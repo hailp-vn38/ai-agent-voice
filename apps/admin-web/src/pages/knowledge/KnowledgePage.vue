@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
-import { Network, Link2, FileText, Folder, FolderOpen, FolderPlus, FilePlus2, Pencil, ChevronsUp, BookOpen, Columns2, ArrowUpRight, ChevronDown, ChevronRight } from '@lucide/vue'
+import { Network, Link2, FileText, Folder, FolderOpen, FolderPlus, FilePlus2, Pencil, ChevronsUp, BookOpen, Columns2, ArrowUpRight, ChevronDown, ChevronRight, Search } from '@lucide/vue'
 import { renderMarkdown, markdownOutline } from './markdown'
 import { renderMermaidBlocks } from './mermaidRenderer'
 import { useTheme } from '@/composables/useTheme'
@@ -13,7 +13,19 @@ import PageHeader from '@/components/admin/PageHeader.vue'
 import { Button } from '@/components/ui/button'
 import { useI18n } from '@/composables/useI18n'
 
-type Hit = { id: string; title: string; revision: number; excerpt: string; status?: string }
+type SearchMode = 'hybrid' | 'lex' | 'vec'
+type Hit = {
+  id: string
+  title: string
+  revision: number
+  excerpt: string
+  status?: string
+  space?: TreeSpace
+  path?: string
+  relative_path?: string
+  match_line?: number
+  score?: number
+}
 type TreeSpace = 'raw' | 'wiki' | 'drafts'
 type TreeNode = { type: 'file' | 'folder'; space: TreeSpace; path: string; name: string; editable: boolean; id?: string; revision?: number; status?: string; has_staged_draft?: boolean }
 type RawFile = { path: string; body: string; sha256: string }
@@ -70,6 +82,32 @@ function restoredVaultSpace(): TreeSpace {
 }
 
 const q = ref('')
+const searchOpen = ref(false)
+const searchMode = ref<SearchMode>('hybrid')
+const searchHits = ref<Hit[]>([])
+const searchExecuted = ref(false)
+watch(q, () => {
+  searchHits.value = []
+  searchExecuted.value = false
+})
+function closeSearch() {
+  searchOpen.value = false
+  searchMode.value = 'hybrid'
+  q.value = ''
+  searchHits.value = []
+  searchExecuted.value = false
+}
+function toggleSearch() {
+  if (searchOpen.value) {
+    closeSearch()
+    return
+  }
+  cancelInlineNote()
+  searchOpen.value = true
+  void nextTick(() => {
+    document.getElementById('knowledge-search-input')?.focus()
+  })
+}
 const storageSpaces = [
   { id: 'wiki', label: 'knowledgeV3.viewWiki' },
   { id: 'raw', label: 'knowledgeV3.viewRaw' },
@@ -367,7 +405,6 @@ const currentFolder = computed(() => activeTree.value?.type === 'folder'
   : activeTree.value?.path.split('/').slice(0, -1).join('/') ?? activeSpace.value)
 const visibleTree = computed(() => tree.value.filter(node => {
   if (node.space !== activeSpace.value) return false
-  if (q.value.trim()) return node.path.toLowerCase().includes(q.value.trim().toLowerCase())
   const parts = node.path.split('/')
   return parts.slice(1).every((_, index) => openFolders.value.has(parts.slice(0, index + 1).join('/')))
 }))
@@ -469,23 +506,68 @@ async function listPages(append = false) {
     nextCursor.value = response.next_cursor
   } catch (cause) { error.value = formatApiError(cause) }
 }
-async function search() {
-  if (activeSpace.value !== 'wiki') {
-    hits.value = []
-    nextCursor.value = null
-    return // Raw and Drafts filter the current physical tree by path.
+function leaveComposeForNavigation(): boolean {
+  if (viewMode.value === 'compose') {
+    if (editorDirty.value && !window.confirm(t('knowledgeV3.discardChanges'))) return false
+    composeOpen.value = false
+    viewMode.value = 'read'
   }
-  if (!q.value.trim()) { await listPages(); return }
+  cancelInlineNote()
+  return true
+}
+async function openRawNote(path: string, displayTitle: string) {
+  selected.value = null
+  readOnlySource.value = false
+  busy.value = true
+  noteLoading.value = true
+  error.value = ''
+  try {
+    const result = await requestJson<RawFile>(withQuery('/api/admin/knowledge/raw/files', { path }))
+    rawFile.value = result
+    title.value = displayTitle
+    body.value = result.body
+    sourceRef.value = ''
+    selectedPath.value = result.path || path
+  } catch (cause) { error.value = formatApiError(cause) }
+  finally {
+    busy.value = false
+    noteLoading.value = false
+  }
+}
+async function search() {
+  const query = q.value.trim()
+  if (!query) {
+    searchHits.value = []
+    searchExecuted.value = false
+    if (activeSpace.value === 'wiki') await listPages()
+    return
+  }
   nextCursor.value = null
   busy.value = true
   error.value = ''
   try {
+    const spaceParam = activeSpace.value === 'raw' ? 'raw' : 'wiki'
     const result = await requestJson<{ items: Hit[] }>(
-      withQuery('/api/admin/knowledge/pages', { q: q.value.trim(), limit: 20 }),
+      withQuery('/api/admin/knowledge/pages', {
+        q: query,
+        space: spaceParam,
+        mode: searchMode.value,
+        limit: 20,
+      }),
     )
-    hits.value = result.items
+    searchHits.value = result.items
+    searchExecuted.value = true
   } catch (cause) { error.value = formatApiError(cause) }
   finally { busy.value = false }
+}
+async function openSearchHit(hit: Hit) {
+  if (!leaveComposeForNavigation()) return
+  const uiPath = hit.path ?? hit.id
+  if ((hit.space ?? activeSpace.value) === 'raw') {
+    await openRawNote(uiPath, hit.title || uiPath)
+    return
+  }
+  await openPage(hit.id, uiPath)
 }
 async function openPage(id: string, nodePath?: string) {
   rawFile.value = null
@@ -597,7 +679,7 @@ function resetExplorer(space: TreeSpace) {
   newFileName.value = ''
   folderPath.value = 'wiki'
   preview.value = false
-  q.value = ''
+  closeSearch()
   hits.value = []
   nextCursor.value = null
   error.value = ''
@@ -649,12 +731,7 @@ async function chooseNode(node: TreeNode) {
     toggleFolder(node.path)
     return
   }
-  if (viewMode.value === 'compose') {
-    if (editorDirty.value && !window.confirm(t('knowledgeV3.discardChanges'))) return
-    composeOpen.value = false
-    viewMode.value = 'read'
-  }
-  cancelInlineNote()
+  if (!leaveComposeForNavigation()) return
   selectedPath.value = node.path
   error.value = ''
   if (node.space === 'wiki' || node.space === 'drafts') {
@@ -684,19 +761,7 @@ async function chooseNode(node: TreeNode) {
     }
     return
   }
-  busy.value = true
-  noteLoading.value = true
-  try {
-    const result = await requestJson<RawFile>(withQuery('/api/admin/knowledge/raw/files', {path: node.path}))
-    rawFile.value = result
-    title.value = node.name
-    body.value = result.body
-    sourceRef.value = ''
-  } catch (cause) { error.value = formatApiError(cause) }
-  finally {
-    busy.value = false
-    noteLoading.value = false
-  }
+  await openRawNote(node.path, node.name)
 }
 function segmentsOfPath(value: string, file: boolean): string[] {
   const parts = value.split('/')
@@ -956,11 +1021,47 @@ onMounted(() => {
             <button type="button" class="icon-button" aria-label="Add file" :title="t('knowledgeV3.createNote')"
               :disabled="busy" @click="startNewFile"><FilePlus2 :size="17" /></button>
           </template>
+          <button class="icon-button" :class="{ active: searchOpen }" type="button"
+            :title="t('knowledgeV3.search')" :aria-label="t('knowledgeV3.search')"
+            :aria-pressed="searchOpen" :disabled="busy" @click="toggleSearch"><Search :size="17" /></button>
           <button class="icon-button" type="button" title="Collapse folders" aria-label="Collapse folders"
             @click="openFolders = new Set([activeSpace])"><ChevronsUp :size="17" /></button>
         </div>
       </div>
+      <form v-if="searchOpen" class="a-search-panel" @submit.prevent="search">
+        <div class="a-search-row">
+          <input id="knowledge-search-input" v-model="q" type="search"
+            class="a-search-input" :aria-label="t('knowledgeV3.search')"
+            :placeholder="activeSpace === 'raw' ? t('knowledgeV3.filterHint') : t('knowledgeV3.searchHint')"
+            autocomplete="off" spellcheck="false" :disabled="busy"
+            @keydown.esc.prevent="closeSearch" />
+          <select v-model="searchMode" class="a-search-mode"
+            :aria-label="t('knowledgeV3.searchMode')" :disabled="busy"
+            @change="q.trim() && void search()">
+            <option value="hybrid">{{ t('knowledgeV3.searchModeHybrid') }}</option>
+            <option value="lex">{{ t('knowledgeV3.searchModeLex') }}</option>
+            <option value="vec">{{ t('knowledgeV3.searchModeVec') }}</option>
+          </select>
+        </div>
+      </form>
       <div ref="treeHolder" class="tree-holder" role="tree" :aria-label="t('knowledgeV3.explorer')">
+        <template v-if="searchOpen && searchExecuted && q.trim()">
+          <div class="a-search-results" role="region" :aria-label="t('knowledgeV3.searchResults')">
+            <p v-if="!searchHits.length" class="a-search-empty">{{ t('knowledgeV3.noSearchResults') }}</p>
+            <button v-for="hit in searchHits" :key="hit.id" type="button"
+              class="a-search-hit" :class="{ active: selectedPath === (hit.path || hit.id) }"
+              @click="openSearchHit(hit)">
+              <div class="a-search-hit-header">
+                <FileText :size="14" class="shrink-0 opacity-60" />
+                <span class="a-search-hit-title">{{ hit.title }}</span>
+                <span v-if="hit.match_line" class="a-search-hit-badge">L{{ hit.match_line }}</span>
+              </div>
+              <div class="a-search-hit-path">{{ hit.path || hit.relative_path || hit.id }}</div>
+              <p v-if="hit.excerpt" class="a-search-hit-excerpt">{{ hit.excerpt }}</p>
+            </button>
+          </div>
+        </template>
+        <template v-else>
         <div v-if="treeLoading && !readableNodes.length" data-knowledge-tree-skeleton class="space-y-1.5 px-2 py-2" aria-hidden="true">
           <div v-for="slot in 5" :key="slot" class="card-shimmer flex items-center gap-2 rounded-md px-2 py-1.5">
             <div class="size-3.5 shrink-0 rounded bg-muted/60" />
@@ -1017,6 +1118,7 @@ onMounted(() => {
             :disabled="busy" @keydown.enter.prevent="confirmInlineNote" @keydown.esc.prevent="cancelInlineNote" />
           <span class="tree-new-note-extension">{{ newNoteName.toLowerCase().endsWith('.md') ? '' : '.md' }}</span>
         </form>
+        </template>
       </div>
       <div class="a-vault-footer">
         <span class="dot"></span>

@@ -3,6 +3,8 @@
 
 mod memory;
 mod raw;
+#[cfg(test)]
+mod tests;
 
 pub(super) use memory::{
     memory_create, memory_forget, memory_health, memory_read, memory_rebuild, memory_recall,
@@ -15,8 +17,8 @@ pub(super) use raw::{
 
 use super::*;
 use llm_wiki::{
-    CollectionScope, GetOptions, HybridQueryRequest, MultiGetOptions, WikiEngine, WikiError,
-    WriteTopicSourceRequest, slugify,
+    CollectionScope, GetOptions, HybridQueryRequest, MultiGetOptions, SearchOptions, WikiEngine,
+    WikiError, WriteTopicSourceRequest, slugify,
 };
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
@@ -108,10 +110,14 @@ pub(super) fn format_wiki_markdown(title: &str, body: &str, source_ref: Option<&
     out
 }
 
-#[derive(Deserialize)]
+#[derive(Default, Deserialize)]
 pub(super) struct SearchQuery {
     pub(super) q: Option<String>,
     pub(super) limit: Option<i64>,
+    #[serde(default)]
+    pub(super) space: Option<String>,
+    #[serde(default)]
+    pub(super) mode: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -246,6 +252,32 @@ pub(super) async fn knowledge_rebuild(State(state): State<AppState>, req: Reques
     .into_response()
 }
 
+fn browser_space_and_path(collection: CollectionScope, rel_path: &str) -> (&'static str, String) {
+    if collection == CollectionScope::Sources {
+        ("raw", rel_path.replacen("sources/", "raw/", 1))
+    } else {
+        ("wiki", rel_path.to_owned())
+    }
+}
+
+#[derive(Clone, Copy)]
+enum SearchModeParam {
+    Hybrid,
+    Lex,
+    Vec,
+}
+
+impl SearchModeParam {
+    fn parse(raw: Option<&str>) -> Option<Self> {
+        match raw.map(str::trim).filter(|s| !s.is_empty()) {
+            None | Some("hybrid") => Some(Self::Hybrid),
+            Some("lex") => Some(Self::Lex),
+            Some("vec") => Some(Self::Vec),
+            Some(_) => None,
+        }
+    }
+}
+
 pub(super) async fn knowledge_search(
     State(state): State<AppState>,
     Query(q): Query<SearchQuery>,
@@ -255,22 +287,50 @@ pub(super) async fn knowledge_search(
         Ok(engine) => engine,
         Err(resp) => return resp,
     };
+    let (collections, list_glob) = match q.space.as_deref().map(str::trim).filter(|s| !s.is_empty())
+    {
+        None | Some("wiki") => (vec![CollectionScope::Wiki], "wiki/**/*.md"),
+        Some("raw") => (vec![CollectionScope::Sources], "sources/**/*.md"),
+        Some(_) => return error(&req, StatusCode::BAD_REQUEST, "invalid_arguments"),
+    };
+    let Some(mode) = SearchModeParam::parse(q.mode.as_deref()) else {
+        return error(&req, StatusCode::BAD_REQUEST, "invalid_arguments");
+    };
     let limit = q.limit.unwrap_or(50).clamp(1, 200) as usize;
-    if let Some(query) = q.q.as_deref().filter(|query| !query.trim().is_empty()) {
-        let hybrid_req = HybridQueryRequest {
-            query: Some(query.to_owned()),
-            collections: vec![CollectionScope::Wiki],
-            limit,
-            ..Default::default()
+    if let Some(query) = q.q.as_deref().map(str::trim).filter(|query| !query.is_empty()) {
+        let search_result = match mode {
+            SearchModeParam::Hybrid => engine.query(HybridQueryRequest {
+                query: Some(query.to_owned()),
+                collections,
+                limit,
+                ..Default::default()
+            }),
+            SearchModeParam::Lex | SearchModeParam::Vec => {
+                let opts = SearchOptions {
+                    collections,
+                    filter: None,
+                    limit,
+                    min_score: 0.0,
+                };
+                match mode {
+                    SearchModeParam::Lex => engine.search_lex(query, opts),
+                    SearchModeParam::Vec => engine.search_vec(query, opts),
+                    SearchModeParam::Hybrid => unreachable!(),
+                }
+            }
         };
-        match engine.query(hybrid_req) {
+        match search_result {
             Ok(results) => {
                 let items: Vec<Value> = results
                     .into_iter()
                     .map(|item| {
+                        let (space, ui_path) =
+                            browser_space_and_path(item.collection, &item.rel_path);
                         serde_json::json!({
                             "id": item.rel_path,
                             "docid": item.docid,
+                            "space": space,
+                            "path": ui_path,
                             "title": item.title,
                             "revision": 1,
                             "status": "verified",
@@ -278,6 +338,8 @@ pub(super) async fn knowledge_search(
                             "excerpt": item.snippet,
                             "relative_path": item.rel_path,
                             "score": item.score,
+                            "match_line": item.match_line,
+                            "context": item.context,
                         })
                     })
                     .collect();
@@ -290,7 +352,7 @@ pub(super) async fn knowledge_search(
             Err(err) => wiki_error(&req, err),
         }
     } else {
-        match engine.multi_get("wiki/**/*.md", MultiGetOptions::default()) {
+        match engine.multi_get(list_glob, MultiGetOptions::default()) {
             Ok(batch) => {
                 let items: Vec<Value> = batch
                     .docs
@@ -298,9 +360,13 @@ pub(super) async fn knowledge_search(
                     .take(limit)
                     .map(|doc| {
                         let excerpt: String = doc.content.chars().take(240).collect();
+                        let (space, ui_path) =
+                            browser_space_and_path(doc.info.collection, &doc.info.rel_path);
                         serde_json::json!({
                             "id": doc.info.rel_path,
                             "docid": doc.info.docid,
+                            "space": space,
+                            "path": ui_path,
                             "title": doc.info.title,
                             "revision": 1,
                             "status": "verified",

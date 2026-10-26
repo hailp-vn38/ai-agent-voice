@@ -191,7 +191,7 @@ _Avoid_: Wiki Page, Job Artifact
 _Avoid_: content hash, search snippet ID
 
 **Knowledge Browser Space**:
-Vùng thư mục vật lý (`raw` tương ứng `sources/`, hoặc `wiki`) được chọn để duyệt trên giao diện quản trị; đây là bộ lọc hiển thị, không thay đổi quyền truy xuất của Agent.
+Vùng thư mục vật lý (`raw` tương ứng `sources/`, hoặc `wiki`) được chọn để duyệt hoặc tìm kiếm trên giao diện quản trị; đây là bộ lọc hiển thị của Admin, không thay đổi quyền truy xuất của Agent.
 _Avoid_: Agent retrieval scope, immutable snapshot
 
 ## Knowledge Wiki Graph

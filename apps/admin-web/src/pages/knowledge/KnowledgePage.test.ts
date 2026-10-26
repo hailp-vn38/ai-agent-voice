@@ -511,3 +511,119 @@ it('shows shimmer placeholders in the explorer and note reader while loading', a
     wrapper.unmount()
   }
 })
+
+it('toggles Explorer search, queries Wiki and File spaces, and opens matching documents', async () => {
+  const fallback = requestJsonMock.getMockImplementation()!
+  requestJsonMock.mockImplementation(async (url: string) => {
+    if (url === '/api/admin/knowledge/pages?q=Reciprocal+rank&space=wiki&mode=hybrid&limit=20') {
+      return {
+        items: [{
+          id: 'wiki/concepts/hybrid-search.md',
+          space: 'wiki',
+          path: 'wiki/concepts/hybrid-search.md',
+          title: 'Hybrid Search Architecture',
+          revision: 1,
+          status: 'verified',
+          excerpt: 'Reciprocal rank fusion combines lexical BM25 and dense vectors.',
+          match_line: 6,
+          score: 0.92,
+        }],
+        next_cursor: null,
+      }
+    }
+    if (url === '/api/admin/knowledge/pages/wiki%2Fconcepts%2Fhybrid-search.md') {
+      return {
+        id: 'wiki/concepts/hybrid-search.md',
+        title: 'Hybrid Search Architecture',
+        body: '# Hybrid Search Architecture\n\nReciprocal rank fusion details.',
+        status: 'verified',
+        revision: 1,
+        source_ref: null,
+      }
+    }
+    if (url === '/api/admin/knowledge/pages?q=barge-in&space=raw&mode=lex&limit=20') {
+      return {
+        items: [{
+          id: 'sources/notes/field-observation.md',
+          space: 'raw',
+          path: 'raw/notes/field-observation.md',
+          title: 'Field Observation',
+          revision: 1,
+          status: 'verified',
+          excerpt: 'Acoustic barge-in latency was measured at 42 milliseconds.',
+          match_line: 3,
+          score: 0.88,
+        }],
+        next_cursor: null,
+      }
+    }
+    if (url === '/api/admin/knowledge/raw/files?path=raw%2Fnotes%2Ffield-observation.md') {
+      return {
+        path: 'raw/notes/field-observation.md',
+        body: '# Field Observation\n\nAcoustic barge-in latency was measured at 42 milliseconds.',
+        sha256: 'obs-sha',
+      }
+    }
+    return fallback(url)
+  })
+
+  const wrapper = mount(KnowledgePage)
+  try {
+    await flushPromises()
+    expect(wrapper.find('input[aria-label="Search"]').exists()).toBe(false)
+
+    // 1. Open search in Knowledge (wiki) space
+    await wrapper.get('button[aria-label="Search"]').trigger('click')
+    const input = wrapper.get('input[aria-label="Search"]')
+    await input.setValue('Reciprocal rank')
+    await wrapper.get('form.a-search-panel').trigger('submit')
+    await flushPromises()
+
+    expect(requestJsonMock).toHaveBeenCalledWith(
+      '/api/admin/knowledge/pages?q=Reciprocal+rank&space=wiki&mode=hybrid&limit=20',
+    )
+    const wikiHit = wrapper.get('button.a-search-hit')
+    expect(wikiHit.text()).toContain('Hybrid Search Architecture')
+    expect(wikiHit.text()).toContain('Reciprocal rank fusion combines lexical BM25')
+    expect(wikiHit.text()).toContain('L6')
+
+    await wikiHit.trigger('click')
+    await flushPromises()
+    expect(wrapper.get('.doc h1').text()).toBe('Hybrid Search Architecture')
+    expect(wrapper.get('.markdown-body').text()).toContain('Reciprocal rank fusion details.')
+
+    // 2. Switch to File (raw) space and search with Keyword (lex) mode
+    const fileTab = wrapper.findAll('[role="tablist"][aria-label="Knowledge source"] [role="tab"]')
+      .find(tab => tab.text() === 'File')!
+    await fileTab.trigger('click')
+    await flushPromises()
+
+    await wrapper.get('button[aria-label="Search"]').trigger('click')
+    await wrapper.get('select[aria-label="Search mode"]').setValue('lex')
+    const rawInput = wrapper.get('input[aria-label="Search"]')
+    await rawInput.setValue('barge-in')
+    await wrapper.get('form.a-search-panel').trigger('submit')
+    await flushPromises()
+
+    expect(requestJsonMock).toHaveBeenCalledWith(
+      '/api/admin/knowledge/pages?q=barge-in&space=raw&mode=lex&limit=20',
+    )
+    const rawHit = wrapper.get('button.a-search-hit')
+    expect(rawHit.text()).toContain('Field Observation')
+    expect(rawHit.text()).toContain('42 milliseconds')
+    expect(rawHit.text()).toContain('L3')
+
+    await rawHit.trigger('click')
+    await flushPromises()
+    expect(wrapper.get('.doc h1').text()).toContain('Field Observation')
+    expect(wrapper.get('.markdown-body').text()).toContain('42 milliseconds')
+
+    // 3. Pressing Escape closes the search input and restores the folder tree
+    await wrapper.get('input[aria-label="Search"]').trigger('keydown', { key: 'Escape' })
+    await flushPromises()
+    expect(wrapper.find('input[aria-label="Search"]').exists()).toBe(false)
+    expect(wrapper.find('.tree-holder').text()).toContain('raw-file')
+  } finally {
+    wrapper.unmount()
+  }
+})

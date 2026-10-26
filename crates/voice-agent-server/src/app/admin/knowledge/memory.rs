@@ -42,6 +42,7 @@ pub(in crate::app::admin) async fn memory_recall(
         Query(SearchQuery {
             q: q.q,
             limit: q.limit,
+            ..SearchQuery::default()
         }),
         req,
     )
