@@ -369,3 +369,49 @@ async fn web_assistant_reminder_tools_require_bound_physical_target() {
     assert_eq!(saved["status"], "saved");
     assert_eq!(saved["device_id"], "test-device");
 }
+
+#[tokio::test]
+async fn disabled_reminder_tools_hide_legacy_task_reminders_and_reject_calls() {
+    let mut actor = tests::session_with_external_mcp(Default::default());
+    actor.job_submit = Some(crate::services::task_flow::VoiceTaskSubmit::unbacked_for_test());
+    let advertised = actor.available_llm_tools();
+    assert!(
+        advertised
+            .iter()
+            .all(|t| !crate::tools::builtin::is_reminder_tool_name(&t.name)
+                && !crate::tools::builtin::is_legacy_reminder_tool_name(&t.name)),
+        "when reminders_enabled is false, neither server_*_reminder nor legacy reminder_* may be advertised"
+    );
+
+    actor.begin_active_turn().unwrap();
+    actor
+        .commit_user_text("Nhắc tôi uống nước sau 5 phút".into())
+        .unwrap();
+    actor.start_tool_batch(vec![
+        ToolCall {
+            id: "legacy-1".into(),
+            name: "reminder_create".into(),
+            arguments: serde_json::json!({"message": "Uống nước", "delay_seconds": 300}),
+        },
+        ToolCall {
+            id: "builtin-1".into(),
+            name: "server_create_reminder".into(),
+            arguments: serde_json::json!({"message": "Uống nước", "delay_seconds": 300}),
+        },
+    ]);
+    let results: Vec<_> = actor
+        .llm_messages
+        .iter()
+        .filter_map(|message| match message {
+            ChatMessage::ToolResult { content, .. } => {
+                Some(serde_json::from_str::<serde_json::Value>(content).unwrap())
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(results.len(), 2);
+    assert_eq!(results[0]["ok"], false);
+    assert_eq!(results[0]["code"], "reminders_disabled");
+    assert_eq!(results[1]["ok"], false);
+    assert_eq!(results[1]["code"], "reminders_disabled");
+}

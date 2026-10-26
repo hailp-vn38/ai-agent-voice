@@ -46,14 +46,10 @@ impl SessionActor {
         let mut tools = vec![exit_tool_definition()];
         if let Some(ref handle) = self.job_submit {
             let defs = handle.tool_definitions();
-            if self.reminder_tools.is_some() {
-                tools.extend(
-                    defs.into_iter()
-                        .filter(|tool| !is_legacy_reminder_tool_name(&tool.name)),
-                );
-            } else {
-                tools.extend(defs);
-            }
+            tools.extend(
+                defs.into_iter()
+                    .filter(|tool| !is_legacy_reminder_tool_name(&tool.name)),
+            );
         }
         if self.reminder_tools.is_some() {
             tools.extend(reminder_tool_definitions());
@@ -110,13 +106,8 @@ impl SessionActor {
     }
 
     pub(in super::super) fn resolve_tool(&self, name: &str) -> Option<ToolTarget> {
-        if is_reminder_tool_name(name)
-            || (self.reminder_tools.is_some() && is_legacy_reminder_tool_name(name))
-        {
-            return self
-                .reminder_tools
-                .as_ref()
-                .map(|_| ToolTarget::Builtin(BuiltinTool::Reminder));
+        if is_reminder_tool_name(name) || is_legacy_reminder_tool_name(name) {
+            return Some(ToolTarget::Builtin(BuiltinTool::Reminder));
         }
         if is_task_suite_tool_name(name) {
             return self

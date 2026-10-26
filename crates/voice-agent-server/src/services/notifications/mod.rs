@@ -91,10 +91,23 @@ impl ReminderCoordinator {
         ctx: &MutationContext<'_>,
         input: CreateReminder,
     ) -> Result<Reminder, NotificationError> {
-        let (mut reminder, device_row_id) = self
+        let (mut reminder, device_row_id) = match self
             .repo
             .create_with_context(device_id, ctx, input)
-            .await?;
+            .await
+        {
+            Ok(res) => res,
+            Err(err) => {
+                tracing::warn!(
+                    device_id = %device_id,
+                    source = %ctx.source.as_str(),
+                    caller = %ctx.caller,
+                    error = %err,
+                    "reminder create failed"
+                );
+                return Err(err);
+            }
+        };
         self.enrich_item_capability(device_row_id, &mut reminder);
         let due_at_utc = chrono::DateTime::<chrono::Utc>::from_timestamp_millis(reminder.due_at_ms)
             .map(|dt| dt.to_rfc3339())
@@ -125,10 +138,25 @@ impl ReminderCoordinator {
         ctx: &MutationContext<'_>,
         input: UpdateReminder,
     ) -> Result<Reminder, NotificationError> {
-        let (mut reminder, device_row_id) = self
+        let (mut reminder, device_row_id) = match self
             .repo
             .update_with_context(device_id, reminder_id, expected_revision, ctx, input)
-            .await?;
+            .await
+        {
+            Ok(res) => res,
+            Err(err) => {
+                tracing::warn!(
+                    device_id = %device_id,
+                    reminder_id = %reminder_id,
+                    expected_revision,
+                    source = %ctx.source.as_str(),
+                    caller = %ctx.caller,
+                    error = %err,
+                    "reminder update failed"
+                );
+                return Err(err);
+            }
+        };
         self.enrich_item_capability(device_row_id, &mut reminder);
         let due_at_utc = chrono::DateTime::<chrono::Utc>::from_timestamp_millis(reminder.due_at_ms)
             .map(|dt| dt.to_rfc3339())
@@ -159,10 +187,25 @@ impl ReminderCoordinator {
         expected_revision: i64,
         ctx: &MutationContext<'_>,
     ) -> Result<Reminder, NotificationError> {
-        let (reminder, device_row_id) = self
+        let (reminder, device_row_id) = match self
             .repo
             .cancel_with_context(device_id, reminder_id, expected_revision, ctx)
-            .await?;
+            .await
+        {
+            Ok(res) => res,
+            Err(err) => {
+                tracing::warn!(
+                    device_id = %device_id,
+                    reminder_id = %reminder_id,
+                    expected_revision,
+                    source = %ctx.source.as_str(),
+                    caller = %ctx.caller,
+                    error = %err,
+                    "reminder cancel failed"
+                );
+                return Err(err);
+            }
+        };
         tracing::info!(
             reminder_id = %reminder.id,
             device_id = %reminder.device_id,
@@ -456,6 +499,44 @@ impl SessionReminderTools {
         call_id: &str,
         tool_name: &str,
         arguments: Value,
+    ) -> Result<Value, &'static str> {
+        let result = self
+            .execute_inner(session_id, call_id, tool_name, &arguments)
+            .await;
+        match &result {
+            Ok(output) => {
+                tracing::info!(
+                    event = "voice_reminder_tool_succeeded",
+                    session_id = %session_id,
+                    agent_key = %self.agent_key,
+                    tool = %tool_name,
+                    call_id = %call_id,
+                    result = %output,
+                    "voice reminder tool call succeeded"
+                );
+            }
+            Err(code) => {
+                tracing::warn!(
+                    event = "voice_reminder_tool_failed",
+                    session_id = %session_id,
+                    agent_key = %self.agent_key,
+                    tool = %tool_name,
+                    call_id = %call_id,
+                    error_code = %code,
+                    arguments = %arguments,
+                    "voice reminder tool call failed"
+                );
+            }
+        }
+        result
+    }
+
+    async fn execute_inner(
+        &self,
+        session_id: &str,
+        call_id: &str,
+        tool_name: &str,
+        arguments: &Value,
     ) -> Result<Value, &'static str> {
         match self.coordinator.repo().grant(&self.agent_key).await {
             Ok((true, _)) => {}

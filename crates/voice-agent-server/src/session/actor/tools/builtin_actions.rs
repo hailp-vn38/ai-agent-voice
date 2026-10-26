@@ -51,19 +51,52 @@ impl SessionActor {
 
     pub(in super::super) fn execute_reminder_tool(&mut self, call: ToolCall) {
         let Some(handle) = self.reminder_tools.clone() else {
+            tracing::warn!(
+                event = "voice_reminder_tool_rejected",
+                session_id = %self.session_id,
+                tool = %call.name,
+                call_id = %call.id,
+                reason = "reminders_disabled",
+                "voice reminder tool call rejected because reminders_enabled is false for agent"
+            );
             self.complete_tool_call(call, Err("reminders_disabled"));
             return;
         };
         let Some(turn) = self.turn.as_ref() else {
+            tracing::warn!(
+                event = "voice_reminder_tool_rejected",
+                session_id = %self.session_id,
+                tool = %call.name,
+                call_id = %call.id,
+                reason = "no_active_turn",
+                "voice reminder tool call rejected because there is no active turn"
+            );
             self.complete_tool_call(call, Err("no_active_turn"));
             return;
         };
         let (turn_id, generation) = (turn.turn_id, turn.generation);
         let cancellation = turn.cancellation.clone();
         let Ok(runtime) = tokio::runtime::Handle::try_current() else {
+            tracing::warn!(
+                event = "voice_reminder_tool_rejected",
+                session_id = %self.session_id,
+                tool = %call.name,
+                call_id = %call.id,
+                reason = "device_notifications_unavailable",
+                "voice reminder tool call rejected because tokio runtime is unavailable"
+            );
             self.complete_tool_call(call, Err("device_notifications_unavailable"));
             return;
         };
+        tracing::info!(
+            event = "voice_reminder_tool_called",
+            session_id = %self.session_id,
+            turn_id = turn_id.get(),
+            tool = %call.name,
+            call_id = %call.id,
+            arguments = %call.arguments,
+            "voice session invoked reminder builtin tool"
+        );
         let completions = self.async_calls_tx.clone();
         let session_id = self.session_id.clone();
         let dispatched = call.clone();

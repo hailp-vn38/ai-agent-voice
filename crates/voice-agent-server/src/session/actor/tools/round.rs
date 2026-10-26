@@ -161,7 +161,9 @@ impl SessionActor {
         let succeeded = result.as_ref().is_ok_and(|value| {
             value.get("isError").and_then(serde_json::Value::as_bool) != Some(true)
         });
-        if crate::tools::builtin::is_task_suite_tool_name(&call.name) {
+        if crate::tools::builtin::is_task_suite_tool_name(&call.name)
+            && !crate::tools::builtin::is_legacy_reminder_tool_name(&call.name)
+        {
             let value = result.unwrap_or_else(crate::services::task_flow::voice_rejection);
             self.record_tool_call(call, value.to_string(), succeeded);
             self.dispatch_next_tool();
