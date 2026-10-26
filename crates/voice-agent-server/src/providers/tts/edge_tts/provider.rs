@@ -157,8 +157,8 @@ pub(crate) fn format_pitch_hz(pitch_hz: i16) -> String {
 }
 
 pub(crate) fn build_ssml(config: &EdgeTtsConfig, raw_text: &str) -> Result<String, TtsError> {
-    let canonical_voice =
-        canonical_voice_name(&config.voice).ok_or_else(|| TtsError::UnsupportedVoice(config.voice.clone()))?;
+    let canonical_voice = canonical_voice_name(&config.voice)
+        .ok_or_else(|| TtsError::UnsupportedVoice(config.voice.clone()))?;
     let escaped = escape_xml_text(&sanitize_input_text(raw_text));
     let pitch = format_pitch_hz(config.pitch_hz);
     let rate = format_rate_percent(config.rate_percent);
@@ -200,7 +200,10 @@ fn build_ws_request(
         "Accept-Encoding",
         HeaderValue::from_static("gzip, deflate, br, zstd"),
     );
-    headers.insert("Accept-Language", HeaderValue::from_static("en-US,en;q=0.9"));
+    headers.insert(
+        "Accept-Language",
+        HeaderValue::from_static("en-US,en;q=0.9"),
+    );
     let cookie = format!("muid={};", generate_muid());
     if let Ok(cookie_val) = HeaderValue::from_str(&cookie) {
         headers.insert("Cookie", cookie_val);
@@ -419,9 +422,11 @@ mod tests {
         let cfg = sample_config();
         let ssml = build_ssml(&cfg, "Xin chào 5 < 10 & 'AI' \"Voice\"\x0b!").unwrap();
         assert!(ssml.contains("xml:lang='vi-VN'"));
-        assert!(ssml.contains(
-            "name='Microsoft Server Speech Text to Speech Voice (vi-VN, HoaiMyNeural)'"
-        ));
+        assert!(
+            ssml.contains(
+                "name='Microsoft Server Speech Text to Speech Voice (vi-VN, HoaiMyNeural)'"
+            )
+        );
         assert!(ssml.contains("<prosody pitch='-5Hz' rate='+15%' volume='+0%'>"));
         assert!(ssml.contains("Xin chào 5 &lt; 10 &amp; &apos;AI&apos; &quot;Voice&quot; !"));
     }
@@ -485,8 +490,7 @@ mod tests {
                     bin_frame.extend_from_slice(b"FAKE_MP3_PAYLOAD");
                     ws.send(Message::Binary(bin_frame.into())).await.unwrap();
 
-                    let turn_end =
-                        "X-RequestId:abc\r\nContent-Type:application/json; charset=utf-8\r\nPath:turn.end\r\n\r\n{}";
+                    let turn_end = "X-RequestId:abc\r\nContent-Type:application/json; charset=utf-8\r\nPath:turn.end\r\n\r\n{}";
                     ws.send(Message::Text(turn_end.into())).await.unwrap();
                 }
             }

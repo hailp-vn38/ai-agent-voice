@@ -1,8 +1,6 @@
 //! Physical folder tree & Raw/Wiki file browser handlers for `/api/admin/knowledge/*`.
 
-use super::{
-    resolve_wiki_scoped_path, sha256_hex, trigger_source_analysis, wiki, wiki_error,
-};
+use super::{resolve_wiki_scoped_path, sha256_hex, trigger_source_analysis, wiki, wiki_error};
 use crate::app::{
     AppState,
     admin::{Json, Path, Query, Request, Response, State, StatusCode, error, json},

@@ -271,7 +271,10 @@ fn sha256_init(salt: &[u8]) -> [u32; 8] {
 }
 
 fn sha256_digest(data: &[u8]) -> [u8; 32] {
-    assert!(data.len() >= 7, "Token salt must contain at least seven bytes");
+    assert!(
+        data.len() >= 7,
+        "Token salt must contain at least seven bytes"
+    );
     let length = 57 + data.len();
     let pad_zeros = (55usize.wrapping_sub(length)) % 64;
     let mut padded = Vec::with_capacity(data.len() - 7 + 1 + pad_zeros + 8);
@@ -313,7 +316,10 @@ fn cs64_digest(data: &[u8], digest: &[u8; 32]) -> (u32, u32) {
         .enumerate()
         .map(|(index, (coefficient, _))| coefficient.wrapping_mul(factors[index % 2]))
         .collect();
-    let mut offsets: Vec<u32> = CS64_COEFFICIENTS.iter().map(|(_, offset)| *offset).collect();
+    let mut offsets: Vec<u32> = CS64_COEFFICIENTS
+        .iter()
+        .map(|(_, offset)| *offset)
+        .collect();
 
     let mut prefixed = Vec::with_capacity(1 + data.len());
     prefixed.push(0);
@@ -395,7 +401,11 @@ pub fn generate_sec_ms_gec_at(trusted_client_token: &str, version: &str, unix_ts
     let mut cs_bytes = [0u8; 8];
     cs_bytes[..4].copy_from_slice(&cs0.to_le_bytes());
     cs_bytes[4..].copy_from_slice(&cs1.to_le_bytes());
-    format!("{}-{}", encode_upper_hex(&cs_bytes), encode_upper_hex(&digest))
+    format!(
+        "{}-{}",
+        encode_upper_hex(&cs_bytes),
+        encode_upper_hex(&digest)
+    )
 }
 
 pub fn current_unix_timestamp_with_skew() -> f64 {

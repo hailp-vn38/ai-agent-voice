@@ -24,11 +24,13 @@ use std::sync::Arc;
 
 #[allow(clippy::result_large_err)]
 pub(super) fn wiki(state: &AppState, req: &Request) -> Result<Arc<WikiEngine>, Response> {
-    state
-        .wiki_engine
-        .as_ref()
-        .cloned()
-        .ok_or_else(|| error(req, StatusCode::SERVICE_UNAVAILABLE, "knowledge_unavailable"))
+    state.wiki_engine.as_ref().cloned().ok_or_else(|| {
+        error(
+            req,
+            StatusCode::SERVICE_UNAVAILABLE,
+            "knowledge_unavailable",
+        )
+    })
 }
 
 pub(super) fn wiki_error(req: &Request, err: WikiError) -> Response {
@@ -40,7 +42,11 @@ pub(super) fn wiki_error(req: &Request, err: WikiError) -> Response {
         WikiError::InvalidMetadataFilter(_) | WikiError::InvalidToolArguments { .. } => {
             error(req, StatusCode::BAD_REQUEST, "invalid_arguments")
         }
-        _ => error(req, StatusCode::SERVICE_UNAVAILABLE, "knowledge_unavailable"),
+        _ => error(
+            req,
+            StatusCode::SERVICE_UNAVAILABLE,
+            "knowledge_unavailable",
+        ),
     }
 }
 
@@ -70,7 +76,8 @@ pub(super) async fn trigger_source_analysis(state: &AppState, rel_path: &str, bo
         return;
     }
     if let Some(ref tm) = state.task_manager {
-        if let Ok(task) = crate::services::task_flow::submit_wiki_source_analysis(tm, rel_path).await
+        if let Ok(task) =
+            crate::services::task_flow::submit_wiki_source_analysis(tm, rel_path).await
         {
             body["analysis"] = serde_json::json!({
                 "job_id": task.id,

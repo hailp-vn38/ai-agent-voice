@@ -58,11 +58,7 @@ const FIELDS: &[ProviderConfigField] = &[
         Some(2_000_000),
         None,
     ),
-    select_field(
-        "reasoning_effort",
-        "Reasoning effort",
-        REASONING_EFFORTS,
-    ),
+    select_field("reasoning_effort", "Reasoning effort", REASONING_EFFORTS),
     field(
         "temperature_percent",
         "Temperature (0-200%)",
