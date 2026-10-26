@@ -1,4 +1,78 @@
-use sqlx::{Executor, Sqlite, SqlitePool};
+use serde::Serialize;
+use sqlx::{Executor, FromRow, QueryBuilder, Sqlite, SqlitePool};
+
+#[derive(Clone, Debug, Serialize, FromRow, PartialEq, Eq)]
+pub struct AuditLogEventRow {
+    pub id: i64,
+    pub created_at: i64,
+    pub request_id: String,
+    pub resource_type: String,
+    pub resource_id: Option<i64>,
+    pub action: String,
+    pub prior_revision: Option<i64>,
+    pub new_revision: Option<i64>,
+    pub outcome: String,
+    pub error_kind: Option<String>,
+    pub affected_rows: Option<i64>,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct AuditLogFilter {
+    pub page: u32,
+    pub page_size: u32,
+    pub resource_type: Option<String>,
+    pub outcome: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
+pub struct AuditLogPage {
+    pub items: Vec<AuditLogEventRow>,
+    pub total: u64,
+    pub page: u32,
+    pub page_size: u32,
+}
+
+fn push_audit_filters<'a>(qb: &mut QueryBuilder<'a, Sqlite>, filter: &'a AuditLogFilter) {
+    if let Some(ref resource_type) = filter.resource_type {
+        qb.push(" AND resource_type = ").push_bind(resource_type);
+    }
+    if let Some(ref outcome) = filter.outcome {
+        qb.push(" AND outcome = ").push_bind(outcome);
+    }
+}
+
+impl crate::database::Database {
+    pub async fn list_audit_events(
+        &self,
+        filter: &AuditLogFilter,
+    ) -> Result<AuditLogPage, sqlx::Error> {
+        let mut count_qb: QueryBuilder<Sqlite> =
+            QueryBuilder::new("SELECT COUNT(*) FROM admin_audit_events WHERE 1=1");
+        push_audit_filters(&mut count_qb, filter);
+        let total: (i64,) = count_qb.build_query_as().fetch_one(&self.pool).await?;
+
+        let offset = i64::from(filter.page.saturating_sub(1)) * i64::from(filter.page_size);
+        let limit = i64::from(filter.page_size);
+
+        let mut list_qb: QueryBuilder<Sqlite> = QueryBuilder::new(
+            "SELECT id, created_at, request_id, resource_type, resource_id, action, prior_revision, new_revision, outcome, error_kind, affected_rows FROM admin_audit_events WHERE 1=1",
+        );
+        push_audit_filters(&mut list_qb, filter);
+        list_qb
+            .push(" ORDER BY id DESC LIMIT ")
+            .push_bind(limit)
+            .push(" OFFSET ")
+            .push_bind(offset);
+
+        let items: Vec<AuditLogEventRow> = list_qb.build_query_as().fetch_all(&self.pool).await?;
+        Ok(AuditLogPage {
+            items,
+            total: total.0.max(0) as u64,
+            page: filter.page,
+            page_size: filter.page_size,
+        })
+    }
+}
 
 /// What an administration did, and therefore what its audit row records.
 ///

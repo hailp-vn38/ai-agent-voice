@@ -12,5 +12,6 @@ pub use provider::{
     diagnostic as provider_diagnostic, prewarm as provider_prewarm, runtime as provider_runtime,
     test as provider_test,
 };
+pub use system::logs as system_logs;
 pub use system::metrics as system_metrics;
 pub(crate) use system::status as system_status;

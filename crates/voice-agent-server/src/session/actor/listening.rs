@@ -117,7 +117,13 @@ impl SessionActor {
                 }
                 Err(error) => {
                     self.emit_turn_status("rejected", Some("asr_capacity"));
-                    warn!(?error, "manual ASR start rejected");
+                    warn!(
+                        subsystem = "voice.asr",
+                        event = "asr_manual_start_rejected",
+                        outcome = "failure",
+                        ?error,
+                        "manual ASR start rejected"
+                    );
                     self.phase = SessionPhase::Ready;
                 }
             },
@@ -128,7 +134,16 @@ impl SessionActor {
                     self.phase = SessionPhase::Listening;
                 }
                 Err(error) => {
-                    warn!(?error, phase = ?self.phase, generation = self.generation, "auto VAD worker open failed");
+                    warn!(
+                        subsystem = "voice.vad",
+                        event = "vad_open_failed",
+                        outcome = "failure",
+                        mode = "auto",
+                        ?error,
+                        phase = ?self.phase,
+                        generation = self.generation,
+                        "auto VAD worker open failed"
+                    );
                     self.phase = SessionPhase::Closed;
                     let _ = self.urgent_tx.try_send(OutboundMessage::Close(1013));
                 }
@@ -142,7 +157,14 @@ impl SessionActor {
                     self.phase = SessionPhase::Listening;
                 }
                 Err(error) => {
-                    warn!(?error, "realtime VAD worker open failed");
+                    warn!(
+                        subsystem = "voice.vad",
+                        event = "vad_open_failed",
+                        outcome = "failure",
+                        mode = "realtime",
+                        ?error,
+                        "realtime VAD worker open failed"
+                    );
                     self.phase = SessionPhase::Closed;
                     let _ = self.urgent_tx.try_send(OutboundMessage::Close(1013));
                 }
@@ -159,6 +181,8 @@ impl SessionActor {
         let was_speaking = self.phase == SessionPhase::Speaking;
         if self.auto_reset_pending {
             info!(
+                subsystem = "voice.vad",
+                event = "vad_duplicate_start_ignored",
                 generation = self.generation,
                 "duplicate auto listen:start accepted while VAD reset is pending"
             );
@@ -186,10 +210,21 @@ impl SessionActor {
                 if !was_speaking {
                     self.phase = SessionPhase::Processing;
                 }
-                info!(generation = self.generation, "reusing VAD capture cycle");
+                info!(
+                    subsystem = "voice.vad",
+                    event = "vad_cycle_reused",
+                    generation = self.generation,
+                    "reusing VAD capture cycle"
+                );
             }
             Err(error) => {
-                warn!(?error, "failed to reset existing Auto VAD cycle");
+                warn!(
+                    subsystem = "voice.vad",
+                    event = "vad_reset_failed",
+                    outcome = "failure",
+                    ?error,
+                    "failed to reset existing Auto VAD cycle"
+                );
                 self.fail_closed();
             }
         }
@@ -244,7 +279,13 @@ impl SessionActor {
                 self.phase = SessionPhase::Processing;
             }
             Err(error) => {
-                warn!(?error, "Auto VAD reset failed after abort");
+                warn!(
+                    subsystem = "voice.vad",
+                    event = "vad_reset_failed",
+                    outcome = "failure",
+                    ?error,
+                    "Auto VAD reset failed after abort"
+                );
                 self.fail_closed();
             }
         }
@@ -266,7 +307,12 @@ impl SessionActor {
             }
             return;
         };
-        info!(mode = ?self.listening_mode, "typed detect accepted");
+        info!(
+            event = "typed_detect_accepted",
+            mode = ?self.listening_mode,
+            text_chars = text.chars().count(),
+            "typed detect accepted"
+        );
         self.manual_capture.abort();
         match self.listening_mode {
             Some(ListenMode::Manual) => {
@@ -379,6 +425,15 @@ impl SessionActor {
             AsrWorkerEvent::Final { text, .. } if current => {
                 self.asr_stream = None;
                 let text = normalize_asr_final_text(text);
+                info!(
+                    subsystem = "voice.asr",
+                    event = "asr_final_recognized",
+                    outcome = "success",
+                    turn_id = self.current_turn_id().map(TurnId::get).unwrap_or(0),
+                    generation = self.generation,
+                    text_chars = text.chars().count(),
+                    "ASR final recognized"
+                );
                 if self.speaker_observe.is_some() {
                     self.on_identification_final(text);
                 } else if let Some(final_text) = self.commit_user_text(text) {
@@ -438,7 +493,12 @@ impl SessionActor {
                 }
                 Ok(None) => {}
                 Err(_) => {
-                    warn!("VAD stream integrity failure");
+                    warn!(
+                        subsystem = "voice.vad",
+                        event = "vad_integrity_failed",
+                        outcome = "failure",
+                        "VAD stream integrity failure"
+                    );
                     self.fail_closed();
                 }
             },
@@ -487,7 +547,12 @@ impl SessionActor {
             | VadWorkerEvent::CleanupTimedOut { .. }
                 if current_worker =>
             {
-                warn!("VAD worker failed or cleanup timed out");
+                warn!(
+                    subsystem = "voice.vad",
+                    event = "vad_worker_failed",
+                    outcome = "failure",
+                    "VAD worker failed or cleanup timed out"
+                );
                 self.fail_closed()
             }
             _ => {}
@@ -515,8 +580,11 @@ impl SessionActor {
     /// the current PCM packet may contain the onset that caused the interruption.
     fn begin_acoustic_barge_in(&mut self, start_sample: u64) {
         info!(
+            subsystem = "voice.vad",
+            event = "acoustic_barge_in_accepted",
             generation = self.generation,
-            start_sample, "Acoustic barge-in accepted"
+            start_sample,
+            "Acoustic barge-in accepted"
         );
         let feed_start = start_sample.saturating_sub(self.pre_roll_samples);
         let Some(retained) = self.auto_retention.range(feed_start) else {

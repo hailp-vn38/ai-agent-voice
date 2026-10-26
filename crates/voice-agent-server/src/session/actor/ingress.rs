@@ -273,7 +273,12 @@ impl SessionActor {
             }
             ClientMessage::Abort { session_id } => {
                 if self.inbound_session_matches(session_id.as_deref()) {
-                    info!(phase = ?self.phase, generation = self.generation, "Client abort accepted");
+                    info!(
+                        event = "client_abort_accepted",
+                        phase = ?self.phase,
+                        generation = self.generation,
+                        "Client abort accepted"
+                    );
                     self.abort_active_interaction();
                 }
             }

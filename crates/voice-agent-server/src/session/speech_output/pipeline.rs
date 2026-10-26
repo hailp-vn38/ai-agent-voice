@@ -15,6 +15,9 @@ impl SpeechOutput {
         // transport queue, so a long valid segment must not consume future segment capacity.
         if self.pending.len() >= self.max_pending {
             tracing::warn!(
+                subsystem = "voice.tts",
+                event = "tts_segment_queue_full",
+                outcome = "failure",
                 pending_segments = self.pending.len(),
                 max_pending = self.max_pending,
                 "Speech segment queue reached capacity"
@@ -36,7 +39,12 @@ impl SpeechOutput {
         let text = segment.tts_text;
         if let Some(runtime) = &self.tts_runtime {
             let stream = self.tts_stream.expect("TTS worker requires a stream");
-            tracing::info!(?stream, "TTS segment submission requested");
+            tracing::info!(
+                subsystem = "voice.tts",
+                event = "tts_segment_submitted",
+                ?stream,
+                "TTS segment submission requested"
+            );
             let lease = runtime
                 .start_in_stream(stream, text)
                 .map_err(|_| SpeechOutputError::Synthesis)?;
@@ -44,6 +52,8 @@ impl SpeechOutput {
             return Ok(());
         }
         tracing::info!(
+            subsystem = "voice.tts",
+            event = "tts_synthesis_started",
             chars = text.chars().count(),
             delivery = "direct",
             "TTS synthesis input"
@@ -71,6 +81,8 @@ impl SpeechOutput {
         for packet in packets {
             if !self.started && self.packets.is_empty() && self.segment_packets.is_empty() {
                 tracing::info!(
+                    subsystem = "voice.tts",
+                    event = "tts_first_packet_ready",
                     packet_bytes = packet.as_bytes().len(),
                     "First downlink Opus packet ready"
                 );

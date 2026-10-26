@@ -54,6 +54,8 @@ impl SpeechOutput {
             if !segment.announced {
                 segment.announced = true;
                 tracing::info!(
+                    subsystem = "voice.tts",
+                    event = "tts_segment_ready",
                     chars = segment.display_text.chars().count(),
                     "Speech segment ready"
                 );
@@ -89,7 +91,13 @@ impl SpeechOutput {
                     return Err(SpeechOutputError::Synthesis);
                 }
                 Some(TtsWorkerEvent::TimedOut) => {
-                    tracing::warn!(?lease, "TTS synthesis timed out");
+                    tracing::warn!(
+                        subsystem = "voice.tts",
+                        event = "tts_synthesis_timed_out",
+                        outcome = "failure",
+                        ?lease,
+                        "TTS synthesis timed out"
+                    );
                     self.active_worker = None;
                     // Actor failure stops polling this lease, so cleanup must continue at the
                     // runtime boundary and quarantine the slot if native acknowledgement stalls.
@@ -134,6 +142,8 @@ impl SpeechOutput {
                 return Ok(None);
             }
             tracing::info!(
+                subsystem = "voice.tts",
+                event = "tts_initial_buffer_ready",
                 buffered_packets = self.packets.len(),
                 active_worker = self.active_worker.is_some(),
                 "TTS initial buffer ready"

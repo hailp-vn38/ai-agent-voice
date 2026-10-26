@@ -113,6 +113,12 @@ impl Drop for RetainedSession {
             self.reusable = false;
         }
         if !self.reusable {
+            tracing::warn!(
+                subsystem = "voice.asr",
+                event = "asr_session_pool_degraded",
+                outcome = "failure",
+                "Retained native ASR session failed reset and marked pool unhealthy"
+            );
             self.pool.1.store(false, Ordering::Release);
         } else {
             self.pool.0.lock().expect("ASR pool poisoned").push(session);

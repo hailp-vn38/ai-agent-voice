@@ -748,3 +748,8 @@ For Wiki Page, Source, Knowledge Revision, Memory Fact, Memory Summary, Search P
 
 For Notification, Notification Inbox, Notification Channel, Notification Channel Policy, and Channel Delivery Attempt, use the definitions in [GLOSSARY.md](GLOSSARY.md#multi-channel-notifications).
 
+## System Observability & Structured Logs
+
+For Structured Log Entry, Correlation Context, Log Ring Buffer, and Live Log Stream, use the definitions in [GLOSSARY.md](GLOSSARY.md#system-observability--structured-logs).
+
+

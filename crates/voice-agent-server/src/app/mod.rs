@@ -124,6 +124,7 @@ pub fn router_with_state(mut state: AppState) -> Router {
             state.system_metrics.clone(),
             state.config.llm.max_tool_result_chars,
         )
+        .with_system_logs(state.system_logs.clone())
         .with_discovery(state.external_mcp.clone(), state.secret_resolver.clone())
         .with_notification_hub(state.notification_hub.clone()),
     ));
@@ -200,7 +201,12 @@ pub fn router_with_state(mut state: AppState) -> Router {
                 .on_request(())
                 .on_response(())
                 .make_span_with(|request: &Request<_>| {
-                    tracing::debug_span!("http_request", method = %request.method(), path = request.uri().path())
+                    tracing::debug_span!(
+                        "http_request",
+                        request_id = tracing::field::Empty,
+                        method = %request.method(),
+                        path = request.uri().path()
+                    )
                 }),
         )
 }
@@ -307,7 +313,12 @@ fn ensure_declared_assets(config: &AppConfig) -> Result<(), crate::providers::Pr
             continue;
         };
         assets.ensure_assets()?;
-        tracing::info!(provider = adapter, "provider model files ready");
+        tracing::info!(
+            subsystem = "system",
+            event = "provider_assets_ready",
+            provider = adapter,
+            "provider model files ready"
+        );
     }
     Ok(())
 }
@@ -525,11 +536,26 @@ async fn prepare_builtin_speaker(state: &mut AppState) {
     .await;
     match built {
         Ok(Ok(runtime)) => {
-            info!(embedding_space = %runtime.embedding_space_id(), "builtin speaker engine ready");
+            info!(
+                subsystem = "voice.speaker",
+                event = "builtin_speaker_ready",
+                embedding_space = %runtime.embedding_space_id(),
+                "builtin speaker engine ready"
+            );
             state.speaker_runtime = Some(Arc::new(runtime));
         }
-        Ok(Err(err)) => warn!(reason = %err, "builtin speaker engine unavailable"),
-        Err(err) => warn!(reason = %err, "builtin speaker worker failed to initialize"),
+        Ok(Err(err)) => warn!(
+            subsystem = "voice.speaker",
+            event = "builtin_speaker_unavailable",
+            reason = %err,
+            "builtin speaker engine unavailable"
+        ),
+        Err(err) => warn!(
+            subsystem = "voice.speaker",
+            event = "builtin_speaker_init_failed",
+            reason = %err,
+            "builtin speaker worker failed to initialize"
+        ),
     }
 }
 
@@ -581,6 +607,9 @@ fn apply_load_plan(
 
 fn map_load_plan_failure(error: RequiredProviderUnavailable) -> BootstrapError {
     tracing::error!(
+        subsystem = "system",
+        event = "required_provider_unavailable",
+        outcome = "failure",
         provider_key = %error.provider_key,
         reason = ?error.failure,
         "required database provider is unavailable; refusing to bind the listener"

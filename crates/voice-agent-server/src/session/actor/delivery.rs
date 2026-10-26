@@ -238,18 +238,31 @@ impl SessionActor {
             self.terminalize_turn_failure(TurnFailure::LlmRequestTooLarge);
             return;
         }
+        let turn_id = self.current_turn_id().map(|id| id.get());
         if self
             .llm_runtime
             .start(identity.clone(), request, cancellation)
             .is_err()
         {
             self.turn = None;
-            warn!("LLM operation could not start");
+            warn!(
+                subsystem = "voice.llm",
+                event = "llm_operation_start_failed",
+                outcome = "failure",
+                turn_id = turn_id,
+                operation_id = identity.stream(),
+                generation = identity.generation(),
+                "LLM operation could not start"
+            );
             self.complete_recognition();
             return;
         }
         info!(
+            subsystem = "voice.llm",
             event = "llm_operation_started",
+            turn_id = turn_id,
+            operation_id = identity.stream(),
+            generation = identity.generation(),
             profile_source,
             system_prompt_bytes = self
                 .llm_messages
@@ -274,7 +287,13 @@ impl SessionActor {
     }
 
     pub(super) fn terminalize_turn_failure(&mut self, failure: TurnFailure) {
-        warn!(code = failure.code(), "conversational turn terminalized");
+        warn!(
+            event = "turn_terminalized",
+            outcome = "failure",
+            turn_id = self.current_turn_id().map(TurnId::get).unwrap_or(0),
+            code = failure.code(),
+            "conversational turn terminalized"
+        );
         self.terminalize_llm_failure();
     }
 
@@ -317,7 +336,15 @@ impl SessionActor {
                     self.generated_response = round.prose.clone();
                     self.pending_llm_delta = Some((round.prose, 0));
                 }
-                info!("LLM operation finished");
+                info!(
+                    subsystem = "voice.llm",
+                    event = "llm_operation_completed",
+                    outcome = "success",
+                    turn_id = self.current_turn_id().map(TurnId::get).unwrap_or(0),
+                    generation = self.generation,
+                    response_chars = self.generated_response.chars().count(),
+                    "LLM operation finished"
+                );
                 self.llm_finish_pending = true;
                 self.flush_pending_llm_text();
             }
@@ -377,7 +404,13 @@ impl SessionActor {
                 self.speech_output.push_direct_delta(&text[*offset..end])
             };
             if let Err(error) = result {
-                warn!(?error, "LLM text could not enter speech output");
+                warn!(
+                    subsystem = "voice.tts",
+                    event = "speech_output_push_failed",
+                    outcome = "failure",
+                    ?error,
+                    "LLM text could not enter speech output"
+                );
                 self.fail_speech_delivery();
                 return;
             }
@@ -396,10 +429,21 @@ impl SessionActor {
         {
             self.llm_finish_pending = false;
             if self.generated_response.trim().is_empty() {
-                warn!("LLM response has no deliverable text");
+                warn!(
+                    subsystem = "voice.llm",
+                    event = "llm_empty_response",
+                    outcome = "failure",
+                    "LLM response has no deliverable text"
+                );
                 self.fail_speech_delivery();
             } else if let Err(error) = self.speech_output.finish_input() {
-                warn!(?error, "LLM response could not finish speech input");
+                warn!(
+                    subsystem = "voice.tts",
+                    event = "speech_output_finish_failed",
+                    outcome = "failure",
+                    ?error,
+                    "LLM response could not finish speech input"
+                );
                 self.fail_speech_delivery();
             }
         }
@@ -414,7 +458,13 @@ impl SessionActor {
                 Ok(Some(event)) => event,
                 Ok(None) => break,
                 Err(error) => {
-                    warn!(?error, "TTS delivery failed");
+                    warn!(
+                        subsystem = "voice.tts",
+                        event = "tts_delivery_failed",
+                        outcome = "failure",
+                        ?error,
+                        "TTS delivery failed"
+                    );
                     self.fail_speech_delivery();
                     break;
                 }
@@ -433,7 +483,12 @@ impl SessionActor {
                         .ok()
                         .is_none_or(|payload| self.send_turn_control(payload).is_err())
                     {
-                        warn!("LLM segment control could not enter outbound queue");
+                        warn!(
+                            subsystem = "voice.tts",
+                            event = "llm_segment_outbound_queue_full",
+                            outcome = "failure",
+                            "LLM segment control could not enter outbound queue"
+                        );
                         self.fail_speech_delivery();
                         break;
                     }
@@ -441,7 +496,13 @@ impl SessionActor {
                 SpeechOutputEvent::Started => {
                     self.tts_started = true;
                     self.phase = SessionPhase::Speaking;
-                    info!("TTS delivery started");
+                    info!(
+                        subsystem = "voice.tts",
+                        event = "tts_delivery_started",
+                        turn_id = self.current_turn_id().map(TurnId::get).unwrap_or(0),
+                        generation = self.generation,
+                        "TTS delivery started"
+                    );
                     let Some(turn_id) = self.current_turn_id() else {
                         self.fail_speech_delivery();
                         break;
@@ -456,7 +517,12 @@ impl SessionActor {
                             })
                             .is_err()
                     }) {
-                        warn!("TTS start control could not enter outbound queue");
+                        warn!(
+                            subsystem = "voice.tts",
+                            event = "tts_start_outbound_queue_full",
+                            outcome = "failure",
+                            "TTS start control could not enter outbound queue"
+                        );
                         self.fail_speech_delivery();
                         break;
                     }
@@ -495,7 +561,14 @@ impl SessionActor {
                     }
                 }
                 SpeechOutputEvent::Drained => {
-                    info!("TTS delivery drained");
+                    info!(
+                        subsystem = "voice.tts",
+                        event = "tts_delivery_drained",
+                        outcome = "success",
+                        turn_id = self.current_turn_id().map(TurnId::get).unwrap_or(0),
+                        generation = self.generation,
+                        "TTS delivery drained"
+                    );
                     let Some(turn_id) = self.current_turn_id() else {
                         self.fail_speech_delivery();
                         break;

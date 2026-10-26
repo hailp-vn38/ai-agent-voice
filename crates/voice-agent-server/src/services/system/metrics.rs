@@ -91,7 +91,12 @@ impl SystemMetrics {
                         }
                     }
                     Err(_) => {
-                        tracing::warn!("system metrics sampler unavailable");
+                        tracing::warn!(
+                            subsystem = "system",
+                            event = "system_metrics_sampler_unavailable",
+                            outcome = "failure",
+                            "system metrics sampler unavailable"
+                        );
                         break;
                     }
                 }

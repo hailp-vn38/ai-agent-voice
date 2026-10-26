@@ -88,6 +88,7 @@ pub struct AppState {
     pub notification_hub: Option<Arc<crate::services::notification_hub::NotificationHub>>,
     pub(crate) system_mcp: Option<Arc<crate::tools::system_mcp::SystemMcp>>,
     pub system_metrics: Arc<crate::services::system_metrics::SystemMetrics>,
+    pub system_logs: Arc<crate::services::system_logs::SystemLogHub>,
     pub(crate) web_assistant: Arc<super::assistant::WebAssistantAuth>,
     /// Identity of this process incarnation, pinned into enrollment drafts as provenance so a
     /// restart can detect a stale runtime and repin a still-compatible draft.
@@ -729,6 +730,7 @@ impl AppState {
             notification_hub,
             system_mcp: None,
             system_metrics: Arc::new(crate::services::system_metrics::SystemMetrics::new()),
+            system_logs: crate::services::system_logs::SystemLogHub::global(),
             web_assistant: Arc::new(Default::default()),
             runtime_id: format!("voice-agent-server-{}", uuid::Uuid::new_v4()),
             deployment_snapshots: Vec::new(),
@@ -759,6 +761,14 @@ impl AppState {
             state.lifecycle.observe_history_writer(metrics);
         }
         state
+    }
+
+    pub fn with_system_logs(
+        mut self,
+        system_logs: Arc<crate::services::system_logs::SystemLogHub>,
+    ) -> Self {
+        self.system_logs = system_logs;
+        self
     }
 
     /// Binds one admitted connection's Persistent Transcript capture, or `None`.

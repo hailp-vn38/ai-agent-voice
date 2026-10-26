@@ -225,6 +225,9 @@ pub(super) fn router(state: AppState) -> Router<AppState> {
         )
         .route("/system", get(get_system))
         .route("/system/resources", get(system::get_resources))
+        .route("/system/logs", get(system::get_logs))
+        .route("/system/logs/stream", get(system::stream_logs))
+        .route("/system/audit-logs", get(system::get_audit_logs))
         .route(
             "/system/assistant-device",
             get(assistant_device::get).put(assistant_device::put),
@@ -487,6 +490,7 @@ async fn transport(request: Request, next: Next) -> Response {
 
 async fn request_id(mut request: Request, next: Next) -> Response {
     let id = Uuid::new_v4().to_string();
+    tracing::Span::current().record("request_id", id.as_str());
     request.extensions_mut().insert(RequestId(id.clone()));
     let mut response = next.run(request).await;
     response.headers_mut().insert(

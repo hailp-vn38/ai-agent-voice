@@ -6,6 +6,7 @@
 //! but failure or a late result never denies the conversational turn.
 
 use std::sync::atomic::Ordering;
+use tracing::Instrument;
 
 use super::*;
 use crate::session::speaker_observe::OBSERVE_MAX_SAMPLES;
@@ -92,46 +93,55 @@ impl SessionActor {
         let in_flight = self.observe_in_flight.clone();
         let status_frames = self.speaker_status;
         let gate_tx = self.gate_tx.clone();
-        tokio::spawn(async move {
-            let diagnostic = observe.observe(identity, &samples).await;
-            let recognized_speaker = (diagnostic.outcome
-                == crate::session::SpeakerStatus::Verified)
-                .then(|| {
-                    observe
-                        .plan()
-                        .candidates
-                        .iter()
-                        .find(|candidate| Some(candidate.speaker_id) == diagnostic.best_speaker_id)
-                        .map(|candidate| candidate.key.as_str())
-                })
-                .flatten();
-            tracing::info!(
-                operation_id = diagnostic.identity.operation_id,
-                turn_id = diagnostic.identity.turn_id,
-                generation = diagnostic.identity.generation,
-                embedding_space = %diagnostic.embedding_space,
-                catalog_revision = diagnostic.catalog_revision,
-                samples = diagnostic.samples,
-                speech_ms = diagnostic.speech_ms,
-                inference_ms = diagnostic.inference_ms,
-                state = diagnostic.outcome.as_str(),
-                recognized = recognized_speaker.is_some(),
-                speaker_key = recognized_speaker.unwrap_or("none"),
-                best_score = diagnostic.best_score,
-                "speaker observe",
-            );
-            in_flight.store(false, Ordering::Release);
-            let _ = gate_tx.send(diagnostic.clone());
-            // Stale results are cleanup-only: they never surface, and the latch is already clear.
-            if !status_frames || !generation_gate.admits(diagnostic.identity.generation) {
-                return;
+        tokio::spawn(
+            async move {
+                let diagnostic = observe.observe(identity, &samples).await;
+                let recognized_speaker = (diagnostic.outcome
+                    == crate::session::SpeakerStatus::Verified)
+                    .then(|| {
+                        observe
+                            .plan()
+                            .candidates
+                            .iter()
+                            .find(|candidate| {
+                                Some(candidate.speaker_id) == diagnostic.best_speaker_id
+                            })
+                            .map(|candidate| candidate.key.as_str())
+                    })
+                    .flatten();
+                tracing::info!(
+                    subsystem = "voice.speaker",
+                    event = "speaker_observe_completed",
+                    outcome = diagnostic.outcome.as_str(),
+                    duration_ms = diagnostic.inference_ms,
+                    operation_id = diagnostic.identity.operation_id,
+                    turn_id = diagnostic.identity.turn_id,
+                    generation = diagnostic.identity.generation,
+                    embedding_space = %diagnostic.embedding_space,
+                    catalog_revision = diagnostic.catalog_revision,
+                    samples = diagnostic.samples,
+                    speech_ms = diagnostic.speech_ms,
+                    inference_ms = diagnostic.inference_ms,
+                    state = diagnostic.outcome.as_str(),
+                    recognized = recognized_speaker.is_some(),
+                    speaker_key = recognized_speaker.unwrap_or("none"),
+                    best_score = diagnostic.best_score,
+                    "speaker observe",
+                );
+                in_flight.store(false, Ordering::Release);
+                let _ = gate_tx.send(diagnostic.clone());
+                // Stale results are cleanup-only: they never surface, and the latch is already clear.
+                if !status_frames || !generation_gate.admits(diagnostic.identity.generation) {
+                    return;
+                }
+                let _ = control_tx
+                    .send(OutboundMessage::SpeakerStatus {
+                        text: diagnostic.wire_text(),
+                    })
+                    .await;
             }
-            let _ = control_tx
-                .send(OutboundMessage::SpeakerStatus {
-                    text: diagnostic.wire_text(),
-                })
-                .await;
-        });
+            .instrument(tracing::Span::current()),
+        );
     }
 
     /// Fire-and-forget bounded status frame, matching `PipelineStatus` backpressure.
@@ -147,7 +157,11 @@ impl SessionActor {
             .is_err()
         {
             // Status is advisory; a full control lane must not fail the session closed.
-            tracing::debug!("speaker status frame dropped: control lane full");
+            tracing::debug!(
+                subsystem = "voice.speaker",
+                event = "speaker_status_frame_dropped",
+                "speaker status frame dropped: control lane full"
+            );
         }
     }
 }

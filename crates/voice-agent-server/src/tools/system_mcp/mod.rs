@@ -52,6 +52,7 @@ pub(crate) struct SystemMcp {
     enabled: bool,
     status: SystemStatus,
     metrics: Arc<SystemMetrics>,
+    logs: Arc<crate::services::system_logs::SystemLogHub>,
     max_result_chars: usize,
     discovery: Option<(
         Arc<crate::tools::external_mcp::ExternalMcpManager>,
@@ -99,11 +100,20 @@ impl SystemMcp {
             enabled,
             status,
             metrics,
+            logs: crate::services::system_logs::SystemLogHub::global(),
             max_result_chars,
             discovery: None,
             notification_hub: None,
             pending: proposals::PendingRequests::default(),
         }
+    }
+
+    pub(crate) fn with_system_logs(
+        mut self,
+        logs: Arc<crate::services::system_logs::SystemLogHub>,
+    ) -> Self {
+        self.logs = logs;
+        self
     }
 
     pub(crate) fn with_discovery(
@@ -191,6 +201,25 @@ impl SystemMcp {
                 parse::<Empty>(arguments)?;
                 serde_json::to_value(self.metrics.latest().ok_or(SystemToolError::Unavailable)?)
                     .map_err(|_| SystemToolError::Unavailable)
+            }
+            "system_get_logs" => {
+                let args: SystemLogsArgs = parse(arguments)?;
+                if !(1..=50).contains(&args.limit) {
+                    return Err(SystemToolError::InvalidArguments);
+                }
+                let filter = crate::services::system_logs::LogFilter {
+                    min_level: args.min_level,
+                    subsystem: args.subsystem,
+                    session_id: args.session_id,
+                    q: args.q,
+                    limit: Some(args.limit),
+                    ..Default::default()
+                };
+                let page = self
+                    .logs
+                    .query(&filter)
+                    .map_err(|_| SystemToolError::InvalidArguments)?;
+                serde_json::to_value(page).map_err(|_| SystemToolError::Unavailable)
             }
             "mcp_list_servers" => {
                 let args: Servers = parse(arguments)?;
@@ -280,9 +309,26 @@ fn first_page() -> u32 {
 fn default_size() -> u32 {
     20
 }
+fn default_logs_limit() -> usize {
+    20
+}
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Empty {}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SystemLogsArgs {
+    #[serde(default)]
+    min_level: Option<String>,
+    #[serde(default)]
+    subsystem: Option<String>,
+    #[serde(default)]
+    session_id: Option<String>,
+    #[serde(default)]
+    q: Option<String>,
+    #[serde(default = "default_logs_limit")]
+    limit: usize,
+}
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Servers {

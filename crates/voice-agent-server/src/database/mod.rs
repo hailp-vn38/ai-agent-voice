@@ -22,6 +22,7 @@ pub(crate) use identity::{agents, devices};
 pub(crate) use mcp::mcp_servers;
 pub use mcp::{external_mcp, external_mcp_policy, tool_allowlist};
 pub(crate) use mutations::audit;
+pub use mutations::audit::{AuditLogEventRow, AuditLogFilter, AuditLogPage};
 pub(crate) use mutations::{deletion, writes};
 pub use providers::{config as provider_config, load_plan};
 pub use security::{credentials, secrets, tool_security};

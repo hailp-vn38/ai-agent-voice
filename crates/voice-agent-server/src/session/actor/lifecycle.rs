@@ -68,7 +68,13 @@ impl SessionActor {
         if self.phase == SessionPhase::Closed {
             return;
         }
-        warn!(phase = ?self.phase, "voice session failed closed");
+        warn!(
+            event = "session_failed_closed",
+            outcome = "failure",
+            phase = ?self.phase,
+            generation = self.generation,
+            "voice session failed closed"
+        );
         self.interrupt_active_turn();
         let _ = self.advance_generation();
         self.close_vad();
@@ -130,7 +136,12 @@ impl Drop for SessionActor {
         self.pipeline_request
             .fetch_add(1, std::sync::atomic::Ordering::AcqRel);
         if self.turn.is_some() || self.tts_started {
-            info!(phase = ?self.phase, generation = self.generation, "Voice session ended during active turn");
+            info!(
+                event = "session_dropped_during_turn",
+                phase = ?self.phase,
+                generation = self.generation,
+                "Voice session ended during active turn"
+            );
         }
         // The application-owned supervisor continues to observe the acknowledgement or timeout
         // after this actor and its WebSocket have gone away.

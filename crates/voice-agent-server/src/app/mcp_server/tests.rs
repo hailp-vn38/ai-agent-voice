@@ -118,7 +118,7 @@ async fn rmcp_and_independent_http_client_negotiate_and_share_voice_core_output(
         ))
         .await
         .unwrap();
-    assert_eq!(service.list_all_tools().await.unwrap().len(), 6);
+    assert_eq!(service.list_all_tools().await.unwrap().len(), 7);
     let mut params = CallToolRequestParams::new("mcp_list_servers");
     params.arguments = Some(serde_json::Map::new());
     let result = service.call_tool(params).await.unwrap();
@@ -146,7 +146,7 @@ async fn rmcp_and_independent_http_client_negotiate_and_share_voice_core_output(
         .json()
         .await
         .unwrap();
-    assert_eq!(tools["result"]["tools"].as_array().unwrap().len(), 6);
+    assert_eq!(tools["result"]["tools"].as_array().unwrap().len(), 7);
     let call:Value=post(json!({"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"mcp_list_servers","arguments":{}}})).send().await.unwrap().json().await.unwrap();
     assert_eq!(call["result"]["structuredContent"], expected);
     let denied:Value=post(json!({"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"mcp_request_server_change","arguments":{"server_key":"weather","enabled":false,"expected_revision":1}}})).send().await.unwrap().json().await.unwrap();

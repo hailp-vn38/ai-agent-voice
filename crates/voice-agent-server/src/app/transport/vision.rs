@@ -149,6 +149,8 @@ pub async fn post_handler(
     };
     let image_bytes = image.len();
     tracing::info!(
+        subsystem = "mcp.device",
+        event = "vision_request_accepted",
         device_id,
         client_id,
         image_bytes,
@@ -174,7 +176,20 @@ pub async fn post_handler(
         .await;
     match result {
         Ok(response) => {
-            tracing::info!(vision_provider_instance = ?state.config.provider_defaults.vision, vision_adapter = runtime.provider().adapter(), device_id, client_id, image_bytes, mime_type, elapsed_ms = started.elapsed().as_millis(), "vision request completed");
+            let elapsed_ms = started.elapsed().as_millis() as u64;
+            tracing::info!(
+                subsystem = "mcp.device",
+                event = "vision_request_completed",
+                outcome = "success",
+                elapsed_ms,
+                vision_provider_instance = ?state.config.provider_defaults.vision,
+                vision_adapter = runtime.provider().adapter(),
+                device_id,
+                client_id,
+                image_bytes,
+                mime_type,
+                "vision request completed"
+            );
             Json(Success {
                 success: true,
                 action: "RESPONSE",

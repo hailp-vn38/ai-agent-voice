@@ -4,12 +4,13 @@ use std::{
         Arc, Mutex,
         atomic::{AtomicBool, Ordering},
     },
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use futures_util::StreamExt;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
+use tracing::Instrument;
 
 use crate::{
     providers::{
@@ -187,44 +188,64 @@ impl LlmRuntime {
         let routes = Arc::clone(&self.routes);
         let cancellations = Arc::clone(&self.cancellations);
         let timeout = self.timeout;
-        tokio::spawn(async move {
-            let route = routes
-                .lock()
-                .expect("LLM routes lock")
-                .get(identity.session())
-                .cloned();
-            let terminal = if let Some(route) = &route {
-                tokio::time::timeout(
-                    timeout,
-                    run_operation(
-                        provider,
-                        identity.clone(),
-                        request,
-                        cancellation,
-                        route.clone(),
-                    ),
-                )
-                .await
-                .unwrap_or(LlmRuntimeEvent::Failed {
-                    identity: identity.clone(),
-                    reason: LlmFailureReason::TimedOut,
-                })
-            } else {
-                LlmRuntimeEvent::Cancelled {
-                    identity: identity.clone(),
+        let turn_span = tracing::info_span!(
+            "voice_turn",
+            session_id = %identity.session(),
+            operation_id = identity.stream(),
+            generation = identity.generation(),
+        );
+        tokio::spawn(
+            async move {
+                let started_at = Instant::now();
+                let route = routes
+                    .lock()
+                    .expect("LLM routes lock")
+                    .get(identity.session())
+                    .cloned();
+                let terminal = if let Some(route) = &route {
+                    tokio::time::timeout(
+                        timeout,
+                        run_operation(
+                            provider,
+                            identity.clone(),
+                            request,
+                            cancellation,
+                            route.clone(),
+                        ),
+                    )
+                    .await
+                    .unwrap_or_else(|_| {
+                        tracing::warn!(
+                            subsystem = "voice.llm",
+                            event = "llm_stream_failed",
+                            outcome = "failure",
+                            reason = ?LlmFailureReason::TimedOut,
+                            duration_ms = started_at.elapsed().as_millis() as u64,
+                            "LLM stream timed out"
+                        );
+                        LlmRuntimeEvent::Failed {
+                            identity: identity.clone(),
+                            reason: LlmFailureReason::TimedOut,
+                        }
+                    })
+                } else {
+                    LlmRuntimeEvent::Cancelled {
+                        identity: identity.clone(),
+                    }
+                };
+                cancellations
+                    .lock()
+                    .expect("LLM cancellations lock")
+                    .remove(&identity);
+                drop(permit);
+                if let Some(route) = route {
+                    // The operation is terminal before the actor receives this event, so a
+                    // tool-result continuation can acquire capacity immediately.
+                    let _ = route.send(terminal).await;
                 }
-            };
-            cancellations
-                .lock()
-                .expect("LLM cancellations lock")
-                .remove(&identity);
-            drop(permit);
-            if let Some(route) = route {
-                // The operation is terminal before the actor receives this event, so a
-                // tool-result continuation can acquire capacity immediately.
-                let _ = route.send(terminal).await;
             }
-        });
+            .instrument(turn_span),
+        );
         Ok(())
     }
 
@@ -335,31 +356,71 @@ async fn run_operation(
     cancellation: CancellationToken,
     route: mpsc::Sender<LlmRuntimeEvent>,
 ) -> LlmRuntimeEvent {
+    let started_at = Instant::now();
     let Ok(mut stream) = provider.stream(request).await else {
+        tracing::warn!(
+            subsystem = "voice.llm",
+            event = "llm_stream_failed",
+            outcome = "failure",
+            reason = ?LlmFailureReason::OpenStream,
+            duration_ms = started_at.elapsed().as_millis() as u64,
+            "LLM provider failed to open stream"
+        );
         return LlmRuntimeEvent::Failed {
             identity,
             reason: LlmFailureReason::OpenStream,
         };
     };
+    let mut ttft_ms: Option<u64> = None;
+    let mut tool_calls: u64 = 0;
     loop {
         tokio::select! {
             _ = cancellation.cancelled() => return LlmRuntimeEvent::Cancelled { identity },
             item = stream.next() => match item {
                 Some(Ok(LlmEvent::TextDelta(text))) => {
+                    if ttft_ms.is_none() {
+                        ttft_ms = Some(started_at.elapsed().as_millis() as u64);
+                    }
                     if route.send(LlmRuntimeEvent::TextDelta { identity: identity.clone(), text }).await.is_err() {
                         return LlmRuntimeEvent::Cancelled { identity };
                     }
                 }
                 Some(Ok(LlmEvent::ToolCall(call))) => {
+                    if ttft_ms.is_none() {
+                        ttft_ms = Some(started_at.elapsed().as_millis() as u64);
+                    }
+                    tool_calls = tool_calls.saturating_add(1);
                     if route.send(LlmRuntimeEvent::ToolCall { identity: identity.clone(), call }).await.is_err() {
                         return LlmRuntimeEvent::Cancelled { identity };
                     }
                 }
-                Some(Ok(LlmEvent::Finished)) | None => return LlmRuntimeEvent::Finished { identity },
-                Some(Err(_)) => return LlmRuntimeEvent::Failed {
-                    identity,
-                    reason: LlmFailureReason::Stream,
-                },
+                Some(Ok(LlmEvent::Finished)) | None => {
+                    let duration_ms = started_at.elapsed().as_millis() as u64;
+                    tracing::info!(
+                        subsystem = "voice.llm",
+                        event = "llm_stream_completed",
+                        outcome = "success",
+                        duration_ms,
+                        ttft_ms = ttft_ms.unwrap_or(duration_ms),
+                        tool_calls,
+                        "LLM stream completed"
+                    );
+                    return LlmRuntimeEvent::Finished { identity };
+                }
+                Some(Err(_)) => {
+                    tracing::warn!(
+                        subsystem = "voice.llm",
+                        event = "llm_stream_failed",
+                        outcome = "failure",
+                        reason = ?LlmFailureReason::Stream,
+                        duration_ms = started_at.elapsed().as_millis() as u64,
+                        "LLM stream failed mid-turn"
+                    );
+                    return LlmRuntimeEvent::Failed {
+                        identity,
+                        reason: LlmFailureReason::Stream,
+                    };
+                }
             },
         }
     }

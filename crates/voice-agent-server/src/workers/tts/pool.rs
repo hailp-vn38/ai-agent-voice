@@ -108,6 +108,8 @@ pub(super) fn worker_loop(
                 let diagnostic = matches!(&request, TtsWorkRequest::Diagnostic { .. });
                 if let TtsWorkRequest::Voice(request) = &request {
                     tracing::info!(
+                        subsystem = "voice.tts",
+                        event = "tts_synthesis_started",
                         chars = request.text.chars().count(),
                         delivery = "worker",
                         "TTS synthesis input"
@@ -139,7 +141,14 @@ pub(super) fn worker_loop(
                     TtsWorkerEvent::Failed
                 };
                 if !diagnostic {
-                    tracing::info!(outcome = ?event, elapsed_ms = started.elapsed().as_millis(), "TTS synthesis ended");
+                    let elapsed_ms = started.elapsed().as_millis() as u64;
+                    tracing::info!(
+                        subsystem = "voice.tts",
+                        event = "tts_synthesis_completed",
+                        outcome = ?event,
+                        elapsed_ms,
+                        "TTS synthesis ended"
+                    );
                 }
                 let _ = events.send(event);
             }

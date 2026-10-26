@@ -234,3 +234,22 @@ _Avoid_: Agent Tool Allowlist, Reminder policy
 Một lần thử chuyển phát một Notification tới một Notification Channel bên ngoài, có kết quả độc lập với trạng thái đã đọc trong Notification Inbox.
 _Avoid_: Delivery Attempt (của Device Reminder)
 
+## System Observability & Structured Logs
+
+**Structured Log Entry**:
+Một bản ghi quan sát vận hành tại một thời điểm của tiến trình server, mang mức độ nghiêm trọng (`level`), phân hệ (`subsystem`), tên sự kiện chuẩn hóa (`event`), định danh ngữ cảnh (`session_id`, `turn_id`, `request_id`, `agent_key`) và tập trường dữ liệu đã qua kiểm duyệt bảo mật (redacted); chỉ tồn tại trong bộ nhớ đệm vòng (ring buffer) của tiến trình, không phải bản ghi kiểm toán hay lịch sử hội thoại.
+_Avoid_: Admin Audit Event, Persistent Transcript, Job Event, Notification
+
+**Correlation Context**:
+Tập các định danh truy vết (`request_id`, `session_id`, `turn_id`, `generation`, `agent_key`, `device_id`, `task_id`) được gắn vào một đơn vị thực thi (Span) và tự động kế thừa xuống mọi Structured Log Entry phát sinh bên trong đơn vị đó.
+_Avoid_: Session Profile, Turn System Prompt, Scenario State
+
+**Log Ring Buffer**:
+Bộ đệm vòng có sức chứa cố định trong RAM của tiến trình server, giữ lại các Structured Log Entry gần nhất kèm số thứ tự tăng đơn điệu (`seq`) để phục vụ truy vấn tức thời và bù dữ liệu khi kết nối mạng bị gián đoạn.
+_Avoid_: History Archive, Notification Inbox, SQLite log table
+
+**Live Log Stream**:
+Luồng đẩy thời gian thực một chiều từ server tới trình duyệt của Admin đã xác thực, áp dụng bộ lọc ngay tại server trước khi phát từng Structured Log Entry.
+_Avoid_: Job Change Signal, Voice Session WebSocket, unauthenticated tail
+
+

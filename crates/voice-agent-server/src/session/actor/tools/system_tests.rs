@@ -34,7 +34,7 @@ async fn system_results_use_llm_continuation_even_when_device_delivery_is_silent
             .iter()
             .filter(|tool| tool.name.starts_with("system_") || tool.name.starts_with("mcp_"))
             .count(),
-        6
+        7
     );
     actor.start_tool_batch(vec![
         ToolCall {

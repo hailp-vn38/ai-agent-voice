@@ -1,6 +1,7 @@
 use super::super::*;
 use crate::services::provider_runtime::{RuntimeMetrics, RuntimePhase};
 use std::time::Instant;
+use tracing::Instrument;
 
 pub(crate) async fn handler(
     State(state): State<AppState>,
@@ -385,18 +386,26 @@ pub(crate) async fn handler(
     let pilot_admission = state.pilot_admission;
     let stopping = state.lifecycle.stopping().clone();
     let writer_probe = state.writer_outcome_probe.clone();
-    info!(
+    let session_span = tracing::info_span!(
+        "voice_session",
+        session_id = %session_id,
         agent_key = %profile.agent_key,
-        template = ?profile.source,
-        "WebSocket upgrade accepted"
     );
-    log_ws_auth(
-        bearer_auth_enabled,
-        bearer_auth_result(bearer_auth_enabled),
-        "admitted",
-        "accepted",
-        "ok",
-    );
+    session_span.in_scope(|| {
+        info!(
+            event = "ws_upgrade_accepted",
+            agent_key = %profile.agent_key,
+            template = ?profile.source,
+            "WebSocket upgrade accepted"
+        );
+        log_ws_auth(
+            bearer_auth_enabled,
+            bearer_auth_result(bearer_auth_enabled),
+            "admitted",
+            "accepted",
+            "ok",
+        );
+    });
     let max = config.websocket.max_frame_bytes;
     upgrade
         .max_frame_size(max.saturating_add(1024))
@@ -438,6 +447,7 @@ pub(crate) async fn handler(
                     registration: drain,
                 },
             )
+            .instrument(session_span)
         })
         .into_response()
 }
@@ -713,7 +723,11 @@ async fn handle_socket(
             return;
         }
     };
-    info!(transport = %hello.transport, "ClientHello accepted");
+    info!(
+        event = "client_hello_accepted",
+        transport = %hello.transport,
+        "ClientHello accepted"
+    );
 
     let (control_tx, mut control_rx) = mpsc::channel(config.limits.outbound_control_queue);
     let (urgent_tx, mut urgent_rx) = mpsc::channel(config.limits.urgent_control_queue);
@@ -810,19 +824,22 @@ async fn handle_socket(
         let sessions = Arc::clone(&active_device_sessions);
         let sid = session_id.clone();
         let ingress = ingress_tx.clone();
-        let worker = tokio::spawn(async move {
-            while let Some(event) = rx.recv().await {
-                handle_reminder_message(
-                    db.as_deref(),
-                    &sessions,
-                    device_db_id,
-                    &sid,
-                    event,
-                    &ingress,
-                )
-                .await;
+        let worker = tokio::spawn(
+            async move {
+                while let Some(event) = rx.recv().await {
+                    handle_reminder_message(
+                        db.as_deref(),
+                        &sessions,
+                        device_db_id,
+                        &sid,
+                        event,
+                        &ingress,
+                    )
+                    .await;
+                }
             }
-        });
+            .instrument(tracing::Span::current()),
+        );
         (Some(tx), Some(worker))
     } else {
         (None, None)
@@ -955,10 +972,14 @@ async fn handle_socket(
                                     metrics.observe(RuntimePhase::WsHelloSend, hello_queued.elapsed());
                                     metrics.observe(RuntimePhase::WsConnect, connect_started.elapsed());
                                 }
-                                info!(event = "ws_connected", elapsed_ms = connect_started.elapsed().as_millis() as u64,
+                                info!(
+                                    event = "ws_connected",
+                                    outcome = "success",
+                                    elapsed_ms = connect_started.elapsed().as_millis() as u64,
                                     pre_upgrade_ms = socket_started.duration_since(connect_started).as_millis() as u64,
                                     after_upgrade_ms = socket_started.elapsed().as_millis() as u64,
-                                    "ServerHello sent; voice session connected");
+                                    "ServerHello sent; voice session connected"
+                                );
                             }
                         },
                     }
@@ -1000,7 +1021,7 @@ async fn handle_socket(
             }
         }
         let _ = pipeline_writer_done.send(true);
-    });
+    }.instrument(tracing::Span::current()));
 
     if physical_connection {
         active_device_sessions.register(
@@ -1011,7 +1032,7 @@ async fn handle_socket(
             replacement_close.clone(),
         );
     }
-    let session = tokio::spawn(actor.run(ingress_rx));
+    let session = tokio::spawn(actor.run(ingress_rx).instrument(tracing::Span::current()));
 
     loop {
         tokio::select! {
@@ -1045,7 +1066,10 @@ async fn handle_socket(
                 break;
             }
             _ = drain_close.cancelled() => {
-                info!("controlled close issued at the shutdown grace deadline");
+                info!(
+                    event = "ws_controlled_close_issued",
+                    "controlled close issued at the shutdown grace deadline"
+                );
                 let _ = ingress_tx.send(SessionEvent::Shutdown).await;
                 break;
             }
@@ -1100,11 +1124,20 @@ async fn handle_socket(
                 }
             }
             Ok(Message::Close(frame)) => {
-                info!(?frame, "websocket peer closed connection");
+                info!(
+                    event = "ws_peer_closed",
+                    ?frame,
+                    "websocket peer closed connection"
+                );
                 break;
             }
             Err(error) => {
-                warn!(%error, "websocket receive failed");
+                warn!(
+                    event = "ws_receive_failed",
+                    outcome = "failure",
+                    %error,
+                    "websocket receive failed"
+                );
                 break;
             }
                     Ok(Message::Ping(_)) | Ok(Message::Pong(_)) => {}
@@ -1143,7 +1176,11 @@ async fn handle_socket(
     // The session is finished: releasing its drain registration here is what lets a shutdown that
     // is waiting observe that this connection is gone.
     drop(control.registration);
-    info!("voice session disconnected");
+    info!(
+        event = "ws_session_disconnected",
+        duration_ms = socket_started.elapsed().as_millis() as u64,
+        "voice session disconnected"
+    );
 }
 
 async fn handle_reminder_message(
@@ -1176,6 +1213,8 @@ async fn handle_reminder_message(
                 return;
             }
             tracing::info!(
+                subsystem = "notification",
+                event = "reminder_snapshot_sent",
                 device_row_id = device,
                 session_id = %session_id,
                 snapshot_id = %snapshot_id,
@@ -1205,6 +1244,8 @@ async fn handle_reminder_message(
                 return;
             };
             tracing::info!(
+                subsystem = "notification",
+                event = "reminder_snapshot_acked",
                 device_row_id = device,
                 session_id = %session_id,
                 snapshot_id = %snapshot_id,
@@ -1340,6 +1381,7 @@ async fn send_outbound(
                 && let Some(llm_text) = message["text"].as_str()
             {
                 info!(
+                    event = "ws_llm_text_sent",
                     message_type = "llm",
                     chars = llm_text.chars().count(),
                     "WebSocket text sent to client"
@@ -1370,7 +1412,12 @@ async fn send_outbound(
         }
     };
     if let Err(ref error) = result {
-        warn!(%error, "websocket writer failed");
+        warn!(
+            event = "ws_writer_failed",
+            outcome = "failure",
+            %error,
+            "websocket writer failed"
+        );
     }
     closes || result.is_err()
 }
@@ -1400,7 +1447,12 @@ async fn resolve_speaker_observe(
         Ok(Some(mode)) => mode,
         Ok(None) => crate::session::SpeakerPolicyMode::Off,
         Err(cause) => {
-            warn!(%cause, "speaker identification preference unavailable");
+            warn!(
+                subsystem = "voice.speaker",
+                event = "speaker_policy_unavailable",
+                %cause,
+                "speaker identification preference unavailable"
+            );
             return Ok(None);
         }
     };
@@ -1408,6 +1460,8 @@ async fn resolve_speaker_observe(
     let runtime = state.speaker_runtime.as_ref();
     if !enabled || runtime.is_none() {
         info!(
+            subsystem = "voice.speaker",
+            event = "speaker_observe_configured",
             agent_key = %profile.agent_key,
             speaker_enabled = enabled,
             engine_available = runtime.is_some(),
@@ -1427,21 +1481,39 @@ async fn resolve_speaker_observe(
     {
         Ok(crate::session::ObserveResolution::Plan(plan)) => plan,
         Ok(_) => {
-            info!(agent_key = %profile.agent_key, speaker_enabled = true,
-                engine_available = true, candidate_count = 0,
-                "ws speaker identification configuration");
+            info!(
+                subsystem = "voice.speaker",
+                event = "speaker_observe_configured",
+                agent_key = %profile.agent_key,
+                speaker_enabled = true,
+                engine_available = true,
+                candidate_count = 0,
+                "ws speaker identification configuration"
+            );
             return Ok(None);
         }
         Err(cause) => {
-            warn!(%cause, "speaker candidates unavailable, continuing without identification");
+            warn!(
+                subsystem = "voice.speaker",
+                event = "speaker_candidates_unavailable",
+                %cause,
+                "speaker candidates unavailable, continuing without identification"
+            );
             return Ok(None);
         }
     };
     if plan.candidates.len() > config.speaker_recognition.max_candidates_per_agent {
-        warn!(agent_key = %profile.agent_key, "speaker candidate cap exceeded");
+        warn!(
+            subsystem = "voice.speaker",
+            event = "speaker_candidate_cap_exceeded",
+            agent_key = %profile.agent_key,
+            "speaker candidate cap exceeded"
+        );
         return Ok(None);
     }
     info!(
+        subsystem = "voice.speaker",
+        event = "speaker_observe_configured",
         agent_key = %profile.agent_key,
         speaker_enabled = true,
         engine_available = true,

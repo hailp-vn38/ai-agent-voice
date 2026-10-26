@@ -128,12 +128,28 @@ pub(super) async fn process_due_outbox(
         };
 
         let payload = OutboundMessagePayload {
-            notification_id: attempt.notification_id,
+            notification_id: attempt.notification_id.clone(),
             content: attempt.content,
         };
 
-        match adapter.send(&target, &payload).await {
+        let delivery_span = tracing::info_span!(
+            "notification_delivery",
+            notification_id = %attempt.notification_id,
+            channel = attempt.channel.as_str(),
+        );
+        let send_started = std::time::Instant::now();
+        match tracing::Instrument::instrument(adapter.send(&target, &payload), delivery_span).await {
             Ok(receipt) => {
+                tracing::info!(
+                    subsystem = "notification",
+                    event = "notification_channel_delivered",
+                    outcome = "success",
+                    channel = attempt.channel.as_str(),
+                    notification_id = %attempt.notification_id,
+                    attempts = attempt.attempts,
+                    duration_ms = send_started.elapsed().as_millis() as u64,
+                    "Notification delivered to external channel"
+                );
                 complete_outbox_sent(
                     &hub.database,
                     &attempt.outbox_id,
@@ -148,6 +164,18 @@ pub(super) async fn process_due_outbox(
                     } else {
                         None
                     };
+                tracing::warn!(
+                    subsystem = "notification",
+                    event = "notification_channel_failed",
+                    outcome = "failure",
+                    channel = attempt.channel.as_str(),
+                    notification_id = %attempt.notification_id,
+                    attempts = attempt.attempts,
+                    error_code = err.error_code(),
+                    retry_scheduled = retry_delay_ms.is_some(),
+                    duration_ms = send_started.elapsed().as_millis() as u64,
+                    "External notification delivery failed"
+                );
                 complete_outbox_failure(
                     &hub.database,
                     &attempt.outbox_id,

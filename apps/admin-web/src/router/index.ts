@@ -134,6 +134,13 @@ const routes: RouteRecordRaw[] = [
     component: () => import('@/pages/notifications/NotificationSettingsPage.vue'),
     meta: { titleKey: 'notifications.settings.title' },
   },
+  {
+    path: '/system/logs',
+    alias: ['/logs'],
+    name: 'system-logs',
+    component: () => import('@/pages/system/SystemLogsPage.vue'),
+    meta: { titleKey: 'system.logs.title' },
+  },
   { path: '/:pathMatch(.*)*', redirect: '/overview' },
 ]
 

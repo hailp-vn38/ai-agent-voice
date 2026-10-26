@@ -81,9 +81,9 @@ tts="test"
 #[tokio::test]
 async fn catalog_scopes_and_disabled_ceiling_deny_guessed_calls() {
     let (core, mut ctx, _) = fixture(true, 4096).await;
-    assert_eq!(core.list_tools(&ctx).len(), 6);
+    assert_eq!(core.list_tools(&ctx).len(), 7);
     ctx.grants.mcp_read = false;
-    assert_eq!(core.list_tools(&ctx).len(), 2);
+    assert_eq!(core.list_tools(&ctx).len(), 3);
     assert_eq!(
         core.call_tool(&ctx, "mcp_list_servers", json!({})).await,
         Err(SystemToolError::Denied)

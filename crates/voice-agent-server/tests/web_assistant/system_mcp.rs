@@ -212,7 +212,7 @@ async fn verified_assistant_reads_six_tools_with_status_results_and_tts() {
             .iter()
             .filter(|tool| tool.name.starts_with("system_") || tool.name.starts_with("mcp_"))
             .count(),
-        6
+        7
     );
     let results: Vec<_> = requests[1]
         .messages
@@ -305,4 +305,83 @@ async fn disabled_assistant_and_physical_device_do_not_advertise_system_tools() 
         assert_eq!(requests.len(), 1);
         task.abort();
     }
+}
+
+#[tokio::test]
+async fn admin_http_system_logs_sse_stream_and_audit_logs_endpoints() {
+    use futures_util::StreamExt;
+    use std::time::Duration;
+
+    let llm = Arc::new(ManagementLlm::default());
+    let providers = Arc::new(ProviderSet::with_all(
+        Arc::new(VoiceVad),
+        Arc::new(VoiceAsr),
+        llm,
+        Arc::new(VoiceTts),
+    ));
+    let (base, task) = start_with_system_mcp(providers, "physical-token", true).await;
+    let client = Client::new();
+
+    // 1. Unauthenticated request is rejected with 401.
+    let unauth = client
+        .get(format!("{base}/api/admin/system/logs"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(unauth.status(), StatusCode::UNAUTHORIZED);
+
+    // 2. Create an agent to generate an admin_audit_events row.
+    client
+        .post(format!("{base}/api/admin/agents"))
+        .bearer_auth("admin-test-token")
+        .json(&serde_json::json!({"key":"studio","name":"Studio"}))
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap();
+
+    // 3. GET /api/admin/system/audit-logs returns recorded admin_audit_events.
+    let audit_resp = client
+        .get(format!(
+            "{base}/api/admin/system/audit-logs?resource_type=agent&outcome=success"
+        ))
+        .bearer_auth("admin-test-token")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(audit_resp.status(), StatusCode::OK);
+    let audit_json: serde_json::Value = audit_resp.json().await.unwrap();
+    assert!(audit_json["total"].as_u64().unwrap_or(0) >= 1);
+    assert_eq!(audit_json["items"][0]["action"], "create");
+
+    // 4. GET /api/admin/system/logs returns structured items and level summary counts.
+    let logs_resp = client
+        .get(format!("{base}/api/admin/system/logs?limit=20"))
+        .bearer_auth("admin-test-token")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(logs_resp.status(), StatusCode::OK);
+    let logs_json: serde_json::Value = logs_resp.json().await.unwrap();
+    assert!(logs_json["capacity"].as_u64().unwrap_or(0) > 0);
+
+    // 5. GET /api/admin/system/logs/stream emits `ready` SSE frame.
+    let sse_resp = client
+        .get(format!("{base}/api/admin/system/logs/stream"))
+        .bearer_auth("admin-test-token")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(sse_resp.status(), StatusCode::OK);
+    let mut body_stream = sse_resp.bytes_stream();
+    let first_chunk = tokio::time::timeout(Duration::from_secs(2), body_stream.next())
+        .await
+        .expect("ready timeout")
+        .expect("ready frame")
+        .expect("ready bytes");
+    let first_text = String::from_utf8_lossy(&first_chunk);
+    assert!(first_text.contains("event: ready"), "got: {first_text}");
+
+    task.abort();
 }

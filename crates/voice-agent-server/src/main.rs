@@ -12,12 +12,9 @@ async fn main() -> anyhow::Result<()> {
     rustls::crypto::ring::default_provider()
         .install_default()
         .map_err(|_| anyhow::anyhow!("install Rustls ring CryptoProvider"))?;
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
-        )
-        .init();
+    voice_agent_server::services::system_logs::init_tracing_subscriber(
+        voice_agent_server::services::system_logs::SystemLogHub::global(),
+    );
     let path = std::env::var("VOICE_AGENT_CONFIG").unwrap_or_else(|_| "config.toml".into());
     let config = AppConfig::load(&path).with_context(|| format!("load {path}"))?;
     // Built before startup so the listener, every admitted Voice Session and the shutdown sequence
@@ -51,7 +48,12 @@ async fn main() -> anyhow::Result<()> {
         drop(listener);
         return Err(error);
     }
-    tracing::info!(address = %address, "voice protocol server listening");
+    tracing::info!(
+        subsystem = "system",
+        event = "server_listening",
+        address = %address,
+        "voice protocol server listening"
+    );
     let listening = lifecycle.listening().clone();
     let mut server = tokio::spawn(async move {
         axum::serve(listener, app)
@@ -64,6 +66,7 @@ async fn main() -> anyhow::Result<()> {
     // the archival writer inside that same deadline.
     let report = lifecycle.shutdown().await;
     tracing::info!(
+        subsystem = "system",
         event = "voice_session_drain_completed",
         outcome = ?report.outcome,
         controlled_closes = report.controlled_closes,
@@ -79,6 +82,8 @@ async fn main() -> anyhow::Result<()> {
         Ok(result) => result.context("join server shutdown")??,
         Err(_) => {
             tracing::warn!(
+                subsystem = "system",
+                event = "voice_session_close_timeout",
                 ?CONTROLLED_CLOSE_SETTLE,
                 "Voice Sessions did not finish their controlled close in time; abandoning them"
             );
@@ -97,11 +102,19 @@ async fn shutdown_signal() {
         _ = tokio::signal::ctrl_c() => {}
         _ = terminate.recv() => {}
     }
-    tracing::info!("shutdown signal received");
+    tracing::info!(
+        subsystem = "system",
+        event = "shutdown_signal_received",
+        "shutdown signal received"
+    );
 }
 
 #[cfg(not(unix))]
 async fn shutdown_signal() {
     let _ = tokio::signal::ctrl_c().await;
-    tracing::info!("shutdown signal received");
+    tracing::info!(
+        subsystem = "system",
+        event = "shutdown_signal_received",
+        "shutdown signal received"
+    );
 }

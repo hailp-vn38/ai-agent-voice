@@ -14,6 +14,18 @@ pub(super) fn catalog(grants: SystemToolGrants) -> Vec<ToolDefinition> {
             &[],
         ));
         tools.push(definition("system_get_resources", "Read the latest OS-visible CPU, RAM and root filesystem snapshot. Estimated reservations are separate from measured memory.", json!({}), &[]));
+        tools.push(definition(
+            "system_get_logs",
+            "Read recent structured operational logs from the in-memory ring buffer with optional level, subsystem, session_id, or keyword filtering.",
+            json!({
+                "min_level": {"type": "string", "enum": ["error", "warn", "info", "debug", "trace"]},
+                "subsystem": {"type": "string", "maxLength": 128},
+                "session_id": {"type": "string", "maxLength": 128},
+                "q": {"type": "string", "maxLength": 128},
+                "limit": {"type": "integer", "minimum": 1, "maximum": 50}
+            }),
+            &[],
+        ));
     }
     if grants.mcp_read {
         tools.push(definition(
