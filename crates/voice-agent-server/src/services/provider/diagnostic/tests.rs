@@ -290,3 +290,108 @@ async fn llm_rejection_does_not_leave_provider_test_busy() {
     }
     server.abort();
 }
+
+#[tokio::test]
+async fn non_chat_llm_capabilities_dispatch_matching_diagnostic_operations() {
+    use crate::{
+        config::{OpenAiConfig, SecretString},
+        providers::llm::ConfiguredOpenAiLlm,
+    };
+    use axum::{Json, Router, routing::post};
+    use base64::{Engine as _, engine::general_purpose::STANDARD};
+    use url::Url;
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base = Url::parse(&format!("http://{}/v1", listener.local_addr().unwrap())).unwrap();
+    let server = tokio::spawn(async move {
+        axum::serve(
+            listener,
+            Router::new()
+                .route(
+                    "/v1/embeddings",
+                    post(|| async {
+                        Json(serde_json::json!({
+                            "data": [{ "embedding": [0.25, -0.5, 0.75] }]
+                        }))
+                    }),
+                )
+                .route(
+                    "/v1/images/generations",
+                    post(|| async {
+                        Json(serde_json::json!({
+                            "data": [{ "b64_json": STANDARD.encode(b"PNG_DATA") }]
+                        }))
+                    }),
+                ),
+        )
+        .await
+        .unwrap();
+    });
+
+    let emb_provider = ConfiguredOpenAiLlm::from_config(&OpenAiConfig {
+        api_key: SecretString::new("sk-emb"),
+        base_url: base.clone(),
+        model: "text-embedding-3-small".into(),
+        timeout_ms: 2_000,
+        tags: Some(vec!["embedding".into()]),
+        ..OpenAiConfig::default()
+    })
+    .unwrap();
+
+    let img_provider = ConfiguredOpenAiLlm::from_config(&OpenAiConfig {
+        api_key: SecretString::new("sk-img"),
+        base_url: base,
+        model: "gpt-image-1".into(),
+        timeout_ms: 2_000,
+        tags: Some(vec!["image".into()]),
+        ..OpenAiConfig::default()
+    })
+    .unwrap();
+
+    let mut service = service(7);
+    service.registry = Arc::new(RuntimeCatalog {
+        llm: HashMap::from([(
+            "llm-a".into(),
+            Arc::new(LlmRuntime::new(
+                Arc::new(emb_provider),
+                2,
+                Duration::from_secs(2),
+            )),
+        )]),
+        ..RuntimeCatalog::default()
+    });
+
+    let emb_op = service
+        .registry
+        .llm_diagnostic("llm-a", LlmRequest::text_turn("hello vector".into()), 1024)
+        .unwrap();
+    let (emb_summary, _) = service
+        .execute(target(7), emb_op, Duration::from_secs(1))
+        .await
+        .unwrap();
+    assert_eq!(emb_summary, "Embedded 1 input(s) (dimensions=3)");
+
+    service.registry = Arc::new(RuntimeCatalog {
+        llm: HashMap::from([(
+            "llm-a".into(),
+            Arc::new(LlmRuntime::new(
+                Arc::new(img_provider),
+                2,
+                Duration::from_secs(2),
+            )),
+        )]),
+        ..RuntimeCatalog::default()
+    });
+
+    let img_op = service
+        .registry
+        .llm_diagnostic("llm-a", LlmRequest::text_turn("draw icon".into()), 1024)
+        .unwrap();
+    let (img_summary, _) = service
+        .execute(target(7), img_op, Duration::from_secs(1))
+        .await
+        .unwrap();
+    assert_eq!(img_summary, "Generated image/png (8 bytes)");
+
+    server.abort();
+}

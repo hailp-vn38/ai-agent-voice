@@ -13,7 +13,8 @@ use crate::providers::{
         ProviderType, field, multi_select_field, select_field,
     },
     llm::{
-        LLM_CAPABILITY_TAGS, LlmEvent, LlmEventStream, LlmRequest, ToolDefinition,
+        LLM_CAPABILITY_TAGS, LlmCapabilityTag, LlmEvent, LlmEventStream, LlmOperation, LlmOutput,
+        LlmRequest, ToolDefinition, collect_chat_stream, effective_capability_tags,
         stream_openai_request,
     },
     registry::ProviderAdapterRegistration,
@@ -74,6 +75,10 @@ impl OpenCodeFreeConfig {
 pub(crate) struct OpenCodeFreeProvider {
     model: String,
     timeout_seconds: u64,
+    max_tokens: Option<u32>,
+    reasoning_effort: Option<String>,
+    temperature_percent: Option<u16>,
+    tags: Vec<LlmCapabilityTag>,
 }
 
 impl OpenCodeFreeProvider {
@@ -84,20 +89,33 @@ impl OpenCodeFreeProvider {
         Ok(Self {
             model: config.model.clone(),
             timeout_seconds: config.timeout_ms.div_ceil(1_000),
+            max_tokens: config.max_tokens,
+            reasoning_effort: config.reasoning_effort.clone(),
+            temperature_percent: config.temperature_percent,
+            tags: effective_capability_tags(config.tags.as_deref()),
         })
     }
 
-    fn chat_client(&self, request: &LlmRequest) -> OpenAICompatibleProvider<ZenChat> {
+    fn chat_client(
+        &self,
+        request: &LlmRequest,
+        force_reasoning: bool,
+    ) -> OpenAICompatibleProvider<ZenChat> {
         let system = request.messages.iter().find_map(|message| match message {
             super::ChatMessage::System { content } => Some(content.clone()),
             _ => None,
+        });
+        let temperature = self.temperature_percent.map(|pct| f32::from(pct) / 100.0);
+        let reasoning_effort = self.reasoning_effort.clone().or_else(|| {
+            (force_reasoning || self.tags.contains(&LlmCapabilityTag::Reasoning))
+                .then(|| "medium".to_owned())
         });
         OpenAICompatibleProvider::<ZenChat>::new(
             PUBLIC_KEY,
             Some(BASE_URL.into()),
             Some(self.model.clone()),
-            None,
-            None,
+            self.max_tokens,
+            temperature,
             Some(self.timeout_seconds),
             system,
             None,
@@ -107,7 +125,7 @@ impl OpenCodeFreeProvider {
                 .tools
                 .is_empty()
                 .then_some(llm::chat::ToolChoice::None),
-            None,
+            reasoning_effort,
             None,
             None,
             None,
@@ -122,20 +140,43 @@ impl OpenCodeFreeProvider {
 #[async_trait::async_trait]
 impl LlmProvider for OpenCodeFreeProvider {
     fn supports_tools(&self) -> bool {
-        true
+        self.supports_tag(LlmCapabilityTag::Chat)
     }
     fn adapter(&self) -> &'static str {
         "opencode_free"
     }
+    fn capability_tags(&self) -> &[LlmCapabilityTag] {
+        &self.tags
+    }
 
     async fn stream(&self, mut request: LlmRequest) -> Result<LlmEventStream, LlmError> {
         use futures_util::StreamExt;
-        let client = self.chat_client(&request);
+        self.ensure_tag(LlmCapabilityTag::Chat)?;
+        let client = self.chat_client(&request, false);
         let placeholders = add_fingerprint_tools(&mut request);
         let stream = stream_openai_request(&client, request, self.adapter()).await?;
         Ok(Box::pin(stream.map(move |event| {
             reject_placeholder_call(event, &placeholders)
         })))
+    }
+
+    async fn execute_operation(&self, op: LlmOperation) -> Result<LlmOutput, LlmError> {
+        use futures_util::StreamExt;
+        match op {
+            LlmOperation::Chat {
+                mut request,
+                reasoning,
+            } => {
+                let client = self.chat_client(&request, reasoning);
+                let placeholders = add_fingerprint_tools(&mut request);
+                let stream = stream_openai_request(&client, request, self.adapter()).await?;
+                let filtered = Box::pin(stream.map(move |event| {
+                    reject_placeholder_call(event, &placeholders)
+                }));
+                collect_chat_stream(filtered).await
+            }
+            _ => Err(LlmError::UnsupportedCapability(op.required_tag().as_str())),
+        }
     }
 }
 

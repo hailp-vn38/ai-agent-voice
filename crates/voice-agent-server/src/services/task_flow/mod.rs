@@ -10,13 +10,13 @@ mod workspace_seed;
 mod tests;
 
 pub use agent_settings::{
-    AGENT_SPECS, AgentConfigOverride, AgentSpec, DEFAULT_ORCHESTRATOR_PROVIDER_REF,
-    DEFAULT_USER_ROOT_AGENT_ID, PersistedBackgroundSettings, ResolvedLlmProvider,
-    WIKI_AUTOFLOW_ROOT_AGENT_ID, build_agent_definitions, default_orchestrator_provider,
-    find_agent_spec, is_user_routable_root_agent, load_persisted_settings,
-    normalize_user_target_agent, project_agents_json, resolve_llm_provider_catalog,
-    save_persisted_settings, sync_orchestrator_from_state, validate_agent_overrides,
-    write_agent_prompts,
+    AGENT_SPECS, AgentConfigOverride, AgentSpec, CatalogImageGeneratorBackend, CatalogMediaBackend,
+    CatalogTtsSynthesizerBackend, DEFAULT_ORCHESTRATOR_PROVIDER_REF, DEFAULT_USER_ROOT_AGENT_ID,
+    PersistedBackgroundSettings, ResolvedLlmProvider, WIKI_AUTOFLOW_ROOT_AGENT_ID,
+    build_agent_definitions, default_orchestrator_provider, find_agent_spec,
+    is_user_routable_root_agent, load_persisted_settings, normalize_user_target_agent,
+    project_agents_json, resolve_llm_provider_catalog, save_persisted_settings,
+    sync_orchestrator_from_state, validate_agent_overrides, write_agent_prompts,
 };
 pub use projections::{project_task_events, project_task_to_admin_job};
 pub use voice::{TASK_SUITE_TOOL_NAMES, VoiceTaskSubmit, is_task_suite_tool_name, voice_rejection};
@@ -172,6 +172,7 @@ async fn init_orchestrator_and_task_manager(
     ensure_prompts_and_skills(&cfg.prompts_dir, resolved_skills_dir.as_deref())?;
 
     let read_budget = AdaptiveReadBudget::for_context_limit(cfg.context_limit_tokens);
+    let media_backend = Arc::new(CatalogMediaBackend::new(&cfg.store_dir, catalog.to_vec()));
     let toolkit = WorkspaceToolKit::new(
         engine.clone(),
         autoflow_notify.clone(),
@@ -180,7 +181,9 @@ async fn init_orchestrator_and_task_manager(
         cfg.work_dir.join("yt"),
     )
     .with_html_work_dir(cfg.work_dir.join("html"))
-    .with_read_budget(read_budget);
+    .with_read_budget(read_budget)
+    .with_image_backend(media_backend.clone())
+    .with_tts_backend(media_backend);
 
     // Phase 1: Prepare `TaskManager` (`tasks.db` + `tasks.owner.lock` + `HostTool` builders)
     let runtime_cfg = TaskRuntimeConfig {

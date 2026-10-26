@@ -38,7 +38,7 @@ pub fn admin_provider_adapter_matches_kind(kind: &str, adapter: &str) -> bool {
     compiled_provider_adapter_registry().supports(adapter, kind)
 }
 pub use error::{AsrError, ProviderLoadError, VadError};
-pub use llm::{LlmError, LlmEvent, LlmProvider};
+pub use llm::{LlmCapabilityTag, LlmError, LlmEvent, LlmOperation, LlmOutput, LlmProvider};
 pub(crate) use loader::{LoadedProviders, load_local, load_vision, vad_timing};
 
 pub use factory_registry::{

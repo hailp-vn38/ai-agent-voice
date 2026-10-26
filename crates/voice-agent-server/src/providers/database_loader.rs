@@ -537,9 +537,6 @@ fn typed_instance<T: serde::de::DeserializeOwned>(
     secret: Option<&str>,
 ) -> Result<T, ()> {
     let object = value.as_object_mut().ok_or(())?;
-    // `max_tokens` is an Admin bound for future provider policy; the current runtime factory does
-    // not consume it, so it must not turn a valid desired row into an adapter-specific bag.
-    object.remove("max_tokens");
     object.insert("adapter".into(), Value::String(adapter.into()));
     if let Some(secret) = secret {
         object.insert("api_key".into(), Value::String(secret.into()));

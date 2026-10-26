@@ -490,3 +490,142 @@ fn resolved_llm_provider_exposes_capability_tags_and_enforces_agent_compatibilit
         Err("provider_capability_mismatch")
     );
 }
+
+#[tokio::test]
+async fn catalog_media_backend_and_reasoning_tag_wire_provider_capabilities() {
+    use crate::config::SecretString;
+    use axum::{
+        Json, Router,
+        http::{HeaderMap, StatusCode, header},
+        response::IntoResponse,
+        routing::post,
+    };
+    use base64::{Engine as _, engine::general_purpose::STANDARD};
+    use orchestrator_agent_rs::ReasoningEffort;
+    use orchestrator_flow_rs::{
+        ImageGenerationRequest, ImageGeneratorBackend, TtsSynthesisRequest, TtsSynthesizerBackend,
+    };
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base_url = format!("http://{}/v1", listener.local_addr().unwrap());
+    let server = tokio::spawn(async move {
+        axum::serve(
+            listener,
+            Router::new()
+                .route(
+                    "/v1/images/generations",
+                    post(|| async {
+                        Json(serde_json::json!({
+                            "data": [{ "b64_json": STANDARD.encode(b"UPSTREAM_PNG_BYTES") }]
+                        }))
+                    }),
+                )
+                .route(
+                    "/v1/audio/speech",
+                    post(|| async {
+                        let mut headers = HeaderMap::new();
+                        headers.insert(header::CONTENT_TYPE, "audio/wav".parse().unwrap());
+                        (StatusCode::OK, headers, b"RIFF_UPSTREAM_WAV".to_vec()).into_response()
+                    }),
+                ),
+        )
+        .await
+        .unwrap();
+    });
+
+    let reasoning_provider = ResolvedLlmProvider {
+        provider_ref: "llm_reasoner".into(),
+        name: "Reasoner".into(),
+        source: "database",
+        adapter: "openai".into(),
+        model: "o3-mini".into(),
+        base_url: base_url.clone(),
+        api_key: Some(SecretString::new("sk-reasoner")),
+        timeout_ms: 10_000,
+        max_tokens: 8_192,
+        context_limit_tokens: 128_000,
+        reasoning_effort: None,
+        temperature_percent: None,
+        tags: vec!["reasoning".into()],
+    };
+    let media_provider = ResolvedLlmProvider {
+        provider_ref: "llm_media".into(),
+        name: "Omni Media".into(),
+        source: "database",
+        adapter: "openai".into(),
+        model: "gpt-omni-media".into(),
+        base_url,
+        api_key: Some(SecretString::new("sk-media")),
+        timeout_ms: 10_000,
+        max_tokens: 4_096,
+        context_limit_tokens: 64_000,
+        reasoning_effort: None,
+        temperature_percent: None,
+        tags: vec!["image".into(), "audio".into()],
+    };
+
+    let catalog = vec![reasoning_provider, media_provider];
+    let settings = PersistedBackgroundSettings {
+        orchestrator_llm_provider: "llm_reasoner".into(),
+        worker_llm_provider: "llm_reasoner".into(),
+        ..PersistedBackgroundSettings::default()
+    };
+    let (_, defs) = build_agent_definitions(
+        &OrchestratorSectionConfig::default(),
+        &settings,
+        &catalog,
+    );
+    let daily_root = defs.iter().find(|d| d.id == "daily_root").unwrap();
+    assert_eq!(
+        daily_root.llm.reasoning_effort,
+        Some(ReasoningEffort::Medium),
+        "reasoning-tagged provider should default AgentDefinition reasoning_effort to Medium"
+    );
+
+    let backend = CatalogMediaBackend::from_catalog(catalog);
+    let img = backend
+        .generate_image(&ImageGenerationRequest {
+            prompt: "A diagram".into(),
+            title: None,
+            filename: "diagram.png".into(),
+            format: "png".into(),
+            width: 256,
+            height: 256,
+            svg_content: None,
+        })
+        .await
+        .unwrap();
+    assert_eq!(img.provider, "llm_media");
+    assert_eq!(img.bytes, b"UPSTREAM_PNG_BYTES");
+
+    let audio = backend
+        .synthesize_tts(&TtsSynthesisRequest {
+            text: "Xin chào".into(),
+            filename: "greeting.wav".into(),
+            voice: "alloy".into(),
+            language: "vi".into(),
+            speed: 1.0,
+        })
+        .await
+        .unwrap();
+    assert_eq!(audio.provider, "llm_media");
+    assert_eq!(audio.bytes, b"RIFF_UPSTREAM_WAV");
+
+    // Fallback when catalog has no image/audio tagged provider
+    let empty_backend = CatalogMediaBackend::from_catalog(Vec::new());
+    let fallback_img = empty_backend
+        .generate_image(&ImageGenerationRequest {
+            prompt: "Fallback".into(),
+            title: None,
+            filename: "fallback.png".into(),
+            format: "png".into(),
+            width: 64,
+            height: 64,
+            svg_content: None,
+        })
+        .await
+        .unwrap();
+    assert_eq!(fallback_img.provider, "builtin_png_renderer");
+
+    server.abort();
+}

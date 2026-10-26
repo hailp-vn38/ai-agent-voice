@@ -37,8 +37,8 @@ pub struct AgentSpec {
 impl AgentSpec {
     pub const fn allowed_capability_tags(&self) -> &'static [&'static str] {
         match self.id.as_bytes() {
-            b"media_creator" => &["chat", "image", "video", "audio"],
-            _ => &["chat"],
+            b"media_creator" => &["chat", "reasoning", "image", "video", "audio"],
+            _ => &["chat", "reasoning"],
         }
     }
 }

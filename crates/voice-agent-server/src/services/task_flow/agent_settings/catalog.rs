@@ -6,12 +6,11 @@ use std::time::Duration;
 
 use orchestrator_agent_rs::{
     AgentDefinition, AgentMode, LlmBackend, LlmProviderConfig, ProviderAuth, ReasoningEffort,
-    SecretString,
 };
 use serde_json::{Value, json};
 
 use crate::app::AppState;
-use crate::config::{LlmInstanceConfig, OrchestratorSectionConfig};
+use crate::config::{LlmInstanceConfig, OrchestratorSectionConfig, SecretString};
 
 use super::specs::{AGENT_SPECS, AgentSpec, find_agent_spec};
 use super::{DEFAULT_ORCHESTRATOR_PROVIDER_REF, PersistedBackgroundSettings};
@@ -37,6 +36,64 @@ pub struct ResolvedLlmProvider {
 impl ResolvedLlmProvider {
     pub fn supports_tag(&self, tag: &str) -> bool {
         self.tags.iter().any(|t| t == tag)
+            || (tag == "chat" && self.tags.iter().any(|t| t == "reasoning"))
+    }
+
+    fn clamped_max_tokens(&self) -> u32 {
+        self.max_tokens.clamp(1, 65_536)
+    }
+
+    fn clamped_context_limit_tokens(&self) -> u32 {
+        u32::try_from(self.context_limit_tokens)
+            .unwrap_or(128_000)
+            .clamp(4_096, 2_000_000)
+    }
+
+    pub(crate) fn to_llm_provider(
+        &self,
+    ) -> Result<Box<dyn crate::providers::LlmProvider>, crate::providers::LlmError> {
+        let max_tokens = Some(self.clamped_max_tokens());
+        let context_limit_tokens = Some(self.clamped_context_limit_tokens());
+        match self.adapter.as_str() {
+            "openai" => {
+                let base_url = url::Url::parse(&self.base_url)
+                    .map_err(|_| crate::providers::LlmError::Failed)?;
+                let api_key = self
+                    .api_key
+                    .as_ref()
+                    .map(|k| crate::config::SecretString::new(k.expose()))
+                    .unwrap_or_default();
+                let cfg = crate::config::OpenAiConfig {
+                    api_key,
+                    base_url,
+                    model: self.model.clone(),
+                    timeout_ms: self.timeout_ms.max(1_000),
+                    max_tokens,
+                    context_limit_tokens,
+                    reasoning_effort: self.reasoning_effort.clone(),
+                    temperature_percent: self.temperature_percent,
+                    tags: Some(self.tags.clone()),
+                };
+                Ok(Box::new(
+                    crate::providers::llm::ConfiguredOpenAiLlm::from_config(&cfg)?,
+                ))
+            }
+            "opencode_free" => {
+                let cfg = crate::config::OpenCodeFreeConfig {
+                    model: self.model.clone(),
+                    timeout_ms: self.timeout_ms.clamp(1_000, 600_000),
+                    max_tokens,
+                    context_limit_tokens,
+                    reasoning_effort: self.reasoning_effort.clone(),
+                    temperature_percent: self.temperature_percent,
+                    tags: Some(self.tags.clone()),
+                };
+                Ok(Box::new(
+                    crate::providers::llm::opencode_free::OpenCodeFreeProvider::build(&cfg)?,
+                ))
+            }
+            _ => Err(crate::providers::LlmError::Failed),
+        }
     }
 
     pub fn to_json_summary(&self) -> Value {
@@ -58,7 +115,9 @@ impl ResolvedLlmProvider {
 
     pub fn to_orchestrator_provider(&self) -> LlmProviderConfig {
         let auth = match &self.api_key {
-            Some(key) => ProviderAuth::ApiKey(key.clone()),
+            Some(key) => ProviderAuth::ApiKey(orchestrator_agent_rs::SecretString::new(
+                key.expose().to_owned(),
+            )),
             None => ProviderAuth::None,
         };
         LlmProviderConfig {
@@ -422,6 +481,8 @@ pub fn build_agent_definitions(
                     "high" => def = def.with_reasoning_effort(ReasoningEffort::High),
                     _ => {}
                 }
+            } else if resolved.supports_tag("reasoning") {
+                def = def.with_reasoning_effort(ReasoningEffort::Medium);
             }
             if eff.spec.mode == AgentMode::Primary {
                 def = def.with_allowed_subagents(eff.allowed_subagents);
@@ -431,6 +492,177 @@ pub fn build_agent_definitions(
         .collect();
 
     (providers, defs)
+}
+
+static LIVE_MEDIA_CATALOG: std::sync::OnceLock<
+    std::sync::Arc<std::sync::RwLock<Vec<ResolvedLlmProvider>>>,
+> = std::sync::OnceLock::new();
+
+pub(crate) fn update_live_media_catalog(catalog: &[ResolvedLlmProvider]) {
+    if let Some(shared) = LIVE_MEDIA_CATALOG.get() {
+        *shared.write().unwrap_or_else(|e| e.into_inner()) = catalog.to_vec();
+    }
+}
+
+pub type CatalogImageGeneratorBackend = CatalogMediaBackend;
+pub type CatalogTtsSynthesizerBackend = CatalogMediaBackend;
+
+#[derive(Clone)]
+pub struct CatalogMediaBackend {
+    store_dir: Option<std::path::PathBuf>,
+    catalog: std::sync::Arc<std::sync::RwLock<Vec<ResolvedLlmProvider>>>,
+    default_image: orchestrator_flow_rs::DefaultImageGeneratorBackend,
+    default_tts: orchestrator_flow_rs::DefaultTtsSynthesizerBackend,
+}
+
+impl CatalogMediaBackend {
+    pub fn new(
+        store_dir: impl Into<std::path::PathBuf>,
+        catalog: Vec<ResolvedLlmProvider>,
+    ) -> Self {
+        let shared = LIVE_MEDIA_CATALOG
+            .get_or_init(|| std::sync::Arc::new(std::sync::RwLock::new(catalog.clone())))
+            .clone();
+        *shared.write().unwrap_or_else(|e| e.into_inner()) = catalog;
+        Self {
+            store_dir: Some(store_dir.into()),
+            catalog: shared,
+            default_image: orchestrator_flow_rs::DefaultImageGeneratorBackend,
+            default_tts: orchestrator_flow_rs::DefaultTtsSynthesizerBackend,
+        }
+    }
+
+    pub fn from_catalog(catalog: Vec<ResolvedLlmProvider>) -> Self {
+        Self {
+            store_dir: None,
+            catalog: std::sync::Arc::new(std::sync::RwLock::new(catalog)),
+            default_image: orchestrator_flow_rs::DefaultImageGeneratorBackend,
+            default_tts: orchestrator_flow_rs::DefaultTtsSynthesizerBackend,
+        }
+    }
+
+    fn select_provider(&self, required_tag: &str) -> Option<ResolvedLlmProvider> {
+        let guard = self.catalog.read().unwrap_or_else(|e| e.into_inner());
+        if let Some(ref dir) = self.store_dir
+            && let Some(settings) = super::load_persisted_settings(dir)
+        {
+            if let Some(explicit_ref) = settings
+                .agents
+                .get("media_creator")
+                .and_then(|o| o.provider_ref.as_deref())
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                && let Some(found) = guard.iter().find(|p| {
+                    p.provider_ref == explicit_ref
+                        && p.supports_tag(required_tag)
+                        && p.api_key.is_some()
+                })
+            {
+                return Some(found.clone());
+            }
+            let worker_ref = settings.worker_llm_provider.trim();
+            if !worker_ref.is_empty()
+                && let Some(found) = guard.iter().find(|p| {
+                    p.provider_ref == worker_ref
+                        && p.supports_tag(required_tag)
+                        && p.api_key.is_some()
+                })
+            {
+                return Some(found.clone());
+            }
+        }
+        guard
+            .iter()
+            .find(|p| p.supports_tag(required_tag) && p.api_key.is_some())
+            .cloned()
+    }
+}
+
+#[async_trait::async_trait]
+impl orchestrator_flow_rs::ImageGeneratorBackend for CatalogMediaBackend {
+    async fn generate_image(
+        &self,
+        req: &orchestrator_flow_rs::ImageGenerationRequest,
+    ) -> Result<orchestrator_flow_rs::GeneratedImagePayload, String> {
+        let fmt = req.format.trim().to_ascii_lowercase();
+        if fmt == "svg" || req.svg_content.is_some() {
+            return self.default_image.generate_image(req).await;
+        }
+        let Some(resolved) = self.select_provider("image") else {
+            return self.default_image.generate_image(req).await;
+        };
+        let width = req.width.clamp(16, 2048);
+        let height = req.height.clamp(16, 2048);
+        let provider = resolved.to_llm_provider().map_err(|e| e.to_string())?;
+        let output = provider
+            .invoke(crate::providers::LlmOperation::ImageGeneration {
+                prompt: req.prompt.clone(),
+                width,
+                height,
+            })
+            .await
+            .map_err(|e| e.to_string())?;
+        let crate::providers::LlmOutput::Media { bytes, mime_type } = output else {
+            return Err("image provider returned non-media output".to_owned());
+        };
+        let stem = llm_wiki::slugify(
+            req.filename
+                .trim_end_matches(".png")
+                .trim_end_matches(".svg"),
+            64,
+        );
+        let safe_name = format!("{}.png", if stem.is_empty() { "image" } else { &stem });
+        Ok(orchestrator_flow_rs::GeneratedImagePayload {
+            filename: safe_name,
+            mime_type,
+            bytes,
+            width,
+            height,
+            provider: resolved.provider_ref.clone(),
+        })
+    }
+}
+
+#[async_trait::async_trait]
+impl orchestrator_flow_rs::TtsSynthesizerBackend for CatalogMediaBackend {
+    async fn synthesize_tts(
+        &self,
+        req: &orchestrator_flow_rs::TtsSynthesisRequest,
+    ) -> Result<orchestrator_flow_rs::SynthesizedAudioPayload, String> {
+        let Some(resolved) = self.select_provider("audio") else {
+            return self.default_tts.synthesize_tts(req).await;
+        };
+        let provider = resolved.to_llm_provider().map_err(|e| e.to_string())?;
+        let speed = req.speed.clamp(0.5, 2.0);
+        let output = provider
+            .invoke(crate::providers::LlmOperation::AudioSpeech {
+                text: req.text.clone(),
+                voice: (!req.voice.trim().is_empty()).then(|| req.voice.clone()),
+                speed: Some(speed),
+            })
+            .await
+            .map_err(|e| e.to_string())?;
+        let crate::providers::LlmOutput::Media { bytes, mime_type } = output else {
+            return Err("audio provider returned non-media output".to_owned());
+        };
+        let word_count = req.text.split_whitespace().count().max(1);
+        let duration_ms = (((word_count as f32) * 120.0 / speed) as u64).clamp(250, 60_000);
+        let stem = llm_wiki::slugify(
+            req.filename
+                .trim_end_matches(".wav")
+                .trim_end_matches(".mp3"),
+            64,
+        );
+        let safe_name = format!("{}.wav", if stem.is_empty() { "tts-audio" } else { &stem });
+        Ok(orchestrator_flow_rs::SynthesizedAudioPayload {
+            filename: safe_name,
+            mime_type,
+            bytes,
+            sample_rate_hz: 24_000,
+            duration_ms,
+            provider: resolved.provider_ref.clone(),
+        })
+    }
 }
 
 pub fn project_agents_json(

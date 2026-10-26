@@ -22,6 +22,66 @@ pub const LLM_CAPABILITY_TAGS: &[&str] = &[
     "embedding",
 ];
 
+const DIAGNOSTIC_PNG_1X1: &[u8] = &[
+    0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52,
+    0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00, 0x00, 0x1F, 0x15, 0xC4,
+    0x89, 0x00, 0x00, 0x00, 0x0A, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9C, 0x63, 0x00, 0x01, 0x00, 0x00,
+    0x05, 0x00, 0x01, 0x0D, 0x0A, 0x2D, 0xB4, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4E, 0x44, 0xAE,
+    0x42, 0x60, 0x82,
+];
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LlmCapabilityTag {
+    Chat,
+    Vision,
+    Image,
+    Video,
+    Audio,
+    Reasoning,
+    Embedding,
+}
+
+impl LlmCapabilityTag {
+    pub const fn as_str(&self) -> &'static str {
+        match self {
+            Self::Chat => "chat",
+            Self::Vision => "vision",
+            Self::Image => "image",
+            Self::Video => "video",
+            Self::Audio => "audio",
+            Self::Reasoning => "reasoning",
+            Self::Embedding => "embedding",
+        }
+    }
+
+    pub fn parse(value: &str) -> Option<Self> {
+        match value.trim() {
+            "chat" => Some(Self::Chat),
+            "vision" => Some(Self::Vision),
+            "image" => Some(Self::Image),
+            "video" => Some(Self::Video),
+            "audio" => Some(Self::Audio),
+            "reasoning" => Some(Self::Reasoning),
+            "embedding" => Some(Self::Embedding),
+            _ => None,
+        }
+    }
+}
+
+pub fn effective_capability_tags(tags: Option<&[String]>) -> Vec<LlmCapabilityTag> {
+    let parsed: Vec<LlmCapabilityTag> = tags
+        .unwrap_or(&[])
+        .iter()
+        .filter_map(|tag| LlmCapabilityTag::parse(tag))
+        .collect();
+    if parsed.is_empty() {
+        vec![LlmCapabilityTag::Chat]
+    } else {
+        parsed
+    }
+}
+
 pub fn valid_llm_tags(tags: Option<&[String]>) -> bool {
     let Some(tags) = tags else {
         return true;
@@ -68,9 +128,9 @@ pub fn llm_config_tags(config_json: &str) -> Vec<String> {
 }
 
 pub fn llm_config_supports_tag(config_json: &str, required_tag: &str) -> bool {
-    llm_config_tags(config_json)
-        .iter()
-        .any(|t| t == required_tag)
+    let tags = llm_config_tags(config_json);
+    tags.iter().any(|t| t == required_tag)
+        || (required_tag == "chat" && tags.iter().any(|t| t == "reasoning"))
 }
 
 pub fn validate_template_provider_capability(
@@ -165,32 +225,197 @@ impl From<&str> for LlmRequest {
     }
 }
 
+/// Unified single-shot operation envelope across all non-streaming LLM capability tags.
+#[derive(Clone, Debug, PartialEq)]
+pub enum LlmOperation {
+    Chat {
+        request: LlmRequest,
+        reasoning: bool,
+    },
+    Vision {
+        prompt: String,
+        image_bytes: Vec<u8>,
+        mime_type: String,
+    },
+    ImageGeneration {
+        prompt: String,
+        width: u32,
+        height: u32,
+    },
+    VideoGeneration {
+        prompt: String,
+        width: u32,
+        height: u32,
+        duration_secs: u32,
+    },
+    AudioSpeech {
+        text: String,
+        voice: Option<String>,
+        speed: Option<f32>,
+    },
+    AudioTranscription {
+        wav_bytes: Vec<u8>,
+        language: Option<String>,
+    },
+    Embedding {
+        inputs: Vec<String>,
+    },
+}
+
+impl LlmOperation {
+    pub const fn required_tag(&self) -> LlmCapabilityTag {
+        match self {
+            Self::Chat {
+                reasoning: false, ..
+            } => LlmCapabilityTag::Chat,
+            Self::Chat {
+                reasoning: true, ..
+            } => LlmCapabilityTag::Reasoning,
+            Self::Vision { .. } => LlmCapabilityTag::Vision,
+            Self::ImageGeneration { .. } => LlmCapabilityTag::Image,
+            Self::VideoGeneration { .. } => LlmCapabilityTag::Video,
+            Self::AudioSpeech { .. } | Self::AudioTranscription { .. } => LlmCapabilityTag::Audio,
+            Self::Embedding { .. } => LlmCapabilityTag::Embedding,
+        }
+    }
+
+    pub fn diagnostic_for(tag: LlmCapabilityTag, input: String) -> Self {
+        let prompt = if input.trim().is_empty() {
+            "diagnostic".to_owned()
+        } else {
+            input
+        };
+        match tag {
+            LlmCapabilityTag::Chat => Self::Chat {
+                request: LlmRequest::text_turn(prompt),
+                reasoning: false,
+            },
+            LlmCapabilityTag::Reasoning => Self::Chat {
+                request: LlmRequest::text_turn(prompt),
+                reasoning: true,
+            },
+            LlmCapabilityTag::Vision => Self::Vision {
+                prompt,
+                image_bytes: DIAGNOSTIC_PNG_1X1.to_vec(),
+                mime_type: "image/png".to_owned(),
+            },
+            LlmCapabilityTag::Image => Self::ImageGeneration {
+                prompt,
+                width: 256,
+                height: 256,
+            },
+            LlmCapabilityTag::Video => Self::VideoGeneration {
+                prompt,
+                width: 256,
+                height: 256,
+                duration_secs: 4,
+            },
+            LlmCapabilityTag::Audio => Self::AudioSpeech {
+                text: prompt,
+                voice: None,
+                speed: None,
+            },
+            LlmCapabilityTag::Embedding => Self::Embedding {
+                inputs: vec![prompt],
+            },
+        }
+    }
+}
+
+/// Normalized output across all non-streaming LLM capability operations.
+#[derive(Clone, Debug, PartialEq)]
+pub enum LlmOutput {
+    Text(String),
+    Media {
+        bytes: Vec<u8>,
+        mime_type: String,
+    },
+    Embeddings {
+        vectors: Vec<Vec<f32>>,
+        dimensions: usize,
+    },
+}
+
+impl LlmOutput {
+    pub fn diagnostic_summary(&self) -> String {
+        match self {
+            Self::Text(text) => text.clone(),
+            Self::Media { bytes, mime_type } => {
+                format!("Generated {mime_type} ({} bytes)", bytes.len())
+            }
+            Self::Embeddings {
+                vectors,
+                dimensions,
+            } => {
+                format!(
+                    "Embedded {} input(s) (dimensions={dimensions})",
+                    vectors.len()
+                )
+            }
+        }
+    }
+}
+
 #[async_trait::async_trait]
 pub trait LlmProvider: Send + Sync {
     fn supports_tools(&self) -> bool {
         false
     }
     fn adapter(&self) -> &'static str;
+
+    fn capability_tags(&self) -> &[LlmCapabilityTag] {
+        &[LlmCapabilityTag::Chat]
+    }
+
+    fn supports_tag(&self, tag: LlmCapabilityTag) -> bool {
+        self.capability_tags().contains(&tag)
+            || (tag == LlmCapabilityTag::Chat
+                && self.capability_tags().contains(&LlmCapabilityTag::Reasoning))
+    }
+
+    fn ensure_tag(&self, tag: LlmCapabilityTag) -> Result<(), LlmError> {
+        if self.supports_tag(tag) {
+            Ok(())
+        } else {
+            Err(LlmError::UnsupportedCapability(tag.as_str()))
+        }
+    }
+
     fn complete(&self, _: &LlmRequest) -> Result<String, LlmError> {
         Err(LlmError::Failed)
     }
 
     async fn stream(&self, request: LlmRequest) -> Result<LlmEventStream, LlmError> {
+        self.ensure_tag(LlmCapabilityTag::Chat)?;
         let response = self.complete(&request)?;
         Ok(Box::pin(futures_util::stream::iter([
             Ok(LlmEvent::TextDelta(response)),
             Ok(LlmEvent::Finished),
         ])))
     }
+
+    async fn invoke(&self, op: LlmOperation) -> Result<LlmOutput, LlmError> {
+        self.ensure_tag(op.required_tag())?;
+        self.execute_operation(op).await
+    }
+
+    async fn execute_operation(&self, op: LlmOperation) -> Result<LlmOutput, LlmError> {
+        match op {
+            LlmOperation::Chat { request, .. } => self.complete(&request).map(LlmOutput::Text),
+            _ => Err(LlmError::UnsupportedCapability(op.required_tag().as_str())),
+        }
+    }
 }
 
-#[derive(Clone, Debug, Error)]
+#[derive(Clone, Debug, PartialEq, Eq, Error)]
 pub enum LlmError {
     #[error("LLM completion failed")]
     Failed,
     /// A terminal provider response definitively rejected or failed to produce usable output.
     #[error("LLM returned a terminal invalid response")]
     Rejected,
+    #[error("LLM provider does not support capability tag `{0}`")]
+    UnsupportedCapability(&'static str),
 }
 
 pub struct UnavailableLlm;
@@ -201,61 +426,27 @@ impl LlmProvider for UnavailableLlm {
     }
 }
 
-pub(crate) struct ConfiguredOpenAiLlm {
-    api_key: String,
-    base_url: String,
-    model: String,
-    timeout_seconds: u64,
-}
+pub(crate) use openai::provider::ConfiguredOpenAiLlm;
 
-impl ConfiguredOpenAiLlm {
-    pub(crate) fn build(
-        api_key: &str,
-        base_url: &str,
-        model: &str,
-        timeout_seconds: u64,
-    ) -> Result<Self, LlmError> {
-        if model.trim().is_empty() || timeout_seconds == 0 {
-            return Err(LlmError::Failed);
+pub(crate) async fn collect_chat_stream(
+    mut stream: LlmEventStream,
+) -> Result<LlmOutput, LlmError> {
+    use futures_util::StreamExt;
+    let mut text = String::new();
+    while let Some(item) = stream.next().await {
+        match item? {
+            LlmEvent::TextDelta(delta) => text.push_str(&delta),
+            LlmEvent::ToolCall(_) => return Err(LlmError::Rejected),
+            LlmEvent::Finished => break,
         }
-        Ok(Self {
-            api_key: api_key.into(),
-            base_url: base_url.into(),
-            model: model.into(),
-            timeout_seconds,
-        })
     }
+    if text.trim().is_empty() {
+        return Err(LlmError::Rejected);
+    }
+    Ok(LlmOutput::Text(text))
 }
 
-#[async_trait::async_trait]
-impl LlmProvider for ConfiguredOpenAiLlm {
-    fn supports_tools(&self) -> bool {
-        true
-    }
-    fn adapter(&self) -> &'static str {
-        "openai"
-    }
-
-    async fn stream(&self, request: LlmRequest) -> Result<LlmEventStream, LlmError> {
-        let system = request.messages.iter().find_map(|message| match message {
-            ChatMessage::System { content } => Some(content.as_str()),
-            _ => None,
-        });
-        let mut builder = llm::builder::LLMBuilder::new()
-            .backend(llm::builder::LLMBackend::OpenAI)
-            .api_key(&self.api_key)
-            .base_url(&self.base_url)
-            .model(&self.model)
-            .timeout_seconds(self.timeout_seconds);
-        if let Some(system) = system {
-            builder = builder.system(system);
-        }
-        let client = builder.build().map_err(|_| LlmError::Failed)?;
-        stream_openai_request(client.as_ref(), request, self.adapter()).await
-    }
-}
-
-async fn stream_openai_request(
+pub(crate) async fn stream_openai_request(
     client: &dyn llm::chat::ChatProvider,
     request: LlmRequest,
     adapter: &'static str,

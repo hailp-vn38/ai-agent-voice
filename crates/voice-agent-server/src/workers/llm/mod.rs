@@ -14,8 +14,8 @@ use tracing::Instrument;
 
 use crate::{
     providers::{
-        LlmEvent, LlmProvider,
-        llm::{LlmRequest, ToolCall},
+        LlmCapabilityTag, LlmError, LlmEvent, LlmOperation, LlmProvider,
+        llm::{ChatMessage, LlmRequest, ToolCall},
     },
     services::provider_diagnostic::{
         ProviderDiagnosticOperation, ProviderDiagnosticOperationError,
@@ -295,12 +295,50 @@ impl ProviderDiagnosticOperation for LlmDiagnosticOperation {
         cancellation: CancellationToken,
     ) -> Result<Self::Output, ProviderDiagnosticOperationError> {
         self.cancellation = Some(cancellation.clone());
+        if !self.provider.supports_tag(LlmCapabilityTag::Chat) {
+            let tag = self
+                .provider
+                .capability_tags()
+                .first()
+                .copied()
+                .unwrap_or(LlmCapabilityTag::Chat);
+            let prompt = self
+                .request
+                .messages
+                .iter()
+                .find_map(|msg| match msg {
+                    ChatMessage::User { content } => Some(content.clone()),
+                    _ => None,
+                })
+                .unwrap_or_else(|| "diagnostic".to_owned());
+            let operation = LlmOperation::diagnostic_for(tag, prompt);
+            let output = tokio::select! {
+                _ = cancellation.cancelled() => return Err(ProviderDiagnosticOperationError::Failed),
+                res = self.provider.invoke(operation) => res.map_err(|error| {
+                    self.terminal_acknowledged = matches!(
+                        error,
+                        LlmError::Rejected | LlmError::UnsupportedCapability(_)
+                    );
+                    ProviderDiagnosticOperationError::Failed
+                })?,
+            };
+            self.terminal_acknowledged = true;
+            let summary = output.diagnostic_summary();
+            if summary.is_empty() || summary.len() > self.max_text_bytes {
+                return Err(ProviderDiagnosticOperationError::InvalidResponse);
+            }
+            return Ok(summary);
+        }
+
         let mut stream = self
             .provider
             .stream(self.request.clone())
             .await
             .map_err(|error| {
-                self.terminal_acknowledged = matches!(error, crate::providers::LlmError::Rejected);
+                self.terminal_acknowledged = matches!(
+                    error,
+                    LlmError::Rejected | LlmError::UnsupportedCapability(_)
+                );
                 ProviderDiagnosticOperationError::Failed
             })?;
         let mut text = String::new();
@@ -322,7 +360,10 @@ impl ProviderDiagnosticOperation for LlmDiagnosticOperation {
                     }
                     Some(Ok(LlmEvent::Finished)) | None => return Ok(text),
                     Some(Err(error)) => {
-                        self.terminal_acknowledged = matches!(error, crate::providers::LlmError::Rejected);
+                        self.terminal_acknowledged = matches!(
+                            error,
+                            LlmError::Rejected | LlmError::UnsupportedCapability(_)
+                        );
                         return Err(ProviderDiagnosticOperationError::Failed);
                     }
                 },

@@ -13,10 +13,11 @@ use serde::{Deserialize, Serialize};
 use crate::app::AppState;
 
 pub use catalog::{
+    CatalogImageGeneratorBackend, CatalogMediaBackend, CatalogTtsSynthesizerBackend,
     ResolvedLlmProvider, build_agent_definitions, default_orchestrator_provider,
     find_provider_by_tag, project_agents_json, resolve_llm_provider_catalog,
 };
-use catalog::agent_supports_provider;
+use catalog::{agent_supports_provider, update_live_media_catalog};
 pub use specs::{
     AGENT_SPECS, AgentSpec, DEFAULT_USER_ROOT_AGENT_ID, WIKI_AUTOFLOW_ROOT_AGENT_ID,
     find_agent_spec, is_user_routable_root_agent, normalize_user_target_agent,
@@ -221,6 +222,7 @@ pub async fn sync_orchestrator_from_state(state: &AppState) -> Result<(), String
         return Ok(());
     };
     let catalog = resolve_llm_provider_catalog(state).await;
+    update_live_media_catalog(&catalog);
     let (providers, defs) =
         build_agent_definitions(&state.config.orchestrator, &settings, &catalog);
     orch.reconfigure(providers, defs)
