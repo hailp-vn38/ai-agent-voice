@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Activity, AlertTriangle, BrainCircuit, Cpu, Layers, Puzzle, RefreshCw, RotateCcw, Square, Trash2, Workflow } from '@lucide/vue'
+import { Activity, AlertTriangle, RefreshCw, RotateCcw, Square, Trash2, Workflow } from '@lucide/vue'
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { agentJobsApi } from '@/api/agent-jobs'
@@ -8,7 +8,7 @@ import { useAuthStore } from '@/stores/auth'
 import { formatApiError, isApiError } from '@/api/errors'
 import type { AdminJob, JobEvent, JobStatus } from '@/api/types/agent-jobs'
 import DetailHeader from '@/components/admin/DetailHeader.vue'
-import JobUnifiedTimeline from '@/components/jobs/JobUnifiedTimeline.vue'
+import JobUnifiedTimeline, { type JobCanvasStats } from '@/components/jobs/JobUnifiedTimeline.vue'
 import KnowledgeJobState from '@/components/jobs/KnowledgeJobState.vue'
 import { llmTokenSummary, projectLlmRuns } from '@/domain/jobs/llm-activity'
 import { projectUnifiedActivity, visibleActivities, type ActivityFilter } from '@/domain/jobs/unified-activity'
@@ -53,6 +53,17 @@ const tokenUsage = computed(() => llmTokenSummary(llmRuns.value))
 const activeLlm = computed(() => llmRuns.value.filter(run => run.status === 'running').length)
 const pluginCalls = computed(() => job.value?.steps.filter(step => step.plugin_id && (step.attempt_state || step.status !== 'pending')).length ?? 0)
 const agentRuns = computed(() => [...(job.value?.agent_runs ?? [])].sort((a, b) => a.run_index - b.run_index))
+const canvasStats = computed<JobCanvasStats | undefined>(() =>
+  job.value
+    ? {
+        agentRunsCount: job.value.agent_runs ? agentRuns.value.length : null,
+        llmRunsCount: llmRuns.value.length,
+        activeLlmCount: activeLlm.value,
+        pluginCallsCount: pluginCalls.value,
+        tokenUsage: tokenUsage.value,
+      }
+    : undefined,
+)
 const roleFilters = computed(() => [...new Set(agentRuns.value.map(run => run.role))])
 const allActivity = computed(() => job.value ? projectUnifiedActivity(job.value, events.value) : [])
 const filteredActivity = computed(() => visibleActivities(allActivity.value, activityFilter.value))
@@ -226,17 +237,6 @@ onBeforeUnmount(() => {
       :aria-label="t('common.loading')"
       class="space-y-5"
     >
-      <div class="grid gap-3 sm:grid-cols-2 xl:grid-cols-4" aria-hidden="true">
-        <div v-for="slot in 4" :key="slot" class="studio-panel card-shimmer space-y-3 p-4">
-          <div class="flex items-center justify-between">
-            <div class="h-3.5 w-24 rounded bg-muted/50" />
-            <div class="size-4 rounded bg-muted/60" />
-          </div>
-          <div class="h-7 w-16 rounded bg-muted/60" />
-          <div class="h-3 w-36 rounded bg-muted/40" />
-        </div>
-      </div>
-
       <div class="card-shimmer flex flex-wrap items-center justify-between gap-3 rounded-xl py-1" aria-hidden="true">
         <div class="space-y-2">
           <div class="h-5 w-44 rounded bg-muted/60" />
@@ -248,6 +248,16 @@ onBeforeUnmount(() => {
       <div class="studio-panel card-shimmer space-y-4 p-4 sm:p-5" aria-hidden="true">
         <div class="flex flex-wrap gap-2">
           <div v-for="pill in 4" :key="pill" class="h-8 w-24 rounded-lg bg-muted/50" />
+        </div>
+        <div class="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
+          <div v-for="slot in 4" :key="slot" class="space-y-2 rounded-lg border border-border/50 bg-muted/20 p-2.5">
+            <div class="flex items-center justify-between">
+              <div class="h-3 w-20 rounded bg-muted/50" />
+              <div class="size-3.5 rounded bg-muted/60" />
+            </div>
+            <div class="h-5 w-12 rounded bg-muted/60" />
+            <div class="h-2.5 w-28 rounded bg-muted/40" />
+          </div>
         </div>
         <div class="grid gap-4 lg:grid-cols-[minmax(0,1fr)_320px]">
           <div class="space-y-3">
@@ -265,28 +275,6 @@ onBeforeUnmount(() => {
         <p v-if="job.error_code" class="mt-2 break-all font-mono text-xs text-danger">{{ job.error_code }}</p>
         <p v-if="unknownOutcome" class="mt-2 text-sm text-danger">{{ t('jobUi.unknownOutcomeWarning') }}</p>
       </div>
-      <div class="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        <section class="studio-panel p-4">
-          <div class="flex items-center justify-between text-xs text-muted-foreground"><span>{{ t('jobUi.timelineAgentRuns') }}</span><Layers class="size-4 text-studio-violet" /></div>
-          <p class="mt-2 text-2xl font-bold tracking-tight">{{ job.agent_runs ? agentRuns.length : '—' }}</p>
-          <p class="mt-1 text-xs text-muted-foreground">{{ job.agent_runs ? (agentRuns.length ? '1 root · ' + Math.max(0, agentRuns.length - 1) + ' sub-agents' : t('jobUi.noAgentRunsYet')) : t('jobUi.legacyNoAgents') }}</p>
-        </section>
-        <section class="studio-panel p-4">
-          <div class="flex items-center justify-between text-xs text-muted-foreground"><span>{{ t('jobUi.llmRuns') }}</span><BrainCircuit class="size-4 text-studio-violet" /></div>
-          <p class="mt-2 text-2xl font-bold tracking-tight">{{ llmRuns.length }}</p>
-          <p class="mt-1 text-xs text-muted-foreground">{{ activeLlm }} {{ t('jobUi.llmRunning') }} · {{ llmRuns.length - activeLlm }} {{ t('jobUi.timelineObserved') }}</p>
-        </section>
-        <section class="studio-panel p-4">
-          <div class="flex items-center justify-between text-xs text-muted-foreground"><span>{{ t('jobUi.timelinePluginCalls') }}</span><Puzzle class="size-4 text-studio-violet" /></div>
-          <p class="mt-2 text-2xl font-bold tracking-tight">{{ pluginCalls }}</p>
-          <p class="mt-1 text-xs text-muted-foreground">{{ t('jobUi.timelinePersistedSteps') }}</p>
-        </section>
-        <section class="studio-panel p-4">
-          <div class="flex items-center justify-between text-xs text-muted-foreground"><span>{{ t('jobUi.timelineTotalTokens') }}</span><Cpu class="size-4 text-studio-violet" /></div>
-          <p class="mt-2 text-2xl font-bold tracking-tight">{{ tokenUsage.known ? tokenUsage.tokens.toLocaleString() : '—' }}</p>
-          <p class="mt-1 text-xs text-muted-foreground">{{ tokenUsage.known }} / {{ tokenUsage.total }} {{ t('jobUi.llmUsageAvailable') }}<span v-if="tokenUsage.known < tokenUsage.total"> · {{ t('jobUi.timelinePartial') }}</span></p>
-        </section>
-      </div>
       <div class="sectionbar flex flex-wrap items-center justify-between gap-3">
         <div>
           <h2 class="flex flex-wrap items-center gap-2 font-semibold">
@@ -303,6 +291,7 @@ onBeforeUnmount(() => {
         :selected-id="selectedActivityId"
         :filter="activityFilter"
         :roles="roleFilters"
+        :stats="canvasStats"
         @select="selectedActivityId = $event"
         @filter="activityFilter = $event"
       />

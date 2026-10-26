@@ -107,6 +107,52 @@ it.each([
   }
 })
 
+it('renders the 4 summary stat cards inside the DAG canvas HUD overlay instead of standalone panels outside', async () => {
+  const job = await api.job()
+  api.job.mockClear().mockResolvedValue({
+    ...job,
+    agent_runs: [
+      { agent_run_id: 'root', run_index: 0, role: 'orchestrator', status: 'succeeded', input_tokens: 1000, output_tokens: 500, llm_rounds: 1 },
+      { agent_run_id: 'child', run_index: 1, role: 'research', status: 'succeeded', input_tokens: 2000, output_tokens: 246, llm_rounds: 1 },
+    ],
+    steps: [
+      {
+        step_key: 'step-1',
+        plugin_id: 'core',
+        operation: 'web.search',
+        status: 'succeeded',
+        attempt_state: 'finished',
+        instruction: 'Search',
+        required: true,
+        dependencies: [],
+        input_refs: [],
+        arguments: {},
+        output_schema: {},
+        result: null,
+      },
+    ],
+  })
+  api.events.mockResolvedValue({
+    items: [
+      { sequence: 1, event_type: 'agent_run_started', step_key: null, created_at: '2026-10-15T00:00:00Z', payload: { agent_run_id: 'root' } },
+      { sequence: 2, event_type: 'agent_run_started', step_key: null, created_at: '2026-10-15T00:00:01Z', payload: { agent_run_id: 'child' } },
+    ],
+  })
+  const wrapper = mount(JobDetailPage, { global: { stubs: { teleport: true } } })
+  try {
+    await flushPromises()
+    const canvasBody = wrapper.get('.canvas-body')
+    const hud = canvasBody.get('[data-canvas-stats]')
+    expect(hud.findAll('.hud-card')).toHaveLength(4)
+    expect(hud.get('[data-canvas-stat="agent-runs"]').text()).toContain('1 root · 1 sub-agents')
+    expect(hud.get('[data-canvas-stat="llm-runs"]').text()).toContain('2')
+    expect(hud.get('[data-canvas-stat="plugin-calls"]').text()).toContain('1')
+    expect(hud.get('[data-canvas-stat="total-tokens"]').text()).toContain((3746).toLocaleString())
+  } finally {
+    wrapper.unmount()
+  }
+})
+
 it.each(['queued', 'planning', 'running', 'cancelling'])('hides deletion for a %s Job', async status => {
   const job = await api.job()
   api.job.mockClear().mockResolvedValue({ ...job, status })

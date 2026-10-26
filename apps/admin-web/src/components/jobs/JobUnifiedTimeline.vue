@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ChevronRight, Download, Eye } from '@lucide/vue'
+import { BrainCircuit, ChevronRight, Cpu, Download, Eye, Layers, Puzzle } from '@lucide/vue'
 import { computed, ref, watch } from 'vue'
 import { agentJobsApi } from '@/api/agent-jobs'
 import type { JobArtifact } from '@/api/types/agent-jobs'
@@ -15,12 +15,25 @@ import { useI18n } from '@/composables/useI18n'
 import ArtifactPreviewDialog, { artifactPreview } from './artifacts/ArtifactPreviewDialog.vue'
 import JobActivityInspector from './JobActivityInspector.vue'
 
+export interface JobCanvasStats {
+  agentRunsCount: number | null
+  llmRunsCount: number
+  activeLlmCount: number
+  pluginCallsCount: number
+  tokenUsage: {
+    tokens: number
+    known: number
+    total: number
+  }
+}
+
 const props = defineProps<{
   jobId?: string
   activities: UnifiedActivity[]
   selectedId: string | null
   filter: ActivityFilter
   roles: string[]
+  stats?: JobCanvasStats
 }>()
 const emit = defineEmits<{
   select: [id: string]
@@ -130,7 +143,7 @@ function stepZoom(delta: number) {
 }
 function fitCanvas() {
   const cw = viewportRef.value?.clientWidth || 1100
-  const ch = viewportRef.value?.clientHeight || 618
+  const ch = (viewportRef.value?.clientHeight || 618) - (props.stats ? 76 : 0)
   const fitW = (cw - 24) / layout.value.width
   const fitH = (ch - 24) / layout.value.height
   setZoom(Math.max(0.43, Math.min(0.95, Math.min(fitW, fitH))))
@@ -380,26 +393,86 @@ function footerRight(activity: UnifiedActivity): string {
       </button>
     </div>
 
-    <p v-if="!activities.length" class="p-6 text-sm text-muted-foreground">{{ t('jobUi.noTimelineActivity') }}</p>
+    <p v-if="!activities.length && !stats" class="p-6 text-sm text-muted-foreground">{{ t('jobUi.noTimelineActivity') }}</p>
 
     <div v-else class="canvas-body">
-      <div
-        ref="viewportRef"
-        class="canvas-viewport"
-        @wheel.prevent="onWheel"
-        @pointerdown="onPointerDown"
-        @pointermove="onPointerMove"
-        @pointerup="onPointerUp"
-        @pointercancel="onPointerUp"
-        @pointerleave="onPointerUp"
-      >
+      <div class="canvas-main">
         <div
-          class="canvas-scale-box"
-          :style="{
-            width: Math.round(layout.width * zoom) + 'px',
-            height: Math.round(layout.height * zoom) + 'px',
-          }"
+          v-if="stats"
+          class="canvas-stats-hud"
+          data-canvas-stats
         >
+          <section class="hud-card" data-canvas-stat="agent-runs">
+            <div class="hud-card-head">
+              <span class="truncate">{{ t('jobUi.timelineAgentRuns') }}</span>
+              <Layers class="hud-icon" />
+            </div>
+            <p class="hud-value">{{ stats.agentRunsCount !== null ? stats.agentRunsCount : '—' }}</p>
+            <p class="hud-sub truncate">
+              {{
+                stats.agentRunsCount !== null
+                  ? stats.agentRunsCount
+                    ? '1 root · ' + Math.max(0, stats.agentRunsCount - 1) + ' sub-agents'
+                    : t('jobUi.noAgentRunsYet')
+                  : t('jobUi.legacyNoAgents')
+              }}
+            </p>
+          </section>
+
+          <section class="hud-card" data-canvas-stat="llm-runs">
+            <div class="hud-card-head">
+              <span class="truncate">{{ t('jobUi.llmRuns') }}</span>
+              <BrainCircuit class="hud-icon" />
+            </div>
+            <p class="hud-value">{{ stats.llmRunsCount }}</p>
+            <p class="hud-sub truncate">
+              {{ stats.activeLlmCount }} {{ t('jobUi.llmRunning') }} · {{ stats.llmRunsCount - stats.activeLlmCount }} {{ t('jobUi.timelineObserved') }}
+            </p>
+          </section>
+
+          <section class="hud-card" data-canvas-stat="plugin-calls">
+            <div class="hud-card-head">
+              <span class="truncate">{{ t('jobUi.timelinePluginCalls') }}</span>
+              <Puzzle class="hud-icon" />
+            </div>
+            <p class="hud-value">{{ stats.pluginCallsCount }}</p>
+            <p class="hud-sub truncate">{{ t('jobUi.timelinePersistedSteps') }}</p>
+          </section>
+
+          <section class="hud-card" data-canvas-stat="total-tokens">
+            <div class="hud-card-head">
+              <span class="truncate">{{ t('jobUi.timelineTotalTokens') }}</span>
+              <Cpu class="hud-icon" />
+            </div>
+            <p class="hud-value">{{ stats.tokenUsage.known ? stats.tokenUsage.tokens.toLocaleString() : '—' }}</p>
+            <p class="hud-sub truncate">
+              {{ stats.tokenUsage.known }} / {{ stats.tokenUsage.total }} {{ t('jobUi.llmUsageAvailable') }}<span v-if="stats.tokenUsage.known < stats.tokenUsage.total"> · {{ t('jobUi.timelinePartial') }}</span>
+            </p>
+          </section>
+        </div>
+
+        <div
+          ref="viewportRef"
+          class="canvas-viewport"
+          :class="{ 'has-stats-hud': Boolean(stats) }"
+          @wheel.prevent="onWheel"
+          @pointerdown="onPointerDown"
+          @pointermove="onPointerMove"
+          @pointerup="onPointerUp"
+          @pointercancel="onPointerUp"
+          @pointerleave="onPointerUp"
+        >
+          <p v-if="!activities.length" class="m-auto p-6 text-sm text-muted-foreground">
+            {{ t('jobUi.noTimelineActivity') }}
+          </p>
+          <div
+            v-else
+            class="canvas-scale-box"
+            :style="{
+              width: Math.round(layout.width * zoom) + 'px',
+              height: Math.round(layout.height * zoom) + 'px',
+            }"
+          >
           <div
             class="canvas-stage"
             :style="{
@@ -625,8 +698,9 @@ function footerRight(activity: UnifiedActivity): string {
             </ol>
           </div>
         </div>
+        </div>
+        <div v-if="activities.length" class="canvas-help">{{ t('jobUi.canvasHelp') }}</div>
       </div>
-      <div class="canvas-help">{{ t('jobUi.canvasHelp') }}</div>
 
       <aside
         v-if="inspectedActivity"
@@ -705,6 +779,63 @@ function footerRight(activity: UnifiedActivity): string {
   height: 618px;
   background-color: #101725;
 }
+.canvas-main {
+  flex: 1 1 0%;
+  min-width: 0;
+  height: 100%;
+  position: relative;
+  display: flex;
+}
+.canvas-stats-hud {
+  position: absolute;
+  top: 10px;
+  left: 14px;
+  right: 14px;
+  z-index: 3;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  pointer-events: none;
+}
+.hud-card {
+  pointer-events: auto;
+  padding: 7px 11px;
+  border-radius: 9px;
+  border: 1px solid #2b3850cc;
+  background: #131b2cd9;
+  backdrop-filter: blur(8px);
+  box-shadow: 0 6px 18px #00000045;
+  min-width: 0;
+}
+.hud-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  font-size: 10.5px;
+  line-height: 1.2;
+  color: #97a6be;
+}
+.hud-icon {
+  width: 13px;
+  height: 13px;
+  flex-shrink: 0;
+  color: var(--color-studio-violet, #8b5cf6);
+}
+.hud-value {
+  margin-top: 2px;
+  font-size: 16px;
+  font-weight: 700;
+  line-height: 1.15;
+  letter-spacing: -0.02em;
+  color: #f1f5f9;
+}
+.hud-sub {
+  margin-top: 1px;
+  font-size: 10px;
+  line-height: 1.2;
+  color: #899ab6;
+}
 .canvas-viewport {
   flex: 1 1 0%;
   min-width: 0;
@@ -717,6 +848,9 @@ function footerRight(activity: UnifiedActivity): string {
   background-size: 20px 20px;
   scrollbar-color: #3e4860 transparent;
   cursor: grab;
+}
+.canvas-viewport.has-stats-hud {
+  padding-top: 76px;
 }
 .canvas-viewport:active {
   cursor: grabbing;
@@ -1093,6 +1227,16 @@ details.lane-details[open] > .lane-title .branch-toggle {
 @media (max-width: 850px) {
   .canvas-body {
     height: 470px;
+  }
+  .canvas-stats-hud {
+    top: 8px;
+    left: 8px;
+    right: 8px;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 6px;
+  }
+  .canvas-viewport.has-stats-hud {
+    padding-top: 132px;
   }
   .canvas-inspector {
     position: absolute;
