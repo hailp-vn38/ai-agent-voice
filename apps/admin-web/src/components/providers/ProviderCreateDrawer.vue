@@ -43,8 +43,8 @@ function toggleMultiSelect(key: string, value: string) {
 const supportsDiscovery = computed(() => descriptor.value?.supports_discovery === true || Boolean(descriptor.value?.capabilities?.supports_discovery))
 const advancedFields = computed(() => fields.value.filter((field) => field.advanced))
 const regularFields = computed(() => fields.value.filter((field) => !field.advanced))
-const canContinue = computed(() => Boolean(descriptor.value))
-const canCreate = computed(() => form.name.trim().length > 0)
+const canContinue = computed(() => Boolean(descriptor.value && !adapterLoading.value))
+const canCreate = computed(() => form.name.trim().length > 0 && form.name.trim().length <= 128)
 
 function label(field: ProviderConfigField) { return field.label || field.key.replace(/_/g, ' ') }
 function clearConfiguration() { form.config = {} }
@@ -139,13 +139,23 @@ async function discover() {
 }
 function validateField(field: ProviderConfigField) {
   const value = form.config[field.key]
-  if (field.required && (value === undefined || value === null || value === '')) return `${label(field)} là bắt buộc.`
-  if (typeof value === 'number' && field.minimum !== undefined && value < field.minimum) return `${label(field)} phải từ ${field.minimum}.`
-  if (typeof value === 'number' && field.maximum !== undefined && value > field.maximum) return `${label(field)} tối đa ${field.maximum}.`
+  if (field.required && (value === undefined || value === null || value === '' || (typeof value === 'string' && !value.trim()) || (Array.isArray(value) && value.length === 0))) return `${label(field)} là bắt buộc.`
+  if (value !== undefined && value !== null && value !== '' && field.type === 'integer') {
+    const numeric = Number(value)
+    if (!Number.isInteger(numeric)) return `${label(field)} phải là số nguyên.`
+    if (field.minimum !== undefined && numeric < field.minimum) return `${label(field)} phải từ ${field.minimum}.`
+    if (field.maximum !== undefined && numeric > field.maximum) return `${label(field)} tối đa ${field.maximum}.`
+  }
   if (typeof value === 'string' && field.max_length !== undefined && value.length > field.max_length) return `${label(field)} tối đa ${field.max_length} ký tự.`
   return ''
 }
 const validationError = computed(() => fields.value.map(validateField).find(Boolean) || '')
+const canPassStepTwo = computed(() => canContinue.value && !discoveryLoading.value && canCreate.value && !validationError.value)
+function nextStep() {
+  if (step.value === 1 && !canContinue.value) return
+  if (step.value === 2 && !canPassStepTwo.value) return
+  step.value = Math.min(3, step.value + 1)
+}
 async function create() {
   if (!descriptor.value || !canCreate.value || validationError.value) return
   submitted.value = true; error.value = null
@@ -192,6 +202,6 @@ watch(() => form.config.language, (lang) => {
 
       <div v-else class="space-y-4"><h3 class="font-semibold">{{ t('diagnostics.testReview') }}</h3><ProviderTestPanel v-if="open && descriptor && ['asr','llm','tts'].includes(type)" :type="type" :adapter="descriptor.adapter" :capabilities="descriptor.capabilities" :draft="{ type, adapter: descriptor.adapter, config_json: config, ...(form.apiKey ? { api_key: form.apiKey } : {}) }" /><div class="rounded-lg border p-4 text-sm text-card-foreground"><dl class="grid gap-3 sm:grid-cols-2"><div><dt class="text-muted-foreground">Provider</dt><dd>{{ form.name }}</dd></div><div><dt class="text-muted-foreground">Loại / Adapter</dt><dd>{{ type.toUpperCase() }} / {{ descriptor?.name || descriptor?.adapter }}</dd></div><div v-for="(value, key) in config" :key="key"><dt class="text-muted-foreground">{{ key }}</dt><dd>{{ value }}</dd></div></dl></div><p class="rounded-lg border border-warning/30 bg-warning/10 p-3 text-sm text-card-foreground">{{ t('diagnostics.prepareHint') }}</p><details class="rounded-lg border p-3 text-card-foreground"><summary class="cursor-pointer text-sm font-medium">Xem JSON gửi lên</summary><pre class="mt-3 overflow-auto text-xs">{{ JSON.stringify({ name: form.name, type, adapter: descriptor?.adapter, config_json: config }, null, 2) }}</pre></details><p v-if="validationError" class="text-sm text-danger">{{ validationError }}</p></div>
     </div>
-    <template #footer><div class="flex justify-between gap-2"><Button v-if="step > 1" variant="outline" @click="step === 2 ? backToAdapterSelection() : step--">Quay lại</Button><Button v-else variant="outline" @click="open = false">Hủy</Button><Button v-if="step < 3" :disabled="step === 1 ? !canContinue : Boolean(validationError) || !form.name.trim()" @click="step++">Tiếp tục</Button><Button v-else :disabled="submitted || !canCreate || Boolean(validationError)" @click="create">{{ submitted ? 'Đang tạo…' : 'Tạo provider' }}</Button></div></template>
+    <template #footer><div class="flex justify-between gap-2"><Button v-if="step > 1" variant="outline" @click="step === 2 ? backToAdapterSelection() : step--">Quay lại</Button><Button v-else variant="outline" @click="open = false">Hủy</Button><Button v-if="step < 3" :disabled="step === 1 ? !canContinue : !canPassStepTwo" @click="nextStep">Tiếp tục</Button><Button v-else :disabled="submitted || !canPassStepTwo" @click="create">{{ submitted ? 'Đang tạo…' : 'Tạo provider' }}</Button></div></template>
   </BaseModal>
 </template>

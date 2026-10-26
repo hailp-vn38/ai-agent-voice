@@ -17,18 +17,21 @@ import {
   Volume2,
 } from '@lucide/vue'
 import { computed, onBeforeUnmount, reactive, ref, watch, type Component } from 'vue'
-import { RouterLink, useRoute, useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 
 import { formatApiError } from '@/api/errors'
 import { providerAdaptersApi } from '@/api/provider-adapters'
 import type { ProviderAdapter, ProviderConfigField } from '@/api/types/providers'
-import type { TemplateProviderType } from '@/api/types/templates'
+import DetailHeader from '@/components/admin/DetailHeader.vue'
 import ProviderTestPanel from '@/components/providers/ProviderTestPanel.vue'
+import { Button } from '@/components/ui/button'
+import { useI18n } from '@/composables/useI18n'
 import { useAdminStore } from '@/stores/admin'
 
 const route = useRoute()
 const router = useRouter()
 const store = useAdminStore()
+const { t } = useI18n()
 
 type SetupProviderType = 'llm' | 'tts' | 'asr' | 'vad'
 
@@ -322,7 +325,14 @@ const supportsDiscovery = computed(
     Boolean(descriptor.value?.capabilities?.supports_discovery),
 )
 
-const canContinue = computed(() => Boolean(descriptor.value && selectedAdapterId.value))
+const canContinue = computed(() =>
+  Boolean(
+    descriptor.value &&
+      selectedAdapterId.value &&
+      descriptor.value.adapter === selectedAdapterId.value &&
+      !adapterLoading.value,
+  ),
+)
 
 function fieldLabel(field: ProviderConfigField): string {
   return field.label || field.key.replace(/_/g, ' ')
@@ -461,6 +471,7 @@ async function loadAdapters(autoSelectFirst = true) {
     const items = await providerAdaptersApi.list(requestedType)
     if (version !== requestVersion || requestedType !== type.value) return
     adapters.value = items
+    adapterLoading.value = false
     if (autoSelectFirst && items.length > 0 && items[0]?.adapter) {
       await chooseAdapter(items[0], true)
     }
@@ -519,7 +530,14 @@ async function discover() {
 function validateField(field: ProviderConfigField): string {
   const value = form.config[field.key]
   const label = fieldLabel(field)
-  if (field.required && (value === undefined || value === null || value === '')) {
+  if (
+    field.required &&
+    (value === undefined ||
+      value === null ||
+      value === '' ||
+      (typeof value === 'string' && !value.trim()) ||
+      (Array.isArray(value) && value.length === 0))
+  ) {
     return `Trường “${label}” là bắt buộc.`
   }
   if (value !== undefined && value !== null && value !== '' && field.type === 'integer') {
@@ -535,12 +553,67 @@ function validateField(field: ProviderConfigField): string {
   if (typeof value === 'string' && field.max_length !== undefined && value.length > field.max_length) {
     return `${label} tối đa ${field.max_length} ký tự.`
   }
+  if (
+    field.key === 'model' &&
+    descriptor.value?.adapter === 'opencode_free' &&
+    typeof value === 'string' &&
+    value.trim() &&
+    !value.trim().endsWith('-free')
+  ) {
+    return 'OpenCode Free cần model ID kết thúc bằng -free.'
+  }
   return ''
 }
 
+function fieldValidationMessage(field: ProviderConfigField): string {
+  const value = form.config[field.key]
+  if (value === undefined || value === null || value === '') return ''
+  return validateField(field)
+}
+
+const configurationError = computed<string>(() => {
+  if (!canContinue.value || !descriptor.value) return 'Bạn cần chọn một adapter.'
+  const trimmedName = form.name.trim()
+  if (!trimmedName) return 'Bạn cần nhập tên hiển thị.'
+  if (trimmedName.length > 128) return 'Tên hiển thị tối đa 128 ký tự.'
+  for (const field of fields.value) {
+    const fieldError = validateField(field)
+    if (fieldError) return fieldError
+  }
+  if (
+    descriptor.value.adapter === 'opencode_free' &&
+    typeof form.config.model === 'string' &&
+    form.config.model.trim() &&
+    !form.config.model.trim().endsWith('-free')
+  ) {
+    return 'OpenCode Free cần model ID kết thúc bằng -free.'
+  }
+  return ''
+})
+
+const canPassStep2 = computed(
+  () => canContinue.value && !discoveryLoading.value && !configurationError.value,
+)
+
+function canAccessStep(target: number): boolean {
+  if (target === 1) return true
+  if (target === 2) return canContinue.value
+  if (target === 3 || target === 4) return canPassStep2.value
+  return false
+}
+
+const canAdvanceCurrentStep = computed(() => {
+  if (step.value === 1) return canContinue.value
+  if (step.value === 2 || step.value === 3) return canPassStep2.value
+  if (step.value === 4) return canPassStep2.value && !submitted.value
+  return false
+})
+
 function validateConfiguration(): string {
-  if (!descriptor.value) return 'Bạn cần chọn một adapter.'
-  if (!form.name.trim()) return 'Bạn cần nhập tên hiển thị.'
+  if (!canContinue.value || !descriptor.value) return 'Bạn cần chọn một adapter.'
+  const trimmedName = form.name.trim()
+  if (!trimmedName) return 'Bạn cần nhập tên hiển thị.'
+  if (trimmedName.length > 128) return 'Tên hiển thị tối đa 128 ký tự.'
   for (const field of fields.value) {
     const fieldError = validateField(field)
     if (fieldError) {
@@ -593,13 +666,39 @@ const safePreview = computed(() => JSON.stringify(safePreviewPayload.value, null
 
 function goToStep(target: number) {
   if (target < 1 || target > 4) return
-  if (target > 1 && !canContinue.value) return
+  if (target > 1 && !canContinue.value) {
+    errorMessage.value = 'Bạn cần chọn một adapter.'
+    step.value = 1
+    return
+  }
+  if (target > 2) {
+    if (discoveryLoading.value) return
+    const validationProblem = validateConfiguration()
+    if (validationProblem) {
+      errorMessage.value = validationProblem
+      step.value = 2
+      return
+    }
+  }
   errorMessage.value = ''
   step.value = target
 }
 
 function nextStep() {
-  if (step.value === 1 && !canContinue.value) return
+  if (step.value === 1) {
+    if (!canContinue.value) {
+      errorMessage.value = 'Bạn cần chọn một adapter.'
+      return
+    }
+  } else if (step.value >= 2) {
+    if (discoveryLoading.value) return
+    const validationProblem = validateConfiguration()
+    if (validationProblem) {
+      errorMessage.value = validationProblem
+      step.value = 2
+      return
+    }
+  }
   errorMessage.value = ''
   step.value = Math.min(4, step.value + 1)
 }
@@ -704,29 +803,32 @@ void loadAdapters(true)
 </script>
 
 <template>
-  <div class="provider-create-page">
-    <nav class="breadcrumb" aria-label="Breadcrumb">
-      <RouterLink :to="catalogRoute" data-action="nav">Providers</RouterLink>
-      <ChevronRight class="size-3.5 shrink-0" aria-hidden="true" />
-      <span>Tạo Provider</span>
-    </nav>
-
-    <header class="header-block">
-      <div>
-        <div class="prototype-kicker mb8">Provider onboarding</div>
-        <h1 class="page-title">Tạo Provider mới</h1>
-        <p class="page-sub">
+  <div class="provider-create-page space-y-5">
+    <DetailHeader
+      title="Tạo Provider mới"
+      :back-label="t('providers.title')"
+      @back="cancel"
+    >
+      <template #icon>
+        <span
+          class="flex size-10 shrink-0 items-center justify-center rounded-xl border border-studio-violet/20 bg-studio-violet/10 text-studio-violet"
+        >
+          <component :is="TYPE_META[type].icon" class="size-5" aria-hidden="true" />
+        </span>
+      </template>
+      <template #details>
+        <span class="line-clamp-2">
           Thiết lập adapter cho hệ thống AI Voice — cấu hình, kiểm tra và quản lý vòng đời runtime
           tại một trang độc lập.
-        </p>
-      </div>
-      <div class="top-actions">
-        <button type="button" class="btn" data-action="reset" @click="resetAll">
-          <RotateCcw class="size-[15px]" aria-hidden="true" />
+        </span>
+      </template>
+      <template #actions>
+        <Button variant="outline" size="sm" data-action="reset" @click="resetAll">
+          <RotateCcw class="size-4" aria-hidden="true" />
           Làm lại
-        </button>
-      </div>
-    </header>
+        </Button>
+      </template>
+    </DetailHeader>
 
     <div class="stepbar" role="tablist" aria-label="Các bước tạo Provider">
       <button
@@ -736,15 +838,15 @@ void loadAdapters(true)
         class="stepitem"
         :class="{
           active: step === index + 1,
-          done: step > index + 1,
+          done: step > index + 1 && canAccessStep(index + 2),
         }"
-        :disabled="index > 0 && !canContinue"
+        :disabled="!canAccessStep(index + 1)"
         data-action="step"
         :data-value="index + 1"
         @click="goToStep(index + 1)"
       >
         <span class="stepnum">
-          <Check v-if="step > index + 1" class="size-3.5" aria-hidden="true" />
+          <Check v-if="step > index + 1 && canAccessStep(index + 2)" class="size-3.5" aria-hidden="true" />
           <template v-else>{{ index + 1 }}</template>
         </span>
         <span>
@@ -941,7 +1043,10 @@ void loadAdapters(true)
                   @input="updateFieldInput(field, ($event.target as HTMLInputElement).value)"
                 />
 
-                <small v-if="field.description">{{ field.description }}</small>
+                <small v-if="fieldValidationMessage(field)" class="field-error">
+                  {{ fieldValidationMessage(field) }}
+                </small>
+                <small v-else-if="field.description">{{ field.description }}</small>
               </label>
 
               <div v-if="!regularFields.length" class="full note flex gap8">
@@ -1035,7 +1140,10 @@ void loadAdapters(true)
                     @input="updateFieldInput(field, ($event.target as HTMLInputElement).value)"
                   />
 
-                  <small v-if="field.description">{{ field.description }}</small>
+                  <small v-if="fieldValidationMessage(field)" class="field-error">
+                    {{ fieldValidationMessage(field) }}
+                  </small>
+                  <small v-else-if="field.description">{{ field.description }}</small>
                 </label>
               </div>
             </div>
@@ -1161,7 +1269,15 @@ void loadAdapters(true)
           <div class="flex gap8">
             <span class="badge">{{ step }}/4 bước</span>
             <span class="tiny muted">
-              {{ step < 4 ? 'Dữ liệu chỉ lưu trong trang này' : 'Sẵn sàng lưu cấu hình Provider' }}
+              {{
+                step === 1 && !canContinue
+                  ? 'Bạn cần chọn một adapter để tiếp tục'
+                  : step === 2 && configurationError
+                    ? configurationError
+                    : step < 4
+                      ? 'Dữ liệu chỉ lưu trong trang này'
+                      : 'Sẵn sàng lưu cấu hình Provider'
+              }}
             </span>
           </div>
           <div class="flex gap8">
@@ -1178,7 +1294,7 @@ void loadAdapters(true)
               type="button"
               class="btn btn-primary"
               :data-action="step === 4 ? 'create' : 'wizard-next'"
-              :disabled="step === 1 ? !canContinue : step === 4 ? submitted : false"
+              :disabled="!canAdvanceCurrentStep"
               @click="step === 4 ? submitCreate() : nextStep()"
             >
               {{ step === 4 ? (submitted ? 'Đang tạo…' : 'Tạo Provider') : 'Tiếp tục' }}
@@ -1236,11 +1352,19 @@ void loadAdapters(true)
         <section class="panel wizard-context">
           <h4>Tiến trình cấu hình</h4>
           <div class="activity">
-            <div class="line ok">Chọn loại &amp; adapter</div>
-            <div class="line" :class="step > 1 ? 'ok' : step === 1 ? 'active' : ''">
+            <div class="line" :class="step > 1 && canContinue ? 'ok' : step === 1 ? 'active' : ''">
+              Chọn loại &amp; adapter
+            </div>
+            <div
+              class="line"
+              :class="step > 2 && canPassStep2 ? 'ok' : step === 2 ? 'active' : ''"
+            >
               Thiết lập thông số
             </div>
-            <div class="line" :class="step > 2 ? 'ok' : step === 3 ? 'active' : ''">
+            <div
+              class="line"
+              :class="step > 3 && canPassStep2 ? 'ok' : step === 3 ? 'active' : ''"
+            >
               Chạy kiểm tra
             </div>
             <div class="line" :class="step === 4 ? 'active' : ''">Lưu và nạp runtime</div>
@@ -1385,73 +1509,6 @@ pre {
 
 .mb12 {
   margin-bottom: 12px;
-}
-
-.prototype-kicker {
-  display: inline-flex;
-  gap: 7px;
-  align-items: center;
-  font-size: 10px;
-  font-weight: 750;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-  color: var(--sub);
-}
-
-.prototype-kicker::before {
-  content: '';
-  width: 6px;
-  height: 6px;
-  background: var(--violet);
-  border-radius: 50%;
-}
-
-.breadcrumb {
-  font-size: 12px;
-  color: var(--sub);
-  margin-bottom: 18px;
-  display: flex;
-  align-items: center;
-  gap: 7px;
-}
-
-.breadcrumb a {
-  color: inherit;
-  text-decoration: none;
-}
-
-.breadcrumb a:hover {
-  color: var(--violet);
-}
-
-.page-title {
-  font-size: 26px;
-  font-weight: 760;
-  letter-spacing: -0.045em;
-  line-height: 1.24;
-  color: var(--fg);
-}
-
-.page-sub {
-  font-size: 13px;
-  color: var(--sub);
-  margin-top: 7px;
-  max-width: 670px;
-}
-
-.top-actions {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-
-.header-block {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  gap: 12px;
-  margin-bottom: 23px;
 }
 
 .panel {
@@ -1611,6 +1668,10 @@ pre {
 }
 
 .form-label .req {
+  color: var(--danger);
+}
+
+.form-label .field-error {
   color: var(--danger);
 }
 
@@ -2027,12 +2088,6 @@ pre {
   .stepitem small {
     display: none;
   }
-  .header-block {
-    align-items: start;
-  }
-  .top-actions {
-    justify-content: flex-end;
-  }
 }
 
 @media (max-width: 600px) {
@@ -2040,9 +2095,6 @@ pre {
   .adapter-grid,
   .wizard-side {
     grid-template-columns: 1fr;
-  }
-  .header-block {
-    flex-direction: column;
   }
   .type-grid {
     grid-template-columns: repeat(2, 1fr);

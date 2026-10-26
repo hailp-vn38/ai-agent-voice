@@ -88,9 +88,11 @@ describe('ProviderCreatePage (Variant A wizard)', () => {
 
     await flushPromises()
 
-    // Header has Reset action and NO theme toggle button
-    expect(wrapper.find('.header-block [data-action="theme"]').exists()).toBe(false)
-    expect(wrapper.find('.header-block [data-action="reset"]').exists()).toBe(true)
+    // Uses shared DetailHeader with back button and Reset action
+    expect(wrapper.find('[data-detail-header]').exists()).toBe(true)
+    expect(wrapper.find('[data-detail-back]').exists()).toBe(true)
+    expect(wrapper.find('[data-detail-header] [data-action="reset"]').exists()).toBe(true)
+    expect(wrapper.find('[data-detail-header] h1').text()).toBe('Tạo Provider mới')
 
     // 4 steps in stepbar
     const steps = wrapper.findAll('.stepbar .stepitem')
@@ -155,7 +157,7 @@ describe('ProviderCreatePage (Variant A wizard)', () => {
     wrapper.unmount()
   })
 
-  it('validates required fields on Step 4 and returns to Step 2 with an error alert', async () => {
+  it('blocks advancing past Step 1 or Step 2 until each step meets all conditions', async () => {
     adaptersApi.list.mockResolvedValue([
       { adapter: 'zerotts_onnx', type: 'tts', display_name: 'ZeroTTS' },
     ])
@@ -164,7 +166,17 @@ describe('ProviderCreatePage (Variant A wizard)', () => {
       type: 'tts',
       display_name: 'ZeroTTS',
       config_schema: {
-        fields: [{ key: 'voice', label: 'Voice', type: 'string', required: true }],
+        fields: [
+          { key: 'voice', label: 'Voice', type: 'string', required: true },
+          {
+            key: 'speed_percent',
+            label: 'Speed (%)',
+            type: 'integer',
+            required: false,
+            minimum: 50,
+            maximum: 200,
+          },
+        ],
       },
     })
 
@@ -184,13 +196,48 @@ describe('ProviderCreatePage (Variant A wizard)', () => {
 
     await flushPromises()
 
-    // Jump directly to Step 4 via stepbar
-    await wrapper.get('.stepbar [data-action="step"][data-value="4"]').trigger('click')
-    await wrapper.get('[data-action="create"]').trigger('click')
+    // On Step 1: Step 2 is enabled (adapter loaded), but Steps 3 & 4 are disabled until Step 2 is valid
+    const step2Btn = wrapper.get('.stepbar [data-action="step"][data-value="2"]')
+    const step3Btn = wrapper.get('.stepbar [data-action="step"][data-value="3"]')
+    const step4Btn = wrapper.get('.stepbar [data-action="step"][data-value="4"]')
+    expect(step2Btn.attributes('disabled')).toBeUndefined()
+    expect(step3Btn.attributes('disabled')).toBeDefined()
+    expect(step4Btn.attributes('disabled')).toBeDefined()
 
-    // Should jump back to Step 2 and show missing name error
-    expect(wrapper.get('[role="alert"]').text()).toBe('Bạn cần nhập tên hiển thị.')
+    // Advance to Step 2
+    await wrapper.get('[data-action="wizard-next"]').trigger('click')
     expect(wrapper.text()).toContain('02 / Cấu hình ZeroTTS')
+
+    // Next button on Step 2 is disabled while name and required fields are missing
+    const nextBtn = wrapper.get('[data-action="wizard-next"]')
+    expect(nextBtn.attributes('disabled')).toBeDefined()
+    expect(wrapper.get('.wizard-foot').text()).toContain('Bạn cần nhập tên hiển thị.')
+
+    // Entering only display name still keeps Next disabled because required "voice" is empty
+    await wrapper.get('input[data-general="name"]').setValue('ZeroTTS Production')
+    expect(nextBtn.attributes('disabled')).toBeDefined()
+    expect(wrapper.get('.wizard-foot').text()).toContain('Trường “Voice” là bắt buộc.')
+
+    // Filling required "voice" unlocks Step 3 & Step 4 and enables Next
+    await wrapper.get('input[data-field="voice"]').setValue('vi_female_1')
+    expect(nextBtn.attributes('disabled')).toBeUndefined()
+    expect(step3Btn.attributes('disabled')).toBeUndefined()
+    expect(step4Btn.attributes('disabled')).toBeUndefined()
+
+    // Entering an invalid advanced integer value re-locks Next and Steps 3 & 4
+    await wrapper.get('[data-action="advanced"]').trigger('click')
+    await wrapper.get('input[data-field="speed_percent"]').setValue('10')
+    expect(nextBtn.attributes('disabled')).toBeDefined()
+    expect(step3Btn.attributes('disabled')).toBeDefined()
+    expect(step4Btn.attributes('disabled')).toBeDefined()
+    expect(wrapper.text()).toContain('Speed (%) phải từ 50.')
+
+    // Fixing the advanced field unlocks progression again
+    await wrapper.get('input[data-field="speed_percent"]').setValue('100')
+    expect(nextBtn.attributes('disabled')).toBeUndefined()
+
+    await nextBtn.trigger('click')
+    expect(wrapper.text()).toContain('03 / Chạy kiểm tra cấu hình')
     expect(createProviderFromSetup).not.toHaveBeenCalled()
     wrapper.unmount()
   })
