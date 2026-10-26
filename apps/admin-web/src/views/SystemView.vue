@@ -155,12 +155,14 @@ onBeforeUnmount(() => {
             <CardTitle>{{ t('notifications.settings.title') }}</CardTitle>
           </div>
         </div>
-        <Button as-child variant="outline" size="sm" data-testid="system-open-notification-settings">
-          <RouterLink to="/system/notifications">
-            <Settings2 class="size-4" />
-            <span>{{ t('notifications.settings.title') }}</span>
-          </RouterLink>
-        </Button>
+        <RouterLink
+          to="/system/notifications"
+          data-testid="system-open-notification-settings"
+          class="inline-flex h-8 items-center justify-center gap-2 whitespace-nowrap rounded-md border border-input bg-background px-3 text-xs font-medium text-foreground transition-colors hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        >
+          <Settings2 class="size-4 shrink-0" />
+          <span>{{ t('notifications.settings.title') }}</span>
+        </RouterLink>
       </CardHeader>
       <CardContent class="text-sm text-muted-foreground">
         {{ t('notifications.settings.description') }}
