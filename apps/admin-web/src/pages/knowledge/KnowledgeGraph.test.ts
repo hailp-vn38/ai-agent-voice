@@ -165,3 +165,66 @@ it('keeps non-zero flex sizing when Cytoscape applies position:relative and drop
     wrapper.unmount()
   }
 })
+
+it('defaults to Option A compact context card and toggles Option B Focus Mode right drawer', async () => {
+  const wrapper = mount(KnowledgeGraph, { props: { centerId: 'wiki_agent', reloadToken: 0 } })
+  try {
+    await flushPromises()
+    const inspect = wrapper.get('aside.kg-inspect')
+    // Hidden until a node or edge is actively clicked in global view
+    expect(inspect.classes()).toContain('is-hidden')
+    expect(inspect.classes()).not.toContain('is-drawer')
+
+    // Tapping a node opens the Option A context card
+    events['tap:node']?.({ target: { id: () => 'wiki_agent' } })
+    await flushPromises()
+    expect(inspect.classes()).not.toContain('is-hidden')
+    expect(inspect.classes()).not.toContain('is-drawer')
+    expect(wrapper.get('.kg-heading-title').text()).toBe('Node connections')
+
+    // Toggling Focus mode switches the inspector to the Option B right drawer
+    const focusBtn = wrapper.get('button[aria-label="Focus mode"]')
+    await focusBtn.trigger('click')
+    await flushPromises()
+    expect(wrapper.emitted('update:focusMode')?.[0]).toEqual([true])
+    expect(wrapper.get('.kg-root').classes()).toContain('is-focus-mode')
+    expect(inspect.classes()).toContain('is-drawer')
+  } finally {
+    wrapper.unmount()
+  }
+})
+
+it('supports floating node search, display settings menu, and centers computed node positions around (0, 0)', async () => {
+  const wrapper = mount(KnowledgeGraph, { props: { centerId: 'wiki_agent', reloadToken: 0 } })
+  try {
+    await flushPromises()
+    const options = drawMock.mock.calls[0]?.[0] as {
+      layout: { positions: (node: { id: () => string }) => { x: number; y: number } }
+    }
+    const p1 = options.layout.positions({ id: () => 'wiki_agent' })
+    const p2 = options.layout.positions({ id: () => 'wiki_llm' })
+    // Bounding box center is centered at (0, 0)
+    expect(Math.abs((p1.x + p2.x) / 2)).toBeLessThanOrEqual(1)
+    expect(Math.abs((p1.y + p2.y) / 2)).toBeLessThanOrEqual(1)
+
+    // Search palette opens, filters nodes, and selects a node
+    await wrapper.get('button[aria-label="Search nodes"]').trigger('click')
+    expect(wrapper.get('.kg-search').classes()).toContain('open')
+    const searchInput = wrapper.get('input[aria-label="Search a node"]')
+    await searchInput.setValue('LLM')
+    const results = wrapper.findAll('.kg-search-result')
+    expect(results).toHaveLength(1)
+    expect(results[0]!.text()).toContain('LLM')
+    await results[0]!.trigger('click')
+    await flushPromises()
+    expect(wrapper.get('.kg-search').classes()).not.toContain('open')
+    expect(wrapper.get('.kg-inspect-name').text()).toBe('LLM')
+
+    // Display settings menu toggles legend
+    await wrapper.get('button[aria-label="Display settings"]').trigger('click')
+    expect(wrapper.get('.kg-menu').classes()).toContain('open')
+  } finally {
+    wrapper.unmount()
+  }
+})
+

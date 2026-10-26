@@ -111,6 +111,17 @@ it('supports rendered Wiki links and the existing Graph tab without editor forms
     await wrapper.find('button.other-tab').trigger('click')
     expect(wrapper.text()).toContain('Knowledge graph')
     expect(wrapper.find('textarea').exists()).toBe(false)
+    expect(wrapper.find('.a-outline').exists()).toBe(false)
+
+    // Toggling Immersive view (Option B Focus Mode) collapses the explorer
+    const immersiveBtn = wrapper.get('button[aria-label="Immersive view"]')
+    await immersiveBtn.trigger('click')
+    expect(wrapper.get('.knowledge-a').classes()).toContain('is-graph-focus')
+
+    // Toggling Explorer exits focus mode and restores the explorer
+    const explorerBtn = wrapper.get('button[aria-label="Toggle explorer"]')
+    await explorerBtn.trigger('click')
+    expect(wrapper.get('.knowledge-a').classes()).not.toContain('is-graph-focus')
   } finally { wrapper.unmount() }
 })
 
