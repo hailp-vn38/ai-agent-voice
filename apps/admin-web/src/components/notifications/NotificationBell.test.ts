@@ -98,6 +98,9 @@ describe('NotificationBell.vue', () => {
     const toast = wrapper.find('[data-testid="notification-toast"]')
     expect(toast.exists()).toBe(true)
     expect(toast.classes()).toContain('notification-toast')
+    expect(toast.classes()).toContain('top-4')
+    expect(toast.classes()).toContain('right-4')
+    expect(toast.classes()).not.toContain('bottom-4')
     wrapper.unmount()
   })
 
