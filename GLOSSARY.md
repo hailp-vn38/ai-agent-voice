@@ -53,8 +53,12 @@ Xác nhận Device đã lưu bền vững một bản lịch đánh thức; khô
 _Avoid_: saved on server, Playback ACK
 
 **Delivery Attempt**:
-Một lần thử phát Reminder đến đúng Device, có danh tính riêng gắn với Voice Session thực hiện lần thử.
+Một lần thử phát Reminder đến đúng Device gắn với Voice Session thực hiện, tách biệt giai đoạn giữ chỗ trước khi phát và giai đoạn đã bắt đầu phát âm thanh chờ xác nhận.
 _Avoid_: Reminder, Conversational Turn, waiting for device
+
+**Bound Reminder Target**:
+Thiết bị vật lý đang hoạt động thuộc cùng Agent được Admin gắn tạm thời cho một phiên Studio Assistant để nhận thao tác đặt lịch nhắc.
+_Avoid_: Virtual Device reminder owner, spoken device name, permanent assistant binding
 
 **Playback ACK**:
 Xác nhận client đã phát hết dữ liệu qua lớp audio output; không chứng minh âm vật lý đã phát ra loa.

@@ -696,9 +696,13 @@ _Avoid_: Agent–External MCP binding, tool execution status
 A fixed proposal to change an MCP Server, Agent binding or reviewed tool permission; only a separate authenticated Admin confirmation can apply it.
 _Avoid_: spoken approval, tool execution permission, automatic mutation
 
-## Reminders and Direct Speech (proposed)
+## Reminders and Direct Speech
 
-Thuật ngữ được định nghĩa trong [GLOSSARY.md](GLOSSARY.md#reminders-and-direct-speech). Thiết kế chưa triển khai được ghi tại [ADR-0087](docs/adr/0087-device-owned-durable-reminders.md), [ADR-0088](docs/adr/0088-shared-session-direct-speech.md), [ADR-0089](docs/adr/0089-reminder-snapshot-sync-and-device-wake.md), [ADR-0090](docs/adr/0090-reminder-playback-ack-and-bounded-attempts.md) và [ADR-0091](docs/adr/0091-reminder-authorization-and-turn-context.md).
+Thuật ngữ được định nghĩa trong [GLOSSARY.md](GLOSSARY.md#reminders-and-direct-speech). Các quyết định kiến trúc được ghi tại [ADR-0087](docs/adr/0087-device-owned-durable-reminders.md), [ADR-0088](docs/adr/0088-shared-session-direct-speech.md), [ADR-0089](docs/adr/0089-reminder-snapshot-sync-and-device-wake.md), [ADR-0090](docs/adr/0090-reminder-playback-ack-and-bounded-attempts.md) và [ADR-0091](docs/adr/0091-reminder-authorization-and-turn-context.md).
+
+**Bound Reminder Target**:
+The enabled physical Device belonging to the same Agent that an Admin temporarily binds to a live Studio Assistant Voice Session as the recipient of reminder mutations.
+_Avoid_: Virtual Device reminder owner, spoken device name, permanent assistant binding
 
 ## Background Tasks, Reminders, and Wiki Auto-Flow
 

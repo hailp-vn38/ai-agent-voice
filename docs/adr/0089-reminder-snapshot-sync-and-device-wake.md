@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed, 2026-10-12. Chưa triển khai; offline wake cần firmware thật và hardware acceptance.
+Accepted, 2026-10-26 — `server-ready, firmware-unverified` (Proposed, 2026-10-12; offline RTC wake cần nghiệm thu trên phần cứng thật).
 
 Server giữ lịch authoritative; firmware chỉ cache kế hoạch wake đã xác nhận, không giữ quyền phát. Chọn snapshot có revision và một logical wake timer thay vì timer theo từng Reminder hay giả định server có thể đánh thức Device đang Deep Sleep.
 
