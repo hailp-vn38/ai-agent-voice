@@ -2,6 +2,7 @@
 import { AudioWaveform, PanelLeftClose, PanelLeftOpen } from '@lucide/vue'
 
 import LanguageSwitcher from '@/components/LanguageSwitcher.vue'
+import NotificationBell from '@/components/notifications/NotificationBell.vue'
 import ThemeToggle from '@/components/ThemeToggle.vue'
 import { useI18n } from '@/composables/useI18n'
 import { navigationGroups } from '@/config/navigation'
@@ -59,9 +60,16 @@ const { t } = useI18n()
     </nav>
 
     <div class="shrink-0 border-t border-border/60 transition-[padding] duration-300 motion-reduce:transition-none"
-      :class="collapsed ? 'flex justify-center p-2' : 'p-4'">
-      <ThemeToggle v-if="collapsed" />
+      :class="collapsed ? 'flex flex-col items-center gap-2 p-2' : 'p-4'">
+      <template v-if="collapsed">
+        <NotificationBell v-if="collapsible" compact placement="sidebar" />
+        <ThemeToggle />
+      </template>
       <template v-else>
+        <div v-if="collapsible" class="mb-2.5 flex items-center justify-between gap-2 text-xs">
+          <span class="font-medium">{{ t('notifications.title') }}</span>
+          <NotificationBell placement="sidebar" />
+        </div>
         <div class="flex items-center justify-between gap-2 text-xs">
           <span class="font-medium">{{ t('app.theme') }}</span>
           <ThemeToggle />

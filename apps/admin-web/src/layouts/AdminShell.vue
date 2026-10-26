@@ -5,6 +5,7 @@ import { useRoute } from 'vue-router'
 
 import AssistantWidget from '@/components/assistant/AssistantWidget.vue'
 import AppSidebar from '@/components/AppSidebar.vue'
+import NotificationBell from '@/components/notifications/NotificationBell.vue'
 import SidebarContent from '@/components/SidebarContent.vue'
 import ThemeToggle from '@/components/ThemeToggle.vue'
 import { Button } from '@/components/ui/button'
@@ -69,7 +70,10 @@ onBeforeUnmount(() => {
           </Button>
           <AudioWaveform class="size-5 shrink-0" />
           <span class="truncate text-sm font-semibold">{{ t('app.brand') }}</span>
-          <ThemeToggle class="ml-auto" />
+          <div class="ml-auto flex items-center gap-2">
+            <NotificationBell compact placement="header" />
+            <ThemeToggle />
+          </div>
         </div>
       </header>
 

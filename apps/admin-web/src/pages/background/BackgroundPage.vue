@@ -13,6 +13,7 @@ import type {
 import { formatApiError, isApiError } from '@/api/errors'
 import BaseModal from '@/components/admin/BaseModal.vue'
 import DetailHeader from '@/components/admin/DetailHeader.vue'
+import NotificationSettingsCard from '@/components/notifications/NotificationSettingsCard.vue'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { useI18n } from '@/composables/useI18n'
@@ -574,6 +575,8 @@ onBeforeUnmount(() => controller?.abort())
         </div>
       </section>
     </template>
+
+    <NotificationSettingsCard v-if="!loading" />
 
     <!-- Configure Agent / Sub-Agent Modal -->
     <BaseModal
