@@ -166,29 +166,40 @@ it('keeps non-zero flex sizing when Cytoscape applies position:relative and drop
   }
 })
 
-it('defaults to Option A compact context card and toggles Option B Focus Mode right drawer', async () => {
+it('opens the note directly without showing the graph node info card when a node is clicked, and supports increasing/decreasing font size', async () => {
   const wrapper = mount(KnowledgeGraph, { props: { centerId: 'wiki_agent', reloadToken: 0 } })
   try {
     await flushPromises()
     const inspect = wrapper.get('aside.kg-inspect')
-    // Hidden until a node or edge is actively clicked in global view
     expect(inspect.classes()).toContain('is-hidden')
-    expect(inspect.classes()).not.toContain('is-drawer')
 
-    // Tapping a node opens the Option A context card
+    // Tapping a node opens the note directly instead of showing the node inspector card
     events['tap:node']?.({ target: { id: () => 'wiki_agent' } })
     await flushPromises()
-    expect(inspect.classes()).not.toContain('is-hidden')
-    expect(inspect.classes()).not.toContain('is-drawer')
-    expect(wrapper.get('.kg-heading-title').text()).toBe('Node connections')
+    expect(inspect.classes()).toContain('is-hidden')
+    expect(wrapper.emitted('open')?.[0]).toEqual(['wiki_agent'])
 
-    // Toggling Focus mode switches the inspector to the Option B right drawer
-    const focusBtn = wrapper.get('button[aria-label="Focus mode"]')
-    await focusBtn.trigger('click')
+    // Increasing and decreasing font size updates the Cytoscape node style
+    const initialOptions = drawMock.mock.calls.at(-1)?.[0] as {
+      style: Array<{ selector: string; style: Record<string, unknown> }>
+    }
+    const initialFontSize = initialOptions.style.find(s => s.selector === 'node')?.style['font-size'] as number
+
+    await wrapper.get('button[aria-label="Increase font size"]').trigger('click')
     await flushPromises()
-    expect(wrapper.emitted('update:focusMode')?.[0]).toEqual([true])
-    expect(wrapper.get('.kg-root').classes()).toContain('is-focus-mode')
-    expect(inspect.classes()).toContain('is-drawer')
+    const increasedOptions = drawMock.mock.calls.at(-1)?.[0] as {
+      style: Array<{ selector: string; style: Record<string, unknown> }>
+    }
+    const increasedFontSize = increasedOptions.style.find(s => s.selector === 'node')?.style['font-size'] as number
+    expect(increasedFontSize).toBeGreaterThan(initialFontSize)
+
+    await wrapper.get('button[aria-label="Decrease font size"]').trigger('click')
+    await flushPromises()
+    const restoredOptions = drawMock.mock.calls.at(-1)?.[0] as {
+      style: Array<{ selector: string; style: Record<string, unknown> }>
+    }
+    const restoredFontSize = restoredOptions.style.find(s => s.selector === 'node')?.style['font-size'] as number
+    expect(restoredFontSize).toBe(initialFontSize)
   } finally {
     wrapper.unmount()
   }
@@ -207,7 +218,7 @@ it('supports floating node search, display settings menu, and centers computed n
     expect(Math.abs((p1.x + p2.x) / 2)).toBeLessThanOrEqual(1)
     expect(Math.abs((p1.y + p2.y) / 2)).toBeLessThanOrEqual(1)
 
-    // Search palette opens, filters nodes, and selects a node
+    // Search palette opens, filters nodes, and clicking a result opens that note directly
     await wrapper.get('button[aria-label="Search nodes"]').trigger('click')
     expect(wrapper.get('.kg-search').classes()).toContain('open')
     const searchInput = wrapper.get('input[aria-label="Search a node"]')
@@ -218,7 +229,7 @@ it('supports floating node search, display settings menu, and centers computed n
     await results[0]!.trigger('click')
     await flushPromises()
     expect(wrapper.get('.kg-search').classes()).not.toContain('open')
-    expect(wrapper.get('.kg-inspect-name').text()).toBe('LLM')
+    expect(wrapper.emitted('open')?.[0]).toEqual(['wiki_llm'])
 
     // Display settings menu toggles legend
     await wrapper.get('button[aria-label="Display settings"]').trigger('click')

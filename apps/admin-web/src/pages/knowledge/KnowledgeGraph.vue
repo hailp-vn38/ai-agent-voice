@@ -37,6 +37,9 @@ type NodeGroup = 'concept' | 'entity' | 'synthesis' | 'source' | 'system' | 'dra
 const MIN_ZOOM = 0.28
 const MAX_ZOOM = 2.4
 const DEFAULT_MAX_FIT_ZOOM = 1.12
+const MIN_FONT_PERCENT = 70
+const MAX_FONT_PERCENT = 160
+const FONT_STEP = 10
 
 const props = defineProps<{
   centerId?: string | null
@@ -81,10 +84,19 @@ const showAllLabels = ref(false)
 const focusNeighbors = ref(true)
 const showLegend = ref(true)
 const nodeSizePercent = ref(100)
+const fontSizePercent = ref(100)
 const viewMenuOpen = ref(false)
 const nodeSearchOpen = ref(false)
 const nodeSearchQuery = ref('')
 const nodeSearchInput = ref<HTMLInputElement | null>(null)
+
+function decreaseFontSize() {
+  fontSizePercent.value = Math.max(MIN_FONT_PERCENT, fontSizePercent.value - FONT_STEP)
+}
+
+function increaseFontSize() {
+  fontSizePercent.value = Math.min(MAX_FONT_PERCENT, fontSizePercent.value + FONT_STEP)
+}
 
 const canvasWrap = ref<HTMLElement | null>(null)
 const canvas = ref<HTMLElement | null>(null)
@@ -220,7 +232,7 @@ const visibleEdges = computed(() => visibleGraph.value.edges)
 
 const effectiveSelectedId = computed(() => activeId.value ?? selectedId.value)
 const current = computed(() => visibleNodes.value.find(node => node.id === effectiveSelectedId.value) ?? null)
-const inspectorOpen = computed(() => Boolean(activeId.value || selectedEdgeId.value))
+const inspectorOpen = computed(() => Boolean(selectedEdgeId.value))
 
 const selectedEdge = computed(() => {
   if (!selectedEdgeId.value) return null
@@ -260,7 +272,7 @@ const filteredSearchNodes = computed(() => {
 })
 
 const inspectStyle = computed<Record<string, string>>(() => {
-  if (isFocusMode.value || !inspectCoords.value) return {} as Record<string, string>
+  if (!inspectCoords.value) return {} as Record<string, string>
   return {
     left: `${inspectCoords.value.left}px`,
     top: `${inspectCoords.value.top}px`,
@@ -268,7 +280,7 @@ const inspectStyle = computed<Record<string, string>>(() => {
 })
 
 function placePanel() {
-  if (isFocusMode.value || !inspectorOpen.value) {
+  if (!inspectorOpen.value) {
     inspectCoords.value = null
     panelFlipped.value = false
     return
@@ -307,9 +319,8 @@ function stopSmoothZoom() {
 function getViewportCenter() {
   const fullW = canvas.value?.clientWidth || canvasWrap.value?.clientWidth || 800
   const fullH = canvas.value?.clientHeight || canvasWrap.value?.clientHeight || 560
-  const drawerOffset = isFocusMode.value && inspectorOpen.value ? 176 : 0
   return {
-    x: Math.max(160, (fullW - drawerOffset) / 2),
+    x: Math.max(160, fullW / 2),
     y: fullH / 2,
   }
 }
@@ -647,27 +658,16 @@ function clearSelection() {
   placePanel()
 }
 
-function chooseNode(id: string, keepOpen = false) {
+function chooseNode(id: string) {
   selectedEdgeId.value = null
-  if (!keepOpen && activeId.value === id && !isFocusMode.value) {
-    clearSelection()
-    return
-  }
   selectedId.value = id
-  activeId.value = id
-  cy?.getElementById(id).select()
-  applyFocusClasses(null)
-  void nextTick(() => requestAnimationFrame(placePanel))
+  activeId.value = null
+  emit('open', id)
 }
 
 function chooseNodeFromSearch(id: string) {
   nodeSearchOpen.value = false
-  chooseNode(id, true)
-  if (cy && typeof cy.getElementById === 'function' && typeof cy.center === 'function') {
-    const el = cy.getElementById(id)
-    if (el) cy.center(el)
-    requestAnimationFrame(placePanel)
-  }
+  chooseNode(id)
 }
 
 function focusEdge(edge: GraphEdge) {
@@ -690,10 +690,6 @@ function isolateCurrentNode() {
   }
   applyFocusClasses(null)
   requestAnimationFrame(placePanel)
-}
-
-function toggleFocusMode() {
-  isFocusMode.value = !isFocusMode.value
 }
 
 function toggleViewMenu() {
@@ -753,7 +749,10 @@ function draw() {
 
   const palette = getPalette()
   const isLocal = scope.value === 'local'
-  const baseFontSize = isLocal ? 11.5 : 12.5
+  const fontScale = fontSizePercent.value / 100
+  const baseFontSize = Number(((isLocal ? 11.5 : 12.5) * fontScale).toFixed(1))
+  const labelMaxWidth = `${Math.round((isLocal ? 136 : 128) * fontScale)}px`
+  const selectedMaxWidth = `${Math.round(172 * fontScale)}px`
   const scale = nodeSizeScale.value
 
   const elements = [
@@ -798,7 +797,7 @@ function draw() {
           'font-size': baseFontSize,
           'font-weight': 560,
           'text-wrap': 'wrap',
-          'text-max-width': isLocal ? '136px' : '128px',
+          'text-max-width': labelMaxWidth,
           'text-valign': 'bottom',
           'text-margin-y': 6,
           'color': palette.text,
@@ -838,7 +837,7 @@ function draw() {
         style: {
           'label': 'data(selectedLabel)',
           'text-opacity': 1,
-          'text-max-width': '172px',
+          'text-max-width': selectedMaxWidth,
           'border-width': 3.5,
           'border-color': palette.selectedRing,
           'border-opacity': 1,
@@ -938,7 +937,7 @@ function draw() {
     }
   })
   cy.on('pan zoom', '', () => {
-    if (inspectorOpen.value && !isFocusMode.value) {
+    if (inspectorOpen.value) {
       requestAnimationFrame(placePanel)
     }
   })
@@ -1029,13 +1028,7 @@ function onKeydown(event: KeyboardEvent) {
 watch([scope, depth, () => props.centerId, () => props.reloadToken], () => { void loadGraph() })
 watch(dark, () => { if (graph.value) draw() })
 watch([showAllLabels, focusNeighbors], () => { applyFocusClasses(null) })
-watch(nodeSizePercent, () => { if (graph.value) draw() })
-watch(isFocusMode, () => {
-  void nextTick(() => {
-    if (cy && typeof cy.resize === 'function') cy.resize()
-    placePanel()
-  })
-})
+watch([nodeSizePercent, fontSizePercent], () => { if (graph.value) draw() })
 
 onMounted(() => {
   void loadGraph()
@@ -1063,7 +1056,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="kg-root" :class="{ 'is-focus-mode': isFocusMode }">
+  <div class="kg-root">
     <div v-if="error || isStale || (scope === 'local' && !centerId)" class="kg-alert-strip">
       <p v-if="error" role="alert" class="kg-alert-error">{{ error }}</p>
       <Button v-if="isStale" type="button" size="sm" variant="outline" @click="emit('rebuild')">
@@ -1127,6 +1120,28 @@ onBeforeUnmount(() => {
             <RefreshCw :size="13" />
             <span>{{ t('knowledgeV3.graphRelayout') }}</span>
           </button>
+          <span class="kg-sep"></span>
+          <button
+            type="button"
+            class="kg-tool-btn"
+            title="Decrease font size"
+            aria-label="Decrease font size"
+            :disabled="fontSizePercent <= MIN_FONT_PERCENT"
+            @click="decreaseFontSize"
+          >
+            <span>A&minus;</span>
+          </button>
+          <button
+            type="button"
+            class="kg-tool-btn"
+            title="Increase font size"
+            aria-label="Increase font size"
+            :disabled="fontSizePercent >= MAX_FONT_PERCENT"
+            @click="increaseFontSize"
+          >
+            <span>A+</span>
+          </button>
+          <span class="kg-sep"></span>
           <button
             type="button"
             class="kg-tool-btn"
@@ -1166,18 +1181,6 @@ onBeforeUnmount(() => {
         >
           <RotateCw :size="15" />
         </button>
-        <button
-          type="button"
-          class="kg-iconbtn"
-          :class="{ on: isFocusMode }"
-          title="Focus mode"
-          aria-label="Focus mode"
-          :aria-pressed="isFocusMode"
-          @click="toggleFocusMode"
-        >
-          <Minimize2 v-if="isFocusMode" :size="15" />
-          <Maximize2 v-else :size="15" />
-        </button>
       </div>
 
       <!-- Display Settings Menu (Prototype #menu) -->
@@ -1198,6 +1201,17 @@ onBeforeUnmount(() => {
         <label>
           <span>Node size</span>
           <input v-model.number="nodeSizePercent" type="range" min="70" max="140" />
+        </label>
+        <label>
+          <span>Font size ({{ fontSizePercent }}%)</span>
+          <input
+            v-model.number="fontSizePercent"
+            type="range"
+            :min="MIN_FONT_PERCENT"
+            :max="MAX_FONT_PERCENT"
+            :step="FONT_STEP"
+            aria-label="Font size"
+          />
         </label>
       </div>
 
@@ -1230,7 +1244,7 @@ onBeforeUnmount(() => {
         </div>
       </div>
 
-      <!-- Inspector: Option A Floating Context Card (default) + Option B Right Drawer (Focus Mode) -->
+      <!-- Inspector: Floating Context Card -->
       <aside
         ref="inspectPanel"
         class="kg-inspect"
@@ -1297,7 +1311,7 @@ onBeforeUnmount(() => {
               :key="id"
               type="button"
               class="kg-link"
-              @click="chooseNode(id, true)"
+              @click="chooseNode(id)"
             >
               &#8599; {{ name(id) }}
             </button>
@@ -1370,7 +1384,7 @@ onBeforeUnmount(() => {
 
       <!-- Bottom-Center Help / Hover Pill (Prototype #help) -->
       <div v-if="hoverText || !inspectorOpen" class="kg-help">
-        {{ hoverText || 'Click any node to inspect · Drag to pan · Scroll to zoom' }}
+        {{ hoverText || 'Click any node to open note · Drag to pan · Scroll to zoom' }}
       </div>
 
       <!-- Loading & Empty states -->

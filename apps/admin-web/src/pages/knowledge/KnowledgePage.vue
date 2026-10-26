@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
-import { Network, Link2, FileText, Folder, FolderOpen, FolderPlus, FilePlus2, Pencil, ChevronsUp, BookOpen, Columns2, ArrowUpRight, ChevronDown, ChevronRight, Search, PanelLeftClose, PanelLeftOpen, Maximize2, Minimize2 } from '@lucide/vue'
+import { Network, Link2, FileText, Folder, FolderOpen, FolderPlus, FilePlus2, Pencil, ChevronsUp, BookOpen, ArrowUpRight, ChevronDown, ChevronRight, Search, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen } from '@lucide/vue'
 import { renderMarkdown, markdownOutline } from './markdown'
 import { renderMermaidBlocks } from './mermaidRenderer'
 import { useTheme } from '@/composables/useTheme'
@@ -39,7 +39,15 @@ const route = useRoute()
 
 const VAULT_SPACE_KEY = 'voice-agent-knowledge-vault-space'
 const EXPLORER_STATE_KEY = 'voice-agent-knowledge-explorer-state-v1'
+const EXPLORER_COLLAPSED_KEY = 'voice-agent-knowledge-explorer-collapsed'
 const OUTLINE_COLLAPSED_KEY = 'voice-agent-knowledge-outline-collapsed'
+function restoredExplorerCollapsed(): boolean {
+  try {
+    return window.localStorage.getItem(EXPLORER_COLLAPSED_KEY) === 'true'
+  } catch {
+    return false
+  }
+}
 function restoredOutlineCollapsed(): boolean {
   try {
     return window.localStorage.getItem(OUTLINE_COLLAPSED_KEY) === 'true'
@@ -47,7 +55,14 @@ function restoredOutlineCollapsed(): boolean {
     return false
   }
 }
+const explorerCollapsed = ref(restoredExplorerCollapsed())
 const outlineCollapsed = ref(restoredOutlineCollapsed())
+function toggleExplorer() {
+  explorerCollapsed.value = !explorerCollapsed.value
+  try {
+    window.localStorage.setItem(EXPLORER_COLLAPSED_KEY, String(explorerCollapsed.value))
+  } catch { /* Storage can be disabled; keep the default. */ }
+}
 function toggleOutline() {
   outlineCollapsed.value = !outlineCollapsed.value
   try {
@@ -144,22 +159,10 @@ watch([activeSpace, openFolders, selectedPath], ([space, folders, path]) => {
   } catch { /* Storage unavailable; preserve in-memory navigation. */ }
 })
 const viewMode = ref<'read' | 'graph' | 'compose'>('read')
-const explorerCollapsed = ref(false)
 const graphFocusMode = ref(false)
 watch(viewMode, mode => {
   if (mode !== 'graph') graphFocusMode.value = false
 })
-function toggleExplorer() {
-  if (viewMode.value === 'graph' && graphFocusMode.value) {
-    graphFocusMode.value = false
-    explorerCollapsed.value = false
-    return
-  }
-  explorerCollapsed.value = !explorerCollapsed.value
-}
-function toggleGraphFocusMode() {
-  graphFocusMode.value = !graphFocusMode.value
-}
 const composeOpen = ref(false)
 const composeBaseFolder = ref('raw')
 const newNoteFolder = ref<string | null>(null)
@@ -1043,13 +1046,15 @@ onMounted(() => {
   <section class="knowledge-a" :class="{
     'is-dragging-file': isDraggingFile,
     'is-explorer-collapsed': explorerCollapsed,
+    'is-outline-collapsed': outlineCollapsed,
     'is-graph-focus': viewMode === 'graph' && graphFocusMode,
     'is-graph-view': viewMode === 'graph',
   }" aria-label="Knowledge Vault"
     @dragenter.prevent="onPageDragEnter" @dragover.prevent="onPageDragOver"
     @dragleave="onPageDragLeave" @drop.prevent="onFileDrop($event)">
     <div v-if="isDraggingFile" class="a-drop-banner" role="status">{{ t('knowledgeV3.dropMarkdownHint') }}</div>
-    <aside class="a-explorer">
+    <aside id="knowledge-explorer-panel" class="a-explorer"
+      :class="{ 'is-collapsed': explorerCollapsed }" :aria-hidden="explorerCollapsed">
       <div class="a-pane-heading">
         <div class="a-source-tabs" role="tablist" aria-label="Knowledge source">
           <button v-for="space in storageSpaces" :key="space.id" type="button" role="tab"
@@ -1183,27 +1188,32 @@ onMounted(() => {
           type="button" :aria-pressed="viewMode === 'graph'" @click="showGraph"><Network :size="15" class="inline-block mr-1" /> Graph</button>
         <div class="a-spacer"></div>
         <div class="a-tab-actions">
-          <template v-if="viewMode === 'graph'">
-            <button class="icon-button" :class="{ active: !explorerCollapsed && !graphFocusMode }"
-              type="button" title="Toggle explorer" aria-label="Toggle explorer"
-              :aria-pressed="!explorerCollapsed && !graphFocusMode" @click="toggleExplorer">
-              <PanelLeftOpen v-if="explorerCollapsed || graphFocusMode" :size="16" />
-              <PanelLeftClose v-else :size="16" />
-            </button>
-            <button class="icon-button" :class="{ active: graphFocusMode }"
-              type="button" title="Immersive view" aria-label="Immersive view"
-              :aria-pressed="graphFocusMode" @click="toggleGraphFocusMode">
-              <Minimize2 v-if="graphFocusMode" :size="16" />
-              <Maximize2 v-else :size="16" />
-            </button>
-          </template>
-          <template v-else>
+          <template v-if="viewMode !== 'graph'">
             <button v-if="viewMode !== 'compose' && (selected || rawFile) && activeSpace !== 'drafts' && !readOnlySource"
               class="icon-button" type="button" :title="t('knowledgeV3.edit')"
               :aria-label="t('knowledgeV3.edit')" @click="startEditNote"><Pencil :size="16" /></button>
             <button class="icon-button" type="button" title="Copy a note link" aria-label="Copy a note link" :disabled="!selected" @click="copyNoteLink"><Link2 :size="16" /></button>
-            <button class="icon-button" type="button" title="Split view is not part of this option" aria-label="Split view unavailable" disabled><Columns2 :size="16" /></button>
           </template>
+          <button class="icon-button" :class="{ active: !explorerCollapsed }" type="button"
+            :title="explorerCollapsed ? 'Expand explorer' : 'Collapse explorer'"
+            :aria-label="explorerCollapsed ? 'Expand explorer' : 'Collapse explorer'"
+            :aria-expanded="!explorerCollapsed"
+            :aria-pressed="!explorerCollapsed"
+            aria-controls="knowledge-explorer-panel"
+            @click="toggleExplorer">
+            <PanelLeftOpen v-if="explorerCollapsed" :size="16" />
+            <PanelLeftClose v-else :size="16" />
+          </button>
+          <button class="icon-button" :class="{ active: !outlineCollapsed }" type="button"
+            :title="outlineCollapsed ? 'Expand outline & links' : 'Collapse outline & links'"
+            :aria-label="outlineCollapsed ? 'Expand outline & links' : 'Collapse outline & links'"
+            :aria-expanded="!outlineCollapsed"
+            :aria-pressed="!outlineCollapsed"
+            aria-controls="knowledge-outline-panel"
+            @click="toggleOutline">
+            <PanelRightOpen v-if="outlineCollapsed" :size="16" />
+            <PanelRightClose v-else :size="16" />
+          </button>
         </div>
       </div>
       <div v-if="viewMode === 'read'" class="a-pathbar">
@@ -1291,13 +1301,14 @@ onMounted(() => {
         <article v-else class="doc"><h1>{{ t('knowledgeV3.selectFile') }}</h1></article>
       </main>
       <div v-else-if="viewMode === 'graph'" class="graph-host">
-        <KnowledgeGraph v-if="activeSpace === 'wiki'" v-model:focus-mode="graphFocusMode"
+        <KnowledgeGraph v-if="activeSpace === 'wiki'"
           :center-id="selected?.id ?? null" :reload-token="graphReloadToken"
           @open="openGraphWiki" @rebuild="rebuild" />
       </div>
     </section>
 
-    <aside v-if="viewMode !== 'graph'" class="a-outline">
+    <aside id="knowledge-outline-panel" class="a-outline"
+      :class="{ 'is-collapsed': outlineCollapsed }" :aria-hidden="outlineCollapsed">
       <div class="a-outline-top">Outline &amp; links</div>
       <div class="aside-scroll">
         <div class="a-aside-label">On this page</div>
@@ -1306,7 +1317,7 @@ onMounted(() => {
         </div>
         <template v-else>
           <button v-for="heading in outlineLinks" :key="heading.id" class="outline-link"
-            :class="{ active: activeHeading === heading.id }" :style="{ paddingLeft: (11 + Math.max(0, heading.level - 2) * 10) + 'px' }"
+            :class="{ active: activeHeading === heading.id }" :style="{ paddingLeft: (8 + Math.max(0, heading.level - 2) * 8) + 'px' }"
             type="button" @click="gotoHeading(heading.id)">{{ heading.title }}</button>
         </template>
         <div class="a-aside-label" style="margin-top:32px">Linked notes</div>

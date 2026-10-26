@@ -111,17 +111,7 @@ it('supports rendered Wiki links and the existing Graph tab without editor forms
     await wrapper.find('button.other-tab').trigger('click')
     expect(wrapper.text()).toContain('Knowledge graph')
     expect(wrapper.find('textarea').exists()).toBe(false)
-    expect(wrapper.find('.a-outline').exists()).toBe(false)
-
-    // Toggling Immersive view (Option B Focus Mode) collapses the explorer
-    const immersiveBtn = wrapper.get('button[aria-label="Immersive view"]')
-    await immersiveBtn.trigger('click')
-    expect(wrapper.get('.knowledge-a').classes()).toContain('is-graph-focus')
-
-    // Toggling Explorer exits focus mode and restores the explorer
-    const explorerBtn = wrapper.get('button[aria-label="Toggle explorer"]')
-    await explorerBtn.trigger('click')
-    expect(wrapper.get('.knowledge-a').classes()).not.toContain('is-graph-focus')
+    expect(wrapper.get('.knowledge-a').classes()).toContain('is-graph-view')
   } finally { wrapper.unmount() }
 })
 
@@ -649,3 +639,59 @@ it('toggles Explorer search, queries Wiki and File spaces, and opens matching do
     wrapper.unmount()
   }
 })
+
+it('shares a single pair of left and right panel toggle actions across Knowledge and Graph views and persists their states', async () => {
+  const first = mount(KnowledgePage)
+  try {
+    await flushPromises()
+    const explorer = first.get('aside.a-explorer')
+    const outline = first.get('aside.a-outline')
+    expect(explorer.classes()).not.toContain('is-collapsed')
+    expect(outline.classes()).not.toContain('is-collapsed')
+    expect(first.find('.a-outline-top button').exists()).toBe(false)
+    expect(first.find('button[aria-label="Immersive view"]').exists()).toBe(false)
+    expect(first.find('button[aria-label="Split view unavailable"]').exists()).toBe(false)
+
+    // Collapse both left (Explorer) and right (Outline & links) panels from .a-tab-actions
+    await first.get('.a-tab-actions button[aria-label="Collapse explorer"]').trigger('click')
+    await first.get('.a-tab-actions button[aria-label="Collapse outline & links"]').trigger('click')
+    expect(explorer.classes()).toContain('is-collapsed')
+    expect(outline.classes()).toContain('is-collapsed')
+    expect(first.get('.knowledge-a').classes()).toContain('is-explorer-collapsed')
+    expect(first.get('.knowledge-a').classes()).toContain('is-outline-collapsed')
+    expect(window.localStorage.getItem('voice-agent-knowledge-explorer-collapsed')).toBe('true')
+    expect(window.localStorage.getItem('voice-agent-knowledge-outline-collapsed')).toBe('true')
+
+    // Switch to Graph view: the same 2 panel actions and shared right panel remain available
+    await first.get('button.other-tab').trigger('click')
+    await flushPromises()
+    expect(first.find('aside.a-outline').exists()).toBe(true)
+    expect(first.find('button[aria-label="Immersive view"]').exists()).toBe(false)
+    expect(first.find('.a-tab-actions button[aria-label="Expand explorer"]').exists()).toBe(true)
+    expect(first.find('.a-tab-actions button[aria-label="Expand outline & links"]').exists()).toBe(true)
+  } finally {
+    first.unmount()
+  }
+
+  // Remounting restores both collapsed states from localStorage
+  const second = mount(KnowledgePage)
+  try {
+    await flushPromises()
+    const explorer = second.get('aside.a-explorer')
+    const outline = second.get('aside.a-outline')
+    expect(explorer.classes()).toContain('is-collapsed')
+    expect(outline.classes()).toContain('is-collapsed')
+
+    // Expand both panels via the 2 shared actions in .a-tab-actions
+    await second.get('.a-tab-actions button[aria-label="Expand explorer"]').trigger('click')
+    await second.get('.a-tab-actions button[aria-label="Expand outline & links"]').trigger('click')
+
+    expect(explorer.classes()).not.toContain('is-collapsed')
+    expect(outline.classes()).not.toContain('is-collapsed')
+    expect(window.localStorage.getItem('voice-agent-knowledge-explorer-collapsed')).toBe('false')
+    expect(window.localStorage.getItem('voice-agent-knowledge-outline-collapsed')).toBe('false')
+  } finally {
+    second.unmount()
+  }
+})
+
