@@ -62,7 +62,11 @@ onBeforeUnmount(() => {
         </div>
         <Button variant="outline" size="sm" aria-label="Close preview" @click="emit('close')"><X class="size-4" /></Button>
       </header>
-      <p v-if="loading" class="text-sm text-muted-foreground">Loading preview…</p>
+      <div v-if="loading" role="status" aria-busy="true" class="card-shimmer space-y-3 rounded-lg border border-border/60 bg-muted/20 p-5">
+        <span class="sr-only">Loading preview…</span>
+        <div class="h-4 w-48 rounded bg-muted/60" aria-hidden="true" />
+        <div class="h-36 w-full rounded-lg bg-muted/40" aria-hidden="true" />
+      </div>
       <p v-else-if="error" role="alert" class="text-sm text-danger">{{ error }}</p>
       <p v-else-if="kind === 'download'" class="text-sm text-muted-foreground">Preview unavailable for this file.</p>
       <audio v-else-if="kind === 'audio'" :src="url" controls class="w-full" />

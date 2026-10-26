@@ -278,3 +278,24 @@ it('loads the full event history and keeps the event cursor during fallback refr
     wrapper.unmount()
   }
 })
+
+it('shows shimmer on JobDetailPage while the job is loading, then renders the job details', async () => {
+  const loadedJob = await api.job()
+  let finishJob!: (value: unknown) => void
+  api.job.mockReset().mockReturnValue(new Promise(resolve => { finishJob = resolve }))
+
+  const wrapper = mount(JobDetailPage, { global: { stubs: { teleport: true } } })
+  try {
+    await flushPromises()
+    expect(wrapper.find('[data-job-detail-skeleton]').exists()).toBe(true)
+    expect(wrapper.get('[data-job-detail-skeleton]').attributes('aria-busy')).toBe('true')
+    expect(wrapper.findAll('.card-shimmer').length).toBeGreaterThan(0)
+
+    finishJob(loadedJob)
+    await flushPromises()
+    expect(wrapper.find('[data-job-detail-skeleton]').exists()).toBe(false)
+    expect(wrapper.text()).toContain('Run a job')
+  } finally {
+    wrapper.unmount()
+  }
+})

@@ -179,9 +179,11 @@ onBeforeUnmount(() => { requestVersion++; cy?.destroy(); cy = null })
         <p v-if="hoverText" class="pointer-events-none absolute bottom-3 left-3 max-w-[95%] rounded bg-background/95 p-2 text-xs shadow">
           {{ hoverText }}
         </p>
-        <p v-if="loading" class="pointer-events-none absolute left-3 top-3 rounded bg-background/90 p-2 text-xs">
-          {{ t('knowledgeV3.graphLoading') }}
-        </p>
+        <div v-if="loading" role="status" aria-busy="true" class="card-shimmer pointer-events-none absolute inset-0 bg-muted/15">
+          <p class="absolute left-3 top-3 rounded bg-background/90 p-2 text-xs">
+            {{ t('knowledgeV3.graphLoading') }}
+          </p>
+        </div>
         <p v-else-if="graph && !graph.nodes.length" class="pointer-events-none absolute left-3 top-3 text-xs">
           {{ t('knowledgeV3.graphEmpty') }}
         </p>

@@ -62,7 +62,23 @@ watch(() => props.agentId, () => { void load() }, { immediate: true })
       </Button>
     </div>
     <p v-if="error" role="alert" class="rounded-lg border border-danger/40 p-3 text-sm text-danger">{{ error }}</p>
-    <p v-if="loading" class="text-sm text-muted-foreground">{{ t('common.loading') }}</p>
+    <div v-if="loading" role="status" aria-busy="true" :aria-label="t('common.loading')" class="grid gap-3 lg:grid-cols-2">
+      <div v-for="slot in 2" :key="slot" class="card-shimmer space-y-3 rounded-xl border border-border/70 bg-surface p-4" aria-hidden="true">
+        <div class="flex items-start justify-between gap-3">
+          <div class="space-y-2">
+            <div class="h-4 w-36 rounded bg-muted/60" />
+            <div class="h-3 w-24 rounded bg-muted/40" />
+          </div>
+          <div class="h-4 w-16 rounded bg-muted/40" />
+        </div>
+        <div class="h-3 w-full rounded bg-muted/40" />
+        <div class="h-3 w-2/3 rounded bg-muted/40" />
+        <div class="flex gap-2 pt-1">
+          <div class="h-8 w-20 rounded-lg bg-muted/50" />
+          <div class="h-8 w-20 rounded-lg bg-muted/40" />
+        </div>
+      </div>
+    </div>
     <p v-else-if="!tools.length" class="rounded-lg border border-dashed border-border/70 p-5 text-sm text-muted-foreground">{{ t('mcp.noObservedTools') }}</p>
     <div v-else class="grid gap-3 lg:grid-cols-2">
       <article v-for="tool in tools" :key="`${tool.server_key}/${tool.original_name}`" class="rounded-xl border border-border/70 bg-surface p-4">

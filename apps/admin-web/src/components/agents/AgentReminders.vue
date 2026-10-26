@@ -81,7 +81,20 @@ onBeforeUnmount(() => active?.abort())
   <h2 class="text-lg font-semibold">{{t('reminders.title')}}</h2>
   <p>{{t('reminders.kpiHelp')}}</p>
   <dl v-if="data && !loading && !error" class="grid grid-cols-2 gap-3 sm:grid-cols-4"><div v-for="state in ['pending','completed','cancelled','expired'] as const" :key="state" :data-kpi="state" class="rounded border p-3"><dt>{{t(`reminders.${state}`)}}</dt><dd>{{data.kpi[state]}}</dd></div></dl>
-  <p v-if="error" role="alert">{{error}}</p><p v-if="loading" role="status">{{t('common.loading')}}</p>
+  <p v-if="error" role="alert">{{error}}</p>
+  <div v-if="loading" role="status" aria-busy="true" class="space-y-3">
+   <span class="sr-only">{{t('common.loading')}}</span>
+   <div class="grid grid-cols-2 gap-3 sm:grid-cols-4" aria-hidden="true">
+    <div v-for="slot in 4" :key="slot" class="card-shimmer space-y-2 rounded border p-3">
+     <div class="h-3 w-20 rounded bg-muted/50" />
+     <div class="h-6 w-12 rounded bg-muted/60" />
+    </div>
+   </div>
+   <div v-for="row in 2" :key="row" class="card-shimmer space-y-2 rounded border p-3" aria-hidden="true">
+    <div class="h-4 w-2/3 rounded bg-muted/60" />
+    <div class="h-3 w-1/3 rounded bg-muted/40" />
+   </div>
+  </div>
   <form class="flex flex-wrap items-end gap-3" @submit.prevent="filter">
    <label>{{t('reminders.device')}}<select v-model="device" data-filter="device" class="block rounded border p-2" @change="filter"><option value="">{{t('reminders.all')}}</option><option v-for="item in data?.devices" :key="item.device_id" :value="item.device_id">{{item.name || item.device_id}}</option></select></label>
    <label>{{t('reminders.filter')}}<select v-model="status" class="block rounded border p-2" @change="filter"><option value="">{{t('reminders.all')}}</option><option v-for="state in ['pending','completed','cancelled','expired'] as const" :key="state" :value="state">{{t(`reminders.${state}`)}}</option></select></label>

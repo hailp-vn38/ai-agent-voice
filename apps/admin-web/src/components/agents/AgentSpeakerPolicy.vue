@@ -97,6 +97,22 @@ watch(() => props.agentId, load, { immediate: true })
       </Button>
     </header>
     <p v-if="error" role="alert" class="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm">{{ error }}</p>
+    <div v-if="loading && !policy" role="status" aria-busy="true" :aria-label="t('common.loading')" class="space-y-3">
+      <div class="card-shimmer space-y-2 rounded-md border border-border p-3" aria-hidden="true">
+        <div class="h-4 w-36 rounded bg-muted/60" />
+        <div class="flex gap-2">
+          <div class="h-8 w-28 rounded-lg bg-muted/50" />
+          <div class="h-8 w-20 rounded-lg bg-muted/40" />
+        </div>
+      </div>
+      <div class="card-shimmer flex items-center justify-between rounded-md border border-border p-3" aria-hidden="true">
+        <div class="space-y-2">
+          <div class="h-4 w-32 rounded bg-muted/60" />
+          <div class="h-3 w-24 rounded bg-muted/40" />
+        </div>
+        <div class="h-6 w-20 rounded-full bg-muted/40" />
+      </div>
+    </div>
     <div v-if="policy" class="space-y-2 rounded-md border border-border p-3">
       <p class="text-sm font-medium">Speaker Recognition</p>
       <div class="flex flex-wrap items-center gap-2">

@@ -47,7 +47,10 @@ async function change(event: Event) {
     <h2 class="text-lg font-semibold">{{ t('reminders.permission') }}</h2>
     <p>{{ t('reminders.permissionHelp') }}</p>
     <p v-if="error" role="alert">{{ error }}</p>
-    <p v-if="!policy && !error" role="status">{{ t('common.loading') }}</p>
+    <div v-if="!policy && !error" role="status" aria-busy="true" class="card-shimmer rounded-lg border border-border/60 p-3">
+      <span class="sr-only">{{ t('common.loading') }}</span>
+      <div class="h-4 w-48 rounded bg-muted/50" aria-hidden="true" />
+    </div>
     <label>
       <input type="checkbox" :checked="policy?.reminders_enabled ?? false" :disabled="!policy || busy" @change="change" />
       {{ t('reminders.allow') }}

@@ -383,6 +383,9 @@ const title = ref('')
 const body = ref('')
 const sourceRef = ref('')
 const busy = ref(false)
+const treeLoading = ref(false)
+const noteLoading = ref(false)
+const linkedLoading = ref(false)
 const error = ref('')
 const notice = ref('')
 
@@ -488,6 +491,7 @@ async function openPage(id: string, nodePath?: string) {
   rawFile.value = null
   readOnlySource.value = false
   busy.value = true
+  noteLoading.value = true
   error.value = ''
   try {
     const page = await requestJson<Page>(
@@ -501,7 +505,10 @@ async function openPage(id: string, nodePath?: string) {
     body.value = page.body
     sourceRef.value = page.source_ref ?? ''
   } catch (cause) { error.value = formatApiError(cause) }
-  finally { busy.value = false }
+  finally {
+    busy.value = false
+    noteLoading.value = false
+  }
 }
 async function save() {
   if (busy.value) return
@@ -561,13 +568,18 @@ async function rebuild() {
 async function refreshTree() {
   const space = activeSpace.value
   const requestVersion = ++treeRequestVersion
-  const result = await requestJson<{items: TreeNode[]}>(
-    withQuery('/api/admin/knowledge/tree', { space }))
-  if (requestVersion === treeRequestVersion && activeSpace.value === space) {
-    tree.value = result.items
-    const existingFolders = new Set(result.items.filter(node => node.type === 'folder')
-      .map(node => node.path))
-    openFolders.value = new Set([space, ...[...openFolders.value].filter(path => existingFolders.has(path))])
+  treeLoading.value = true
+  try {
+    const result = await requestJson<{items: TreeNode[]}>(
+      withQuery('/api/admin/knowledge/tree', { space }))
+    if (requestVersion === treeRequestVersion && activeSpace.value === space) {
+      tree.value = result.items
+      const existingFolders = new Set(result.items.filter(node => node.type === 'folder')
+        .map(node => node.path))
+      openFolders.value = new Set([space, ...[...openFolders.value].filter(path => existingFolders.has(path))])
+    }
+  } finally {
+    if (requestVersion === treeRequestVersion) treeLoading.value = false
   }
 }
 function resetExplorer(space: TreeSpace) {
@@ -661,16 +673,19 @@ async function chooseNode(node: TreeNode) {
     if (source) {
       sourceRef.value = source.id + ':' + source.version
       if (node.name === 'original.md' || node.name === 'extracted.md') {
+        noteLoading.value = true
         try {
           const response = await requestJson<{ text: string }>(
             '/api/admin/knowledge/sources/' + encodeURIComponent(source.id))
           body.value = response.text
         } catch (cause) { error.value = formatApiError(cause) }
+        finally { noteLoading.value = false }
       } else body.value = JSON.stringify(source, null, 2)
     }
     return
   }
   busy.value = true
+  noteLoading.value = true
   try {
     const result = await requestJson<RawFile>(withQuery('/api/admin/knowledge/raw/files', {path: node.path}))
     rawFile.value = result
@@ -678,7 +693,10 @@ async function chooseNode(node: TreeNode) {
     body.value = result.body
     sourceRef.value = ''
   } catch (cause) { error.value = formatApiError(cause) }
-  finally { busy.value = false }
+  finally {
+    busy.value = false
+    noteLoading.value = false
+  }
 }
 function segmentsOfPath(value: string, file: boolean): string[] {
   const parts = value.split('/')
@@ -862,7 +880,11 @@ async function copyNoteLink() {
 async function refreshLinkedNotes(id: string) {
   const version = ++linkedRequestVersion
   linkedNotes.value = []
-  if (activeSpace.value !== 'wiki') return
+  if (activeSpace.value !== 'wiki') {
+    linkedLoading.value = false
+    return
+  }
+  linkedLoading.value = true
   try {
     const result = await requestJson<{
       nodes: { id: string; title: string }[]
@@ -874,12 +896,14 @@ async function refreshLinkedNotes(id: string) {
     linkedNotes.value = result.nodes.filter(node => related.has(node.id) && node.id !== id)
   } catch {
     if (version === linkedRequestVersion) linkedNotes.value = []
+  } finally {
+    if (version === linkedRequestVersion) linkedLoading.value = false
   }
 }
 watch(() => selected.value?.id, id => {
   activeHeading.value = ''
   if (id) void refreshLinkedNotes(id)
-  else { ++linkedRequestVersion; linkedNotes.value = [] }
+  else { ++linkedRequestVersion; linkedNotes.value = []; linkedLoading.value = false }
 })
 
 async function openJobLink() {
@@ -937,6 +961,12 @@ onMounted(() => {
         </div>
       </div>
       <div ref="treeHolder" class="tree-holder" role="tree" :aria-label="t('knowledgeV3.explorer')">
+        <div v-if="treeLoading && !readableNodes.length" data-knowledge-tree-skeleton class="space-y-1.5 px-2 py-2" aria-hidden="true">
+          <div v-for="slot in 5" :key="slot" class="card-shimmer flex items-center gap-2 rounded-md px-2 py-1.5">
+            <div class="size-3.5 shrink-0 rounded bg-muted/60" />
+            <div class="h-3.5 rounded bg-muted/50" :class="slot % 2 === 0 ? 'w-28' : 'w-36'" />
+          </div>
+        </div>
         <template v-for="node in readableNodes" :key="node.path">
           <template v-if="node.type === 'folder'">
             <div class="tree-folder-row" :class="{ 'drop-target': dropTargetFolder === node.path }"
@@ -1061,7 +1091,36 @@ onMounted(() => {
         </form>
       </main>
       <main v-else-if="viewMode === 'read'" ref="readerViewport" class="a-reader-viewport">
-        <article v-if="selected || rawFile || readOnlySource" class="doc">
+        <article
+          v-if="noteLoading || (treeLoading && !selected && !rawFile && !readOnlySource)"
+          data-knowledge-detail-skeleton
+          role="status"
+          aria-busy="true"
+          :aria-label="t('common.loading')"
+          class="doc"
+        >
+          <div class="card-shimmer space-y-5 rounded-xl p-1" aria-hidden="true">
+            <div class="h-3 w-40 rounded bg-muted/50" />
+            <div class="h-10 w-2/3 rounded-lg bg-muted/60" />
+            <div class="space-y-2 pt-1">
+              <div class="h-4 w-full rounded bg-muted/40" />
+              <div class="h-4 w-5/6 rounded bg-muted/40" />
+            </div>
+            <div class="doc-divider"></div>
+            <div class="space-y-3">
+              <div class="h-6 w-48 rounded bg-muted/60" />
+              <div class="h-3.5 w-full rounded bg-muted/40" />
+              <div class="h-3.5 w-11/12 rounded bg-muted/40" />
+              <div class="h-3.5 w-3/4 rounded bg-muted/40" />
+            </div>
+            <div class="space-y-3 pt-4">
+              <div class="h-5 w-40 rounded bg-muted/60" />
+              <div class="h-3.5 w-full rounded bg-muted/40" />
+              <div class="h-3.5 w-4/5 rounded bg-muted/40" />
+            </div>
+          </div>
+        </article>
+        <article v-else-if="selected || rawFile || readOnlySource" class="doc">
           <div class="doc-overline"><span>{{ activeSpace }} / Markdown note</span><span>·</span><span>Knowledge vault</span></div>
           <h1>{{ noteTitle }}</h1>
           <div v-if="leadHtml" class="lead" v-html="leadHtml"></div>
@@ -1080,13 +1139,23 @@ onMounted(() => {
       <div class="a-outline-top">Outline &amp; links</div>
       <div class="aside-scroll">
         <div class="a-aside-label">On this page</div>
-        <button v-for="heading in outlineLinks" :key="heading.id" class="outline-link"
-          :class="{ active: activeHeading === heading.id }" :style="{ paddingLeft: (11 + Math.max(0, heading.level - 2) * 10) + 'px' }"
-          type="button" @click="gotoHeading(heading.id)">{{ heading.title }}</button>
+        <div v-if="noteLoading || (treeLoading && !selected && !rawFile && !readOnlySource)" class="space-y-2 py-1" aria-hidden="true">
+          <div v-for="slot in 3" :key="slot" class="card-shimmer h-3.5 rounded bg-muted/50" :class="slot === 2 ? 'ml-3 w-28' : 'w-32'" />
+        </div>
+        <template v-else>
+          <button v-for="heading in outlineLinks" :key="heading.id" class="outline-link"
+            :class="{ active: activeHeading === heading.id }" :style="{ paddingLeft: (11 + Math.max(0, heading.level - 2) * 10) + 'px' }"
+            type="button" @click="gotoHeading(heading.id)">{{ heading.title }}</button>
+        </template>
         <div class="a-aside-label" style="margin-top:32px">Linked notes</div>
-        <button v-for="note in linkedNotes" :key="note.id" type="button" class="a-backlink" @click="openGraphWiki(note.id)">
-          <ArrowUpRight /><span>{{ note.title }}</span>
-        </button>
+        <div v-if="linkedLoading || noteLoading" class="space-y-2 py-1" aria-hidden="true">
+          <div v-for="slot in 2" :key="slot" class="card-shimmer h-3.5 w-32 rounded bg-muted/50" />
+        </div>
+        <template v-else>
+          <button v-for="note in linkedNotes" :key="note.id" type="button" class="a-backlink" @click="openGraphWiki(note.id)">
+            <ArrowUpRight /><span>{{ note.title }}</span>
+          </button>
+        </template>
       </div>
     </aside>
   </section>

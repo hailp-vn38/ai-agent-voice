@@ -218,7 +218,45 @@ onBeforeUnmount(() => {
 
     <div v-if="error" role="alert" class="rounded-xl border border-danger/30 bg-danger/5 p-4 text-sm text-danger">{{ error }}</div>
     <p v-if="notice" role="status" class="rounded-xl border border-success/30 bg-success/5 p-3 text-sm text-success-foreground">{{ notice }}</p>
-    <div v-if="loading" class="studio-panel p-8 text-center text-sm text-muted-foreground">{{ t('common.loading') }}</div>
+    <div
+      v-if="loading"
+      data-job-detail-skeleton
+      role="status"
+      aria-busy="true"
+      :aria-label="t('common.loading')"
+      class="space-y-5"
+    >
+      <div class="grid gap-3 sm:grid-cols-2 xl:grid-cols-4" aria-hidden="true">
+        <div v-for="slot in 4" :key="slot" class="studio-panel card-shimmer space-y-3 p-4">
+          <div class="flex items-center justify-between">
+            <div class="h-3.5 w-24 rounded bg-muted/50" />
+            <div class="size-4 rounded bg-muted/60" />
+          </div>
+          <div class="h-7 w-16 rounded bg-muted/60" />
+          <div class="h-3 w-36 rounded bg-muted/40" />
+        </div>
+      </div>
+
+      <div class="card-shimmer flex flex-wrap items-center justify-between gap-3 rounded-xl py-1" aria-hidden="true">
+        <div class="space-y-2">
+          <div class="h-5 w-44 rounded bg-muted/60" />
+          <div class="h-3 w-64 max-w-full rounded bg-muted/40" />
+        </div>
+        <div class="h-6 w-24 rounded-md bg-muted/40" />
+      </div>
+
+      <div class="studio-panel card-shimmer space-y-4 p-4 sm:p-5" aria-hidden="true">
+        <div class="flex flex-wrap gap-2">
+          <div v-for="pill in 4" :key="pill" class="h-8 w-24 rounded-lg bg-muted/50" />
+        </div>
+        <div class="grid gap-4 lg:grid-cols-[minmax(0,1fr)_320px]">
+          <div class="space-y-3">
+            <div v-for="step in 4" :key="step" class="h-20 rounded-xl bg-muted/40" />
+          </div>
+          <div class="hidden h-80 rounded-xl bg-muted/40 lg:block" />
+        </div>
+      </div>
+    </div>
 
     <template v-if="job && !loading">
       <KnowledgeJobState v-if="job.execution_mode === 'knowledge_ingest_v3'" :job="job" @changed="load()" />

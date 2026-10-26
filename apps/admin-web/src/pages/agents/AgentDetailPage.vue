@@ -580,6 +580,72 @@ async function confirmDeleteDevice() {
     </ConfirmDialog>
   </div>
 
+  <div
+    v-else-if="store.loading"
+    data-agent-detail-skeleton
+    role="status"
+    aria-busy="true"
+    :aria-label="t('common.loading')"
+    class="space-y-4 sm:space-y-5"
+  >
+    <div class="studio-panel card-shimmer p-4 sm:p-5" aria-hidden="true">
+      <div class="h-4 w-24 rounded bg-muted/50" />
+      <div class="mt-3 flex flex-wrap items-start justify-between gap-4">
+        <div class="flex items-start gap-3">
+          <div class="size-11 shrink-0 rounded-xl bg-muted/60" />
+          <div class="space-y-2">
+            <div class="h-6 w-48 rounded bg-muted/60" />
+            <div class="h-4 w-72 max-w-full rounded bg-muted/40" />
+          </div>
+        </div>
+        <div class="flex gap-2">
+          <div class="h-9 w-28 rounded-lg bg-muted/50" />
+          <div class="h-9 w-24 rounded-lg bg-muted/50" />
+        </div>
+      </div>
+      <div class="mt-4 grid gap-3 sm:grid-cols-2 lg:max-w-md">
+        <div class="h-16 rounded-xl bg-muted/40" />
+        <div class="h-16 rounded-xl bg-muted/40" />
+      </div>
+    </div>
+
+    <div class="studio-panel card-shimmer flex flex-wrap gap-2 p-1.5" aria-hidden="true">
+      <div v-for="tab in 5" :key="tab" class="h-9 w-24 rounded-xl bg-muted/50" />
+    </div>
+
+    <div class="studio-panel card-shimmer space-y-3 p-4 sm:p-5" aria-hidden="true">
+      <div class="flex items-center justify-between gap-3">
+        <div class="h-5 w-40 rounded bg-muted/60" />
+        <div class="flex gap-2">
+          <div class="h-8 w-28 rounded-lg bg-muted/50" />
+          <div class="h-8 w-28 rounded-lg bg-muted/40" />
+        </div>
+      </div>
+      <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        <div v-for="slot in 3" :key="slot" class="h-20 rounded-xl bg-muted/40" />
+      </div>
+    </div>
+
+    <div class="studio-panel card-shimmer space-y-3 p-4 sm:p-5" aria-hidden="true">
+      <div class="h-4 w-36 rounded bg-muted/60" />
+      <div class="grid gap-2 sm:grid-cols-4">
+        <div v-for="step in 4" :key="step" class="h-14 rounded-xl bg-muted/40" />
+      </div>
+    </div>
+
+    <div class="grid items-start gap-4 lg:grid-cols-[minmax(0,1.35fr)_minmax(320px,0.65fr)]" aria-hidden="true">
+      <div class="studio-panel card-shimmer space-y-3 p-4 sm:p-5">
+        <div class="h-5 w-44 rounded bg-muted/60" />
+        <div v-for="node in 4" :key="node" class="h-24 rounded-xl bg-muted/40" />
+      </div>
+      <div class="studio-panel card-shimmer space-y-4 p-4 sm:p-5">
+        <div class="h-5 w-40 rounded bg-muted/60" />
+        <div class="h-20 rounded-xl bg-muted/40" />
+        <div class="h-40 rounded-xl bg-muted/40" />
+      </div>
+    </div>
+  </div>
+
   <section v-else class="space-y-4 py-16 text-center">
     <h1 class="text-2xl font-semibold">{{ t('agents.notFound') }}</h1>
     <p class="text-sm text-muted-foreground">{{ t('agents.notFoundDescription') }}</p>

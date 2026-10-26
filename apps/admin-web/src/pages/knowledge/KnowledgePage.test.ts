@@ -463,3 +463,51 @@ it('rejects non-Markdown files dropped onto the page', async () => {
     wrapper.unmount()
   }
 })
+
+it('shows shimmer placeholders in the explorer and note reader while loading', async () => {
+  let resolveTree!: (value: { items: Array<Record<string, unknown>> }) => void
+  let resolvePage!: (value: Record<string, unknown>) => void
+  const fallback = requestJsonMock.getMockImplementation()!
+  requestJsonMock.mockImplementation((url: string) => {
+    if (url === '/api/admin/knowledge/tree?space=wiki') {
+      return new Promise(resolve => { resolveTree = resolve })
+    }
+    if (url === '/api/admin/knowledge/pages/wiki_demo') {
+      return new Promise(resolve => { resolvePage = resolve })
+    }
+    return fallback(url)
+  })
+
+  const wrapper = mount(KnowledgePage)
+  try {
+    await flushPromises()
+    expect(wrapper.find('[data-knowledge-tree-skeleton]').exists()).toBe(true)
+    expect(wrapper.find('[data-knowledge-detail-skeleton]').exists()).toBe(true)
+    expect(wrapper.get('[data-knowledge-detail-skeleton]').attributes('aria-busy')).toBe('true')
+    expect(wrapper.findAll('.card-shimmer').length).toBeGreaterThan(0)
+
+    resolveTree({
+      items: [
+        { type: 'folder', space: 'wiki', path: 'wiki', name: 'wiki', editable: true },
+        { type: 'file', space: 'wiki', path: 'wiki/wiki-file.md', name: 'wiki-file.md', id: 'wiki_demo', revision: 1, status: 'verified', editable: true },
+      ],
+    })
+    await flushPromises()
+    expect(wrapper.find('[data-knowledge-tree-skeleton]').exists()).toBe(false)
+    expect(wrapper.find('[data-knowledge-detail-skeleton]').exists()).toBe(true)
+
+    resolvePage({
+      id: 'wiki_demo',
+      title: 'Wiki Demo',
+      body: '# Wiki Demo\n\nLoaded body.',
+      status: 'verified',
+      revision: 1,
+      source_ref: null,
+    })
+    await flushPromises()
+    expect(wrapper.find('[data-knowledge-detail-skeleton]').exists()).toBe(false)
+    expect(wrapper.get('.doc h1').text()).toBe('Wiki Demo')
+  } finally {
+    wrapper.unmount()
+  }
+})

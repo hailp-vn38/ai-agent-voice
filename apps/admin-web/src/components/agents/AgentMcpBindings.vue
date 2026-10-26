@@ -93,7 +93,6 @@ watch(() => props.agentId, () => { void load() }, { immediate: true })
 
     <p v-if="error" role="alert" class="rounded-lg border border-danger/40 p-3 text-sm text-danger">{{ error }}</p>
     <p v-if="message" role="status" class="text-sm text-muted-foreground">{{ message }}</p>
-    <p v-if="loading" class="text-sm text-muted-foreground">{{ t('common.loading') }}</p>
 
     <div class="flex flex-wrap gap-2 rounded-xl border border-border/70 bg-surface p-3">
       <label class="min-w-48 flex-1 space-y-1">
@@ -110,7 +109,18 @@ watch(() => props.agentId, () => { void load() }, { immediate: true })
       </Button>
     </div>
 
-    <div v-if="!loading && bindings.length" class="divide-y divide-border/70 overflow-hidden rounded-xl border border-border/70">
+    <div v-if="loading" role="status" aria-busy="true" :aria-label="t('common.loading')" class="space-y-2">
+      <div v-for="slot in 2" :key="slot" class="card-shimmer flex items-center gap-3 rounded-xl border border-border/70 p-4" aria-hidden="true">
+        <div class="size-10 shrink-0 rounded-xl bg-muted/60" />
+        <div class="min-w-0 flex-1 space-y-2">
+          <div class="h-4 w-40 rounded bg-muted/60" />
+          <div class="h-3 w-28 rounded bg-muted/40" />
+        </div>
+        <div class="h-8 w-20 rounded-lg bg-muted/40" />
+      </div>
+    </div>
+
+    <div v-else-if="bindings.length" class="divide-y divide-border/70 overflow-hidden rounded-xl border border-border/70">
       <div v-for="binding in bindings" :key="binding.server_key" class="flex flex-wrap items-center gap-3 p-4">
         <span class="flex size-10 shrink-0 items-center justify-center rounded-xl bg-studio-violet/10 text-studio-violet">
           <Link2 class="size-5" aria-hidden="true" />

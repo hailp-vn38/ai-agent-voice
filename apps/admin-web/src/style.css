@@ -158,11 +158,36 @@
     color: white;
     background: linear-gradient(135deg, #6944e9, #0798b9);
   }
+
+  .card-shimmer {
+    position: relative;
+    overflow: hidden;
+  }
+
+  .card-shimmer::after {
+    position: absolute;
+    inset: 0;
+    content: '';
+    pointer-events: none;
+    background: linear-gradient(90deg, transparent, var(--muted), transparent);
+    transform: translateX(-100%);
+    animation: studio-shimmer 1.6s infinite;
+  }
+}
+
+@keyframes studio-shimmer {
+  to {
+    transform: translateX(100%);
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
   .studio-panel, .studio-logo {
     transition: none !important;
+    animation: none !important;
+  }
+
+  .card-shimmer::after {
     animation: none !important;
   }
 }
