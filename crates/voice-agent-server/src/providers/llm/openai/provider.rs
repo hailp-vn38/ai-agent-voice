@@ -5,17 +5,16 @@ use serde::Serialize;
 use serde_json::Value;
 use url::Url;
 
-use crate::{
-    config::SecretString,
-    providers::{
-        llm::{
-            ChatMessage, LlmCapabilityTag, LlmError, LlmEventStream, LlmOperation, LlmOutput,
-            LlmProvider, LlmRequest, collect_chat_stream, effective_capability_tags,
-            openai::config::OpenAiConfig, stream_openai_request, valid_generation_bounds,
-            valid_llm_tags,
-        },
-        vision::{OpenAiVisionCompletion, VisionError, execute_openai_vision_completion},
+#[cfg(test)]
+use crate::config::SecretString;
+use crate::providers::{
+    llm::{
+        ChatMessage, LlmCapabilityTag, LlmError, LlmEventStream, LlmOperation, LlmOutput,
+        LlmProvider, LlmRequest, collect_chat_stream, effective_capability_tags,
+        openai::config::OpenAiConfig, stream_openai_request, valid_generation_bounds,
+        valid_llm_tags,
     },
+    vision::{OpenAiVisionCompletion, VisionError, execute_openai_vision_completion},
 };
 
 pub(crate) struct ConfiguredOpenAiLlm {
@@ -68,6 +67,7 @@ impl ConfiguredOpenAiLlm {
         })
     }
 
+    #[cfg(test)]
     pub(crate) fn build(
         api_key: &str,
         base_url: &str,
