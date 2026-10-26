@@ -66,9 +66,9 @@ const { t } = useI18n()
         <ThemeToggle />
       </template>
       <template v-else>
-        <div v-if="collapsible" class="mb-2.5 flex items-center justify-between gap-2 text-xs">
+        <div v-if="collapsible" class="mb-2 flex items-center justify-between gap-2 text-xs">
           <span class="font-medium">{{ t('notifications.title') }}</span>
-          <NotificationBell placement="sidebar" />
+          <NotificationBell compact placement="sidebar" />
         </div>
         <div class="flex items-center justify-between gap-2 text-xs">
           <span class="font-medium">{{ t('app.theme') }}</span>

@@ -18,6 +18,8 @@ import type {
   NotificationTopic,
   OutboxDeliveryStatus,
 } from '@/api/types/notifications'
+import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
 import { useI18n } from '@/composables/useI18n'
 import type { MessageKey } from '@/i18n/messages'
 
@@ -38,6 +40,7 @@ const instanceUid = instance?.uid ?? Math.random()
 const isToastHost = ref(false)
 const { t } = useI18n()
 
+const triggerEl = ref<HTMLButtonElement | null>(null)
 const open = ref(false)
 const filter = ref<'all' | 'unread'>('all')
 const items = ref<NotificationItem[]>([])
@@ -45,15 +48,40 @@ const unreadCount = ref(0)
 const toastEnabled = ref(true)
 const activeToast = ref<NotificationItem | null>(null)
 const demoMode = ref(false)
+const anchorLeftPx = ref<number | null>(null)
 let toastTimer: ReturnType<typeof setTimeout> | null = null
 let unsubscribeEvents: (() => void) | null = null
 
-const popoverPositionClass = computed(() => {
-  if (props.placement === 'sidebar') {
-    return 'bottom-full left-0 mb-2 w-[360px] sm:w-[400px]'
+const popoverStyle = computed(() => {
+  if (props.placement === 'sidebar' && anchorLeftPx.value !== null && anchorLeftPx.value > 0) {
+    return {
+      left: `${anchorLeftPx.value}px`,
+      bottom: '16px',
+    }
   }
-  return 'top-full right-0 mt-2 w-[340px] sm:w-[400px]'
+  return undefined
 })
+
+const popoverFallbackClass = computed(() => {
+  if (props.placement === 'sidebar') {
+    return 'bottom-4 left-4 lg:left-[268px]'
+  }
+  return 'top-16 right-4'
+})
+
+function updateAnchorPosition(): void {
+  if (props.placement !== 'sidebar' || !triggerEl.value) {
+    anchorLeftPx.value = null
+    return
+  }
+  const sidebarEl = triggerEl.value.closest('aside')
+  const rect = (sidebarEl ?? triggerEl.value).getBoundingClientRect()
+  if (rect.right > 0) {
+    anchorLeftPx.value = Math.round(rect.right + 12)
+  } else {
+    anchorLeftPx.value = null
+  }
+}
 
 async function refresh(): Promise<void> {
   const [page, settings] = await Promise.all([
@@ -88,6 +116,7 @@ function dismissToast(): void {
 async function toggleOpen(): Promise<void> {
   open.value = !open.value
   if (open.value) {
+    updateAnchorPosition()
     await refresh()
   }
 }
@@ -146,29 +175,29 @@ function statusLabel(status: OutboxDeliveryStatus): string {
   return t(`notifications.status.${status}` as MessageKey)
 }
 
-function severityBadgeClass(severity: NotificationSeverity): string {
-  if (severity === 'error') {
-    return 'border-rose-500/30 bg-rose-500/10 text-rose-500'
-  }
-  if (severity === 'warning') {
-    return 'border-amber-500/30 bg-amber-500/10 text-amber-500'
-  }
-  if (severity === 'success') {
-    return 'border-emerald-500/30 bg-emerald-500/10 text-emerald-500'
-  }
-  return 'border-sky-500/30 bg-sky-500/10 text-sky-500'
+function severityDotClass(severity: NotificationSeverity): string {
+  if (severity === 'error') return 'bg-danger'
+  if (severity === 'warning') return 'bg-warning'
+  if (severity === 'success') return 'bg-success'
+  return 'bg-studio-violet'
 }
 
 function deliveryStatusClass(status: OutboxDeliveryStatus): string {
-  if (status === 'sent') return 'text-emerald-500'
-  if (status === 'failed') return 'text-rose-500'
-  if (status === 'sending' || status === 'pending') return 'text-amber-500'
-  return 'text-[var(--text-muted)]'
+  if (status === 'sent') return 'text-success-foreground'
+  if (status === 'failed') return 'text-danger-foreground'
+  return 'text-muted-foreground'
+}
+
+function onKeydown(event: KeyboardEvent): void {
+  if (event.key === 'Escape' && open.value) {
+    open.value = false
+  }
 }
 
 onMounted(() => {
   mountedBellUids.add(instanceUid)
   isToastHost.value = mountedBellUids.values().next().value === instanceUid
+  window.addEventListener('keydown', onKeydown)
   void refresh()
   unsubscribeEvents = subscribeNotificationEvents({
     onCreated: item => {
@@ -183,6 +212,7 @@ onMounted(() => {
 
 onUnmounted(() => {
   mountedBellUids.delete(instanceUid)
+  window.removeEventListener('keydown', onKeydown)
   unsubscribeEvents?.()
   if (toastTimer) clearTimeout(toastTimer)
 })
@@ -191,78 +221,92 @@ onUnmounted(() => {
 <template>
   <div class="relative inline-flex items-center">
     <button
+      ref="triggerEl"
       type="button"
       data-testid="notification-bell-trigger"
-      class="relative inline-flex items-center justify-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--bg-subtle)] text-[var(--text-secondary)] transition-colors hover:bg-[var(--bg-hover)] hover:text-[var(--text)]"
-      :class="props.compact ? 'h-9 w-9 p-0' : 'h-9 px-2.5 text-xs font-medium'"
+      class="relative inline-flex items-center justify-center gap-2 rounded-lg text-sidebar-foreground/80 transition-colors hover:bg-accent hover:text-accent-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+      :class="props.compact ? 'size-9' : 'h-9 px-3 text-xs font-medium border border-border bg-background'"
       :aria-label="t('notifications.bellLabel', { count: unreadCount })"
       :title="t('notifications.bellLabel', { count: unreadCount })"
       @click="toggleOpen"
     >
-      <Bell class="h-4 w-4 shrink-0" />
+      <Bell class="size-4 shrink-0" />
       <span v-if="!props.compact" class="truncate">{{ t('notifications.title') }}</span>
       <span
         v-if="unreadCount > 0"
         data-testid="notification-unread-badge"
-        class="inline-flex min-w-[18px] items-center justify-center rounded-full bg-rose-600 px-1.5 py-0.5 text-[10px] font-bold leading-none text-white"
-        :class="props.compact ? 'absolute -right-1 -top-1' : ''"
+        class="inline-flex min-w-[18px] items-center justify-center rounded-full bg-danger px-1.5 py-0.5 text-[10px] font-bold leading-none text-white shadow-xs"
+        :class="props.compact ? 'absolute -right-0.5 -top-0.5' : ''"
       >
         {{ unreadCount > 99 ? '99+' : unreadCount }}
       </span>
     </button>
 
-    <!-- Inbox Popover -->
+    <!-- Click-outside backdrop -->
     <div
       v-if="open"
+      class="fixed inset-0 z-40"
+      aria-hidden="true"
+      @click="open = false"
+    />
+
+    <!-- Inbox Popover (fixed to viewport so sidebar overflow-hidden never clips it) -->
+    <section
+      v-if="open"
       data-testid="notification-popover"
-      class="absolute z-50 rounded-xl border border-[var(--border)] bg-[var(--bg-elevated)] p-3 shadow-2xl"
-      :class="popoverPositionClass"
+      class="fixed z-50 flex w-[360px] max-w-[calc(100vw-2rem)] flex-col rounded-2xl border border-border bg-card p-4 text-card-foreground shadow-2xl sm:w-[400px]"
+      :class="popoverFallbackClass"
+      :style="popoverStyle"
+      role="dialog"
+      :aria-label="t('notifications.title')"
     >
-      <div class="flex items-center justify-between gap-2 border-b border-[var(--border)] pb-2.5">
-        <div class="flex items-center gap-2">
-          <h3 class="text-sm font-semibold text-[var(--text)]">
+      <!-- Header -->
+      <div class="flex items-center justify-between gap-2 border-b border-border/70 pb-3">
+        <div class="flex min-w-0 items-center gap-2">
+          <h3 class="truncate text-sm font-semibold text-foreground">
             {{ t('notifications.title') }}
           </h3>
-          <span
-            v-if="demoMode"
-            class="rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 text-[10px] font-medium text-amber-500"
-          >
+          <Badge v-if="demoMode" variant="secondary" class="shrink-0 text-[10px]">
             {{ t('notifications.demoBadge') }}
-          </span>
+          </Badge>
         </div>
 
-        <div class="flex items-center gap-1">
-          <button
+        <div class="flex shrink-0 items-center gap-1">
+          <Button
             type="button"
+            variant="outline"
+            size="sm"
             data-testid="notification-simulate-demo"
-            class="inline-flex items-center gap-1 rounded-md border border-[var(--border)] bg-[var(--bg-subtle)] px-2 py-1 text-[11px] font-medium text-[var(--text-secondary)] transition-colors hover:bg-[var(--bg-hover)] hover:text-[var(--text)]"
+            class="h-7 gap-1 px-2 text-[11px]"
             @click="simulateDemo"
           >
-            <Sparkles class="h-3 w-3 text-amber-500" />
+            <Sparkles class="size-3 text-studio-violet" />
             <span>{{ t('notifications.simulateDemo') }}</span>
-          </button>
-          <button
+          </Button>
+          <Button
             type="button"
-            class="inline-flex h-6 w-6 items-center justify-center rounded-md text-[var(--text-muted)] hover:bg-[var(--bg-hover)] hover:text-[var(--text)]"
+            variant="ghost"
+            size="icon"
+            class="size-7"
             :aria-label="t('common.close')"
             @click="open = false"
           >
-            <X class="h-3.5 w-3.5" />
-          </button>
+            <X class="size-3.5" />
+          </Button>
         </div>
       </div>
 
       <!-- Filter Tabs & Bulk Actions -->
-      <div class="mt-2.5 flex items-center justify-between gap-2">
-        <div class="inline-flex rounded-lg border border-[var(--border)] bg-[var(--bg-subtle)] p-0.5 text-xs">
+      <div class="mt-3 flex items-center justify-between gap-2">
+        <div class="inline-flex rounded-lg border border-border bg-muted/60 p-0.5 text-xs">
           <button
             type="button"
             data-testid="notification-tab-all"
             class="rounded-md px-2.5 py-1 font-medium transition-colors"
             :class="
               filter === 'all'
-                ? 'bg-[var(--bg-elevated)] text-[var(--text)] shadow-xs'
-                : 'text-[var(--text-muted)] hover:text-[var(--text)]'
+                ? 'bg-card text-foreground shadow-xs'
+                : 'text-muted-foreground hover:text-foreground'
             "
             @click="setFilter('all')"
           >
@@ -274,8 +318,8 @@ onUnmounted(() => {
             class="rounded-md px-2.5 py-1 font-medium transition-colors"
             :class="
               filter === 'unread'
-                ? 'bg-[var(--bg-elevated)] text-[var(--text)] shadow-xs'
-                : 'text-[var(--text-muted)] hover:text-[var(--text)]'
+                ? 'bg-card text-foreground shadow-xs'
+                : 'text-muted-foreground hover:text-foreground'
             "
             @click="setFilter('unread')"
           >
@@ -283,34 +327,36 @@ onUnmounted(() => {
           </button>
         </div>
 
-        <div class="flex items-center gap-1.5 text-[11px]">
+        <div class="flex items-center gap-1">
           <button
             type="button"
             data-testid="notification-mark-all-read"
-            class="inline-flex items-center gap-1 rounded-md px-2 py-1 font-medium text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text)] disabled:opacity-40"
+            class="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground disabled:opacity-40"
+            :title="t('notifications.markAllRead')"
             :disabled="unreadCount === 0"
             @click="markAllRead"
           >
-            <CheckCheck class="h-3.5 w-3.5" />
-            <span>{{ t('notifications.markAllRead') }}</span>
+            <CheckCheck class="size-3.5" />
+            <span class="hidden sm:inline">{{ t('notifications.markAllRead') }}</span>
           </button>
           <button
             type="button"
             data-testid="notification-purge-read"
-            class="inline-flex items-center gap-1 rounded-md px-2 py-1 font-medium text-[var(--text-muted)] hover:bg-[var(--bg-hover)] hover:text-rose-500"
+            class="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-medium text-muted-foreground transition-colors hover:bg-danger/10 hover:text-danger-foreground"
+            :title="t('notifications.purgeRead')"
             @click="purgeRead"
           >
-            <Trash2 class="h-3.5 w-3.5" />
-            <span>{{ t('notifications.purgeRead') }}</span>
+            <Trash2 class="size-3.5" />
+            <span class="hidden sm:inline">{{ t('notifications.purgeRead') }}</span>
           </button>
         </div>
       </div>
 
       <!-- Notification List -->
-      <div class="mt-2.5 max-h-80 space-y-2 overflow-y-auto pr-0.5">
+      <div class="mt-3 max-h-[340px] space-y-2 overflow-y-auto pr-0.5">
         <p
           v-if="items.length === 0"
-          class="py-8 text-center text-xs text-[var(--text-muted)]"
+          class="py-8 text-center text-xs text-muted-foreground"
         >
           {{ t('notifications.empty') }}
         </p>
@@ -319,11 +365,11 @@ onUnmounted(() => {
           v-for="item in items"
           :key="item.id"
           data-testid="notification-item"
-          class="group rounded-lg border p-2.5 transition-colors"
+          class="group rounded-xl border p-3 transition-colors"
           :class="
             item.is_read
-              ? 'border-[var(--border)] bg-[var(--bg-subtle)]/50 opacity-75'
-              : 'border-[var(--border-strong)] bg-[var(--bg-subtle)]'
+              ? 'border-border/60 bg-background/60 opacity-75 hover:bg-surface/60'
+              : 'border-studio-violet/30 bg-surface/90 hover:bg-surface-elevated'
           "
         >
           <div class="flex items-start justify-between gap-2">
@@ -333,23 +379,20 @@ onUnmounted(() => {
               class="min-w-0 flex-1 text-left"
               @click="openNotification(item)"
             >
-              <div class="flex flex-wrap items-center gap-1.5">
+              <div class="flex items-center gap-2">
                 <span
-                  v-if="!item.is_read"
-                  class="h-2 w-2 shrink-0 rounded-full bg-sky-500"
-                  :title="t('notifications.unreadDot')"
+                  class="size-2 shrink-0 rounded-full"
+                  :class="item.is_read ? 'bg-muted-foreground/40' : severityDotClass(item.severity)"
+                  :title="!item.is_read ? t('notifications.unreadDot') : undefined"
                 />
-                <span
-                  class="rounded-md border px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide"
-                  :class="severityBadgeClass(item.severity)"
-                >
+                <span class="truncate text-[11px] font-medium text-muted-foreground">
                   {{ topicLabel(item.topic) }}
                 </span>
               </div>
-              <p class="mt-1 text-xs font-semibold text-[var(--text)]">
+              <p class="mt-1 text-xs font-semibold text-foreground">
                 {{ item.title }}
               </p>
-              <p class="mt-0.5 line-clamp-2 text-[11px] text-[var(--text-secondary)]">
+              <p class="mt-0.5 line-clamp-2 text-xs text-muted-foreground">
                 {{ item.body }}
               </p>
             </button>
@@ -357,18 +400,18 @@ onUnmounted(() => {
             <button
               type="button"
               data-testid="notification-delete-item"
-              class="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-[var(--text-muted)] opacity-70 hover:bg-[var(--bg-hover)] hover:text-rose-500 group-hover:opacity-100"
+              class="inline-flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground opacity-60 transition-colors hover:bg-danger/10 hover:text-danger-foreground group-hover:opacity-100"
               :aria-label="t('notifications.deleteItem')"
               :title="t('notifications.deleteItem')"
               @click.stop="removeItem(item.id)"
             >
-              <X class="h-3.5 w-3.5" />
+              <X class="size-3.5" />
             </button>
           </div>
 
           <div
             v-if="item.deliveries.length > 0"
-            class="mt-2 flex flex-wrap items-center gap-2 border-t border-[var(--border)]/60 pt-1.5 text-[10px]"
+            class="mt-2 flex flex-wrap items-center gap-2 border-t border-border/50 pt-1.5 text-[11px]"
           >
             <span
               v-for="delivery in item.deliveries"
@@ -377,43 +420,43 @@ onUnmounted(() => {
               :class="deliveryStatusClass(delivery.status)"
               :title="delivery.last_error_code ?? undefined"
             >
-              <span class="uppercase">{{ delivery.channel }}:</span>
+              <span class="capitalize">{{ delivery.channel }}:</span>
               <span>{{ statusLabel(delivery.status) }}</span>
             </span>
           </div>
         </div>
       </div>
-    </div>
+    </section>
 
     <!-- Live Toast Popup -->
     <div
       v-if="activeToast"
       data-testid="notification-toast"
-      class="fixed bottom-4 right-4 z-50 flex w-80 items-start justify-between gap-2 rounded-xl border border-[var(--border-strong)] bg-[var(--bg-elevated)] p-3 shadow-2xl"
+      class="fixed bottom-4 right-4 z-50 flex w-80 items-start justify-between gap-2.5 rounded-2xl border border-border bg-card p-3.5 text-card-foreground shadow-2xl"
       role="status"
       aria-live="polite"
     >
       <div class="min-w-0 flex-1">
-        <span
-          class="inline-block rounded-md border px-1.5 py-0.5 text-[10px] font-semibold uppercase"
-          :class="severityBadgeClass(activeToast.severity)"
-        >
-          {{ topicLabel(activeToast.topic) }}
-        </span>
-        <p class="mt-1 text-xs font-semibold text-[var(--text)]">
+        <div class="flex items-center gap-1.5">
+          <span class="size-2 shrink-0 rounded-full" :class="severityDotClass(activeToast.severity)" />
+          <span class="truncate text-[11px] font-medium text-muted-foreground">
+            {{ topicLabel(activeToast.topic) }}
+          </span>
+        </div>
+        <p class="mt-1 text-xs font-semibold text-foreground">
           {{ activeToast.title }}
         </p>
-        <p class="mt-0.5 line-clamp-2 text-[11px] text-[var(--text-secondary)]">
+        <p class="mt-0.5 line-clamp-2 text-xs text-muted-foreground">
           {{ activeToast.body }}
         </p>
       </div>
       <button
         type="button"
-        class="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-[var(--text-muted)] hover:bg-[var(--bg-hover)] hover:text-[var(--text)]"
+        class="inline-flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-accent-foreground"
         :aria-label="t('notifications.toastDismiss')"
         @click="dismissToast"
       >
-        <X class="h-3.5 w-3.5" />
+        <X class="size-3.5" />
       </button>
     </div>
   </div>
