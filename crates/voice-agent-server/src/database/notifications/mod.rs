@@ -105,6 +105,8 @@ pub struct Reminder {
 pub struct DueReminder {
     pub reminder_id: String,
     pub device_row_id: i64,
+    pub device_id: String,
+    pub due_at_ms: i64,
     pub message: String,
 }
 #[derive(Clone)]

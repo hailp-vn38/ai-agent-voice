@@ -158,13 +158,23 @@ pub(super) async fn put_reminder_target(
         device.id,
         device.device_id.clone(),
     ) {
-        Ok(expires_in_seconds) => Json(serde_json::json!({
-            "session_id": input.session_id,
-            "device_id": device.device_id,
-            "target_device_id": device.device_id,
-            "expires_in_seconds": expires_in_seconds,
-        }))
-        .into_response(),
+        Ok(expires_in_seconds) => {
+            tracing::info!(
+                session_id = %input.session_id,
+                target_device_id = %device.device_id,
+                device_row_id = device.id,
+                agent_key = %session_agent_key,
+                expires_in_seconds,
+                "studio assistant reminder target bound"
+            );
+            Json(serde_json::json!({
+                "session_id": input.session_id,
+                "device_id": device.device_id,
+                "target_device_id": device.device_id,
+                "expires_in_seconds": expires_in_seconds,
+            }))
+            .into_response()
+        }
         Err("unauthorized_target") => error(&request, StatusCode::FORBIDDEN, "unauthorized_target"),
         Err(code) => error(&request, StatusCode::CONFLICT, code),
     }

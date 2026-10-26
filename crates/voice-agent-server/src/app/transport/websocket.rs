@@ -1160,7 +1160,7 @@ async fn handle_reminder_message(
         Arc::clone(sessions),
     );
     match event {
-        crate::protocol::ReminderEvent::SyncRequest { known_revision: _ } => {
+        crate::protocol::ReminderEvent::SyncRequest { known_revision } => {
             let Ok(snapshot) = coordinator.repo().snapshot(device).await else {
                 return;
             };
@@ -1175,6 +1175,16 @@ async fn handle_reminder_message(
             ) {
                 return;
             }
+            tracing::info!(
+                device_row_id = device,
+                session_id = %session_id,
+                snapshot_id = %snapshot_id,
+                known_revision = ?known_revision,
+                revision = snapshot.revision,
+                items_count = snapshot.items.len(),
+                has_more = snapshot.has_more,
+                "reminder snapshot sent to device"
+            );
             let text = serde_json::json!({
                 "type":"reminder", "event":"sync", "session_id":session_id,
                 "snapshot_id":snapshot_id, "revision":snapshot.revision,
@@ -1194,6 +1204,15 @@ async fn handle_reminder_message(
             else {
                 return;
             };
+            tracing::info!(
+                device_row_id = device,
+                session_id = %session_id,
+                snapshot_id = %snapshot_id,
+                revision = snapshot.revision,
+                acked_items_count = snapshot.item_ids.len(),
+                next_wake_at_ms = ?next_wake_at_ms,
+                "reminder snapshot acknowledged by device"
+            );
             let _ = coordinator
                 .repo()
                 .acknowledge_snapshot(

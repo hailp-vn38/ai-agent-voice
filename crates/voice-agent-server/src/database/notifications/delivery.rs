@@ -73,8 +73,8 @@ impl DeviceNotifications {
         }
 
         let mut tx = self.database.pool().begin_with("BEGIN IMMEDIATE").await?;
-        let row = sqlx::query_as::<_, (String, i64, String)>(
-            "SELECT r.id, r.device_row_id, r.message \
+        let row = sqlx::query_as::<_, (String, i64, String, i64, String)>(
+            "SELECT r.id, r.device_row_id, d.device_id, r.due_at_ms, r.message \
              FROM device_reminders r \
              JOIN devices d ON d.id = r.device_row_id \
              WHERE r.device_row_id = ? \
@@ -103,7 +103,7 @@ impl DeviceNotifications {
         .fetch_optional(&mut *tx)
         .await?;
 
-        let Some((reminder_id, device_row_id, message)) = row else {
+        let Some((reminder_id, device_row_id, device_id, due_at_ms, message)) = row else {
             tx.commit().await?;
             return Ok(None);
         };
@@ -129,6 +129,8 @@ impl DeviceNotifications {
             DueReminder {
                 reminder_id,
                 device_row_id,
+                device_id,
+                due_at_ms,
                 message,
             },
             attempt_id,
@@ -220,8 +222,8 @@ impl DeviceNotifications {
     ) -> Result<Option<(DueReminder, String)>, NotificationError> {
         let now = (self.clock)();
         let mut tx = self.database.pool().begin_with("BEGIN IMMEDIATE").await?;
-        let row = sqlx::query_as::<_, (String, i64, String)>(
-            "SELECT r.id, r.device_row_id, r.message \
+        let row = sqlx::query_as::<_, (String, i64, String, i64, String)>(
+            "SELECT r.id, r.device_row_id, d.device_id, r.due_at_ms, r.message \
              FROM device_reminders r \
              JOIN devices d ON d.id = r.device_row_id \
              WHERE r.id = ? \
@@ -244,7 +246,7 @@ impl DeviceNotifications {
         .bind(now)
         .fetch_optional(&mut *tx)
         .await?;
-        let Some((reminder_id, device_row_id, message)) = row else {
+        let Some((reminder_id, device_row_id, device_id, due_at_ms, message)) = row else {
             tx.commit().await?;
             return Ok(None);
         };
@@ -278,6 +280,8 @@ impl DeviceNotifications {
             DueReminder {
                 reminder_id,
                 device_row_id,
+                device_id,
+                due_at_ms,
                 message,
             },
             attempt_id,

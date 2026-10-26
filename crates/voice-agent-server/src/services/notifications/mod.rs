@@ -55,6 +55,21 @@ impl ReminderCoordinator {
     }
 
     fn notify_schedule_changed(&self, device_row_id: i64, schedule_revision: i64) {
+        if let Some(session) = self.sessions.current(device_row_id) {
+            tracing::info!(
+                device_row_id,
+                session_id = %session.session_id,
+                schedule_revision,
+                reminder_capable = session.features.reminders,
+                "reminder sync_required dispatched to active device session"
+            );
+        } else {
+            tracing::info!(
+                device_row_id,
+                schedule_revision,
+                "reminder schedule changed while device is offline; sync pending reconnect"
+            );
+        }
         self.sessions.sync_required(device_row_id, schedule_revision);
         self.scheduler_wakeup.notify_one();
     }
@@ -81,6 +96,23 @@ impl ReminderCoordinator {
             .create_with_context(device_id, ctx, input)
             .await?;
         self.enrich_item_capability(device_row_id, &mut reminder);
+        let due_at_utc = chrono::DateTime::<chrono::Utc>::from_timestamp_millis(reminder.due_at_ms)
+            .map(|dt| dt.to_rfc3339())
+            .unwrap_or_default();
+        tracing::info!(
+            reminder_id = %reminder.id,
+            device_id = %reminder.device_id,
+            device_row_id,
+            due_at_ms = reminder.due_at_ms,
+            due_at_utc = %due_at_utc,
+            timezone = %reminder.timezone,
+            source = %ctx.source.as_str(),
+            caller = %ctx.caller,
+            schedule_revision = reminder.schedule_revision,
+            sync_status = %reminder.sync_status,
+            message = %reminder.message,
+            "reminder created"
+        );
         self.notify_schedule_changed(device_row_id, reminder.schedule_revision);
         Ok(reminder)
     }
@@ -98,6 +130,24 @@ impl ReminderCoordinator {
             .update_with_context(device_id, reminder_id, expected_revision, ctx, input)
             .await?;
         self.enrich_item_capability(device_row_id, &mut reminder);
+        let due_at_utc = chrono::DateTime::<chrono::Utc>::from_timestamp_millis(reminder.due_at_ms)
+            .map(|dt| dt.to_rfc3339())
+            .unwrap_or_default();
+        tracing::info!(
+            reminder_id = %reminder.id,
+            device_id = %reminder.device_id,
+            device_row_id,
+            due_at_ms = reminder.due_at_ms,
+            due_at_utc = %due_at_utc,
+            timezone = %reminder.timezone,
+            source = %ctx.source.as_str(),
+            caller = %ctx.caller,
+            row_revision = reminder.row_revision,
+            schedule_revision = reminder.schedule_revision,
+            sync_status = %reminder.sync_status,
+            message = %reminder.message,
+            "reminder updated"
+        );
         self.notify_schedule_changed(device_row_id, reminder.schedule_revision);
         Ok(reminder)
     }
@@ -113,6 +163,16 @@ impl ReminderCoordinator {
             .repo
             .cancel_with_context(device_id, reminder_id, expected_revision, ctx)
             .await?;
+        tracing::info!(
+            reminder_id = %reminder.id,
+            device_id = %reminder.device_id,
+            device_row_id,
+            source = %ctx.source.as_str(),
+            caller = %ctx.caller,
+            row_revision = reminder.row_revision,
+            schedule_revision = reminder.schedule_revision,
+            "reminder cancelled"
+        );
         self.notify_schedule_changed(device_row_id, reminder.schedule_revision);
         Ok(reminder)
     }
@@ -231,10 +291,19 @@ impl ReminderCoordinator {
             .repo
             .complete_attempt_with_outcome(device_row_id, session_id, reminder_id, attempt_id)
             .await?;
-        if let Some(ref outcome) = outcome
-            && !outcome.duplicate_ack
-        {
-            self.notify_schedule_changed(device_row_id, outcome.schedule_revision);
+        if let Some(ref outcome) = outcome {
+            tracing::info!(
+                reminder_id,
+                attempt_id,
+                device_row_id,
+                session_id,
+                schedule_revision = outcome.schedule_revision,
+                duplicate_ack = outcome.duplicate_ack,
+                "reminder playback completed (device ack received)"
+            );
+            if !outcome.duplicate_ack {
+                self.notify_schedule_changed(device_row_id, outcome.schedule_revision);
+            }
         }
         Ok(outcome)
     }
@@ -252,6 +321,16 @@ impl ReminderCoordinator {
             .fail_attempt(device_row_id, session_id, reminder_id, attempt_id, reason)
             .await?;
         if let Some(ref outcome) = outcome {
+            tracing::warn!(
+                reminder_id,
+                attempt_id,
+                device_row_id,
+                session_id,
+                reason,
+                expired = outcome.expired,
+                schedule_revision = outcome.schedule_revision,
+                "reminder delivery attempt failed"
+            );
             if outcome.expired {
                 self.notify_schedule_changed(device_row_id, outcome.schedule_revision);
             } else {
@@ -271,6 +350,12 @@ impl ReminderCoordinator {
             .on_session_closed(device_row_id, session_id)
             .await?;
         if let Some(rev) = new_revision {
+            tracing::warn!(
+                device_row_id,
+                session_id,
+                schedule_revision = rev,
+                "in-flight reminder expired on session disconnect"
+            );
             self.notify_schedule_changed(device_row_id, rev);
         } else {
             self.scheduler_wakeup.notify_one();
@@ -282,6 +367,12 @@ impl ReminderCoordinator {
         &self,
     ) -> Result<Vec<(i64, i64)>, NotificationError> {
         let changed = self.repo.reap_expired_leases_and_overdue().await?;
+        if !changed.is_empty() {
+            tracing::warn!(
+                expired_devices = ?changed,
+                "reminder reaper expired overdue or exhausted reminders"
+            );
+        }
         for &(dev_id, rev) in &changed {
             self.sessions.sync_required(dev_id, rev);
         }

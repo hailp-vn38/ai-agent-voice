@@ -55,6 +55,18 @@ pub fn start(
                 }
                 let estimated_audio_ms = ((due.message.chars().count() as i64) * 80).max(2_000);
                 let reminder_id = due.reminder_id;
+                let device_id = due.device_id;
+                let due_at_ms = due.due_at_ms;
+                tracing::info!(
+                    reminder_id = %reminder_id,
+                    attempt_id = %attempt_id,
+                    device_id = %device_id,
+                    device_row_id,
+                    session_id = %session_id,
+                    due_at_ms,
+                    message = %due.message,
+                    "reminder triggered and dispatching direct speech to device"
+                );
                 let request = DirectSpeechRequest {
                     request_id: attempt_id.clone(),
                     text: due.message,
@@ -74,13 +86,40 @@ pub fn start(
                             )
                             .await
                         {
-                            Ok(true) => {}
+                            Ok(true) => {
+                                tracing::info!(
+                                    reminder_id = %reminder_id,
+                                    attempt_id = %attempt_id,
+                                    device_id = %device_id,
+                                    device_row_id,
+                                    session_id = %session_id,
+                                    estimated_audio_ms,
+                                    "reminder playback accepted by session actor; awaiting playback ack"
+                                );
+                            }
                             _ => {
+                                tracing::warn!(
+                                    reminder_id = %reminder_id,
+                                    attempt_id = %attempt_id,
+                                    device_id = %device_id,
+                                    device_row_id,
+                                    session_id = %session_id,
+                                    "reminder playback cancelled during pre-start revalidation"
+                                );
                                 sessions.clear_in_flight_reminder(device_row_id, &session_id);
                             }
                         }
                     }
-                    Err(_) => {
+                    Err(err) => {
+                        tracing::warn!(
+                            reminder_id = %reminder_id,
+                            attempt_id = %attempt_id,
+                            device_id = %device_id,
+                            device_row_id,
+                            session_id = %session_id,
+                            error = ?err,
+                            "reminder dispatch deferred before playback start; releasing unstarted claim"
+                        );
                         any_transient_rejection = true;
                         sessions.clear_in_flight_reminder(device_row_id, &session_id);
                         let _ = coordinator
