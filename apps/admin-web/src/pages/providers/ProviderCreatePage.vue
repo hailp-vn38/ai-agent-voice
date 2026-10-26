@@ -1568,7 +1568,7 @@ pre {
 
 .input,
 .select {
-  background: var(--bg);
+  background-color: var(--bg);
   border: 1px solid var(--border);
   border-radius: 8px;
   outline: none;
@@ -1578,6 +1578,10 @@ pre {
   height: 39px;
   font-size: 12.5px;
   min-width: 0;
+}
+
+.select {
+  padding-right: 36px;
 }
 
 .input::placeholder {

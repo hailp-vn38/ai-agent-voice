@@ -18,7 +18,7 @@ function onChange(event: Event) {
       {{ t('app.language') }}
     </span>
     <select
-      class="h-7 rounded-md border border-input bg-background px-2 text-xs outline-none focus:border-ring focus:ring-2 focus:ring-ring/30"
+      class="h-7 rounded-md border border-input bg-background pl-2.5 pr-8 text-xs outline-none focus:border-ring focus:ring-2 focus:ring-ring/30"
       :value="locale"
       :aria-label="t('app.language')"
       @change="onChange"

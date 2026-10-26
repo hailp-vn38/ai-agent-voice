@@ -155,13 +155,13 @@ onBeforeUnmount(() => active?.abort())
   <p v-if="error" role="alert">{{error}}</p>
   <form class="space-y-3" @submit.prevent="create">
    <label class="block">{{t('reminders.message')}}<textarea v-model="message" class="block w-full rounded border p-2" required /></label>
-   <label class="block">{{t('reminders.timeMode')}}<select v-model="mode" class="block rounded border p-2"><option value="relative">{{t('reminders.relative')}}</option><option value="absolute">{{t('reminders.absolute')}}</option></select></label>
+   <label class="block">{{t('reminders.timeMode')}}<select v-model="mode" class="block rounded border py-2 pl-2.5 pr-9"><option value="relative">{{t('reminders.relative')}}</option><option value="absolute">{{t('reminders.absolute')}}</option></select></label>
    <label v-if="mode==='relative'" class="block">{{t('reminders.seconds')}}<input v-model.number="delay" class="block rounded border p-2" type="number" required min="1" max="31536000" /></label>
    <label v-else class="block">{{t('reminders.timestamp')}}<input v-model="at" class="block w-full rounded border p-2" required placeholder="2026-10-13T07:00:00+07:00" /></label>
    <Button type="submit" :disabled="saving || !message.trim() || !validTime">{{t('common.save')}}</Button>
    <Button v-if="editing" type="button" :disabled="saving" @click="closeEdit">{{t('common.cancel')}}</Button>
   </form>
-  <label>{{t('reminders.filter')}}<select v-model="status" @change="page=1"><option value="">{{t('reminders.all')}}</option><option v-for="state in ['pending','completed','cancelled','expired']" :key="state" :value="state">{{t(`reminders.${state}` as Parameters<typeof t>[0])}}</option></select></label>
+  <label>{{t('reminders.filter')}}<select v-model="status" class="rounded border py-1.5 pl-2.5 pr-9" @change="page=1"><option value="">{{t('reminders.all')}}</option><option v-for="state in ['pending','completed','cancelled','expired']" :key="state" :value="state">{{t(`reminders.${state}` as Parameters<typeof t>[0])}}</option></select></label>
   <p v-if="loading" role="status">{{t('common.loading')}}</p>
   <p v-if="!loading && result?.items.length===0">{{t('reminders.empty')}}</p>
   <ul v-if="!loading" class="space-y-3"><li v-for="item in result?.items" :key="item.id" class="rounded border p-3"><p>{{item.message}}</p><time>{{formatDateTime(new Date(item.due_at_ms))}}</time><p>{{t(`reminders.${item.status}` as Parameters<typeof t>[0])}} · {{t('reminders.syncPending')}}</p><div v-if="item.status==='pending'" class="flex gap-2"><Button data-action="edit" :disabled="saving" @click="edit(item)">{{t('reminders.edit')}}</Button><Button data-action="cancel-reminder" :disabled="saving" @click="confirmCancel(item)">{{t('reminders.cancel')}}</Button></div></li></ul>

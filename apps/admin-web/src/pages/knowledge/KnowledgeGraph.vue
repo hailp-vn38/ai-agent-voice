@@ -160,7 +160,7 @@ onBeforeUnmount(() => { requestVersion++; cy?.destroy(); cy = null })
         :disabled="!centerId" @click="scope = 'local'">{{ t('knowledgeV3.graphLocal') }}</Button>
       <label v-if="scope === 'local'" class="flex items-center gap-2 text-xs">
         {{ t('knowledgeV3.graphDepth') }}
-        <select v-model.number="depth" class="admin-input w-16"><option :value="1">1</option><option :value="2">2</option></select>
+        <select v-model.number="depth" class="admin-input w-20"><option :value="1">1</option><option :value="2">2</option></select>
       </label>
       <Button type="button" size="sm" variant="outline" @click="void loadGraph()">{{ t('knowledgeV3.graphRefresh') }}</Button>
       <Button type="button" size="sm" variant="outline" @click="fitGraph">{{ t('knowledgeV3.graphFit') }}</Button>
