@@ -37,7 +37,7 @@ pub struct AgentSpec {
 impl AgentSpec {
     pub const fn allowed_capability_tags(&self) -> &'static [&'static str] {
         match self.id.as_bytes() {
-            b"media_creator" => &["chat", "reasoning", "image", "video", "audio"],
+            b"media_creator" => &["chat", "reasoning", "image", "video"],
             _ => &["chat", "reasoning"],
         }
     }
@@ -192,17 +192,19 @@ pub const AGENT_SPECS: &[AgentSpec] = &[
         parent_id: Some("daily_root"),
         mode: AgentMode::Subagent,
         user_routable: false,
-        default_description: "Generates PNG/SVG images via image_create, synthesizes TTS audio via tts_synthesize, and publishes structured Task Artifacts via artifact_create.",
+        default_description: "Generates PNG/SVG images via image_create, MP4 videos via video_create, synthesizes TTS audio via tts_synthesize, and publishes structured Task Artifacts via artifact_create.",
         default_prompt: MEDIA_CREATOR_PROMPT,
         default_steps: 12,
         default_allowed_tools: &[
             "image_create",
+            "video_create",
             "tts_synthesize",
             "artifact_create",
         ],
         available_tools: &[
             "skill",
             "image_create",
+            "video_create",
             "tts_synthesize",
             "artifact_create",
         ],

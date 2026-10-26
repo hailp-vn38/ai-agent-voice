@@ -327,6 +327,7 @@ struct ResolvedAgentSettings<'a> {
     enabled: bool,
     explicit_ref: Option<String>,
     resolved_provider: ResolvedLlmProvider,
+    execution_provider: ResolvedLlmProvider,
     steps: u32,
     allowed_tools: Vec<String>,
     allowed_skills: Vec<String>,
@@ -350,6 +351,13 @@ fn resolve_effective_agents<'a>(
             .cloned()
             .unwrap_or_else(|| fallback.clone())
     };
+    let find_chat_provider = |pref: &str| -> ResolvedLlmProvider {
+        catalog
+            .iter()
+            .find(|p| p.provider_ref == pref && p.supports_tag("chat"))
+            .cloned()
+            .unwrap_or_else(|| fallback.clone())
+    };
 
     AGENT_SPECS
         .iter()
@@ -370,6 +378,15 @@ fn resolve_effective_agents<'a>(
                 _ => settings.worker_llm_provider.as_str(),
             });
             let resolved_provider = find_provider(spec.id, effective_ref);
+            // Subagents in `Orchestrator` always run a chat/tool-calling loop over `/v1/chat/completions`.
+            // When `media_creator` is configured with a dedicated `image` or `video` provider (without `chat`),
+            // keep `resolved_provider` for UI projection & media backend selection, while using the worker
+            // `chat` provider for the Orchestrator's tool-calling session.
+            let execution_provider = if resolved_provider.supports_tag("chat") {
+                resolved_provider.clone()
+            } else {
+                find_chat_provider(&settings.worker_llm_provider)
+            };
             let steps = ovr
                 .and_then(|o| o.steps)
                 .unwrap_or(spec.default_steps)
@@ -436,6 +453,7 @@ fn resolve_effective_agents<'a>(
                 enabled,
                 explicit_ref,
                 resolved_provider,
+                execution_provider,
                 steps,
                 allowed_tools,
                 allowed_skills,
@@ -460,7 +478,7 @@ pub fn build_agent_definitions(
     let defs = resolve_effective_agents(cfg, settings, catalog)
         .into_iter()
         .map(|eff| {
-            let resolved = &eff.resolved_provider;
+            let resolved = &eff.execution_provider;
             let mut def = AgentDefinition::new(eff.spec.id, &resolved.provider_ref, &resolved.model)
                 .with_mode(eff.spec.mode)
                 .with_description(eff.description)
@@ -498,20 +516,35 @@ static LIVE_MEDIA_CATALOG: std::sync::OnceLock<
     std::sync::Arc<std::sync::RwLock<Vec<ResolvedLlmProvider>>>,
 > = std::sync::OnceLock::new();
 
-pub(crate) fn update_live_media_catalog(catalog: &[ResolvedLlmProvider]) {
+static LIVE_MEDIA_SETTINGS: std::sync::OnceLock<
+    std::sync::Arc<std::sync::RwLock<Option<PersistedBackgroundSettings>>>,
+> = std::sync::OnceLock::new();
+
+pub(crate) fn update_live_media_catalog(
+    catalog: &[ResolvedLlmProvider],
+    settings: Option<&PersistedBackgroundSettings>,
+) {
     if let Some(shared) = LIVE_MEDIA_CATALOG.get() {
         *shared.write().unwrap_or_else(|e| e.into_inner()) = catalog.to_vec();
+    }
+    if let Some(settings) = settings
+        && let Some(shared_settings) = LIVE_MEDIA_SETTINGS.get()
+    {
+        *shared_settings.write().unwrap_or_else(|e| e.into_inner()) = Some(settings.clone());
     }
 }
 
 pub type CatalogImageGeneratorBackend = CatalogMediaBackend;
+pub type CatalogVideoGeneratorBackend = CatalogMediaBackend;
 pub type CatalogTtsSynthesizerBackend = CatalogMediaBackend;
 
 #[derive(Clone)]
 pub struct CatalogMediaBackend {
     store_dir: Option<std::path::PathBuf>,
     catalog: std::sync::Arc<std::sync::RwLock<Vec<ResolvedLlmProvider>>>,
+    settings: std::sync::Arc<std::sync::RwLock<Option<PersistedBackgroundSettings>>>,
     default_image: orchestrator_flow_rs::DefaultImageGeneratorBackend,
+    default_video: orchestrator_flow_rs::DefaultVideoGeneratorBackend,
     default_tts: orchestrator_flow_rs::DefaultTtsSynthesizerBackend,
 }
 
@@ -520,14 +553,22 @@ impl CatalogMediaBackend {
         store_dir: impl Into<std::path::PathBuf>,
         catalog: Vec<ResolvedLlmProvider>,
     ) -> Self {
+        let dir = store_dir.into();
+        let initial_settings = super::load_persisted_settings(&dir);
         let shared = LIVE_MEDIA_CATALOG
             .get_or_init(|| std::sync::Arc::new(std::sync::RwLock::new(catalog.clone())))
             .clone();
         *shared.write().unwrap_or_else(|e| e.into_inner()) = catalog;
+        let shared_settings = LIVE_MEDIA_SETTINGS
+            .get_or_init(|| std::sync::Arc::new(std::sync::RwLock::new(initial_settings.clone())))
+            .clone();
+        *shared_settings.write().unwrap_or_else(|e| e.into_inner()) = initial_settings;
         Self {
-            store_dir: Some(store_dir.into()),
+            store_dir: Some(dir),
             catalog: shared,
+            settings: shared_settings,
             default_image: orchestrator_flow_rs::DefaultImageGeneratorBackend,
+            default_video: orchestrator_flow_rs::DefaultVideoGeneratorBackend,
             default_tts: orchestrator_flow_rs::DefaultTtsSynthesizerBackend,
         }
     }
@@ -536,22 +577,40 @@ impl CatalogMediaBackend {
         Self {
             store_dir: None,
             catalog: std::sync::Arc::new(std::sync::RwLock::new(catalog)),
+            settings: std::sync::Arc::new(std::sync::RwLock::new(None)),
             default_image: orchestrator_flow_rs::DefaultImageGeneratorBackend,
+            default_video: orchestrator_flow_rs::DefaultVideoGeneratorBackend,
             default_tts: orchestrator_flow_rs::DefaultTtsSynthesizerBackend,
         }
     }
 
+    pub fn with_settings(self, settings: PersistedBackgroundSettings) -> Self {
+        *self.settings.write().unwrap_or_else(|e| e.into_inner()) = Some(settings);
+        self
+    }
+
+    fn effective_settings(&self) -> Option<PersistedBackgroundSettings> {
+        if let Some(ref dir) = self.store_dir
+            && let Some(loaded) = super::load_persisted_settings(dir)
+        {
+            return Some(loaded);
+        }
+        self.settings
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
+    }
+
     fn select_provider(&self, required_tag: &str) -> Option<ResolvedLlmProvider> {
         let guard = self.catalog.read().unwrap_or_else(|e| e.into_inner());
-        if let Some(ref dir) = self.store_dir
-            && let Some(settings) = super::load_persisted_settings(dir)
-        {
-            if let Some(explicit_ref) = settings
-                .agents
-                .get("media_creator")
-                .and_then(|o| o.provider_ref.as_deref())
-                .map(str::trim)
-                .filter(|s| !s.is_empty())
+        if let Some(settings) = self.effective_settings() {
+            if matches!(required_tag, "image" | "video")
+                && let Some(explicit_ref) = settings
+                    .agents
+                    .get("media_creator")
+                    .and_then(|o| o.provider_ref.as_deref())
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
                 && let Some(found) = guard.iter().find(|p| {
                     p.provider_ref == explicit_ref
                         && p.supports_tag(required_tag)
@@ -618,6 +677,51 @@ impl orchestrator_flow_rs::ImageGeneratorBackend for CatalogMediaBackend {
             bytes,
             width,
             height,
+            provider: resolved.provider_ref.clone(),
+        })
+    }
+}
+
+#[async_trait::async_trait]
+impl orchestrator_flow_rs::VideoGeneratorBackend for CatalogMediaBackend {
+    async fn generate_video(
+        &self,
+        req: &orchestrator_flow_rs::VideoGenerationRequest,
+    ) -> Result<orchestrator_flow_rs::GeneratedVideoPayload, String> {
+        let Some(resolved) = self.select_provider("video") else {
+            return self.default_video.generate_video(req).await;
+        };
+        let width = req.width.clamp(16, 2048);
+        let height = req.height.clamp(16, 2048);
+        let duration_secs = req.duration_secs.clamp(1, 60);
+        let provider = resolved.to_llm_provider().map_err(|e| e.to_string())?;
+        let output = provider
+            .invoke(crate::providers::LlmOperation::VideoGeneration {
+                prompt: req.prompt.clone(),
+                width,
+                height,
+                duration_secs,
+            })
+            .await
+            .map_err(|e| e.to_string())?;
+        let crate::providers::LlmOutput::Media { bytes, mime_type } = output else {
+            return Err("video provider returned non-media output".to_owned());
+        };
+        let stem = llm_wiki::slugify(
+            req.filename
+                .trim_end_matches(".mp4")
+                .trim_end_matches(".webm")
+                .trim_end_matches(".mov"),
+            64,
+        );
+        let safe_name = format!("{}.mp4", if stem.is_empty() { "video" } else { &stem });
+        Ok(orchestrator_flow_rs::GeneratedVideoPayload {
+            filename: safe_name,
+            mime_type,
+            bytes,
+            width,
+            height,
+            duration_secs,
             provider: resolved.provider_ref.clone(),
         })
     }

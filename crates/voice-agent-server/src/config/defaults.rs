@@ -20,7 +20,7 @@ pub(super) fn default_provider_test_concurrency() -> usize {
     2
 }
 pub(super) fn default_provider_test_timeout_ms() -> u64 {
-    30_000
+    90_000
 }
 pub(super) fn default_history_retention_days() -> u32 {
     30

@@ -60,7 +60,7 @@ function providerSupportsAnyTag(option: BackgroundProviderOption, requiredTags: 
   return requiredTags.some(tag => tags.includes(tag))
 }
 const chatProviderOptions = computed(() =>
-  providerOptions.value.filter(option => providerSupportsAnyTag(option, ['chat'])),
+  providerOptions.value.filter(option => providerSupportsAnyTag(option, ['chat', 'reasoning'])),
 )
 function providerOptionsForAgent(agent: BackgroundAgentConfig | null): BackgroundProviderOption[] {
   if (!agent) return chatProviderOptions.value
@@ -68,8 +68,8 @@ function providerOptionsForAgent(agent: BackgroundAgentConfig | null): Backgroun
     agent.allowed_capability_tags && agent.allowed_capability_tags.length > 0
       ? agent.allowed_capability_tags
       : agent.id === 'media_creator'
-        ? ['chat', 'image', 'video', 'audio']
-        : ['chat']
+        ? ['chat', 'reasoning', 'image', 'video']
+        : ['chat', 'reasoning']
   return providerOptions.value.filter(option => providerSupportsAnyTag(option, allowedTags))
 }
 function formatProviderOptionLabel(option: BackgroundProviderOption): string {

@@ -14,8 +14,9 @@ use crate::app::AppState;
 
 pub use catalog::{
     CatalogImageGeneratorBackend, CatalogMediaBackend, CatalogTtsSynthesizerBackend,
-    ResolvedLlmProvider, build_agent_definitions, default_orchestrator_provider,
-    find_provider_by_tag, project_agents_json, resolve_llm_provider_catalog,
+    CatalogVideoGeneratorBackend, ResolvedLlmProvider, build_agent_definitions,
+    default_orchestrator_provider, find_provider_by_tag, project_agents_json,
+    resolve_llm_provider_catalog,
 };
 use catalog::{agent_supports_provider, update_live_media_catalog};
 pub use specs::{
@@ -222,7 +223,7 @@ pub async fn sync_orchestrator_from_state(state: &AppState) -> Result<(), String
         return Ok(());
     };
     let catalog = resolve_llm_provider_catalog(state).await;
-    update_live_media_catalog(&catalog);
+    update_live_media_catalog(&catalog, Some(&settings));
     let (providers, defs) =
         build_agent_definitions(&state.config.orchestrator, &settings, &catalog);
     orch.reconfigure(providers, defs)

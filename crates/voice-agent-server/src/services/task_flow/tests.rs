@@ -464,7 +464,41 @@ fn resolved_llm_provider_exposes_capability_tags_and_enforces_agent_compatibilit
         Err("provider_capability_mismatch")
     );
 
-    // Media creator can use an `image`-tagged provider, whereas `wiki_researcher` requires `chat`
+    // Media creator can use an `image`- or `video`-tagged provider, whereas `wiki_researcher` requires `chat`
+    let video_only_provider = ResolvedLlmProvider {
+        provider_ref: "llm_video".into(),
+        name: "Sora Video".into(),
+        source: "database",
+        adapter: "openai".into(),
+        model: "sora-1".into(),
+        base_url: "https://api.example.com/v1".into(),
+        api_key: None,
+        timeout_ms: 60_000,
+        max_tokens: 4_096,
+        context_limit_tokens: 32_000,
+        reasoning_effort: None,
+        temperature_percent: None,
+        tags: vec!["video".into()],
+    };
+    let audio_only_provider = ResolvedLlmProvider {
+        provider_ref: "llm_audio".into(),
+        name: "TTS Model".into(),
+        source: "database",
+        adapter: "openai".into(),
+        model: "tts-1".into(),
+        base_url: "https://api.example.com/v1".into(),
+        api_key: None,
+        timeout_ms: 30_000,
+        max_tokens: 4_096,
+        context_limit_tokens: 32_000,
+        reasoning_effort: None,
+        temperature_percent: None,
+        tags: vec!["audio".into()],
+    };
+    let mut catalog = catalog;
+    catalog.push(video_only_provider);
+    catalog.push(audio_only_provider);
+
     let mut media_overrides = BTreeMap::new();
     media_overrides.insert(
         "media_creator".to_owned(),
@@ -475,6 +509,67 @@ fn resolved_llm_provider_exposes_capability_tags_and_enforces_agent_compatibilit
         },
     );
     assert!(validate_agent_overrides("llm_chat", "llm_chat", &media_overrides, &catalog).is_ok());
+
+    media_overrides.insert(
+        "media_creator".to_owned(),
+        AgentConfigOverride {
+            enabled: true,
+            provider_ref: Some("llm_video".to_owned()),
+            ..Default::default()
+        },
+    );
+    assert!(validate_agent_overrides("llm_chat", "llm_chat", &media_overrides, &catalog).is_ok());
+
+    // `media_creator` LLM provider only serves chat/reasoning/image/video; TTS uses `tts_synthesize` tool
+    let mut audio_media_overrides = BTreeMap::new();
+    audio_media_overrides.insert(
+        "media_creator".to_owned(),
+        AgentConfigOverride {
+            enabled: true,
+            provider_ref: Some("llm_audio".to_owned()),
+            ..Default::default()
+        },
+    );
+    assert_eq!(
+        validate_agent_overrides("llm_chat", "llm_chat", &audio_media_overrides, &catalog),
+        Err("provider_capability_mismatch")
+    );
+
+    // When `media_creator` is assigned a dedicated `video` (or `image`) provider without `chat`,
+    // `project_agents_json` reports `llm_video`, while `build_agent_definitions` binds the
+    // Orchestrator subagent's tool-calling session to the worker `chat` provider (`llm_chat`).
+    let settings = crate::services::task_flow::PersistedBackgroundSettings {
+        orchestrator_llm_provider: "llm_chat".into(),
+        worker_llm_provider: "llm_chat".into(),
+        agents: media_overrides,
+        ..Default::default()
+    };
+    let projected_agents = crate::services::task_flow::project_agents_json(
+        &crate::config::OrchestratorSectionConfig::default(),
+        &settings,
+        &catalog,
+    );
+    let media_json = projected_agents
+        .iter()
+        .find(|a| a["id"] == "media_creator")
+        .unwrap();
+    assert_eq!(media_json["effective_provider_ref"], "llm_video");
+    assert_eq!(media_json["effective_model"], "sora-1");
+    assert_eq!(
+        media_json["allowed_capability_tags"],
+        serde_json::json!(["chat", "reasoning", "image", "video"])
+    );
+
+    let (_, defs) = crate::services::task_flow::build_agent_definitions(
+        &crate::config::OrchestratorSectionConfig::default(),
+        &settings,
+        &catalog,
+    );
+    let media_def = defs.iter().find(|d| d.id == "media_creator").unwrap();
+    assert_eq!(
+        media_def.provider_id, "llm_chat",
+        "non-chat media provider must fall back to worker chat provider for Orchestrator tool-calling loop"
+    );
 
     let mut wiki_overrides = BTreeMap::new();
     wiki_overrides.insert(
@@ -504,6 +599,7 @@ async fn catalog_media_backend_and_reasoning_tag_wire_provider_capabilities() {
     use orchestrator_agent_rs::ReasoningEffort;
     use orchestrator_flow_rs::{
         ImageGenerationRequest, ImageGeneratorBackend, TtsSynthesisRequest, TtsSynthesizerBackend,
+        VideoGenerationRequest, VideoGeneratorBackend,
     };
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -517,6 +613,14 @@ async fn catalog_media_backend_and_reasoning_tag_wire_provider_capabilities() {
                     post(|| async {
                         Json(serde_json::json!({
                             "data": [{ "b64_json": STANDARD.encode(b"UPSTREAM_PNG_BYTES") }]
+                        }))
+                    }),
+                )
+                .route(
+                    "/v1/videos/generations",
+                    post(|| async {
+                        Json(serde_json::json!({
+                            "data": [{ "b64_json": STANDARD.encode(b"UPSTREAM_MP4_BYTES") }]
                         }))
                     }),
                 )
@@ -561,7 +665,7 @@ async fn catalog_media_backend_and_reasoning_tag_wire_provider_capabilities() {
         context_limit_tokens: 64_000,
         reasoning_effort: None,
         temperature_percent: None,
-        tags: vec!["image".into(), "audio".into()],
+        tags: vec!["image".into(), "video".into(), "audio".into()],
     };
 
     let catalog = vec![reasoning_provider, media_provider];
@@ -582,7 +686,7 @@ async fn catalog_media_backend_and_reasoning_tag_wire_provider_capabilities() {
         "reasoning-tagged provider should default AgentDefinition reasoning_effort to Medium"
     );
 
-    let backend = CatalogMediaBackend::from_catalog(catalog);
+    let backend = CatalogMediaBackend::from_catalog(catalog).with_settings(settings);
     let img = backend
         .generate_image(&ImageGenerationRequest {
             prompt: "A diagram".into(),
@@ -598,6 +702,21 @@ async fn catalog_media_backend_and_reasoning_tag_wire_provider_capabilities() {
     assert_eq!(img.provider, "llm_media");
     assert_eq!(img.bytes, b"UPSTREAM_PNG_BYTES");
 
+    let vid = backend
+        .generate_video(&VideoGenerationRequest {
+            prompt: "A rack flythrough".into(),
+            title: Some("Flythrough".into()),
+            filename: "flythrough.mp4".into(),
+            width: 640,
+            height: 360,
+            duration_secs: 4,
+        })
+        .await
+        .unwrap();
+    assert_eq!(vid.provider, "llm_media");
+    assert_eq!(vid.bytes, b"UPSTREAM_MP4_BYTES");
+    assert_eq!(vid.mime_type, "video/mp4");
+
     let audio = backend
         .synthesize_tts(&TtsSynthesisRequest {
             text: "Xin chào".into(),
@@ -611,7 +730,7 @@ async fn catalog_media_backend_and_reasoning_tag_wire_provider_capabilities() {
     assert_eq!(audio.provider, "llm_media");
     assert_eq!(audio.bytes, b"RIFF_UPSTREAM_WAV");
 
-    // Fallback when catalog has no image/audio tagged provider
+    // Fallback when catalog has no image/video/audio tagged provider
     let empty_backend = CatalogMediaBackend::from_catalog(Vec::new());
     let fallback_img = empty_backend
         .generate_image(&ImageGenerationRequest {
@@ -626,6 +745,20 @@ async fn catalog_media_backend_and_reasoning_tag_wire_provider_capabilities() {
         .await
         .unwrap();
     assert_eq!(fallback_img.provider, "builtin_png_renderer");
+
+    let fallback_vid = empty_backend
+        .generate_video(&VideoGenerationRequest {
+            prompt: "Fallback video".into(),
+            title: None,
+            filename: "fallback.mp4".into(),
+            width: 64,
+            height: 64,
+            duration_secs: 2,
+        })
+        .await
+        .unwrap();
+    assert_eq!(fallback_vid.provider, "builtin_mp4_renderer");
+    assert_eq!(&fallback_vid.bytes[4..8], b"ftyp");
 
     server.abort();
 }

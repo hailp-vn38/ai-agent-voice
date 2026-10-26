@@ -13,7 +13,7 @@ Tài liệu này mô tả luồng thực thi Task nền hợp nhất trên `voic
   1. `source_collector`: Thu thập nguồn ngoài (`COLLECTOR_TOOL_NAMES`: YouTube Playlist qua `yt_list_playlist` / `yt_fetch_transcript`, tài liệu PDF qua `anydoc_inspect_pdf` / `anydoc_save_to_sources`, hoặc trang Web qua `fetch_html` / `html_extract_*`), phân loại chủ đề `<domain>/<topic>` và lưu file Markdown thô vào `sources/<domain>/<topic>/` (tự động kích hoạt Flow 2).
   2. `wiki_researcher`: Tra cứu chỉ-đọc kho tri thức Wiki (`wiki_query`, `wiki_get`, `wiki_tree`, `wiki_graph_neighbors`) và trích xuất trang Web (`fetch_html`, `html_extract_*`).
   3. `report_stager`: Tổng hợp nội dung thảo luận vào `sources/<domain>/<topic>/` qua `add_to_sources` hoặc xuất báo cáo độc lập qua `markdown_create` / `markdown_read`.
-  4. `media_creator`: Chuyên gia tạo hình ảnh minh họa/sơ đồ (`image_create` cho `image/png` và `image/svg+xml`), tổng hợp giọng nói TTS (`tts_synthesize` cho `audio/wav`), và xuất dữ liệu cấu trúc (`artifact_create`).
+  4. `media_creator`: Chuyên gia tạo hình ảnh minh họa/sơ đồ (`image_create` cho `image/png` và `image/svg+xml`), tạo video (`video_create` cho `video/mp4`), tổng hợp giọng nói TTS qua tool (`tts_synthesize` cho `audio/wav`), và xuất dữ liệu cấu trúc (`artifact_create`).
   5. `reminder_planner`: Quản lý lịch hẹn và lời nhắc (`reminder_create`, `reminder_list`, `reminder_complete`, `reminder_delete`).
 
 ### Flow 2 (`wiki_root`) — Đường ống Biên soạn Tri thức Karpathy LLM Wiki Tự động
@@ -30,7 +30,7 @@ Tài liệu này mô tả luồng thực thi Task nền hợp nhất trên `voic
 ## 2. Luồng Xuất bản & Truy vấn Multi-Kind Task Artifacts
 
 1. **Xuất bản từ Subagent (`HostTool`)**:
-   - Khi `media_creator` hoặc `report_stager` gọi `markdown_create`, `image_create`, `tts_synthesize`, hoặc `artifact_create`, công cụ thực thi `ctx.artifacts().put(ArtifactInput::from_bytes(...))`.
+   - Khi `media_creator` hoặc `report_stager` gọi `markdown_create`, `image_create`, `video_create`, `tts_synthesize`, hoặc `artifact_create`, công cụ thực thi `ctx.artifacts().put(ArtifactInput::from_bytes(...))`.
    - `orchestrator_agent_rs::ArtifactStore` ghi dữ liệu vào `staging/`, tính SHA-256, `fsync`, đổi tên nguyên tử sang `committed/<storage_key>`, và lưu bản ghi vào bảng `artifacts` gắn với `root_session_id = task.session_id`.
 2. **Tổng hợp trong `TaskDetailView` & `AdminJob` (`projections.rs`)**:
    - Khi Admin UI gọi `GET /api/admin/jobs/{id}`, `tm.get_task_detail_any_scope(&id)` truy vấn đồng thời `FamilySnapshot` và `Orchestrator::list_family_artifacts` cho `task.session_id`.
@@ -52,7 +52,7 @@ Tài liệu này mô tả luồng thực thi Task nền hợp nhất trên `voic
        "download_url": "/api/admin/jobs/<job_id>/artifacts/art-..."
      }
      ```
-   - Đồng thời `"budget_used"` bổ sung các chỉ số: `total_artifacts`, `primary_artifacts`, `report_artifacts`, `image_artifacts`, `audio_artifacts`, `artifact_ids`.
+   - Đồng thời `"budget_used"` bổ sung các chỉ số: `total_artifacts`, `primary_artifacts`, `report_artifacts`, `image_artifacts`, `video_artifacts`, `audio_artifacts`, `artifact_ids`.
 3. **Tải xuống có xác minh SHA-256 (`GET /api/admin/jobs/{id}/artifacts/{artifact_id}`)**:
    - Handler `artifact` trong `crates/voice-agent-server/src/app/admin/background.rs` gọi `tm.read_task_artifact_bytes_any_scope(&id, &artifact_id)`.
    - Hệ thống kiểm tra `artifact_id` phải thuộc đúng `root_session_id` của Task `{id}`, xác minh kích thước file và chữ ký SHA-256 trên dòng dữ liệu đọc ra, rồi trả về HTTP `200 OK` kèm `Content-Type`, `Content-Disposition: inline; filename="..."` và `ETag: "<sha256>"`.

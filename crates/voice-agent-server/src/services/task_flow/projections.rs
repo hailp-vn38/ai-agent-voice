@@ -165,6 +165,7 @@ pub fn project_task_to_admin_job(task: &TaskView, detail: Option<&TaskDetailView
             "primary_artifacts": summary.primary_artifacts,
             "report_artifacts": summary.report_artifacts,
             "image_artifacts": summary.image_artifacts,
+            "video_artifacts": summary.video_artifacts,
             "audio_artifacts": summary.audio_artifacts,
             "artifact_ids": summary.artifact_ids,
             "last_lint_healthy": summary.last_lint_healthy,

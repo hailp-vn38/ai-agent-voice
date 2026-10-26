@@ -199,6 +199,17 @@ impl ConfiguredOpenAiLlm {
         }
 
         let value: Value = response.json().await.map_err(|_| LlmError::Rejected)?;
+        self.decode_media_json(value, default_mime_type).await
+    }
+
+    async fn decode_media_json(
+        &self,
+        value: Value,
+        default_mime_type: &str,
+    ) -> Result<LlmOutput, LlmError> {
+        if value.get("error").is_some_and(|err| !err.is_null()) {
+            return Err(LlmError::Rejected);
+        }
         if let Some(b64) = value
             .pointer("/data/0/b64_json")
             .or_else(|| value.get("b64_json"))
@@ -220,9 +231,47 @@ impl ConfiguredOpenAiLlm {
             .or_else(|| value.get("url"))
             .and_then(Value::as_str)
         {
+            if let Some(rest) = url.strip_prefix("data:") {
+                let (_meta, b64_part) = rest.split_once(',').ok_or(LlmError::Rejected)?;
+                let bytes = STANDARD
+                    .decode(b64_part.trim())
+                    .map_err(|_| LlmError::Rejected)?;
+                if bytes.is_empty() {
+                    return Err(LlmError::Rejected);
+                }
+                return Ok(LlmOutput::Media {
+                    bytes,
+                    mime_type: default_mime_type.to_owned(),
+                });
+            }
             let media_resp = self
                 .client
                 .get(url)
+                .send()
+                .await
+                .map_err(|_| LlmError::Failed)?;
+            let media_resp = Self::check_response(media_resp).await?;
+            let bytes = media_resp.bytes().await.map_err(|_| LlmError::Failed)?;
+            if bytes.is_empty() {
+                return Err(LlmError::Rejected);
+            }
+            return Ok(LlmOutput::Media {
+                bytes: bytes.to_vec(),
+                mime_type: default_mime_type.to_owned(),
+            });
+        }
+
+        if default_mime_type.starts_with("video/")
+            && value.get("status").and_then(Value::as_str) == Some("completed")
+            && let Some(video_id) = value.get("id").and_then(Value::as_str)
+            && !video_id.trim().is_empty()
+        {
+            let api_key = self.ensure_api_key()?;
+            let content_endpoint = self.endpoint(&format!("videos/{video_id}/content"))?;
+            let media_resp = self
+                .client
+                .get(content_endpoint)
+                .bearer_auth(api_key)
                 .send()
                 .await
                 .map_err(|_| LlmError::Failed)?;
@@ -256,7 +305,6 @@ impl ConfiguredOpenAiLlm {
             prompt: &'a str,
             n: u8,
             size: String,
-            response_format: &'static str,
         }
         let endpoint = self.endpoint("images/generations")?;
         let response = self
@@ -268,7 +316,6 @@ impl ConfiguredOpenAiLlm {
                 prompt,
                 n: 1,
                 size: format!("{width}x{height}"),
-                response_format: "b64_json",
             })
             .send()
             .await
@@ -292,22 +339,38 @@ impl ConfiguredOpenAiLlm {
             model: &'a str,
             prompt: &'a str,
             size: String,
+            seconds: u32,
             duration: u32,
         }
-        let endpoint = self.endpoint("videos/generations")?;
+        let payload = VideoPayload {
+            model: &self.model,
+            prompt,
+            size: format!("{width}x{height}"),
+            seconds: duration_secs,
+            duration: duration_secs,
+        };
+        let mut endpoint = self.endpoint("videos")?;
+        endpoint.set_query(Some("sync=true"));
         let response = self
             .client
             .post(endpoint)
             .bearer_auth(api_key)
-            .json(&VideoPayload {
-                model: &self.model,
-                prompt,
-                size: format!("{width}x{height}"),
-                duration: duration_secs,
-            })
+            .json(&payload)
             .send()
             .await
             .map_err(|_| LlmError::Failed)?;
+        let response = if matches!(response.status().as_u16(), 404 | 405) {
+            let fallback = self.endpoint("videos/generations")?;
+            self.client
+                .post(fallback)
+                .bearer_auth(api_key)
+                .json(&payload)
+                .send()
+                .await
+                .map_err(|_| LlmError::Failed)?
+        } else {
+            response
+        };
         self.decode_media_response(response, "video/mp4").await
     }
 

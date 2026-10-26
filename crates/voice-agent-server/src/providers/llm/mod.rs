@@ -301,14 +301,14 @@ impl LlmOperation {
             },
             LlmCapabilityTag::Image => Self::ImageGeneration {
                 prompt,
-                width: 256,
-                height: 256,
+                width: 1024,
+                height: 1024,
             },
             LlmCapabilityTag::Video => Self::VideoGeneration {
                 prompt,
-                width: 256,
-                height: 256,
-                duration_secs: 4,
+                width: 1280,
+                height: 720,
+                duration_secs: 5,
             },
             LlmCapabilityTag::Audio => Self::AudioSpeech {
                 text: prompt,

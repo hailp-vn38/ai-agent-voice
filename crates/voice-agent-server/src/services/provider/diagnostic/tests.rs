@@ -317,9 +317,39 @@ async fn non_chat_llm_capabilities_dispatch_matching_diagnostic_operations() {
                 )
                 .route(
                     "/v1/images/generations",
-                    post(|| async {
+                    post(|Json(body): Json<serde_json::Value>| async move {
+                        if body.get("size").and_then(serde_json::Value::as_str) != Some("1024x1024")
+                            || body.get("response_format").is_some()
+                        {
+                            return Json(serde_json::json!({
+                                "error": {
+                                    "message": "Yêu cầu chưa được xử lý. Vui lòng kiểm tra tham số hoặc liên hệ hỗ trợ.",
+                                    "type": "upstream_error",
+                                    "code": null
+                                }
+                            }));
+                        }
                         Json(serde_json::json!({
-                            "data": [{ "b64_json": STANDARD.encode(b"PNG_DATA") }]
+                            "data": [{
+                                "url": format!("data:image/png;base64,{}", STANDARD.encode(b"PNG_DATA"))
+                            }]
+                        }))
+                    }),
+                )
+                .route(
+                    "/v1/videos",
+                    post(|Json(body): Json<serde_json::Value>| async move {
+                        assert_eq!(
+                            body.get("size").and_then(serde_json::Value::as_str),
+                            Some("1280x720")
+                        );
+                        assert_eq!(
+                            body.get("seconds").and_then(serde_json::Value::as_u64),
+                            Some(5)
+                        );
+                        Json(serde_json::json!({
+                            "status": "completed",
+                            "url": format!("data:video/mp4;base64,{}", STANDARD.encode(b"MP4_DATA"))
                         }))
                     }),
                 ),
@@ -340,10 +370,20 @@ async fn non_chat_llm_capabilities_dispatch_matching_diagnostic_operations() {
 
     let img_provider = ConfiguredOpenAiLlm::from_config(&OpenAiConfig {
         api_key: SecretString::new("sk-img"),
-        base_url: base,
-        model: "gpt-image-1".into(),
+        base_url: base.clone(),
+        model: "gemini-3-pro-image".into(),
         timeout_ms: 2_000,
         tags: Some(vec!["image".into()]),
+        ..OpenAiConfig::default()
+    })
+    .unwrap();
+
+    let vid_provider = ConfiguredOpenAiLlm::from_config(&OpenAiConfig {
+        api_key: SecretString::new("sk-vid"),
+        base_url: base,
+        model: "seedance_2.0_fast".into(),
+        timeout_ms: 2_000,
+        tags: Some(vec!["video".into()]),
         ..OpenAiConfig::default()
     })
     .unwrap();
@@ -392,6 +432,28 @@ async fn non_chat_llm_capabilities_dispatch_matching_diagnostic_operations() {
         .await
         .unwrap();
     assert_eq!(img_summary, "Generated image/png (8 bytes)");
+
+    service.registry = Arc::new(RuntimeCatalog {
+        llm: HashMap::from([(
+            "llm-a".into(),
+            Arc::new(LlmRuntime::new(
+                Arc::new(vid_provider),
+                2,
+                Duration::from_secs(2),
+            )),
+        )]),
+        ..RuntimeCatalog::default()
+    });
+
+    let vid_op = service
+        .registry
+        .llm_diagnostic("llm-a", LlmRequest::text_turn("waves crashing".into()), 1024)
+        .unwrap();
+    let (vid_summary, _) = service
+        .execute(target(7), vid_op, Duration::from_secs(1))
+        .await
+        .unwrap();
+    assert_eq!(vid_summary, "Generated video/mp4 (8 bytes)");
 
     server.abort();
 }
