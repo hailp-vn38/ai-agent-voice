@@ -6,8 +6,8 @@ import { expect, it, vi } from 'vitest'
 import DetailHeader from '@/components/admin/DetailHeader.vue'
 import PageHeader from '@/components/admin/PageHeader.vue'
 import ProviderCatalogCard from '@/components/providers/ProviderCatalogCard.vue'
-import ProviderCreateDrawer from '@/components/providers/ProviderCreateDrawer.vue'
 import { providerAdaptersApi } from '@/api/provider-adapters'
+import ProviderCreatePage from '@/pages/providers/ProviderCreatePage.vue'
 import ProviderDetailPage from '@/pages/providers/ProviderDetailPage.vue'
 import ProvidersView from './ProvidersView.vue'
 
@@ -36,23 +36,27 @@ vi.mock('@/api/provider-adapters', () => ({
   providerAdaptersApi: { list: vi.fn(async () => []), get: vi.fn(async () => ({ config_schema: { fields: [] } })) },
 }))
 
-it.each(['vad', 'asr', 'llm', 'tts'])('opens Create with the currently viewed %s type', async (type) => {
+it.each(['vad', 'asr', 'llm', 'tts'])('opens Create page with the currently viewed %s type', async (type) => {
   const router = createRouter({
     history: createMemoryHistory(),
-    routes: [{ path: '/providers', component: ProvidersView }],
+    routes: [
+      { path: '/providers', name: 'providers', component: ProvidersView },
+      { path: '/providers/create', name: 'provider-create', component: ProviderCreatePage },
+    ],
   })
   await router.push(`/providers?type=${type}`)
   await router.isReady()
-  const wrapper = mount(ProvidersView, {
+  const wrapper = mount(defineComponent({ components: { RouterView }, template: '<RouterView />' }), {
     global: {
       plugins: [router],
-      stubs: { BaseModal: { template: '<div><slot /></div>' }, ProviderFormModal: true, LinkProviderTemplateDialog: true, ConfirmDialog: true, ProviderTestPanel: true },
+      stubs: { ProviderFormModal: true, LinkProviderTemplateDialog: true, ConfirmDialog: true, ProviderTestPanel: true },
     },
   })
   try {
     await wrapper.getComponent(PageHeader).get('button').trigger('click')
     await flushPromises()
-    expect(wrapper.getComponent(ProviderCreateDrawer).props('initialType')).toBe(type)
+    expect(router.currentRoute.value.path).toBe('/providers/create')
+    expect(router.currentRoute.value.query.type).toBe(type)
     expect(providerAdaptersApi.list).toHaveBeenLastCalledWith(type)
   } finally {
     wrapper.unmount()

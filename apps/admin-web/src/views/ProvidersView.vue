@@ -10,7 +10,6 @@ import PageHeader from '@/components/admin/PageHeader.vue'
 import ProviderFormModal from '@/components/admin/ProviderFormModal.vue'
 import LinkProviderTemplateDialog from '@/components/providers/LinkProviderTemplateDialog.vue'
 import ProviderCatalogCard from '@/components/providers/ProviderCatalogCard.vue'
-import ProviderCreateDrawer from '@/components/providers/ProviderCreateDrawer.vue'
 import ProviderTypeTabs from '@/components/providers/ProviderTypeTabs.vue'
 import { Button } from '@/components/ui/button'
 import { useI18n } from '@/composables/useI18n'
@@ -50,8 +49,6 @@ const activeType = computed<string>({
 const statusFilter = ref<string>(ALL)
 const tagFilter = ref<string>(ALL)
 
-const createOpen = ref(false)
-const createType = ref<TemplateProviderType | undefined>()
 const linkOpen = ref(false)
 const selectedProvider = ref<ProviderInstance | undefined>()
 const editingProvider = ref<ProviderInstance | undefined>()
@@ -164,15 +161,11 @@ function clearFilters() {
 
 /** The API models four provider types, so `vision` never preselects anything. */
 function openCreate(type: ProviderType = activeProviderType.value) {
-  createType.value = isSetupType(type) ? type : undefined
   editingProvider.value = undefined
-  createOpen.value = true
-}
-
-/** A saved provider is not ready to use yet, so it lands on detail, not the catalog. */
-function openCreatedProvider(key: string) {
-  createType.value = undefined
-  void router.push({ name: 'provider-detail', params: { key }, query: route.query })
+  const query = isSetupType(type)
+    ? { ...route.query, type }
+    : { ...route.query, type: undefined }
+  void router.push({ name: 'provider-create', query })
 }
 
 function openDetail(provider: ProviderInstance) {
@@ -369,13 +362,6 @@ function providerNameById(id?: string) {
         {{ t('providers.create') }}
       </Button>
     </div>
-
-    <ProviderCreateDrawer
-      v-model="createOpen"
-      :create="store.createProviderFromSetup"
-      :initial-type="createType"
-      @created="openCreatedProvider"
-    />
 
     <ProviderFormModal
       v-model="formOpen"

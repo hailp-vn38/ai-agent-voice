@@ -97,6 +97,13 @@ const routes: RouteRecordRaw[] = [
     meta: { titleKey: 'nav.providers' },
   },
   {
+    path: '/providers/create',
+    alias: ['/providers/new'],
+    name: 'provider-create',
+    component: () => import('@/pages/providers/ProviderCreatePage.vue'),
+    meta: { titleKey: 'providers.createTitle' },
+  },
+  {
     path: '/providers/:key',
     name: 'provider-detail',
     component: () => import('@/pages/providers/ProviderDetailPage.vue'),
