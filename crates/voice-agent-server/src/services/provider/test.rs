@@ -32,6 +32,7 @@ pub enum ProviderTestOutput {
     Text {
         text: String,
         language: Option<String>,
+        media: Option<crate::providers::llm::LlmDiagnosticMedia>,
     },
     Wav(Vec<u8>),
 }
@@ -168,6 +169,7 @@ impl ProviderTestRunner<'_> {
                 Ok(ProviderTestOutput::Text {
                     text: result.text,
                     language: None,
+                    media: result.media,
                 })
             }
             ProviderTestInput::Tts(request) => Ok(ProviderTestOutput::Wav(
@@ -178,6 +180,7 @@ impl ProviderTestRunner<'_> {
                 Ok(ProviderTestOutput::Text {
                     text: result.text,
                     language: Some(result.language),
+                    media: None,
                 })
             }
         }

@@ -154,10 +154,15 @@ export interface ProviderTestDraft {
   api_key?: string
   saved_credential?: { key: string; expected_revision: number }
 }
+export interface ProviderDiagnosticMedia {
+  mime_type: string
+  data_url: string
+}
+
 export interface ProviderTextTestResult {
   test_source?: 'draft' | 'saved'
   type: 'llm' | 'asr'
   status: 'success'
-  result: { text: string; language?: string }
+  result: { text: string; language?: string; media?: ProviderDiagnosticMedia }
   metrics: { elapsed_ms: number; audio_duration_ms?: number; rtf?: number }
 }

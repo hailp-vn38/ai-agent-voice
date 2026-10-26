@@ -77,6 +77,7 @@ pub enum ProviderDiagnosticRequestError {
 pub struct LlmDiagnosticResult {
     pub provider_key: String,
     pub text: String,
+    pub media: Option<crate::providers::llm::LlmDiagnosticMedia>,
     pub runtime: ProviderDiagnosticRuntimeMetadata,
 }
 
@@ -585,6 +586,7 @@ impl ProviderDiagnosticService {
             .registry
             .llm_diagnostic(&provider_key, LlmRequest::text_turn(input), 32 * 1024)
             .map_err(|_| ProviderDiagnosticError::RuntimeNotLoaded)?;
+        let media_slot = operation.media_slot();
         let (text, runtime) = self
             .execute(
                 ProviderDiagnosticTarget {
@@ -596,9 +598,11 @@ impl ProviderDiagnosticService {
                 Duration::from_millis(100),
             )
             .await?;
+        let media = media_slot.lock().ok().and_then(|mut guard| guard.take());
         Ok(LlmDiagnosticResult {
             provider_key,
             text,
+            media,
             runtime,
         })
     }

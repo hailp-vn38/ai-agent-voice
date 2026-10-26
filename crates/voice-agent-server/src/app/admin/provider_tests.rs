@@ -73,12 +73,16 @@ pub(super) async fn test_llm_provider(
         Ok(value) => value,
         Err(diagnostic_error) => return request_error_response(&request, diagnostic_error),
     };
+    let mut result = serde_json::json!({ "text": diagnostic.text });
+    if let Some(media) = diagnostic.media {
+        result["media"] = serde_json::json!(media);
+    }
     Json(serde_json::json!({
         "source": if diagnostic.provider_key.starts_with("config:") { "config" } else { "database" },
         "provider_key": diagnostic.provider_key,
         "type": "llm",
         "status": "success",
-        "result": { "text": diagnostic.text },
+        "result": result,
         "metrics": { "elapsed_ms": started.elapsed().as_millis() },
         "runtime": {
             "runtime_status": "loaded",

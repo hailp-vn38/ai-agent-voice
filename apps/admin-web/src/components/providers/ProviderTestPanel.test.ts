@@ -124,3 +124,37 @@ it('uses the waveform dock for create-provider draft ASR without saving a provid
   wrapper.unmount()
   recorder.mockRestore()
 })
+
+it('renders image and video previews when LLM diagnostics return media and clears on edit', async () => {
+  api.testDraftLlm.mockResolvedValueOnce({
+    result: {
+      text: 'Generated image/png (8 bytes)',
+      media: { mime_type: 'image/png', data_url: 'data:image/png;base64,UE5HX0RBVEE=' },
+    },
+    metrics: { elapsed_ms: 120 },
+  })
+  const wrapper = mount(ProviderTestPanel, {
+    props: { type: 'llm', draft: { type: 'llm', adapter: 'openai', config_json: { model: 'gemini-3-pro-image', tags: ['image'] } } },
+  })
+  await wrapper.get('[data-run-test]').trigger('click')
+  await flushPromises()
+  const img = wrapper.get('[data-test-media="image"]')
+  expect(img.attributes('src')).toBe('data:image/png;base64,UE5HX0RBVEE=')
+  expect(wrapper.text()).toContain('Generated image/png (8 bytes)')
+
+  await wrapper.get('textarea').setValue('Another prompt')
+  expect(wrapper.find('[data-test-media="image"]').exists()).toBe(false)
+
+  api.testDraftLlm.mockResolvedValueOnce({
+    result: {
+      text: 'Generated video/mp4 (8 bytes)',
+      media: { mime_type: 'video/mp4', data_url: 'data:video/mp4;base64,TVA0X0RBVEE=' },
+    },
+    metrics: { elapsed_ms: 240 },
+  })
+  await wrapper.get('[data-run-test]').trigger('click')
+  await flushPromises()
+  const video = wrapper.get('[data-test-media="video"]')
+  expect(video.attributes('src')).toBe('data:video/mp4;base64,TVA0X0RBVEE=')
+  wrapper.unmount()
+})

@@ -84,6 +84,13 @@ pub struct LlmDiagnosticOperation {
     max_text_bytes: usize,
     cancellation: Option<CancellationToken>,
     terminal_acknowledged: bool,
+    media: Arc<Mutex<Option<crate::providers::llm::LlmDiagnosticMedia>>>,
+}
+
+impl LlmDiagnosticOperation {
+    pub fn media_slot(&self) -> Arc<Mutex<Option<crate::providers::llm::LlmDiagnosticMedia>>> {
+        Arc::clone(&self.media)
+    }
 }
 
 impl LlmRuntime {
@@ -282,6 +289,7 @@ impl LlmRuntime {
             max_text_bytes,
             cancellation: None,
             terminal_acknowledged: false,
+            media: Arc::new(Mutex::new(None)),
         }
     }
 }
@@ -326,6 +334,9 @@ impl ProviderDiagnosticOperation for LlmDiagnosticOperation {
             let summary = output.diagnostic_summary();
             if summary.is_empty() || summary.len() > self.max_text_bytes {
                 return Err(ProviderDiagnosticOperationError::InvalidResponse);
+            }
+            if let Ok(mut guard) = self.media.lock() {
+                *guard = output.diagnostic_media();
             }
             return Ok(summary);
         }

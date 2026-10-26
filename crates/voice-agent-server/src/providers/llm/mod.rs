@@ -322,6 +322,30 @@ impl LlmOperation {
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct LlmDiagnosticMedia {
+    pub mime_type: String,
+    pub data_url: String,
+}
+
+fn sniff_media_mime_type<'a>(bytes: &[u8], fallback: &'a str) -> &'a str {
+    if bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
+        "image/png"
+    } else if bytes.starts_with(b"\xff\xd8\xff") {
+        "image/jpeg"
+    } else if bytes.len() >= 12 && &bytes[0..4] == b"RIFF" && &bytes[8..12] == b"WEBP" {
+        "image/webp"
+    } else if bytes.starts_with(b"GIF87a") || bytes.starts_with(b"GIF89a") {
+        "image/gif"
+    } else if bytes.len() >= 12 && &bytes[0..4] == b"RIFF" && &bytes[8..12] == b"WAVE" {
+        "audio/wav"
+    } else if bytes.len() >= 8 && &bytes[4..8] == b"ftyp" {
+        "video/mp4"
+    } else {
+        fallback
+    }
+}
+
 /// Normalized output across all non-streaming LLM capability operations.
 #[derive(Clone, Debug, PartialEq)]
 pub enum LlmOutput {
@@ -352,6 +376,21 @@ impl LlmOutput {
                     vectors.len()
                 )
             }
+        }
+    }
+
+    pub fn diagnostic_media(&self) -> Option<LlmDiagnosticMedia> {
+        use base64::{Engine as _, engine::general_purpose::STANDARD};
+        match self {
+            Self::Media { bytes, mime_type } if !bytes.is_empty() => {
+                let detected_mime = sniff_media_mime_type(bytes, mime_type);
+                let data_url = format!("data:{detected_mime};base64,{}", STANDARD.encode(bytes));
+                Some(LlmDiagnosticMedia {
+                    mime_type: detected_mime.to_owned(),
+                    data_url,
+                })
+            }
+            _ => None,
         }
     }
 }

@@ -3,7 +3,7 @@ import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { providersApi } from '@/api/providers'
 import { providerAdaptersApi } from '@/api/provider-adapters'
 import { formatApiError } from '@/api/errors'
-import type { ProviderTestDraft } from '@/api/types/providers'
+import type { ProviderDiagnosticMedia, ProviderTestDraft } from '@/api/types/providers'
 import type { ProviderType } from '@/domain/admin'
 import { Button } from '@/components/ui/button'
 import { useI18n } from '@/composables/useI18n'
@@ -39,6 +39,7 @@ watch(() => [props.adapter, props.capabilities] as const, async ([adapter, provi
 const audio = ref<Blob>()
 const audioUrl = ref('')
 const result = ref('')
+const media = ref<ProviderDiagnosticMedia>()
 const elapsed = ref<number>()
 const error = ref('')
 const busy = ref(false)
@@ -49,7 +50,7 @@ function clear() {
   controller?.abort()
   controller = undefined
   busy.value = false
-  result.value = ''; error.value = ''; elapsed.value = undefined; languageResult.value = ''; durationMs.value = undefined; rtf.value = undefined; status.value = 'idle'
+  result.value = ''; media.value = undefined; error.value = ''; elapsed.value = undefined; languageResult.value = ''; durationMs.value = undefined; rtf.value = undefined; status.value = 'idle'
   if (audioUrl.value) URL.revokeObjectURL(audioUrl.value)
   audioUrl.value = ''
 }
@@ -92,6 +93,7 @@ async function run() {
         : props.draft ? await providersApi.testDraftLlm(props.draft, { text: text.value }, pending.signal) : await providersApi.testLlm(props.savedKey!, { input: text.value }, pending.signal)
       if (pending.signal.aborted) return
       result.value = response.result.text
+      media.value = response.result.media
       elapsed.value = response.metrics.elapsed_ms
       languageResult.value = response.result.language ?? ''
       durationMs.value = response.metrics.audio_duration_ms
@@ -147,6 +149,30 @@ async function run() {
         <span class="text-xs text-muted-foreground">{{ status === 'idle' ? t('diagnostics.notTested') : status === 'success' ? t('diagnostics.success') : status === 'stale' ? t('diagnostics.stale') : t('diagnostics.failed') }} <template v-if="elapsed !== undefined">· {{ elapsed }} ms</template></span>
       </div>
       <p v-if="error" role="alert" class="text-sm text-danger">{{ error }}</p>
+      <div v-if="media" class="overflow-hidden rounded-lg border bg-muted/20 p-2">
+        <img
+          v-if="media.mime_type.startsWith('image/')"
+          :src="media.data_url"
+          :alt="result || t('diagnostics.result')"
+          data-test-media="image"
+          class="mx-auto max-h-96 w-auto rounded object-contain"
+        />
+        <video
+          v-else-if="media.mime_type.startsWith('video/')"
+          :src="media.data_url"
+          controls
+          playsinline
+          data-test-media="video"
+          class="mx-auto max-h-96 w-full rounded"
+        />
+        <audio
+          v-else-if="media.mime_type.startsWith('audio/')"
+          :src="media.data_url"
+          controls
+          data-test-media="audio"
+          class="w-full"
+        />
+      </div>
       <pre v-if="result" class="max-h-60 overflow-auto whitespace-pre-wrap break-words rounded-lg border p-3 text-sm" :aria-label="t('diagnostics.result')">{{ result }}</pre>
       <p v-if="languageResult || durationMs !== undefined" class="text-xs text-muted-foreground">
         <span v-if="languageResult">{{ t('diagnostics.language') }}: {{ languageResult }} · </span>

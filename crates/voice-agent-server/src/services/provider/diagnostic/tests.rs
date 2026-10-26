@@ -427,11 +427,22 @@ async fn non_chat_llm_capabilities_dispatch_matching_diagnostic_operations() {
         .registry
         .llm_diagnostic("llm-a", LlmRequest::text_turn("draw icon".into()), 1024)
         .unwrap();
+    let img_media_slot = img_op.media_slot();
     let (img_summary, _) = service
         .execute(target(7), img_op, Duration::from_secs(1))
         .await
         .unwrap();
     assert_eq!(img_summary, "Generated image/png (8 bytes)");
+    let img_media = img_media_slot
+        .lock()
+        .unwrap()
+        .take()
+        .expect("image media should be captured");
+    assert_eq!(img_media.mime_type, "image/png");
+    assert_eq!(
+        img_media.data_url,
+        format!("data:image/png;base64,{}", STANDARD.encode(b"PNG_DATA"))
+    );
 
     service.registry = Arc::new(RuntimeCatalog {
         llm: HashMap::from([(
@@ -449,11 +460,22 @@ async fn non_chat_llm_capabilities_dispatch_matching_diagnostic_operations() {
         .registry
         .llm_diagnostic("llm-a", LlmRequest::text_turn("waves crashing".into()), 1024)
         .unwrap();
+    let vid_media_slot = vid_op.media_slot();
     let (vid_summary, _) = service
         .execute(target(7), vid_op, Duration::from_secs(1))
         .await
         .unwrap();
     assert_eq!(vid_summary, "Generated video/mp4 (8 bytes)");
+    let vid_media = vid_media_slot
+        .lock()
+        .unwrap()
+        .take()
+        .expect("video media should be captured");
+    assert_eq!(vid_media.mime_type, "video/mp4");
+    assert_eq!(
+        vid_media.data_url,
+        format!("data:video/mp4;base64,{}", STANDARD.encode(b"MP4_DATA"))
+    );
 
     server.abort();
 }

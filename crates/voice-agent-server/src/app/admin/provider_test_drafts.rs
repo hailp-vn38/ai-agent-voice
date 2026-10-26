@@ -62,7 +62,11 @@ fn response(
             );
             response
         }
-        ProviderTestOutput::Text { text, language } => {
+        ProviderTestOutput::Text {
+            text,
+            language,
+            media,
+        } => {
             let mut metrics = serde_json::json!({"elapsed_ms":started.elapsed().as_millis()});
             if let Some(duration) = duration {
                 metrics["audio_duration_ms"] = serde_json::json!(duration);
@@ -75,6 +79,9 @@ fn response(
             let mut result = serde_json::json!({"text":text});
             if let Some(language) = language {
                 result["language"] = serde_json::json!(language);
+            }
+            if let Some(media) = media {
+                result["media"] = serde_json::json!(media);
             }
             Json(serde_json::json!({"test_source":"draft","type":kind,"status":"success","result":result,"metrics":metrics,"runtime":{"test_runtime_ready":true,"persisted_runtime_modified":false}})).into_response()
         }
