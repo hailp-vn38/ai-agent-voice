@@ -2,7 +2,6 @@
 import {
   Database,
   Download,
-  ExternalLink,
   Eye,
   FileCode2,
   FileSpreadsheet,
@@ -14,6 +13,7 @@ import {
   LayoutGrid,
   List,
   Music,
+  Play,
   RefreshCw,
   Search,
   Sparkles,
@@ -29,7 +29,6 @@ import type {
   ArtifactCatalogSummary,
   ArtifactKind,
   ArtifactRole,
-  JobStatus,
 } from '@/api/types/agent-jobs'
 import PageHeader from '@/components/admin/PageHeader.vue'
 import ArtifactPreviewDialog, {
@@ -103,6 +102,12 @@ const mediaAssetsCount = computed(
 
 const hasMore = computed(() => page.value * pageSize.value < total.value)
 
+const selectedIndex = computed(() =>
+  selectedArtifact.value
+    ? items.value.findIndex(entry => entry.id === selectedArtifact.value?.id)
+    : -1,
+)
+
 function formatBytes(bytes: number): string {
   if (!Number.isFinite(bytes) || bytes <= 0) return '0 B'
   if (bytes < 1024) return `${bytes} B`
@@ -115,24 +120,11 @@ function formatBytes(bytes: number): string {
 
 function formatDate(value: string): string {
   const num = Number(value)
-  const stamp = Number.isFinite(num) && num > 0
-    ? new Date(num < 1_000_000_000_000 ? num * 1000 : num)
-    : new Date(value)
+  const stamp =
+    Number.isFinite(num) && num > 0
+      ? new Date(num < 1_000_000_000_000 ? num * 1000 : num)
+      : new Date(value)
   return Number.isFinite(stamp.getTime()) ? stamp.toLocaleString() : value
-}
-
-function jobTone(status: JobStatus): 'success' | 'danger' | 'secondary' | 'outline' {
-  return status === 'succeeded'
-    ? 'success'
-    : status === 'failed'
-      ? 'danger'
-      : status === 'partial_success' || status === 'cancelled'
-        ? 'outline'
-        : 'secondary'
-}
-
-function jobStatusLabel(status: JobStatus): string {
-  return t(('jobUi.jobStatus.' + status) as 'jobUi.jobStatus.queued')
 }
 
 function kindLabel(kind: ArtifactKind): string {
@@ -141,6 +133,17 @@ function kindLabel(kind: ArtifactKind): string {
 
 function roleLabel(role: ArtifactRole): string {
   return role === 'primary' ? t('artifactsUi.role.primary') : t('artifactsUi.role.intermediate')
+}
+
+function fileExtension(item: AdminArtifactItem): string {
+  const name = item.filename || item.name || ''
+  const dot = name.lastIndexOf('.')
+  if (dot > 0 && dot < name.length - 1) {
+    return name.slice(dot + 1).toUpperCase()
+  }
+  const mime = item.mime_type || item.media_type || ''
+  const slash = mime.indexOf('/')
+  return slash >= 0 ? mime.slice(slash + 1).toUpperCase() : item.kind.toUpperCase()
 }
 
 function kindIcon(kind: ArtifactKind) {
@@ -167,6 +170,18 @@ function canPreview(item: AdminArtifactItem): boolean {
   return Boolean(item.job_id) && preview.kind !== 'download' && item.size_bytes >= 0 && item.size_bytes <= preview.limit
 }
 
+function openArtifactModal(item: AdminArtifactItem) {
+  selectedArtifact.value = item
+}
+
+function selectAdjacent(offset: -1 | 1) {
+  const nextIdx = selectedIndex.value + offset
+  const target = items.value[nextIdx]
+  if (target) {
+    selectedArtifact.value = target
+  }
+}
+
 function revokeAllBlobs() {
   for (const url of Object.values(activeBlobUrls)) {
     if (url.startsWith('blob:')) URL.revokeObjectURL(url)
@@ -180,7 +195,7 @@ async function hydrateInlineMediaBlobs(loadedItems: AdminArtifactItem[]) {
   if (typeof agentJobsApi.artifact !== 'function') return
   const inlineCandidates = loadedItems.filter(
     item =>
-      (item.kind === 'image' || item.kind === 'video' || item.kind === 'audio') &&
+      (item.kind === 'image' || item.kind === 'video') &&
       canPreview(item) &&
       item.size_bytes > 0 &&
       item.size_bytes <= 16 * 1024 * 1024,
@@ -205,7 +220,7 @@ async function hydrateInlineMediaBlobs(loadedItems: AdminArtifactItem[]) {
         activeBlobUrls = { ...activeBlobUrls, [item.id]: url }
         mediaBlobUrls.value = { ...activeBlobUrls }
       } catch {
-        // Ignore thumbnail fetch failure; user can still click Preview or Download
+        // Ignore thumbnail fetch failure; user can still click card to open modal or download
       }
     }),
   )
@@ -260,6 +275,7 @@ function clearJobFilter() {
 }
 
 function openJob(jobId: string) {
+  selectedArtifact.value = null
   void router.push({ name: 'job-detail', params: { jobId } })
 }
 
@@ -476,120 +492,129 @@ onBeforeUnmount(() => {
       {{ t('common.loading') }}
     </div>
 
-    <div v-else-if="items.length && viewMode === 'grid'" class="grid gap-4 sm:grid-cols-2 xl:grid-cols-3" data-artifact-grid>
+    <div
+      v-else-if="items.length && viewMode === 'grid'"
+      class="grid gap-4 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-4"
+      data-artifact-grid
+    >
       <article
         v-for="item in items"
         :key="item.id"
+        role="button"
+        tabindex="0"
         data-artifact-card
         :data-artifact-kind="item.kind"
-        class="studio-panel flex flex-col justify-between overflow-hidden transition-colors hover:border-studio-violet/40"
+        class="studio-panel group flex cursor-pointer flex-col justify-between overflow-hidden transition-all duration-200 hover:-translate-y-0.5 hover:border-studio-violet/50 hover:shadow-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-studio-violet"
+        @click="openArtifactModal(item)"
+        @keydown.enter.prevent="openArtifactModal(item)"
+        @keydown.space.prevent="openArtifactModal(item)"
       >
-        <div>
-          <div class="relative flex h-44 items-center justify-center overflow-hidden border-b bg-muted/30">
-            <img
-              v-if="item.kind === 'image' && mediaBlobUrls[item.id]"
-              :src="mediaBlobUrls[item.id]"
-              :alt="item.filename || item.name"
-              loading="lazy"
-              class="h-full w-full object-contain p-2"
-              data-artifact-inline-image
-            />
+        <div class="relative aspect-[16/10] w-full overflow-hidden border-b bg-muted/25">
+          <img
+            v-if="item.kind === 'image' && mediaBlobUrls[item.id]"
+            :src="mediaBlobUrls[item.id]"
+            :alt="item.filename || item.name"
+            loading="lazy"
+            class="h-full w-full object-cover transition-transform duration-300 group-hover:scale-105"
+            data-artifact-inline-image
+          />
+
+          <div
+            v-else-if="item.kind === 'video' && mediaBlobUrls[item.id]"
+            class="relative h-full w-full bg-black/40"
+          >
             <video
-              v-else-if="item.kind === 'video' && mediaBlobUrls[item.id]"
               :src="mediaBlobUrls[item.id]"
-              controls
               preload="metadata"
-              class="h-full w-full object-contain"
+              muted
+              playsinline
+              class="pointer-events-none h-full w-full object-cover transition-transform duration-300 group-hover:scale-105"
               data-artifact-inline-video
             />
-            <div
-              v-else-if="item.kind === 'audio' && mediaBlobUrls[item.id]"
-              class="flex w-full flex-col items-center gap-3 px-4"
-            >
-              <Music class="size-8 text-studio-cyan" />
-              <audio :src="mediaBlobUrls[item.id]" controls class="w-full" data-artifact-inline-audio />
-            </div>
-            <button
-              v-else
-              type="button"
-              class="flex h-full w-full cursor-pointer flex-col items-center justify-center gap-2 p-4 text-muted-foreground transition-colors hover:text-studio-violet"
-              :disabled="!canPreview(item)"
-              @click="canPreview(item) && (selectedArtifact = item)"
-            >
-              <component :is="kindIcon(item.kind)" class="size-10 opacity-80" />
-              <span class="font-mono text-[11px] uppercase tracking-wider">{{ item.mime_type || item.media_type }}</span>
-            </button>
-
-            <div class="pointer-events-none absolute left-2.5 top-2.5 flex items-center gap-1.5">
-              <Badge variant="secondary" class="text-[10px]">{{ kindLabel(item.kind) }}</Badge>
-              <Badge :variant="item.role === 'primary' ? 'success' : 'outline'" class="text-[10px]">
-                {{ roleLabel(item.role) }}
-              </Badge>
+            <div class="pointer-events-none absolute inset-0 flex items-center justify-center bg-black/25">
+              <div class="grid size-11 place-items-center rounded-full bg-background/90 text-foreground shadow-md">
+                <Play class="size-5 fill-current" />
+              </div>
             </div>
           </div>
 
-          <div class="space-y-2.5 p-4">
-            <div>
-              <h3 class="truncate font-semibold" :title="item.filename || item.name">
-                {{ item.filename || item.name || item.id }}
-              </h3>
-              <p class="mt-0.5 text-xs text-muted-foreground">
-                {{ formatBytes(item.size_bytes) }} · {{ formatDate(item.created_at) }}
-              </p>
+          <div
+            v-else-if="item.kind === 'audio'"
+            class="flex h-full w-full flex-col items-center justify-center gap-2.5 bg-gradient-to-br from-studio-cyan/10 via-transparent to-studio-violet/10 p-4"
+          >
+            <div class="grid size-12 place-items-center rounded-full bg-studio-cyan/15 text-studio-cyan">
+              <Music class="size-6" />
             </div>
+            <span class="rounded bg-background/80 px-2 py-0.5 font-mono text-[10px] font-semibold tracking-wider text-muted-foreground">
+              {{ fileExtension(item) }}
+            </span>
+          </div>
 
-            <div class="space-y-1 rounded-lg bg-muted/40 p-2.5 text-xs">
-              <div class="flex items-center justify-between gap-2">
-                <span class="text-muted-foreground">{{ t('artifactsUi.producedBy') }}</span>
-                <span class="truncate font-mono text-[11px] font-medium">
-                  {{ item.producer_agent_id || item.root_agent_id || '—' }}
-                  <span v-if="item.producer_tool_name" class="text-muted-foreground">
-                    · {{ item.producer_tool_name }}
-                  </span>
-                </span>
-              </div>
-              <div class="flex items-center justify-between gap-2">
-                <span class="shrink-0 text-muted-foreground">{{ t('artifactsUi.job') }}</span>
-                <button
-                  type="button"
-                  class="inline-flex min-w-0 cursor-pointer items-center gap-1 truncate font-medium text-studio-violet hover:underline"
-                  data-artifact-job-link
-                  :title="item.job_title || item.job_goal || item.job_id"
-                  @click="openJob(item.job_id)"
-                >
-                  <span class="truncate">{{ item.job_title || item.job_goal || item.job_id }}</span>
-                  <ExternalLink class="size-3 shrink-0" />
-                </button>
-              </div>
+          <div
+            v-else
+            class="flex h-full w-full flex-col items-center justify-center gap-2 bg-gradient-to-br from-studio-violet/8 via-transparent to-muted/30 p-4 text-center"
+          >
+            <div class="grid size-12 place-items-center rounded-xl bg-background/80 text-studio-violet shadow-sm">
+              <component :is="kindIcon(item.kind)" class="size-6" />
             </div>
+            <span class="rounded bg-background/80 px-2 py-0.5 font-mono text-[10px] font-semibold tracking-wider text-muted-foreground">
+              {{ fileExtension(item) }}
+            </span>
+          </div>
+
+          <div class="pointer-events-none absolute left-2.5 top-2.5 flex items-center gap-1.5">
+            <Badge variant="secondary" class="bg-background/90 text-[10px] backdrop-blur-xs">
+              {{ kindLabel(item.kind) }}
+            </Badge>
+            <Badge
+              v-if="item.role === 'primary'"
+              variant="success"
+              class="text-[10px]"
+            >
+              {{ roleLabel(item.role) }}
+            </Badge>
+          </div>
+
+          <div
+            class="pointer-events-none absolute inset-0 flex items-center justify-center bg-black/35 opacity-0 transition-opacity duration-200 group-hover:opacity-100"
+          >
+            <span class="inline-flex items-center gap-1.5 rounded-full bg-background/95 px-3 py-1.5 text-xs font-medium text-foreground shadow-md">
+              <Eye class="size-3.5 text-studio-violet" />{{ t('artifactsUi.clickToView') }}
+            </span>
           </div>
         </div>
 
-        <footer class="flex items-center justify-between gap-2 border-t bg-muted/15 px-4 py-2.5">
-          <Badge :variant="jobTone(item.job_status)" class="text-[10px]">
-            {{ jobStatusLabel(item.job_status) }}
-          </Badge>
-          <div class="flex items-center gap-1.5">
-            <Button
-              v-if="canPreview(item)"
-              variant="outline"
-              size="sm"
-              data-artifact-preview-btn
-              @click="selectedArtifact = item"
+        <div class="flex flex-1 flex-col justify-between gap-2.5 p-3.5">
+          <div class="min-w-0">
+            <h3
+              class="truncate text-sm font-semibold transition-colors group-hover:text-studio-violet"
+              :title="item.filename || item.name"
             >
-              <Eye class="size-3.5" />{{ t('artifactsUi.preview') }}
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              data-artifact-download-btn
-              :disabled="downloadingId === item.id"
-              @click="downloadArtifact(item)"
-            >
-              <Download class="size-3.5" />{{ t('jobUi.download') }}
-            </Button>
+              {{ item.filename || item.name || item.id }}
+            </h3>
+            <p class="mt-0.5 truncate text-xs text-muted-foreground" :title="item.job_title || item.job_goal || item.job_id">
+              {{ item.job_title || item.job_goal || item.job_id }}
+            </p>
           </div>
-        </footer>
+
+          <div class="flex items-center justify-between gap-2 border-t pt-2 text-[11px] text-muted-foreground">
+            <span class="truncate font-mono">
+              {{ formatBytes(item.size_bytes) }}
+              <span v-if="item.producer_agent_id"> · {{ item.producer_agent_id }}</span>
+            </span>
+            <button
+              type="button"
+              data-artifact-download-btn
+              class="inline-flex size-7 shrink-0 cursor-pointer items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+              :title="t('jobUi.download')"
+              :aria-label="t('jobUi.download')"
+              :disabled="downloadingId === item.id"
+              @click.stop="downloadArtifact(item)"
+            >
+              <Download class="size-3.5" />
+            </button>
+          </div>
+        </div>
       </article>
     </div>
 
@@ -608,7 +633,13 @@ onBeforeUnmount(() => {
             </tr>
           </thead>
           <tbody class="divide-y">
-            <tr v-for="item in items" :key="item.id" class="hover:bg-muted/25" data-artifact-row>
+            <tr
+              v-for="item in items"
+              :key="item.id"
+              class="cursor-pointer transition-colors hover:bg-muted/30"
+              data-artifact-row
+              @click="openArtifactModal(item)"
+            >
               <td class="max-w-xs px-4 py-3.5">
                 <p class="truncate font-medium" :title="item.filename || item.name">
                   {{ item.filename || item.name || item.id }}
@@ -633,28 +664,22 @@ onBeforeUnmount(() => {
                 </span>
               </td>
               <td class="max-w-xs px-4 py-3.5">
-                <button
-                  type="button"
-                  class="inline-flex max-w-full cursor-pointer items-center gap-1 truncate font-medium text-studio-violet hover:underline"
-                  @click="openJob(item.job_id)"
-                >
-                  <span class="truncate">{{ item.job_title || item.job_goal || item.job_id }}</span>
-                  <ExternalLink class="size-3 shrink-0" />
-                </button>
+                <span class="truncate font-medium text-studio-violet">
+                  {{ item.job_title || item.job_goal || item.job_id }}
+                </span>
               </td>
               <td class="whitespace-nowrap px-4 py-3.5 text-xs text-muted-foreground">
                 {{ formatDate(item.created_at) }}
               </td>
-              <td class="whitespace-nowrap px-4 py-3.5 text-right">
+              <td class="whitespace-nowrap px-4 py-3.5 text-right" @click.stop>
                 <div class="inline-flex items-center gap-1.5">
                   <Button
-                    v-if="canPreview(item)"
                     variant="outline"
                     size="sm"
                     data-artifact-preview-btn
-                    @click="selectedArtifact = item"
+                    @click="openArtifactModal(item)"
                   >
-                    <Eye class="size-3.5" />{{ t('artifactsUi.preview') }}
+                    <Eye class="size-3.5" />{{ t('artifactsUi.clickToView') }}
                   </Button>
                   <Button
                     variant="outline"
@@ -693,8 +718,14 @@ onBeforeUnmount(() => {
       :key="selectedArtifact.id"
       :job-id="selectedArtifact.job_id"
       :artifact="selectedArtifact"
+      :show-nav="items.length > 1"
+      :has-prev="selectedIndex > 0"
+      :has-next="selectedIndex >= 0 && selectedIndex < items.length - 1"
       @close="selectedArtifact = null"
       @download="selectedArtifact && downloadArtifact(selectedArtifact)"
+      @prev="selectAdjacent(-1)"
+      @next="selectAdjacent(1)"
+      @open-job="openJob"
     />
   </section>
 </template>

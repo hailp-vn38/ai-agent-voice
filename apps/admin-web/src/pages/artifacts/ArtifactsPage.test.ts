@@ -127,19 +127,19 @@ beforeEach(() => {
   vi.restoreAllMocks()
 })
 
-describe('ArtifactsPage & ArtifactPreviewDialog', () => {
+describe('ArtifactsPage Library & Detail Modal', () => {
   it('keeps executable SVG as download-only in artifactPreview', () => {
     const svgItem = sampleCatalogPage.items[1]!
     expect(artifactPreview(svgItem)).toEqual({ kind: 'download', limit: 0 })
   })
 
-  it('renders summary cards, filters by kind/role/search, toggles grid/table view, and previews Markdown', async () => {
+  it('renders library cards, filters by kind/role, and opens detail modal on card click', async () => {
     const listSpy = vi.spyOn(agentJobsApi, 'listArtifacts').mockResolvedValue(sampleCatalogPage)
     vi.spyOn(agentJobsApi, 'artifact').mockImplementation(async (_jobId, artId) => {
       if (artId === 'art-md-1') {
         return new Blob(['# Blackwell B200\n\n20 PFLOPS FP4 performance.'], { type: 'text/markdown' })
       }
-      return new Blob(['<svg xmlns="http://www.w3.org/2000/svg"></svg>'], { type: 'image/svg+xml' })
+      return new Blob(['{"fp4":20}'], { type: 'application/json' })
     })
 
     const router = makeRouter()
@@ -184,27 +184,42 @@ describe('ArtifactsPage & ArtifactPreviewDialog', () => {
         expect.any(AbortSignal),
       )
 
-      // Switch to table view
+      // Switch to table view and back to grid library view
       await wrapper.get('[data-view-mode="table"]').trigger('click')
       expect(wrapper.find('[data-artifact-table]').exists()).toBe(true)
       expect(wrapper.findAll('[data-artifact-row]')).toHaveLength(3)
-
-      // Switch back to grid view and open Markdown preview
       await wrapper.get('[data-view-mode="grid"]').trigger('click')
-      await wrapper.findAll('[data-artifact-preview-btn]')[0]!.trigger('click')
+
+      // Click directly on library card to open detail modal
+      await wrapper.findAll('[data-artifact-card]')[0]!.trigger('click')
       await flushPromises()
+
+      const modal = wrapper.find('[data-artifact-detail-modal]')
+      expect(modal.exists()).toBe(true)
 
       const mdBody = wrapper.get('[data-preview-markdown-body]')
       expect(mdBody.html()).toContain('Blackwell B200')
       expect(mdBody.html()).toContain('20 PFLOPS FP4 performance.')
 
-      // Switch to Raw mode inside preview modal
+      // Verify detail metadata sidebar in modal
+      const meta = wrapper.get('[data-artifact-detail-meta]')
+      expect(meta.text()).toContain('media_creator')
+      expect(meta.text()).toContain('markdown_create')
+      expect(meta.text()).toContain('B200 Architecture Briefing')
+
+      // Switch to Raw mode inside modal
       await wrapper.get('[data-preview-mode-raw]').trigger('click')
       expect(wrapper.find('[data-preview-markdown-body]').exists()).toBe(false)
       expect(wrapper.get('pre').text()).toContain('# Blackwell B200')
 
-      // Navigate to originating Job
-      await wrapper.findAll('[data-artifact-job-link]')[0]!.trigger('click')
+      // Navigate to next item inside modal (SVG download-only item)
+      await wrapper.get('[data-modal-next]').trigger('click')
+      await flushPromises()
+      expect(wrapper.find('[data-preview-download-only]').exists()).toBe(true)
+      expect(wrapper.get('[data-artifact-detail-meta]').text()).toContain('nvlink-topology.svg')
+
+      // Click Originating Job link inside modal to navigate to Job detail
+      await wrapper.get('[data-artifact-job-link]').trigger('click')
       await flushPromises()
       expect(router.currentRoute.value.name).toBe('job-detail')
       expect(router.currentRoute.value.params.jobId).toBe('job-b200')
