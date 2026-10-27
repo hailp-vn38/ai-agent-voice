@@ -108,7 +108,7 @@ The only task that calls WebSocket send for a Voice Session. It owns bounded out
 _Avoid_: provider direct send, concurrent socket writer, actor-owned wire ordering
 
 **Protocol Fault Boundary**:
-The wire fault boundary distinguishes the handshake from application messages: an invalid ClientHello closes the connection before a Voice Session begins; after the handshake, malformed, unknown, or out-of-phase application messages are recorded and ignored, while a frame exceeding the transport cap always causes closure before parsing.
+The wire fault boundary distinguishes the handshake from application messages: an invalid ClientHello closes the connection before a Voice Session begins; after the handshake, malformed, unknown, or out-of-phase application messages are recorded and ignored, while a frame or a fragmented message exceeding the transport cap always causes closure before parsing or reassembly beyond the cap.
 _Avoid_: fail-closed every application error, custom wire-error protocol, codec buffer limit
 
 **Ready**:

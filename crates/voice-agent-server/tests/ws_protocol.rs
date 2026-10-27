@@ -43,6 +43,24 @@ async fn start_with_token_and_lifecycle(
     JoinHandle<()>,
     Option<std::sync::Arc<voice_agent_server::lifecycle::RuntimeLifecycle>>,
 ) {
+    let (base, task, lifecycle, _) =
+        start_with_state(max_frame_bytes, token, lifecycle, |config| config).await;
+    (base, task, lifecycle)
+}
+
+/// Starts the protocol router and also returns the application state it serves, for tests that
+/// must observe or hold application-owned coordination while a connection is admitted.
+async fn start_with_state(
+    max_frame_bytes: usize,
+    token: String,
+    lifecycle: Option<std::sync::Arc<voice_agent_server::lifecycle::RuntimeLifecycle>>,
+    configure: impl FnOnce(AppConfig) -> AppConfig,
+) -> (
+    String,
+    JoinHandle<()>,
+    Option<std::sync::Arc<voice_agent_server::lifecycle::RuntimeLifecycle>>,
+    AppState,
+) {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
     let config = AppConfig {
@@ -56,7 +74,10 @@ async fn start_with_token_and_lifecycle(
         },
         auth: AuthConfig { token },
         audio: AudioConfig::default(),
-        websocket: WebsocketConfig { max_frame_bytes },
+        websocket: WebsocketConfig {
+            max_frame_bytes,
+            ..WebsocketConfig::default()
+        },
         limits: LimitsConfig::default(),
         provider_defaults: voice_agent_server::config::ProviderDefaultsConfig {
             vad: "test".into(),
@@ -83,6 +104,7 @@ async fn start_with_token_and_lifecycle(
         agent: None,
         effective_agent: voice_agent_server::config::EffectiveAgentConfig::default(),
     };
+    let config = configure(config);
     let (config, database) = support::provision(config).await;
     let state = AppState::from_provider_set_with_database_and_shutdown(
         config,
@@ -94,11 +116,11 @@ async fn start_with_token_and_lifecycle(
             ))
         }),
     );
-    let app: Router = router_with_state(state);
+    let app: Router = router_with_state(state.clone());
     let task = tokio::spawn(async move {
         axum::serve(listener, app).await.unwrap();
     });
-    (format!("http://{address}"), task, lifecycle)
+    (format!("http://{address}"), task, lifecycle, state)
 }
 
 fn request(base: &str) -> tokio_tungstenite::tungstenite::handshake::client::Request {
@@ -324,6 +346,45 @@ async fn binary_before_hello_closes_with_protocol_error() {
     task.abort();
 }
 
+/// A message is capped as a whole, not only per frame: continuation frames that each fit the
+/// frame cap must not let a peer make the server buffer an unbounded message before the
+/// application-level size check runs.
+#[tokio::test]
+async fn fragmented_message_beyond_transport_cap_ends_the_connection_before_reassembly() {
+    use tokio_tungstenite::tungstenite::protocol::frame::{
+        Frame,
+        coding::{Data, OpCode},
+    };
+    let (base, task) = start(1_024).await;
+    let (mut socket, _) = connect_async(request(&base)).await.unwrap();
+    socket.send(Message::Text(hello().into())).await.unwrap();
+    let _ = next_message(&mut socket).await;
+    // Each fragment fits the per-frame cap; together they are far beyond it. No final fragment
+    // is ever sent, so a server that keeps reassembling never reaches its own size check.
+    let mut opcode = OpCode::Data(Data::Text);
+    for _ in 0..16 {
+        let frame = Frame::message(vec![b'a'; 1_000], opcode, false);
+        opcode = OpCode::Data(Data::Continue);
+        if socket.send(Message::Frame(frame)).await.is_err() {
+            break;
+        }
+    }
+    let ended = timeout(Duration::from_secs(1), async {
+        loop {
+            match socket.next().await {
+                None | Some(Err(_)) | Some(Ok(Message::Close(_))) => return,
+                Some(Ok(_)) => continue,
+            }
+        }
+    })
+    .await;
+    assert!(
+        ended.is_ok(),
+        "server kept buffering an over-cap fragmented message"
+    );
+    task.abort();
+}
+
 #[tokio::test]
 async fn oversized_post_handshake_frame_closes_with_1009() {
     let (base, task) = start(1_024).await;
@@ -338,5 +399,26 @@ async fn oversized_post_handshake_frame_closes_with_1009() {
         Message::Close(Some(frame)) => assert_eq!(u16::from(frame.code), 1009),
         other => panic!("expected too-large close, got {other:?}"),
     }
+    task.abort();
+}
+
+/// Web Assistant credential publication must never become a queue that physical Devices wait in:
+/// a System save (or a slow Web Assistant admission ahead of one) only concerns the Web
+/// Assistant.
+#[tokio::test]
+async fn physical_device_admission_does_not_wait_on_web_assistant_publication() {
+    let (base, task, _, state) = start_with_state(1_024, String::new(), None, |c| c).await;
+    let publication = state.hold_web_assistant_publication_for_test().await;
+    let connected = timeout(Duration::from_secs(1), async {
+        let (mut socket, _) = connect_async(request(&base)).await.unwrap();
+        socket.send(Message::Text(hello().into())).await.unwrap();
+        next_message(&mut socket).await
+    })
+    .await;
+    drop(publication);
+    assert!(
+        matches!(connected, Ok(Message::Text(_))),
+        "physical Device admission waited on Web Assistant publication"
+    );
     task.abort();
 }

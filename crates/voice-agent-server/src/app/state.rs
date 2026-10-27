@@ -858,6 +858,15 @@ impl AppState {
         self
     }
 
+    /// Test-only: holds Web Assistant credential publication exactly as a System save does, so a
+    /// test can prove which admissions wait on it.
+    #[doc(hidden)]
+    pub async fn hold_web_assistant_publication_for_test(
+        &self,
+    ) -> tokio::sync::RwLockWriteGuard<'_, ()> {
+        self.web_assistant.publication.write().await
+    }
+
     pub fn with_notification_hub(
         mut self,
         hub: Arc<crate::services::notification_hub::NotificationHub>,

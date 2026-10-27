@@ -106,22 +106,41 @@ pub(crate) async fn handler(
         return (StatusCode::BAD_REQUEST, "invalid Client-Id").into_response();
     }
     let assistant_auth = state.web_assistant.clone();
-    // Hold publication through graph resolution and connection registration; System saves cannot
-    // rebind between credential validation and the immutable profile snapshot.
-    let publication = assistant_auth.publication.read().await;
-    let device = match &state.database {
-        Some(db) => match crate::database::devices::get_device_by(db, device_id).await {
-            Ok(d) => Some(d),
-            Err(sqlx::Error::RowNotFound) => None,
-            Err(_) => {
-                return (
+    let lookup_device = || async {
+        match &state.database {
+            Some(db) => match crate::database::devices::get_device_by(db, device_id).await {
+                Ok(d) => Ok(Some(d)),
+                Err(sqlx::Error::RowNotFound) => Ok(None),
+                Err(_) => Err((
                     StatusCode::SERVICE_UNAVAILABLE,
                     "device admission unavailable",
                 )
-                    .into_response();
-            }
-        },
-        None => None,
+                    .into_response()),
+            },
+            None => Ok(None),
+        }
+    };
+    let mut device = match lookup_device().await {
+        Ok(device) => device,
+        Err(response) => return response,
+    };
+    // Only the Web Assistant takes part in credential publication. A physical Device never waits
+    // on it, so a System save (or a slow Web Assistant admission queued ahead of one) cannot
+    // stall Device reconnects.
+    //
+    // For the Web Assistant, publication is held through graph resolution and connection
+    // registration; System saves cannot rebind between credential validation and the immutable
+    // profile snapshot. The row is re-read under the guard so validation never uses a row a save
+    // replaced while this connection waited.
+    let publication = if device.as_ref().is_some_and(|d| d.kind == "web_assistant") {
+        let guard = assistant_auth.publication.read().await;
+        device = match lookup_device().await {
+            Ok(device) => device,
+            Err(response) => return response,
+        };
+        Some(guard)
+    } else {
+        None
     };
     let assistant_connection = if device.as_ref().is_some_and(|d| d.kind == "web_assistant") {
         if headers.contains_key(header::AUTHORIZATION) || query.authorization.is_some() {
@@ -183,8 +202,10 @@ pub(crate) async fn handler(
                 "accepted",
                 "pending_enrollment",
             );
+            let cap = config.websocket.max_frame_bytes.saturating_add(1024);
             return upgrade
-                .max_frame_size(config.websocket.max_frame_bytes.saturating_add(1024))
+                .max_frame_size(cap)
+                .max_message_size(cap)
                 .on_upgrade(move |socket| {
                     super::super::enrollment::run(socket, state, connection, drain)
                 })
@@ -408,7 +429,11 @@ pub(crate) async fn handler(
     });
     let max = config.websocket.max_frame_bytes;
     upgrade
+        // The transport cap bounds the whole message, not only each frame: continuation frames
+        // that each fit `max_frame_size` would otherwise be reassembled up to the library default
+        // before the application size check below ever runs.
         .max_frame_size(max.saturating_add(1024))
+        .max_message_size(max.saturating_add(1024))
         .on_upgrade(move |socket| {
             handle_socket(
                 socket,
