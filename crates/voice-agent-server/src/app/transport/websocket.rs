@@ -505,9 +505,11 @@ async fn handle_socket(
     drop(hello_init_timer);
     let hello_queued = Instant::now();
     actor.start_mcp_discovery();
+    let activity = Arc::new(TransportActivity::new());
     let writer = tokio::spawn(
         writer::WebSocketWriter {
             sender,
+            activity: Arc::clone(&activity),
             write_timeout,
             ping_period: Duration::from_millis(config.websocket.ping_interval_ms),
             generation_gate,
@@ -543,9 +545,8 @@ async fn handle_socket(
     let session = tokio::spawn(actor.run(ingress_rx).instrument(tracing::Span::current()));
 
     let idle_timeout = Duration::from_millis(config.websocket.idle_timeout_ms);
-    let mut last_inbound = tokio::time::Instant::now();
     loop {
-        let idle_deadline = last_inbound + idle_timeout;
+        let idle_deadline = activity.last() + idle_timeout;
         tokio::select! {
             reason = closes.cancelled() => {
                 match reason {
@@ -579,16 +580,19 @@ async fn handle_socket(
                 }
                 break;
             }
-            // Nothing at all — not even a Pong to the writer's Pings — has arrived for the idle
-            // window: the peer is gone without a close (power loss, NAT drop). The session ends
-            // now instead of when the operating system eventually notices.
+            // Transport idle (ADR 0020): no valid WebSocket frame in either direction for the
+            // idle window. The writer may have sent while this branch slept, so the clock is read
+            // again before closing.
             _ = tokio::time::sleep_until(idle_deadline), if !idle_timeout.is_zero() => {
-                info!(event = "ws_idle_timeout", idle_timeout_ms = config.websocket.idle_timeout_ms, "closing a voice session with no inbound frames");
+                if activity.last() + idle_timeout > tokio::time::Instant::now() {
+                    continue;
+                }
+                info!(event = "ws_idle_close", idle_timeout_ms = config.websocket.idle_timeout_ms, "closing a voice session with no transport activity");
                 let _ = urgent_tx.try_send(OutboundMessage::Close(1001));
                 break;
             }
             next = receiver.next() => {
-                last_inbound = tokio::time::Instant::now();
+                activity.touch();
                 let Some(next) = next else { break; };
                 match next {
             Ok(Message::Text(text)) => {
@@ -725,6 +729,7 @@ fn tool_status_enabled(is_web_assistant: bool, features: &crate::protocol::Clien
 
 async fn send_outbound(
     sender: &mut futures_util::stream::SplitSink<WebSocket, Message>,
+    activity: &TransportActivity,
     write_timeout: Duration,
     message: OutboundMessage,
     generation_gate: &crate::session::GenerationGate,
@@ -811,6 +816,9 @@ async fn send_outbound(
             .await
         }
     };
+    if result.is_ok() {
+        activity.touch();
+    }
     if let Err(ref error) = result {
         warn!(
             event = "ws_writer_failed",
@@ -836,6 +844,33 @@ async fn close_direct(
         })),
     )
     .await;
+}
+
+/// The transport idle clock of one connection (ADR 0020): any valid WebSocket frame received or
+/// sent counts as activity. Shared by the reader, which receives and enforces the idle window, and
+/// the WebSocket Writer, which sends.
+struct TransportActivity {
+    origin: tokio::time::Instant,
+    last_ms: std::sync::atomic::AtomicU64,
+}
+
+impl TransportActivity {
+    fn new() -> Self {
+        Self {
+            origin: tokio::time::Instant::now(),
+            last_ms: std::sync::atomic::AtomicU64::new(0),
+        }
+    }
+
+    fn touch(&self) {
+        let elapsed = self.origin.elapsed().as_millis() as u64;
+        self.last_ms
+            .fetch_max(elapsed, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    fn last(&self) -> tokio::time::Instant {
+        self.origin + Duration::from_millis(self.last_ms.load(std::sync::atomic::Ordering::Relaxed))
+    }
 }
 
 /// Why one WebSocket send failed.

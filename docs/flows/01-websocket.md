@@ -232,13 +232,16 @@ Chi tiết capture/VAD, ASR, interrupt và MCP lần lượt ở [Flow 02](02-va
 
 | Config `[websocket]` | Mặc định | Ý nghĩa |
 | --- | ---: | --- |
-| `ping_interval_ms` | 20 000 | Writer gửi Ping định kỳ; `0` tắt. |
-| `idle_timeout_ms` | 60 000 | Không nhận frame nào (kể cả Pong) trong khoảng này ⇒ Idle Close `1001`; `0` tắt. |
+| `ping_interval_ms` | 0 | Ping định kỳ từ writer, opt-in; mặc định không heartbeat ([ADR 0020](../adr/0020-transport-idle-activity.md)). |
+| `idle_timeout_ms` | 300 000 | Không có frame WebSocket hợp lệ nào nhận **hoặc gửi** trong khoảng này ⇒ Idle Close `1001`; `0` tắt. |
 | `write_timeout_ms` | 10 000 | Giới hạn mỗi lần send; peer ngừng đọc ⇒ writer coi là lỗi và kết thúc. |
 
-Khi bật idle close, `ping_interval_ms` phải dương và nhỏ hơn `idle_timeout_ms`
-để peer khỏe luôn có Ping để trả lời trong cửa sổ idle. Ping đi qua WebSocket
-Writer như mọi frame khác; reader chỉ đo thời điểm frame inbound cuối cùng.
+Theo ADR 0020, transport idle đo hoạt động hai chiều: reader ghi nhận mọi frame
+nhận, WebSocket Writer ghi nhận mọi frame gửi thành công; conversation idle không
+đóng phiên. Server không tự thêm heartbeat để firmware có thể chủ động reconnect
+sau khoảng im lặng của nó. Nếu bật Ping, `ping_interval_ms` phải nhỏ hơn
+`idle_timeout_ms`. Enrollment Session đã có thời hạn tuyệt đối
+(`ws_timeout_seconds`) và send timeout riêng nên không dùng các tham số này.
 
 Chỉ Web Assistant tham gia credential publication. Physical Device không bao
 giờ chờ guard này, nên một System save hoặc một Web Assistant admission chậm

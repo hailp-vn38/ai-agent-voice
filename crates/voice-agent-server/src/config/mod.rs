@@ -1178,11 +1178,12 @@ impl Default for AudioConfig {
 pub struct WebsocketConfig {
     #[serde(default = "default_max_frame_bytes")]
     pub max_frame_bytes: usize,
-    /// Interval between server Pings on an upgraded connection; `0` sends none.
+    /// Interval between server Pings on an upgraded connection; `0` (the default, ADR 0020)
+    /// sends none.
     #[serde(default = "default_ws_ping_interval_ms")]
     pub ping_interval_ms: u64,
-    /// A connection from which no frame of any kind (including Pong) has arrived for this long is
-    /// closed with 1001; `0` disables the idle close.
+    /// Transport idle (ADR 0020): a connection with no valid WebSocket frame received or sent for
+    /// this long is closed with 1001; `0` disables the idle close.
     #[serde(default = "default_ws_idle_timeout_ms")]
     pub idle_timeout_ms: u64,
     /// Upper bound on a single WebSocket send; a peer that stops reading cannot hold the writer.

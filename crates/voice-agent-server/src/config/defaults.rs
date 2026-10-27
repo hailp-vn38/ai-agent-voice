@@ -100,12 +100,14 @@ pub(super) fn default_channels() -> u8 {
 pub(super) fn default_frame_ms() -> u16 {
     60
 }
+/// ADR 0020: the server adds no heartbeat by default.
 pub(super) fn default_ws_ping_interval_ms() -> u64 {
-    20_000
+    0
 }
 
+/// ADR 0020: transport idle of 300 s, measured on WebSocket RX and TX.
 pub(super) fn default_ws_idle_timeout_ms() -> u64 {
-    60_000
+    300_000
 }
 
 pub(super) fn default_ws_write_timeout_ms() -> u64 {

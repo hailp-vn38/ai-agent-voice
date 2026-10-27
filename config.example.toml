@@ -80,11 +80,12 @@ max_utterance_ms = 30000
 
 [websocket]
 max_frame_bytes = 65536
-# Server Ping interval; 0 disables Pings.
-ping_interval_ms = 20000
-# Close (1001) a connection with no inbound frame (including Pong) for this long; 0 disables.
-# When set, ping_interval_ms must be positive and shorter.
-idle_timeout_ms = 60000
+# Server Ping interval; 0 (default, ADR 0020) sends no heartbeat. When set, it must be shorter
+# than idle_timeout_ms.
+ping_interval_ms = 0
+# Transport idle (ADR 0020): close (1001) a connection with no WebSocket frame received or sent
+# for this long; 0 disables.
+idle_timeout_ms = 300000
 # Upper bound on one WebSocket send to a peer that stopped reading.
 write_timeout_ms = 10000
 

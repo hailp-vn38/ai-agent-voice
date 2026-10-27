@@ -25,6 +25,8 @@ pub(super) struct HelloTelemetry {
 
 pub(super) struct WebSocketWriter {
     pub(super) sender: futures_util::stream::SplitSink<WebSocket, Message>,
+    /// Every frame this writer sends counts as transport activity (ADR 0020).
+    pub(super) activity: Arc<TransportActivity>,
     pub(super) write_timeout: Duration,
     /// Interval between Pings; zero sends none.
     pub(super) ping_period: Duration,
@@ -40,8 +42,8 @@ pub(super) struct WebSocketWriter {
 
 impl WebSocketWriter {
     pub(super) async fn run(mut self, mut lanes: WriterLanes) {
-        // Server Pings keep NAT/proxy state alive and give a responsive peer something to answer,
-        // which is what the reader's Idle Close measures.
+        // Server Pings are opt-in (ADR 0020: no heartbeat by default). When configured they keep
+        // NAT/proxy state alive and, like every frame sent, count as transport activity.
         let pings_enabled = !self.ping_period.is_zero();
         let period = self.ping_period.max(Duration::from_millis(1));
         let mut ping = tokio::time::interval_at(tokio::time::Instant::now() + period, period);
@@ -74,6 +76,7 @@ impl WebSocketWriter {
                         warn!(event = "ws_writer_failed", outcome = "failure", %error, "websocket ping failed");
                         break;
                     }
+                    self.activity.touch();
                 },
                 Some(message) = lanes.audio.recv() => {
                     if let OutboundMessage::Binary { turn_id, .. } = &message
@@ -219,6 +222,7 @@ impl WebSocketWriter {
     async fn send(&mut self, message: OutboundMessage) -> bool {
         send_outbound(
             &mut self.sender,
+            &self.activity,
             self.write_timeout,
             message,
             &self.generation_gate,

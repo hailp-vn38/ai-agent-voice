@@ -500,8 +500,8 @@ A protocol close performed by the Voice Session itself when the drain deadline a
 _Avoid_: task abort, silent socket drop, ungraceful server shutdown
 
 **Idle Close**:
-A close with code 1001 that a Voice Session performs itself when no frame of any kind has arrived from the peer within the idle window; server Pings give a responsive peer something to answer, so only a peer that is gone without closing is affected. It is distinct from Controlled Close, which is driven by shutdown, and from a protocol fault.
-_Avoid_: session timeout, inactivity hangup of a quiet but responsive client, OS keepalive reliance
+A close with code 1001 that a Voice Session performs itself when no valid WebSocket frame has been received or sent within the transport idle window (ADR 0020). The server adds no heartbeat by default, so a session with no traffic in either direction ends; conversation inactivity alone never closes it. It is distinct from Controlled Close, which is driven by shutdown, and from a protocol fault.
+_Avoid_: session timeout, conversation idle, server heartbeat to keep a session open, OS keepalive reliance
 
 **Liveness**:
 The sole question of whether the process is still running, independent of the database, External MCP, or shutdown; `/health` answers only this question.

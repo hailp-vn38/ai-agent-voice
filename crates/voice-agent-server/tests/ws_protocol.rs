@@ -458,20 +458,17 @@ async fn ping_before_client_hello_is_not_a_protocol_error() {
     task.abort();
 }
 
-/// A peer that stops answering (power loss, NAT drop) must not hold a Voice Session open until
-/// the operating system notices: it is closed once nothing has arrived for the idle timeout.
+/// ADR 0020: with no WebSocket frame in either direction for the transport idle window, the
+/// Voice Session closes itself (Idle Close) instead of waiting for the operating system to notice
+/// a peer that is gone. The server adds no heartbeat by default.
 #[tokio::test]
-async fn silent_peer_is_closed_after_idle_timeout() {
-    let (base, task, _, _) =
-        start_with_state(1_024, String::new(), None, heartbeat(100, 300)).await;
+async fn connection_without_transport_activity_is_idle_closed() {
+    let (base, task, _, _) = start_with_state(1_024, String::new(), None, heartbeat(0, 300)).await;
     let (mut socket, _) = connect_async(request(&base)).await.unwrap();
     socket.send(Message::Text(hello().into())).await.unwrap();
     let _ = next_message(&mut socket).await;
-    // Not reading means not answering the server's Pings.
     tokio::time::sleep(Duration::from_millis(600)).await;
-    // The client answers the queued Pings only now, after the server already closed; its Pong can
-    // meet a reset socket and hide the Close frame, so the end of the connection is the contract
-    // and a Close frame, when it is observed, must carry 1001.
+    // The connection ending is the contract; a Close frame, when observed, must carry 1001.
     let closed = timeout(Duration::from_secs(1), async {
         loop {
             match socket.next().await {
@@ -490,10 +487,10 @@ async fn silent_peer_is_closed_after_idle_timeout() {
     task.abort();
 }
 
-/// A peer that keeps answering the server's Pings stays connected past the idle timeout even
-/// without sending any application message.
+/// Opt-in server Pings, answered by a responsive peer, keep a connection without application
+/// traffic open past the idle window.
 #[tokio::test]
-async fn responsive_peer_survives_idle_timeout_and_receives_pings() {
+async fn opt_in_pings_keep_a_responsive_peer_connected() {
     let (base, task, _, _) =
         start_with_state(1_024, String::new(), None, heartbeat(100, 300)).await;
     let (mut socket, _) = connect_async(request(&base)).await.unwrap();
@@ -510,5 +507,33 @@ async fn responsive_peer_survives_idle_timeout_and_receives_pings() {
         }
     }
     assert!(pings >= 2, "expected periodic server Pings, got {pings}");
+    task.abort();
+}
+
+/// ADR 0020: transport idle counts frames sent as well as received, so server traffic alone keeps
+/// a Voice Session open even while the peer sends nothing.
+#[tokio::test]
+async fn server_traffic_counts_as_transport_activity() {
+    let (base, task, _, _) =
+        start_with_state(1_024, String::new(), None, heartbeat(100, 300)).await;
+    let (mut socket, _) = connect_async(request(&base)).await.unwrap();
+    socket.send(Message::Text(hello().into())).await.unwrap();
+    let _ = next_message(&mut socket).await;
+    // Not reading: the client sends nothing back, not even Pongs, for twice the idle window.
+    tokio::time::sleep(Duration::from_millis(700)).await;
+    let mut pings = 0;
+    let deadline = tokio::time::Instant::now() + Duration::from_millis(200);
+    while let Ok(message) = tokio::time::timeout_at(deadline, socket.next()).await {
+        match message {
+            Some(Ok(Message::Ping(_))) => pings += 1,
+            Some(Ok(Message::Close(frame))) => panic!("server traffic did not count: {frame:?}"),
+            None | Some(Err(_)) => panic!("connection ended despite server traffic"),
+            Some(Ok(_)) => {}
+        }
+    }
+    assert!(
+        pings >= 3,
+        "expected the server's Pings while idle-silent, got {pings}"
+    );
     task.abort();
 }
