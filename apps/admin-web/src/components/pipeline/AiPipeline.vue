@@ -44,12 +44,11 @@ function sharedFor(type: ProviderType) {
   return provider ? props.sharedTemplates(type, provider.id) : []
 }
 
-// Explicit topology: VAD → ASR → LLM, with Vision branching off the LLM and TTS continuing the audio path.
+// Explicit topology: VAD → ASR → LLM → TTS. Vision is a capability tag on the LLM provider.
 const vad = computed(() => providerFor('vad'))
 const asr = computed(() => providerFor('asr'))
 const llm = computed(() => providerFor('llm'))
 const tts = computed(() => providerFor('tts'))
-const vision = computed(() => providerFor('vision'))
 
 const boundCount = computed(() => providerTypes.filter((type) => providerFor(type)).length)
 </script>
@@ -124,57 +123,21 @@ const boundCount = computed(() => providerTypes.filter((type) => providerFor(typ
         </span>
       </div>
 
-      <!-- LLM, with Vision as a side capability branch, both cells stretch so the horizontal link lines up. -->
-      <div class="grid grid-cols-1 items-stretch gap-3 sm:grid-cols-[minmax(0,1fr)_2.5rem_minmax(0,1fr)] sm:gap-0">
-        <div class="flex flex-col items-center">
-          <span class="h-4 w-px bg-foreground/25" aria-hidden="true" />
-          <ProviderNode
-            v-if="llm"
-            class="h-full w-full"
-            type="llm"
-            :provider="llm"
-            :shared-with="sharedFor('llm')"
-            @open="emit('openProvider', $event)"
-            @edit="emit('editProvider', $event)"
-            @unlink="emit('unlink', $event)"
-          />
-          <EmptyProviderNode
-            v-else
-            class="h-full w-full"
-            type="llm"
-            :candidates="candidatesFor('llm')"
-            @select="(type, providerId) => emit('select', type, providerId)"
-          />
-        </div>
-
-        <div class="hidden items-center sm:flex" aria-hidden="true">
-          <span class="h-px w-full bg-foreground/25" />
-          <svg viewBox="0 0 16 8" class="-ml-px size-4 shrink-0 text-foreground/25" fill="none" aria-hidden="true">
-            <path d="M3 1.5 8 6.5l5-5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
-          </svg>
-        </div>
-
-        <div class="flex flex-col items-center">
-          <span class="hidden h-4 w-px bg-foreground/25 sm:block" aria-hidden="true" />
-          <ProviderNode
-            v-if="vision"
-            class="h-full w-full"
-            type="vision"
-            :provider="vision"
-            :shared-with="sharedFor('vision')"
-            @open="emit('openProvider', $event)"
-            @edit="emit('editProvider', $event)"
-            @unlink="emit('unlink', $event)"
-          />
-          <EmptyProviderNode
-            v-else
-            class="h-full w-full"
-            type="vision"
-            :candidates="candidatesFor('vision')"
-            @select="(type, providerId) => emit('select', type, providerId)"
-          />
-        </div>
-      </div>
+      <ProviderNode
+        v-if="llm"
+        type="llm"
+        :provider="llm"
+        :shared-with="sharedFor('llm')"
+        @open="emit('openProvider', $event)"
+        @edit="emit('editProvider', $event)"
+        @unlink="emit('unlink', $event)"
+      />
+      <EmptyProviderNode
+        v-else
+        type="llm"
+        :candidates="candidatesFor('llm')"
+        @select="(type, providerId) => emit('select', type, providerId)"
+      />
 
       <div class="flex h-7 justify-center" aria-hidden="true">
         <span class="flex w-4 flex-col items-center">

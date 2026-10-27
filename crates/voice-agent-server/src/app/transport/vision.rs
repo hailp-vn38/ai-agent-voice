@@ -1,12 +1,13 @@
 use crate::app::AppState;
-use crate::providers::{VisionError, VisionRequest};
+use crate::providers::{LlmOperation, LlmOutput};
+use crate::workers::LlmInvokeError;
 use axum::{
     Json,
     extract::{DefaultBodyLimit, Multipart, State},
     http::{HeaderMap, StatusCode, header},
     response::{IntoResponse, Response},
 };
-use std::{sync::Arc, time::Instant};
+use std::time::Instant;
 
 #[derive(serde::Serialize)]
 struct Success {
@@ -168,14 +169,14 @@ pub async fn post_handler(
     };
     let started = Instant::now();
     let result = runtime
-        .analyze(VisionRequest {
-            question: Arc::<str>::from(question),
-            image: Arc::<[u8]>::from(image),
-            mime_type: Arc::<str>::from(mime_type),
+        .invoke(LlmOperation::Vision {
+            prompt: question,
+            image_bytes: image,
+            mime_type: mime_type.to_owned(),
         })
         .await;
     match result {
-        Ok(response) => {
+        Ok(LlmOutput::Text(text)) => {
             let elapsed_ms = started.elapsed().as_millis() as u64;
             tracing::info!(
                 subsystem = "mcp.device",
@@ -193,14 +194,15 @@ pub async fn post_handler(
             Json(Success {
                 success: true,
                 action: "RESPONSE",
-                response: response.text,
+                response: text,
             })
             .into_response()
         }
-        Err(VisionError::Timeout) => {
+        Ok(_) => failure(StatusCode::BAD_GATEWAY, "vision provider failed"),
+        Err(LlmInvokeError::Timeout) => {
             failure(StatusCode::GATEWAY_TIMEOUT, "vision provider timed out")
         }
-        Err(VisionError::Overloaded) => failure(
+        Err(LlmInvokeError::Overloaded) => failure(
             StatusCode::SERVICE_UNAVAILABLE,
             "vision provider is overloaded",
         ),

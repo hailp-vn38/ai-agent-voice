@@ -92,7 +92,6 @@ pub(super) fn catalog() -> RuntimeCatalog {
             "tts".to_owned(),
             Arc::new(TtsWorkerRuntime::new(Arc::new(UnavailableTts), worker())),
         )]),
-        vision: HashMap::new(),
     }
 }
 

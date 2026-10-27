@@ -82,6 +82,11 @@ pub fn effective_capability_tags(tags: Option<&[String]>) -> Vec<LlmCapabilityTa
     }
 }
 
+pub fn capability_tags_support(tags: &[LlmCapabilityTag], tag: LlmCapabilityTag) -> bool {
+    tags.contains(&tag)
+        || (tag == LlmCapabilityTag::Chat && tags.contains(&LlmCapabilityTag::Reasoning))
+}
+
 pub fn valid_llm_tags(tags: Option<&[String]>) -> bool {
     let Some(tags) = tags else {
         return true;
@@ -407,9 +412,7 @@ pub trait LlmProvider: Send + Sync {
     }
 
     fn supports_tag(&self, tag: LlmCapabilityTag) -> bool {
-        self.capability_tags().contains(&tag)
-            || (tag == LlmCapabilityTag::Chat
-                && self.capability_tags().contains(&LlmCapabilityTag::Reasoning))
+        capability_tags_support(self.capability_tags(), tag)
     }
 
     fn ensure_tag(&self, tag: LlmCapabilityTag) -> Result<(), LlmError> {

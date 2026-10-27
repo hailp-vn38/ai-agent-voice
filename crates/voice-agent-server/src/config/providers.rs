@@ -1,6 +1,5 @@
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
-use url::Url;
 
 use super::defaults::*;
 pub use crate::providers::{
@@ -29,8 +28,6 @@ pub struct ProvidersConfig {
     #[serde(default)]
     pub tts: TtsProvidersConfig,
     #[serde(default)]
-    pub vision: VisionProvidersConfig,
-    #[serde(default)]
     pub speaker: SpeakerProvidersConfig,
 }
 
@@ -49,7 +46,6 @@ provider_catalog_config!(VadProvidersConfig, VadInstanceConfig);
 provider_catalog_config!(AsrProvidersConfig, AsrInstanceConfig);
 provider_catalog_config!(LlmProvidersConfig, LlmInstanceConfig);
 provider_catalog_config!(TtsProvidersConfig, TtsInstanceConfig);
-provider_catalog_config!(VisionProvidersConfig, VisionInstanceConfig);
 provider_catalog_config!(SpeakerProvidersConfig, SpeakerInstanceConfig);
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(tag = "adapter", rename_all = "snake_case")]
@@ -144,6 +140,19 @@ impl LlmInstanceConfig {
             Self::QualificationLlm(_) => unreachable!("qualification LLM has no OpenAI config"),
         }
     }
+    pub fn supports_tag(&self, tag: crate::providers::llm::LlmCapabilityTag) -> bool {
+        let tags = match self {
+            Self::Openai(config) => {
+                crate::providers::llm::effective_capability_tags(config.tags.as_deref())
+            }
+            Self::OpenCodeFree(config) => {
+                crate::providers::llm::effective_capability_tags(config.tags.as_deref())
+            }
+            #[cfg(feature = "qualification-providers")]
+            Self::QualificationLlm(_) => vec![crate::providers::llm::LlmCapabilityTag::Chat],
+        };
+        crate::providers::llm::capability_tags_support(&tags, tag)
+    }
 }
 
 /// Empty, deterministic configuration used only by the compile-time qualification adapters.
@@ -151,41 +160,6 @@ impl LlmInstanceConfig {
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct QualificationConfig {}
-
-#[derive(Clone, Debug, Deserialize)]
-#[serde(tag = "adapter", rename_all = "snake_case")]
-pub enum VisionInstanceConfig {
-    #[serde(rename = "openai_vision")]
-    OpenAiVision(OpenAiVisionConfig),
-}
-
-impl VisionInstanceConfig {
-    pub const fn adapter(&self) -> &'static str {
-        "openai_vision"
-    }
-    pub fn openai_vision(&self) -> &OpenAiVisionConfig {
-        match self {
-            Self::OpenAiVision(config) => config,
-        }
-    }
-}
-
-#[derive(Clone, Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct OpenAiVisionConfig {
-    pub base_url: Url,
-    #[serde(default)]
-    pub api_key: SecretString,
-    pub model: String,
-    #[serde(default = "default_vision_timeout_ms")]
-    pub timeout_ms: u64,
-    #[serde(default = "default_vision_max_tokens")]
-    pub max_tokens: u32,
-    #[serde(default = "default_vision_temperature")]
-    pub temperature: f32,
-    #[serde(default = "default_vision_top_p")]
-    pub top_p: f32,
-}
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(tag = "adapter", rename_all = "snake_case")]

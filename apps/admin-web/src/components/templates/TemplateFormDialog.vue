@@ -52,7 +52,7 @@ const editing = computed(() => Boolean(props.template))
  * The API models four required core slots plus an optional `speaker` slot; `vision` is not a
  * Template slot. Every bindable type except `vision` is offered here.
  */
-const bindableTypes = computed(() => providerTypes.filter((type) => type !== 'vision'))
+const bindableTypes = computed(() => providerTypes)
 
 const steps = computed(() => [
   t('templateForm.stepIdentity'),

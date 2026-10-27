@@ -7,3 +7,4 @@ mod media;
 pub(crate) mod provider;
 #[cfg(test)]
 mod tests;
+mod vision;

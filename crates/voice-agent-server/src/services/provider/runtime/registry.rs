@@ -899,6 +899,22 @@ impl ProviderRuntimeManager {
             .is_some_and(|entry| entry.state == RuntimeState::Ready && entry.healthy())
     }
 
+    pub fn deployment_llm_runtime(&self, key: &str) -> Option<Arc<crate::workers::LlmRuntime>> {
+        let version = ProviderVersion {
+            identity: super::ProviderIdentity::Deployment {
+                kind: "llm".into(),
+                key: key.into(),
+            },
+            revision: 1,
+        };
+        let registry = self.registry.lock().expect("runtime registry poisoned");
+        let entry = registry
+            .entries
+            .get(&version)
+            .filter(|entry| entry.state == RuntimeState::Ready && entry.healthy())?;
+        entry.resource.as_ref()?.runtimes()?.llm.get(key).cloned()
+    }
+
     pub fn admission_deadline(&self) -> Instant {
         Instant::now() + Duration::from_millis(self.limits.admission_timeout_ms)
     }

@@ -223,11 +223,6 @@ impl AppConfig {
                     "invalid provider runtime measured estimates".into(),
                 ));
             }
-            if self.vision.enabled {
-                return Err(ConfigError::Validation(
-                    "managed provider startup does not support Vision".into(),
-                ));
-            }
         }
         Ok(())
     }
@@ -428,7 +423,6 @@ fn validate_capacity(config: &AppConfig) -> Result<(), ConfigError> {
         config.limits.max_active_turns,
         config.limits.llm_concurrency,
         config.limits.tts_concurrency,
-        config.limits.vision_concurrency,
     ]
     .contains(&0)
     {
@@ -762,31 +756,6 @@ fn validate_providers(config: &AppConfig) -> Result<(), ConfigError> {
             _ => {}
         }
     }
-    for (id, instance) in &config.providers.vision.instances {
-        validate_instance_id(id)?;
-        registry.vision_factory(instance.adapter()).map_err(|_| {
-            ConfigError::Validation(format!(
-                "VISION instance `{id}` uses adapter `{}` which is not compiled into this binary",
-                instance.adapter()
-            ))
-        })?;
-        let vision = instance.openai_vision();
-        if !matches!(vision.base_url.scheme(), "http" | "https")
-            || vision.base_url.host_str().is_none()
-            || vision.model.trim().is_empty()
-            || vision.timeout_ms == 0
-            || vision.max_tokens == 0
-            || !vision.temperature.is_finite()
-            || !(0.0..=2.0).contains(&vision.temperature)
-            || !vision.top_p.is_finite()
-            || !(0.0..=1.0).contains(&vision.top_p)
-            || vision.top_p == 0.0
-        {
-            return Err(ConfigError::Validation(format!(
-                "VISION instance `{id}` has invalid OpenAI-compatible options"
-            )));
-        }
-    }
     let defaults = &config.provider_defaults;
     require_instance(
         "default VAD",
@@ -822,13 +791,27 @@ fn validate_vision(config: &AppConfig) -> Result<(), ConfigError> {
             "Vision image and question limits must be within supported bounds".into(),
         ));
     }
+    if let Some(binding) = config.provider_defaults.vision.as_deref() {
+        require_instance("VISION", binding, &config.providers.llm.instances)?;
+        let instance = &config.providers.llm.instances[binding];
+        if !instance.supports_tag(crate::providers::llm::LlmCapabilityTag::Vision) {
+            return Err(ConfigError::Validation(format!(
+                "LLM instance `{binding}` bound as default Vision provider must include capability tag `vision`"
+            )));
+        }
+    } else if vision.enabled {
+        let any_llm_supports_vision = config.providers.llm.instances.values().any(|instance| {
+            instance.supports_tag(crate::providers::llm::LlmCapabilityTag::Vision)
+        });
+        if !any_llm_supports_vision {
+            return Err(ConfigError::Validation(
+                "vision.enabled requires an LLM provider instance with capability tag `vision`".into(),
+            ));
+        }
+    }
     if !vision.enabled {
         return Ok(());
     }
-    let binding = config.provider_defaults.vision.as_deref().ok_or_else(|| {
-        ConfigError::Validation("vision.enabled requires a default Vision provider binding".into())
-    })?;
-    require_instance("VISION", binding, &config.providers.vision.instances)?;
     if vision.advertise_via_mcp {
         let public_url = vision.public_url.as_ref().ok_or_else(|| {
             ConfigError::Validation("vision.advertise_via_mcp requires vision.public_url".into())

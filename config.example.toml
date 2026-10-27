@@ -68,11 +68,6 @@ max_output_tokens = 16000
 request_timeout_ms = 120000
 max_concurrent_root_runs = 4
 
-[wiki]
-enabled = true
-vault_dir = "data/wiki"
-template = "research"
-
 [shutdown]
 grace_ms = 15000
 
@@ -93,7 +88,6 @@ urgent_control_queue = 8
 outbound_audio_queue = 32
 llm_concurrency = 2
 tts_concurrency = 2
-vision_concurrency = 2
 
 [provider_defaults]
 # Server-wide fallback providers. A Template may override each slot independently;
@@ -102,8 +96,9 @@ vad = "silero_default"
 asr = "gipformer_vi"
 llm = "openai_primary"
 tts = "chillaudio_default"
-# Set a Vision instance ID when [vision].enabled is true.
-# vision = "local_vision"
+# Optional LLM instance ID (with capability tag "vision") used when [vision].enabled is true.
+# If omitted, the server uses the default LLM or the first LLM instance tagged with "vision".
+# vision = "openai_primary"
 
 [vision]
 enabled = false
@@ -111,16 +106,6 @@ enabled = false
 max_image_bytes = 5242880
 max_question_bytes = 4096
 advertise_via_mcp = false
-
-# [providers.vision.instances.local_vision]
-# adapter = "openai_vision"
-# base_url = "http://127.0.0.1:11434/v1/"
-# api_key = ""
-# model = "your-vision-model"
-# timeout_ms = 30000
-# max_tokens = 500
-# temperature = 0.2
-# top_p = 1.0
 
 [providers.vad.instances.silero_default]
 adapter = "silero_onnx"

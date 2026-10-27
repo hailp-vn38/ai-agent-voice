@@ -201,17 +201,45 @@ impl AppState {
         }
     }
 
-    pub fn bound_vision_runtime(&self) -> Option<Arc<crate::workers::VisionRuntime>> {
-        let id = self.config.provider_defaults.vision.as_deref()?;
-        self.runtimes.vision(id).ok()
+    pub fn bound_vision_runtime(&self) -> Option<Arc<LlmRuntime>> {
+        use crate::providers::LlmCapabilityTag;
+        let resolve = |id: &str| -> Option<Arc<LlmRuntime>> {
+            let runtime = self
+                .provider_runtime_manager
+                .as_ref()
+                .and_then(|manager| manager.deployment_llm_runtime(id))
+                .or_else(|| self.runtimes.llm(id).ok())?;
+            runtime
+                .provider()
+                .supports_tag(LlmCapabilityTag::Vision)
+                .then_some(runtime)
+        };
+        if let Some(runtime) = self
+            .config
+            .provider_defaults
+            .vision
+            .as_deref()
+            .and_then(resolve)
+        {
+            return Some(runtime);
+        }
+        if let Some(runtime) = resolve(&self.config.provider_defaults.llm) {
+            return Some(runtime);
+        }
+        if let Some(runtime) = self.config.effective_vision_llm_id().and_then(resolve) {
+            return Some(runtime);
+        }
+        let mut keys: Vec<&str> = self.runtimes.llm.keys().map(String::as_str).collect();
+        keys.sort_unstable();
+        keys.into_iter().find_map(resolve)
     }
 
-    /// Deterministic public-HTTP seam: it injects only the already-built Vision runtime,
+    /// Deterministic public-HTTP seam: it injects only the already-built Vision LLM runtime,
     /// leaving the unrelated Voice Session providers unavailable.
     pub fn with_vision_runtime_for_test(
         mut self,
         instance_id: impl Into<String>,
-        provider: Arc<dyn crate::providers::VisionProvider>,
+        provider: Arc<dyn crate::providers::LlmProvider>,
         concurrency: usize,
         timeout: Duration,
     ) -> Self {
@@ -219,13 +247,9 @@ impl AppState {
         let config = Arc::make_mut(&mut self.config);
         config.vision.enabled = true;
         config.provider_defaults.vision = Some(instance_id.clone());
-        Arc::make_mut(&mut self.runtimes).vision.insert(
+        Arc::make_mut(&mut self.runtimes).llm.insert(
             instance_id,
-            Arc::new(crate::workers::VisionRuntime::new(
-                provider,
-                concurrency,
-                timeout,
-            )),
+            Arc::new(LlmRuntime::new(provider, concurrency, timeout)),
         );
         self
     }
@@ -1011,7 +1035,6 @@ pub(super) fn loaded_from_provider_set(
                 asr: HashMap::from([(id.clone(), asr)]),
                 llm: HashMap::from([(id.clone(), llm)]),
                 tts: HashMap::from([(id.clone(), tts)]),
-                vision: HashMap::new(),
             },
             runtimes: RuntimeCatalog {
                 speaker: HashMap::new(),
@@ -1026,7 +1049,6 @@ pub(super) fn loaded_from_provider_set(
                 asr: HashMap::from([(id.clone(), asr_runtime)]),
                 llm: HashMap::from([(id.clone(), llm_runtime)]),
                 tts: HashMap::from([(id, tts_runtime)]),
-                vision: HashMap::new(),
             },
         },
     )

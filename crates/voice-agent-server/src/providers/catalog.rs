@@ -1,6 +1,6 @@
 use std::{collections::HashMap, sync::Arc};
 
-use crate::providers::{AsrProvider, LlmProvider, TtsProvider, VadProvider, VisionProvider};
+use crate::providers::{AsrProvider, LlmProvider, TtsProvider, VadProvider};
 
 #[derive(Debug, thiserror::Error)]
 pub enum ProviderLookupError {
@@ -15,7 +15,6 @@ pub struct ProviderCatalog {
     pub(crate) asr: HashMap<String, Arc<dyn AsrProvider>>,
     pub(crate) llm: HashMap<String, Arc<dyn LlmProvider>>,
     pub(crate) tts: HashMap<String, Arc<dyn TtsProvider>>,
-    pub(crate) vision: HashMap<String, Arc<dyn VisionProvider>>,
 }
 
 impl ProviderCatalog {
@@ -53,15 +52,6 @@ impl ProviderCatalog {
             .cloned()
             .ok_or_else(|| ProviderLookupError::Unknown {
                 kind: "TTS",
-                id: id.into(),
-            })
-    }
-    pub fn vision(&self, id: &str) -> Result<Arc<dyn VisionProvider>, ProviderLookupError> {
-        self.vision
-            .get(id)
-            .cloned()
-            .ok_or_else(|| ProviderLookupError::Unknown {
-                kind: "VISION",
                 id: id.into(),
             })
     }

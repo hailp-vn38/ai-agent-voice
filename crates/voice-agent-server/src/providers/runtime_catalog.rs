@@ -7,7 +7,7 @@ use crate::{
     workers::{
         AsrDiagnosticOperation, AsrWorkerRuntime, LlmDiagnosticOperation, LlmRuntime,
         ProviderAdmissionError, ProviderCapacityPermit, TtsDiagnosticOperation, TtsWorkerRuntime,
-        VadDiagnosticOperation, VadWorkerRuntime, VisionRuntime,
+        VadDiagnosticOperation, VadWorkerRuntime,
     },
 };
 
@@ -85,7 +85,6 @@ pub struct RuntimeCatalog {
     pub(crate) llm: HashMap<String, Arc<LlmRuntime>>,
     pub(crate) tts: HashMap<String, Arc<TtsWorkerRuntime>>,
     pub(crate) speaker: HashMap<String, Arc<super::speaker::SpeakerRuntime>>,
-    pub(crate) vision: HashMap<String, Arc<VisionRuntime>>,
 }
 
 impl RuntimeCatalog {
@@ -140,7 +139,7 @@ impl RuntimeCatalog {
     /// Called outside the manager lock after lease admission has closed. Every worker
     /// owns its native exit acknowledgement; no Arc reference-count heuristic is used.
     pub(crate) fn shutdown_acknowledged(&self) -> bool {
-        let mut acknowledged = self.vision.is_empty();
+        let mut acknowledged = true;
         for runtime in self.speaker.values() {
             acknowledged &= runtime.shutdown_acknowledged();
         }
@@ -263,12 +262,12 @@ impl RuntimeCatalog {
             .validate_diagnostic(request)
             .map_err(|_| TtsDiagnosticValidationError::InvalidInput)
     }
-    pub fn vision(&self, id: &str) -> Result<Arc<VisionRuntime>, RuntimeResolveError> {
-        self.vision
+    pub fn llm(&self, id: &str) -> Result<Arc<LlmRuntime>, RuntimeResolveError> {
+        self.llm
             .get(id)
             .cloned()
             .ok_or_else(|| RuntimeResolveError::Unknown {
-                kind: "VISION",
+                kind: "LLM",
                 id: id.into(),
             })
     }
@@ -380,7 +379,6 @@ mod tests {
                 "tts_b".into(),
                 Arc::new(TtsWorkerRuntime::new(Arc::new(UnavailableTts), worker)),
             )]),
-            vision: HashMap::new(),
         };
         let resolved = catalog
             .resolve(&EffectiveProviderBindings {

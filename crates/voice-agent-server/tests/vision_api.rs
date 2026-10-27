@@ -3,19 +3,30 @@ use std::{sync::Arc, time::Duration};
 use voice_agent_server::{
     app::{AppState, router_with_state},
     config::AppConfig,
-    providers::{ProviderSet, VisionError, VisionProvider, VisionRequest, VisionResponse},
+    providers::{LlmCapabilityTag, LlmError, LlmOperation, LlmOutput, LlmProvider, ProviderSet},
 };
 
 struct EchoVision;
 #[async_trait::async_trait]
-impl VisionProvider for EchoVision {
+impl LlmProvider for EchoVision {
     fn adapter(&self) -> &'static str {
         "echo_vision"
     }
-    async fn analyze(&self, request: VisionRequest) -> Result<VisionResponse, VisionError> {
-        Ok(VisionResponse {
-            text: format!("{}:{}", request.mime_type, request.image.len()),
-        })
+    fn capability_tags(&self) -> &[LlmCapabilityTag] {
+        &[LlmCapabilityTag::Chat, LlmCapabilityTag::Vision]
+    }
+    async fn execute_operation(&self, op: LlmOperation) -> Result<LlmOutput, LlmError> {
+        match op {
+            LlmOperation::Vision {
+                image_bytes,
+                mime_type,
+                ..
+            } => Ok(LlmOutput::Text(format!(
+                "{mime_type}:{}",
+                image_bytes.len()
+            ))),
+            _ => Err(LlmError::UnsupportedCapability(op.required_tag().as_str())),
+        }
     }
 }
 async fn spawn(app: Router) -> (String, tokio::task::JoinHandle<()>) {
@@ -154,16 +165,22 @@ struct SlowVision {
     release: Arc<tokio::sync::Semaphore>,
 }
 #[async_trait::async_trait]
-impl VisionProvider for SlowVision {
+impl LlmProvider for SlowVision {
     fn adapter(&self) -> &'static str {
         "slow_vision"
     }
-    async fn analyze(&self, _: VisionRequest) -> Result<VisionResponse, VisionError> {
-        self.started.notify_one();
-        let _ = self.release.acquire().await.unwrap();
-        Ok(VisionResponse {
-            text: "complete".into(),
-        })
+    fn capability_tags(&self) -> &[LlmCapabilityTag] {
+        &[LlmCapabilityTag::Vision]
+    }
+    async fn execute_operation(&self, op: LlmOperation) -> Result<LlmOutput, LlmError> {
+        match op {
+            LlmOperation::Vision { .. } => {
+                self.started.notify_one();
+                let _ = self.release.acquire().await.unwrap();
+                Ok(LlmOutput::Text("complete".into()))
+            }
+            _ => Err(LlmError::UnsupportedCapability(op.required_tag().as_str())),
+        }
     }
 }
 async fn explain(base: &str) -> reqwest::Response {
@@ -219,5 +236,34 @@ async fn pilot_serializes_vision_requests_even_with_provider_capacity_two() {
     release.add_permits(1);
     assert_eq!(first.await.unwrap().status(), reqwest::StatusCode::OK);
     assert_eq!(explain(&base).await.status(), reqwest::StatusCode::OK);
+    task.abort();
+}
+
+#[tokio::test]
+async fn vision_api_falls_back_to_default_llm_with_vision_tag_when_vision_default_omitted() {
+    let mut config = AppConfig::parse_and_resolve(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../config.example.toml"
+    ))
+    .unwrap();
+    config.vision.enabled = true;
+    config.provider_defaults.vision = None;
+    let state = AppState::from_provider_set(
+        config,
+        Arc::new(ProviderSet::unavailable()),
+    )
+    .with_llm_runtime_for_test(
+        "test",
+        Arc::new(EchoVision),
+        1,
+        Duration::from_secs(1),
+    );
+    let (base, task) = spawn(router_with_state(state)).await;
+    let response = explain(&base).await;
+    assert_eq!(response.status(), reqwest::StatusCode::OK);
+    assert_eq!(
+        response.json::<serde_json::Value>().await.unwrap()["response"],
+        "image/jpeg:4"
+    );
     task.abort();
 }

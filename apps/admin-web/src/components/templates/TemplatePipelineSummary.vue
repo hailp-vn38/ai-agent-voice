@@ -15,22 +15,17 @@ const { t, providerTypeLabel } = useI18n()
 
 const chain = computed(() =>
   providerTypes
-    .filter((type) => type !== 'vision' && props.template.providerBindings[type])
+    .filter((type) => props.template.providerBindings[type])
     .map((type) => ({
       type,
       label: providerTypeLabel(type),
       name: props.providerNameById(props.template.providerBindings[type]),
     })),
 )
-
-const vision = computed(() => {
-  const providerId = props.template.providerBindings.vision
-  return providerId ? props.providerNameById(providerId) : undefined
-})
 </script>
 
 <template>
-  <p v-if="chain.length === 0 && !vision" class="text-xs text-muted-foreground">
+  <p v-if="chain.length === 0" class="text-xs text-muted-foreground">
     {{ t('templateSummary.noProviders') }}
   </p>
 
@@ -51,12 +46,6 @@ const vision = computed(() => {
           </span>
         </span>
       </template>
-    </p>
-
-    <p v-if="vision" class="flex items-center gap-1.5 pl-3 text-xs">
-      <span class="font-mono text-muted-foreground/70" aria-hidden="true">└─</span>
-      <span class="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">Vision</span>
-      <span class="max-w-32 truncate font-medium text-foreground" :title="vision">{{ vision }}</span>
     </p>
   </div>
 </template>

@@ -35,6 +35,21 @@ pub enum LlmStartError {
     Capacity,
 }
 
+/// Coarse, redaction-safe reason a single-shot LLM operation could not complete.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
+pub enum LlmInvokeError {
+    #[error("LLM operation capacity is exhausted")]
+    Overloaded,
+    #[error("LLM operation timed out")]
+    Timeout,
+    #[error("LLM provider does not support capability tag `{0}`")]
+    UnsupportedCapability(&'static str),
+    #[error("LLM provider rejected the request")]
+    Rejected,
+    #[error("LLM provider failed")]
+    Failed,
+}
+
 /// Coarse, redaction-safe reason an LLM operation could not produce a response.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LlmFailureReason {
@@ -94,6 +109,10 @@ impl LlmDiagnosticOperation {
 }
 
 impl LlmRuntime {
+    pub fn provider(&self) -> Arc<dyn LlmProvider> {
+        Arc::clone(&self.provider)
+    }
+
     pub fn supports_tools(&self) -> bool {
         self.provider.supports_tools()
     }
@@ -264,6 +283,37 @@ impl LlmRuntime {
             .get(identity)
         {
             token.cancel();
+        }
+    }
+
+    /// Executes a bounded single-shot operation under Voice workload capacity and the runtime's
+    /// configured timeout.
+    pub async fn invoke(
+        &self,
+        op: LlmOperation,
+    ) -> Result<crate::providers::LlmOutput, LlmInvokeError> {
+        self.provider
+            .ensure_tag(op.required_tag())
+            .map_err(|_| LlmInvokeError::UnsupportedCapability(op.required_tag().as_str()))?;
+        let permit = {
+            let _state = self.cancellations.lock().expect("LLM cancellations lock");
+            if self.closed.load(Ordering::Acquire) {
+                return Err(LlmInvokeError::Overloaded);
+            }
+            self.admission
+                .try_admit(ProviderWorkloadClass::Voice)
+                .map_err(|_| LlmInvokeError::Overloaded)?
+        };
+        let result = tokio::time::timeout(self.timeout, self.provider.invoke(op)).await;
+        drop(permit);
+        match result {
+            Ok(Ok(output)) => Ok(output),
+            Ok(Err(LlmError::UnsupportedCapability(tag))) => {
+                Err(LlmInvokeError::UnsupportedCapability(tag))
+            }
+            Ok(Err(LlmError::Rejected)) => Err(LlmInvokeError::Rejected),
+            Ok(Err(LlmError::Failed)) => Err(LlmInvokeError::Failed),
+            Err(_) => Err(LlmInvokeError::Timeout),
         }
     }
 

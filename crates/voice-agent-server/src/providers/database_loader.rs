@@ -197,7 +197,6 @@ fn empty_loaded() -> LoadedProviders {
             asr: HashMap::new(),
             llm: HashMap::new(),
             tts: HashMap::new(),
-            vision: HashMap::new(),
         },
         runtimes: RuntimeCatalog {
             speaker: HashMap::new(),
@@ -205,7 +204,6 @@ fn empty_loaded() -> LoadedProviders {
             asr: HashMap::new(),
             llm: HashMap::new(),
             tts: HashMap::new(),
-            vision: HashMap::new(),
         },
     }
 }

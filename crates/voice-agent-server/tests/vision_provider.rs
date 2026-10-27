@@ -1,8 +1,7 @@
 use axum::{Json, Router, routing::post};
-use std::sync::Arc;
 use voice_agent_server::{
-    config::{OpenAiVisionConfig, SecretString},
-    providers::{OpenAiVisionProvider, VisionProvider, VisionRequest},
+    config::{LlmInstanceConfig, OpenAiConfig, SecretString},
+    providers::{LlmOperation, LlmOutput, compiled_provider_registry},
 };
 
 async fn upstream(Json(payload): Json<serde_json::Value>) -> Json<serde_json::Value> {
@@ -16,7 +15,7 @@ async fn upstream(Json(payload): Json<serde_json::Value>) -> Json<serde_json::Va
     Json(serde_json::json!({"choices":[{"message":{"content":"  vision result  "}}]}))
 }
 #[tokio::test]
-async fn openai_vision_sends_multimodal_payload_over_http() {
+async fn openai_llm_with_vision_tag_sends_multimodal_payload_over_http() {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
     let task = tokio::spawn(async move {
@@ -27,24 +26,28 @@ async fn openai_vision_sends_multimodal_payload_over_http() {
         .await
         .unwrap();
     });
-    let provider = OpenAiVisionProvider::new(OpenAiVisionConfig {
-        base_url: format!("http://{address}/v1").parse().unwrap(),
-        api_key: SecretString::new("upstream-key"),
-        model: "vision-model".into(),
-        timeout_ms: 1000,
-        max_tokens: 12,
-        temperature: 0.2,
-        top_p: 1.0,
-    })
-    .unwrap();
+    let provider = compiled_provider_registry()
+        .llm_factory("openai")
+        .unwrap()
+        .build(&LlmInstanceConfig::Openai(OpenAiConfig {
+            base_url: format!("http://{address}/v1").parse().unwrap(),
+            api_key: SecretString::new("upstream-key"),
+            model: "vision-model".into(),
+            timeout_ms: 1000,
+            max_tokens: Some(256),
+            temperature_percent: Some(20),
+            tags: Some(vec!["chat".into(), "vision".into()]),
+            ..Default::default()
+        }))
+        .unwrap();
     let response = provider
-        .analyze(VisionRequest {
-            question: Arc::from("describe"),
-            image: Arc::from([137, 80, 78, 71].as_slice()),
-            mime_type: Arc::from("image/png"),
+        .invoke(LlmOperation::Vision {
+            prompt: "describe".into(),
+            image_bytes: vec![137, 80, 78, 71],
+            mime_type: "image/png".into(),
         })
         .await
         .unwrap();
-    assert_eq!(response.text, "vision result");
+    assert_eq!(response, LlmOutput::Text("vision result".into()));
     task.abort();
 }

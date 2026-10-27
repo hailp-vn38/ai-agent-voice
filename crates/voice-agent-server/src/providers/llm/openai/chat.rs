@@ -1,9 +1,6 @@
-use crate::providers::{
-    llm::{
-        ChatMessage, LlmError, LlmEventStream, LlmOutput, LlmProvider, LlmRequest,
-        collect_chat_stream, stream_openai_request,
-    },
-    vision::{OpenAiVisionCompletion, VisionError, execute_openai_vision_completion},
+use crate::providers::llm::{
+    ChatMessage, LlmError, LlmEventStream, LlmOutput, LlmProvider, LlmRequest, collect_chat_stream,
+    stream_openai_request,
 };
 
 use super::provider::ConfiguredOpenAiLlm;
@@ -47,37 +44,5 @@ impl ConfiguredOpenAiLlm {
     ) -> Result<LlmOutput, LlmError> {
         let stream = self.open_chat_stream(request, force_reasoning).await?;
         collect_chat_stream(stream).await
-    }
-
-    pub(super) async fn complete_vision(
-        &self,
-        prompt: &str,
-        image_bytes: &[u8],
-        mime_type: &str,
-    ) -> Result<LlmOutput, LlmError> {
-        let api_key = self.ensure_api_key()?;
-        let endpoint = self.endpoint("chat/completions")?;
-        let text = execute_openai_vision_completion(OpenAiVisionCompletion {
-            client: &self.client,
-            endpoint: &endpoint,
-            api_key,
-            model: &self.model,
-            question: prompt,
-            image_bytes,
-            mime_type,
-            max_tokens: self.max_tokens,
-            temperature: self.temperature(),
-            top_p: None,
-        })
-        .await
-        .map_err(|err| match err {
-            VisionError::InvalidRequest
-            | VisionError::UpstreamRejected
-            | VisionError::InvalidResponse => LlmError::Rejected,
-            VisionError::Transport | VisionError::Timeout | VisionError::Overloaded => {
-                LlmError::Failed
-            }
-        })?;
-        Ok(LlmOutput::Text(text))
     }
 }

@@ -383,6 +383,11 @@ pub fn startup_providers(config: &AppConfig) -> std::collections::BTreeSet<(Stri
     .into_iter()
     .map(|(kind, key)| (kind.to_owned(), key.clone()))
     .collect();
+    if config.vision.enabled
+        && let Some(key) = config.effective_vision_llm_id()
+    {
+        required.insert(("llm".to_owned(), key.to_owned()));
+    }
     for (key, instance) in &config.providers.tts.instances {
         if instance.preload() {
             required.insert(("tts".to_owned(), key.clone()));
@@ -402,9 +407,7 @@ async fn managed_startup(
         .provider_runtime
         .as_ref()
         .ok_or(BootstrapError::Provider)?;
-    // No voice catalog or provider set pins graphs beside the manager on this path;
-    // only the optional deployment-bound Vision runtime lives on AppState directly.
-    let loaded = crate::providers::load_vision(&config).map_err(|_| BootstrapError::Provider)?;
+    let loaded = crate::providers::LoadedProviders::default();
     let mut state = AppState::new_with_database_runtime_snapshot_resolver_and_shutdown(
         config.clone(),
         loaded,

@@ -7,7 +7,6 @@ mod llm;
 mod supervision;
 mod tts;
 mod vad;
-mod vision_runtime;
 
 pub use admission::{
     ProviderAdmissionError, ProviderCapacityPermit, ProviderRuntimeAdmission, ProviderWorkloadClass,
@@ -17,7 +16,9 @@ pub use asr::{
     AsrBackgroundOperation, AsrCommand, AsrStreamLease, AsrWorkerError, AsrWorkerEvent,
     AsrWorkerRuntime,
 };
-pub use llm::{LlmDiagnosticOperation, LlmFailureReason, LlmRuntime, LlmRuntimeEvent};
+pub use llm::{
+    LlmDiagnosticOperation, LlmFailureReason, LlmInvokeError, LlmRuntime, LlmRuntimeEvent,
+};
 pub use supervision::WorkerSupervisor;
 pub use tts::{
     TtsDiagnosticOperation, TtsDiagnosticOutput, TtsLease, TtsStreamId, TtsWorkerError,
@@ -27,7 +28,6 @@ pub use vad::VadDiagnosticOperation;
 pub use vad::{
     VadCaptureCycleId, VadCommand, VadWorkerError, VadWorkerEvent, VadWorkerLease, VadWorkerRuntime,
 };
-pub use vision_runtime::VisionRuntime;
 
 use std::time::Duration;
 

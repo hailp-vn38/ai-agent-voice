@@ -27,7 +27,6 @@ const providerTypeKeys: Record<ProviderType, MessageKey> = {
   speaker: 'providerType.speaker',
   llm: 'providerType.llm',
   tts: 'providerType.tts',
-  vision: 'providerType.vision',
 }
 
 const providerStatusKeys: Record<ProviderStatus, MessageKey> = {

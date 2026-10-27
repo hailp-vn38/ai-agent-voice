@@ -1307,10 +1307,7 @@ async fn handle_reminder_message(
 }
 
 fn vision_capability(config: &AppConfig) -> Option<crate::tools::device_mcp::VisionCapability> {
-    if config.vision.enabled
-        && config.vision.advertise_via_mcp
-        && config.provider_defaults.vision.is_some()
-    {
+    if config.vision.enabled && config.vision.advertise_via_mcp {
         Some(crate::tools::device_mcp::VisionCapability {
             url: config.vision.public_url.as_ref()?.to_string(),
             token: config.auth.token.clone(),

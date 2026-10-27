@@ -8,8 +8,7 @@ use crate::{
         compiled_provider_registry,
     },
     workers::{
-        AsrWorkerRuntime, LlmRuntime, TtsWorkerRuntime, VadWorkerRuntime, VisionRuntime,
-        WorkerRuntimeConfig,
+        AsrWorkerRuntime, LlmRuntime, TtsWorkerRuntime, VadWorkerRuntime, WorkerRuntimeConfig,
     },
 };
 
@@ -39,6 +38,7 @@ pub(crate) fn vad_timing(instance: &VadInstanceConfig) -> (VadSegmenterConfig, u
     )
 }
 
+#[derive(Default)]
 pub struct LoadedProviders {
     pub providers: ProviderCatalog,
     pub runtimes: RuntimeCatalog,
@@ -199,8 +199,13 @@ pub(crate) fn load_local(config: &AppConfig) -> Result<LoadedProviders, Provider
 
     let mut llm_providers = HashMap::new();
     let mut llm_runtimes = HashMap::new();
+    let effective_vision_id = config
+        .vision
+        .enabled
+        .then(|| config.effective_vision_llm_id())
+        .flatten();
     for (id, instance) in &config.providers.llm.instances {
-        if id != &defaults.llm {
+        if id != &defaults.llm && effective_vision_id != Some(id.as_str()) {
             continue;
         }
         let provider = registry.llm_factory(instance.adapter())?.build(instance)?;
@@ -254,15 +259,12 @@ pub(crate) fn load_local(config: &AppConfig) -> Result<LoadedProviders, Provider
         tts_providers.insert(id.clone(), provider);
     }
 
-    let vision = load_vision(config)?;
-
     Ok(LoadedProviders {
         providers: ProviderCatalog {
             vad: vad_providers,
             asr: asr_providers,
             llm: llm_providers,
             tts: tts_providers,
-            vision: vision.providers.vision,
         },
         runtimes: RuntimeCatalog {
             speaker: HashMap::new(),
@@ -270,50 +272,6 @@ pub(crate) fn load_local(config: &AppConfig) -> Result<LoadedProviders, Provider
             asr: asr_runtimes,
             llm: llm_runtimes,
             tts: tts_runtimes,
-            vision: vision.runtimes.vision,
-        },
-    })
-}
-
-pub(crate) fn load_vision(config: &AppConfig) -> Result<LoadedProviders, ProviderLoadError> {
-    config
-        .validate()
-        .map_err(|error| ProviderLoadError::Configuration(error.to_string()))?;
-    let registry = compiled_provider_registry();
-    let mut vision_providers = HashMap::new();
-    let mut vision_runtimes = HashMap::new();
-    if config.vision.enabled {
-        let binding = config
-            .provider_defaults
-            .vision
-            .as_deref()
-            .expect("validated Vision binding");
-        for (id, instance) in &config.providers.vision.instances {
-            if id != binding {
-                continue;
-            }
-            let provider = registry
-                .vision_factory(instance.adapter())?
-                .build(instance)?;
-            vision_runtimes.insert(
-                id.clone(),
-                Arc::new(VisionRuntime::new(
-                    Arc::clone(&provider),
-                    config.limits.vision_concurrency,
-                    Duration::from_millis(instance.openai_vision().timeout_ms),
-                )),
-            );
-            vision_providers.insert(id.clone(), provider);
-        }
-    }
-    Ok(LoadedProviders {
-        providers: ProviderCatalog {
-            vision: vision_providers,
-            ..Default::default()
-        },
-        runtimes: RuntimeCatalog {
-            vision: vision_runtimes,
-            ..Default::default()
         },
     })
 }

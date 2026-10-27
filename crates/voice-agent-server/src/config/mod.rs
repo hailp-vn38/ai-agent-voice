@@ -65,6 +65,41 @@ pub struct AppConfig {
     pub effective_agent: EffectiveAgentConfig,
 }
 
+impl AppConfig {
+    /// Resolves the effective Vision LLM provider instance key at the configuration boundary:
+    /// (1) explicit `provider_defaults.vision`, (2) `provider_defaults.llm` if it carries the
+    /// `"vision"` capability tag, or (3) the first lexicographically ordered LLM instance carrying
+    /// the `"vision"` capability tag.
+    pub fn effective_vision_llm_id(&self) -> Option<&str> {
+        use crate::providers::llm::LlmCapabilityTag;
+        if let Some(id) = self.provider_defaults.vision.as_deref() {
+            return Some(id);
+        }
+        if self
+            .providers
+            .llm
+            .instances
+            .get(&self.provider_defaults.llm)
+            .is_some_and(|instance| instance.supports_tag(LlmCapabilityTag::Vision))
+        {
+            return Some(self.provider_defaults.llm.as_str());
+        }
+        let mut candidates: Vec<&str> = self
+            .providers
+            .llm
+            .instances
+            .iter()
+            .filter_map(|(id, instance)| {
+                instance
+                    .supports_tag(LlmCapabilityTag::Vision)
+                    .then_some(id.as_str())
+            })
+            .collect();
+        candidates.sort_unstable();
+        candidates.into_iter().next()
+    }
+}
+
 pub const DEFAULT_AGENT_NAME: &str = "Mây";
 pub const DEFAULT_AGENT_LANGUAGE: &str = "vi-VN";
 pub const DEFAULT_AGENT_PERSONA: &str = "\
@@ -1169,8 +1204,6 @@ pub struct LimitsConfig {
     pub llm_concurrency: usize,
     #[serde(default = "default_tts_concurrency")]
     pub tts_concurrency: usize,
-    #[serde(default = "default_vision_concurrency")]
-    pub vision_concurrency: usize,
 }
 
 impl Default for LimitsConfig {
@@ -1183,7 +1216,6 @@ impl Default for LimitsConfig {
             max_active_turns: default_max_active_turns(),
             llm_concurrency: default_llm_concurrency(),
             tts_concurrency: default_tts_concurrency(),
-            vision_concurrency: default_vision_concurrency(),
         }
     }
 }

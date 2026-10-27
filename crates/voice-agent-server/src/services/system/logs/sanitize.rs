@@ -57,8 +57,6 @@ pub(super) fn classify_subsystem(explicit: Option<&str>, target: &str) -> String
     } else if target.contains("::tools::device_mcp")
         || target.contains("::session::actor::mcp")
         || target.contains("::app::transport::vision")
-        || target.contains("::workers::vision_runtime")
-        || target.contains("::providers::vision")
     {
         "mcp.device".to_owned()
     } else if target.contains("::tools::external_mcp")

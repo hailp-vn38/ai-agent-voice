@@ -82,7 +82,6 @@ fn valid_config() -> AppConfig {
                     TtsInstanceConfig::ZeroTtsOnnx(ZeroTtsOnnxConfig::default()),
                 )]),
             },
-            vision: voice_agent_server::config::VisionProvidersConfig::default(),
             speaker: voice_agent_server::config::SpeakerProvidersConfig::default(),
         },
         workers: WorkersConfig::default(),

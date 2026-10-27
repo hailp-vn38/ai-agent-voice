@@ -10,11 +10,11 @@ use sherpa_onnx::{
 use crate::{
     config::{
         AsrInstanceConfig, GipformerSherpaOfflineConfig, LlmInstanceConfig, RuntimeConfig,
-        TtsInstanceConfig, VadInstanceConfig, VisionInstanceConfig,
+        TtsInstanceConfig, VadInstanceConfig,
     },
     providers::{
         AsrProvider, AssetError, LlmProvider, ProviderLoadError, ProviderType, TtsProvider,
-        VadProvider, VisionProvider,
+        VadProvider,
         asr::{GipformerAsrProvider, ZipformerAsrProvider, gipformer, zipformer},
         llm::{openai::provider::ConfiguredOpenAiLlm, opencode_free::OpenCodeFreeProvider},
         tts::{
@@ -24,7 +24,6 @@ use crate::{
             zerotts::assets as zerotts_assets,
         },
         vad::{LoadedSileroVad, silero::assets as silero_assets},
-        vision::OpenAiVisionProvider,
     },
 };
 
@@ -74,21 +73,12 @@ pub trait TtsFactory: Send + Sync {
         runtime: &RuntimeConfig,
     ) -> Result<Arc<dyn TtsProvider>, ProviderLoadError>;
 }
-pub trait VisionFactory: Send + Sync {
-    fn adapter(&self) -> &'static str;
-    fn build(
-        &self,
-        config: &VisionInstanceConfig,
-    ) -> Result<Arc<dyn VisionProvider>, ProviderLoadError>;
-}
-
 /// Factories are linked into the binary. There is no runtime code discovery or plugin loading.
 pub struct ProviderRegistry {
     vad: &'static [&'static dyn VadFactory],
     asr: &'static [&'static dyn AsrFactory],
     llm: &'static [&'static dyn LlmFactory],
     tts: &'static [&'static dyn TtsFactory],
-    vision: &'static [&'static dyn VisionFactory],
 }
 
 impl ProviderRegistry {
@@ -173,19 +163,6 @@ impl ProviderRegistry {
                 adapter: adapter.into(),
             })
     }
-    pub fn vision_factory(
-        &self,
-        adapter: &str,
-    ) -> Result<&'static dyn VisionFactory, ProviderLoadError> {
-        self.vision
-            .iter()
-            .copied()
-            .find(|factory| factory.adapter() == adapter)
-            .ok_or_else(|| ProviderLoadError::UnsupportedAdapter {
-                kind: "VISION",
-                adapter: adapter.into(),
-            })
-    }
 }
 
 struct SileroOnnxFactory;
@@ -238,7 +215,6 @@ struct ZipformerSherpaFactory;
 struct GipformerSherpaOfflineFactory;
 
 struct OpenAiFactory;
-struct OpenAiVisionFactory;
 #[cfg(feature = "qualification-providers")]
 struct QualificationVadFactory;
 #[cfg(feature = "qualification-providers")]
@@ -339,25 +315,6 @@ impl TtsFactory for QualificationTtsFactory {
                 "qualification TTS received another config".into(),
             )),
         }
-    }
-}
-
-impl VisionFactory for OpenAiVisionFactory {
-    fn adapter(&self) -> &'static str {
-        "openai_vision"
-    }
-    fn build(
-        &self,
-        config: &VisionInstanceConfig,
-    ) -> Result<Arc<dyn VisionProvider>, ProviderLoadError> {
-        let VisionInstanceConfig::OpenAiVision(options) = config;
-        OpenAiVisionProvider::new(options.clone())
-            .map(|provider| Arc::new(provider) as Arc<dyn VisionProvider>)
-            .map_err(|_| {
-                ProviderLoadError::Provider(
-                    "OpenAI-compatible vision provider initialization failed".into(),
-                )
-            })
     }
 }
 
@@ -788,7 +745,6 @@ static GIPFORMER_SHERPA_OFFLINE_FACTORY: GipformerSherpaOfflineFactory =
     GipformerSherpaOfflineFactory;
 static OPENAI_FACTORY: OpenAiFactory = OpenAiFactory;
 static OPENCODE_FREE_FACTORY: OpenCodeFreeFactory = OpenCodeFreeFactory;
-static OPENAI_VISION_FACTORY: OpenAiVisionFactory = OpenAiVisionFactory;
 static ZEROTTS_ONNX_FACTORY: ZeroTtsOnnxFactory = ZeroTtsOnnxFactory;
 static VIENEU_NATIVE_FACTORY: VieneuNativeFactory = VieneuNativeFactory;
 static CHILLAUDIO_WS_FACTORY: ChillAudioWsFactory = ChillAudioWsFactory;
@@ -828,13 +784,11 @@ static TTS_FACTORIES: &[&dyn TtsFactory] = &[
     #[cfg(feature = "qualification-providers")]
     &QUALIFICATION_TTS_FACTORY,
 ];
-static VISION_FACTORIES: &[&dyn VisionFactory] = &[&OPENAI_VISION_FACTORY];
 static COMPILED_PROVIDER_REGISTRY: ProviderRegistry = ProviderRegistry {
     vad: VAD_FACTORIES,
     asr: ASR_FACTORIES,
     llm: LLM_FACTORIES,
     tts: TTS_FACTORIES,
-    vision: VISION_FACTORIES,
 };
 
 pub fn compiled_provider_registry() -> &'static ProviderRegistry {

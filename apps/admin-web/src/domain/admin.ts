@@ -1,4 +1,4 @@
-export const providerTypes = ['vad', 'asr', 'llm', 'tts', 'vision'] as const
+export const providerTypes = ['vad', 'asr', 'llm', 'tts'] as const
 export type ProviderType = (typeof providerTypes)[number] | 'speaker' // legacy deserialization only
 
 export const llmCapabilityTags = [

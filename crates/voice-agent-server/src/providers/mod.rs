@@ -20,7 +20,6 @@ pub mod llm;
 pub mod speaker;
 pub mod tts;
 pub mod vad;
-pub mod vision;
 
 pub use asr::{AsrEvent, AsrProvider, AsrResult, AsrSession};
 pub use assets::{Asset, AssetError, VoiceAsset};
@@ -39,7 +38,7 @@ pub fn admin_provider_adapter_matches_kind(kind: &str, adapter: &str) -> bool {
 }
 pub use error::{AsrError, ProviderLoadError, VadError};
 pub use llm::{LlmCapabilityTag, LlmError, LlmEvent, LlmOperation, LlmOutput, LlmProvider};
-pub(crate) use loader::{LoadedProviders, load_local, load_vision, vad_timing};
+pub(crate) use loader::{LoadedProviders, load_local, vad_timing};
 
 pub use factory_registry::{
     AsrFactory, LlmFactory, ProviderRegistry, TtsFactory, VadFactory, compiled_provider_registry,
@@ -59,9 +58,6 @@ pub use tts::{
     TtsWorker,
 };
 pub use vad::{VadInput, VadProbability, VadProvider, VadSession};
-pub use vision::{
-    OpenAiVisionProvider, VisionError, VisionProvider, VisionRequest, VisionResponse,
-};
 
 mod deployment_snapshot;
 pub use deployment_snapshot::deployment_provider_snapshot;

@@ -712,7 +712,6 @@ mod tests {
                 "tts".to_owned(),
                 Arc::new(TtsWorkerRuntime::new(Arc::new(UnavailableTts), worker)),
             )]),
-            vision: HashMap::new(),
         }
     }
     /// Minimal extraction-only speaker instance so a bound Template Speaker slot can resolve in a

@@ -37,7 +37,6 @@ const testHintKeys: Record<ProviderType, MessageKey> = {
   speaker: 'providers.testHint.speaker',
   llm: 'providers.testHint.llm',
   tts: 'providers.testHint.tts',
-  vision: 'providers.testHint.vision',
 }
 
 const testHint = computed(() => (props.provider ? t(testHintKeys[props.provider.type]) : ''))

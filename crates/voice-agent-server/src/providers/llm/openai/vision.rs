@@ -1,44 +1,15 @@
-use super::{VisionError, VisionProvider, VisionRequest, VisionResponse};
-use crate::config::{OpenAiVisionConfig, SecretString};
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use serde::Serialize;
 use url::Url;
 
-pub struct OpenAiVisionProvider {
-    client: reqwest::Client,
-    endpoint: Url,
-    api_key: SecretString,
-    model: String,
-    max_tokens: u32,
-    temperature: f32,
-    top_p: f32,
-}
+use crate::providers::llm::{LlmError, LlmOutput};
 
-impl OpenAiVisionProvider {
-    pub fn new(config: OpenAiVisionConfig) -> Result<Self, VisionError> {
-        let mut base = config.base_url;
-        if !base.path().ends_with('/') {
-            base.set_path(&format!("{}/", base.path()));
-        }
-        let endpoint = base
-            .join("chat/completions")
-            .map_err(|_| VisionError::InvalidRequest)?;
-        Ok(Self {
-            client: reqwest::Client::new(),
-            endpoint,
-            api_key: config.api_key,
-            model: config.model,
-            max_tokens: config.max_tokens,
-            temperature: config.temperature,
-            top_p: config.top_p,
-        })
-    }
-}
+use super::provider::ConfiguredOpenAiLlm;
 
 #[derive(Serialize)]
-struct Payload {
+struct VisionPayload {
     model: String,
-    messages: [Message; 1],
+    messages: [VisionMessage; 1],
     stream: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     max_tokens: Option<u32>,
@@ -47,19 +18,22 @@ struct Payload {
     #[serde(skip_serializing_if = "Option::is_none")]
     top_p: Option<f32>,
 }
+
 #[derive(Serialize)]
-struct Message {
+struct VisionMessage {
     role: &'static str,
-    content: [Content; 2],
+    content: [VisionContent; 2],
 }
+
 #[derive(Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
-enum Content {
+enum VisionContent {
     Text { text: String },
-    ImageUrl { image_url: ImageUrl },
+    ImageUrl { image_url: VisionImageUrl },
 }
+
 #[derive(Serialize)]
-struct ImageUrl {
+struct VisionImageUrl {
     url: String,
 }
 
@@ -78,27 +52,27 @@ pub(crate) struct OpenAiVisionCompletion<'a> {
 
 pub(crate) async fn execute_openai_vision_completion(
     req: OpenAiVisionCompletion<'_>,
-) -> Result<String, VisionError> {
+) -> Result<String, LlmError> {
     if req.question.trim().is_empty()
         || req.image_bytes.is_empty()
         || req.mime_type.trim().is_empty()
     {
-        return Err(VisionError::InvalidRequest);
+        return Err(LlmError::Rejected);
     }
-    let payload = Payload {
+    let payload = VisionPayload {
         model: req.model.to_owned(),
         stream: false,
         max_tokens: req.max_tokens,
         temperature: req.temperature,
         top_p: req.top_p,
-        messages: [Message {
+        messages: [VisionMessage {
             role: "user",
             content: [
-                Content::Text {
+                VisionContent::Text {
                     text: req.question.to_owned(),
                 },
-                Content::ImageUrl {
-                    image_url: ImageUrl {
+                VisionContent::ImageUrl {
+                    image_url: VisionImageUrl {
                         url: format!(
                             "data:{};base64,{}",
                             req.mime_type,
@@ -116,51 +90,49 @@ pub(crate) async fn execute_openai_vision_completion(
         .json(&payload)
         .send()
         .await
-        .map_err(|_| VisionError::Transport)?;
+        .map_err(|_| LlmError::Failed)?;
     let status = response.status();
     if !status.is_success() {
         return Err(
             if matches!(status.as_u16(), 401 | 403 | 429) || status.is_client_error() {
-                VisionError::UpstreamRejected
-            } else if matches!(status.as_u16(), 408 | 504) {
-                VisionError::Timeout
+                LlmError::Rejected
             } else {
-                VisionError::Transport
+                LlmError::Failed
             },
         );
     }
-    let value: serde_json::Value = response
-        .json()
-        .await
-        .map_err(|_| VisionError::InvalidResponse)?;
+    let value: serde_json::Value = response.json().await.map_err(|_| LlmError::Rejected)?;
     let text = value
         .pointer("/choices/0/message/content")
         .and_then(serde_json::Value::as_str)
         .map(str::trim)
         .filter(|value| !value.is_empty())
-        .ok_or(VisionError::InvalidResponse)?;
+        .ok_or(LlmError::Rejected)?;
     Ok(text.to_owned())
 }
 
-#[async_trait::async_trait]
-impl VisionProvider for OpenAiVisionProvider {
-    fn adapter(&self) -> &'static str {
-        "openai_vision"
-    }
-    async fn analyze(&self, request: VisionRequest) -> Result<VisionResponse, VisionError> {
+impl ConfiguredOpenAiLlm {
+    pub(super) async fn complete_vision(
+        &self,
+        prompt: &str,
+        image_bytes: &[u8],
+        mime_type: &str,
+    ) -> Result<LlmOutput, LlmError> {
+        let api_key = self.ensure_api_key()?;
+        let endpoint = self.endpoint("chat/completions")?;
         let text = execute_openai_vision_completion(OpenAiVisionCompletion {
             client: &self.client,
-            endpoint: &self.endpoint,
-            api_key: self.api_key.expose(),
+            endpoint: &endpoint,
+            api_key,
             model: &self.model,
-            question: &request.question,
-            image_bytes: request.image.as_ref(),
-            mime_type: &request.mime_type,
-            max_tokens: Some(self.max_tokens),
-            temperature: Some(self.temperature),
-            top_p: Some(self.top_p),
+            question: prompt,
+            image_bytes,
+            mime_type,
+            max_tokens: self.max_tokens,
+            temperature: self.temperature(),
+            top_p: None,
         })
         .await?;
-        Ok(VisionResponse { text })
+        Ok(LlmOutput::Text(text))
     }
 }

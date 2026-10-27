@@ -54,6 +54,7 @@ impl ProviderLoadPlan {
                 defaults.asr.as_str(),
                 defaults.llm.as_str(),
                 defaults.tts.as_str(),
+                defaults.vision.as_deref().unwrap_or(""),
             ]
             .into_iter()
             .filter(|key| !key.is_empty())

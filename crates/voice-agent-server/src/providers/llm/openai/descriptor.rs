@@ -84,7 +84,7 @@ pub static DESCRIPTOR: ProviderDescriptor = ProviderDescriptor {
         streaming: Some(true),
         offline: Some(false),
         tool_calling: Some(true),
-        vision: Some(false),
+        vision: Some(true),
         input_sample_rates: None,
         channels: None,
         provider_output_sample_rates: None,
