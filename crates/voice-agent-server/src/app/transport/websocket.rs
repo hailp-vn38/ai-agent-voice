@@ -712,16 +712,17 @@ async fn handle_socket(
     // `control` itself is held to the end of this function: its registration is the connection's
     // place in the drain registry, and dropping it early would un-count a live session.
     let (mut sender, mut receiver) = socket.split();
+    let write_timeout = Duration::from_millis(config.websocket.write_timeout_ms);
     let hello_wait_timer = metrics
         .as_ref()
         .map(|metrics| metrics.timer(RuntimePhase::WsHelloWait));
     let first = tokio::select! {
         _ = stopping.cancelled() => return,
-        _ = assistant_close.cancelled() => { close_direct(&mut sender,1008).await; return; },
-        _ = system_security_close.cancelled() => { close_direct(&mut sender,1008).await; return; },
-        _ = tool_security_close.cancelled() => { close_direct(&mut sender,1008).await; return; },
-        _ = speaker_security_close.cancelled() => { close_direct(&mut sender,1008).await; return; },
-        first = timeout(Duration::from_millis(config.server.hello_timeout_ms), receiver.next()) => first,
+        _ = assistant_close.cancelled() => { close_direct(&mut sender, write_timeout, 1008).await; return; },
+        _ = system_security_close.cancelled() => { close_direct(&mut sender, write_timeout, 1008).await; return; },
+        _ = tool_security_close.cancelled() => { close_direct(&mut sender, write_timeout, 1008).await; return; },
+        _ = speaker_security_close.cancelled() => { close_direct(&mut sender, write_timeout, 1008).await; return; },
+        first = timeout(Duration::from_millis(config.server.hello_timeout_ms), next_application_frame(&mut receiver)) => first,
     };
     drop(hello_wait_timer);
     let hello_init_timer = metrics
@@ -730,21 +731,21 @@ async fn handle_socket(
     let hello = match first {
         Ok(Some(Ok(message))) => message,
         _ => {
-            close_direct(&mut sender, 1002).await;
+            close_direct(&mut sender, write_timeout, 1002).await;
             return;
         }
     };
     let text = match checked_text(hello, config.websocket.max_frame_bytes) {
         Ok(text) => text,
         Err(code) => {
-            close_direct(&mut sender, code).await;
+            close_direct(&mut sender, write_timeout, code).await;
             return;
         }
     };
     let hello = match parse_client_message(&text) {
         Ok(ClientMessage::Hello(hello)) if hello.validate_v1().is_ok() => hello,
         _ => {
-            close_direct(&mut sender, 1002).await;
+            close_direct(&mut sender, write_timeout, 1002).await;
             return;
         }
     };
@@ -788,7 +789,7 @@ async fn handle_socket(
         Ok(actor) => actor,
         Err(error) => {
             debug!(%error, "failed to initialize session audio runtime");
-            close_direct(&mut sender, 1011).await;
+            close_direct(&mut sender, write_timeout, 1011).await;
             return;
         }
     };
@@ -826,7 +827,7 @@ async fn handle_socket(
         Ok(actor) => actor,
         Err(error) => {
             debug!(%error, "failed to initialize session speech output");
-            close_direct(&mut sender, 1011).await;
+            close_direct(&mut sender, write_timeout, 1011).await;
             return;
         }
     };
@@ -839,7 +840,7 @@ async fn handle_socket(
         Ok(actor) => actor,
         Err(error) => {
             debug!(%error, "session profile prompt exceeds the system prompt bound");
-            close_direct(&mut sender, 1011).await;
+            close_direct(&mut sender, write_timeout, 1011).await;
             return;
         }
     };
@@ -906,14 +907,23 @@ async fn handle_socket(
     let server_hello = serde_json::to_string(&ServerHello::v1(actor.session_id()))
         .expect("ServerHello is serializable");
     if actor.send_control(server_hello).is_err() {
-        close_direct(&mut sender, 1011).await;
+        close_direct(&mut sender, write_timeout, 1011).await;
         return;
     }
     drop(hello_init_timer);
     let hello_queued = Instant::now();
     actor.start_mcp_discovery();
+    let ping_period = Duration::from_millis(config.websocket.ping_interval_ms);
+    let pings_enabled = !ping_period.is_zero();
     let writer = tokio::spawn(async move {
         let probe = writer_probe.clone();
+        // Server Pings keep NAT/proxy state alive and give a responsive peer something to answer,
+        // which is what the reader's idle close measures.
+        let mut ping = tokio::time::interval_at(
+            tokio::time::Instant::now() + ping_period.max(Duration::from_millis(1)),
+            ping_period.max(Duration::from_millis(1)),
+        );
+        ping.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         let mut active_turn: Option<PlaybackTurn> = None;
         let mut deferred_finish: Option<OutboundMessage> = None;
         let mut hello_pending = true;
@@ -927,7 +937,7 @@ async fn handle_socket(
                                 deferred_finish = None;
                                 let start_was_sent = active_turn.as_ref().is_some_and(|active| active.start_was_sent);
                                 let stop_was_sent = if start_was_sent {
-                                    if send_outbound(&mut sender, OutboundMessage::Text(text), &generation_gate, &pipeline_request).await {
+                                    if send_outbound(&mut sender, write_timeout, OutboundMessage::Text(text), &generation_gate, &pipeline_request).await {
                                         let _ = writer_event_tx.send(WriterEvent::Failed { turn_id: Some(turn_id) }).await;
                                         break;
                                     }
@@ -945,7 +955,7 @@ async fn handle_socket(
                                 report_turn_closed(&writer_event_tx, probe.as_ref(), turn_id, WriterTurnOutcome::Aborted { start_was_sent: false, stop_was_sent: false }).await;
                             }
                         }
-                        message => if send_outbound(&mut sender, message, &generation_gate, &pipeline_request).await {
+                        message => if send_outbound(&mut sender, write_timeout, message, &generation_gate, &pipeline_request).await {
                             break;
                         },
                     }
@@ -954,7 +964,7 @@ async fn handle_socket(
                 // lane has had its chance to preempt it.
                 _ = std::future::ready(()), if deferred_finish.is_some() && audio_rx.is_empty() => {
                     let OutboundMessage::FinishTurn { turn_id, text } = deferred_finish.take().expect("checked above") else { unreachable!() };
-                    if send_outbound(&mut sender, OutboundMessage::Text(text), &generation_gate, &pipeline_request).await {
+                    if send_outbound(&mut sender, write_timeout, OutboundMessage::Text(text), &generation_gate, &pipeline_request).await {
                         let _ = writer_event_tx.send(WriterEvent::Failed { turn_id: Some(turn_id) }).await;
                         break;
                     }
@@ -965,20 +975,27 @@ async fn handle_socket(
                     match message {
                         OutboundMessage::BeginTurn { generation, turn_id, text } => {
                             if active_turn.is_none() && generation_gate.admits(generation) {
-                                if send_outbound(&mut sender, OutboundMessage::Text(text), &generation_gate, &pipeline_request).await {
+                                if send_outbound(&mut sender, write_timeout, OutboundMessage::Text(text), &generation_gate, &pipeline_request).await {
                                     let _ = writer_event_tx.send(WriterEvent::Failed { turn_id: Some(turn_id) }).await;
                                     break;
                                 }
                                 active_turn = Some(PlaybackTurn { id: turn_id, start_was_sent: true });
                             }
                         }
-                        message @ OutboundMessage::FinishTurn { .. } => {
-                            if !audio_rx.is_empty() {
-                                deferred_finish = Some(message);
-                            } else if let OutboundMessage::FinishTurn { turn_id, text } = message
-                                && active_turn.as_ref().is_some_and(|active| active.id == turn_id)
-                            {
-                                if send_outbound(&mut sender, OutboundMessage::Text(text), &generation_gate, &pipeline_request).await {
+                        OutboundMessage::FinishTurn { turn_id, text } => {
+                            // Every turn-scoped command ends in exactly one terminal outcome the
+                            // actor can act on: it holds the turn's delivery and Active Turn
+                            // capacity until it hears one. Only the active turn is deferred behind
+                            // its paced audio; a Finish for a turn whose Begin the writer never
+                            // admitted (stale generation, or another turn still playing) closes
+                            // immediately as aborted with nothing sent. A duplicate for a turn
+                            // already closed is ignored by the actor, since Turn IDs never repeat.
+                            if !active_turn.as_ref().is_some_and(|active| active.id == turn_id) {
+                                report_turn_closed(&writer_event_tx, probe.as_ref(), turn_id, WriterTurnOutcome::Aborted { start_was_sent: false, stop_was_sent: false }).await;
+                            } else if !audio_rx.is_empty() {
+                                deferred_finish = Some(OutboundMessage::FinishTurn { turn_id, text });
+                            } else {
+                                if send_outbound(&mut sender, write_timeout, OutboundMessage::Text(text), &generation_gate, &pipeline_request).await {
                                     let _ = writer_event_tx.send(WriterEvent::Failed { turn_id: Some(turn_id) }).await;
                                     break;
                                 }
@@ -988,7 +1005,7 @@ async fn handle_socket(
                         }
                         message => {
                             let sends_hello = hello_pending && matches!(&message, OutboundMessage::Text(_));
-                            if send_outbound(&mut sender, message, &generation_gate, &pipeline_request).await {
+                            if send_outbound(&mut sender, write_timeout, message, &generation_gate, &pipeline_request).await {
                                 break;
                             }
                             if sends_hello {
@@ -1009,10 +1026,16 @@ async fn handle_socket(
                         },
                     }
                 },
+                _ = ping.tick(), if pings_enabled => {
+                    if let Err(error) = send_frame(&mut sender, write_timeout, Message::Ping(Default::default())).await {
+                        warn!(event = "ws_writer_failed", outcome = "failure", %error, "websocket ping failed");
+                        break;
+                    }
+                },
                 Some(message) = audio_rx.recv() => {
                     if let OutboundMessage::Binary { turn_id, .. } = &message
                         && active_turn.as_ref().is_some_and(|active| active.start_was_sent && active.id == *turn_id)
-                        && send_outbound(&mut sender, message, &generation_gate, &pipeline_request).await
+                        && send_outbound(&mut sender, write_timeout, message, &generation_gate, &pipeline_request).await
                     {
                         break;
                     }
@@ -1036,7 +1059,7 @@ async fn handle_socket(
                 },
                 else => {
                     if let Some(OutboundMessage::FinishTurn { turn_id, text }) = deferred_finish.take()
-                        && send_outbound(&mut sender, OutboundMessage::Text(text), &generation_gate, &pipeline_request).await
+                        && send_outbound(&mut sender, write_timeout, OutboundMessage::Text(text), &generation_gate, &pipeline_request).await
                     {
                         let _ = writer_event_tx.send(WriterEvent::Failed { turn_id: Some(turn_id) }).await;
                         break;
@@ -1059,7 +1082,10 @@ async fn handle_socket(
     }
     let session = tokio::spawn(actor.run(ingress_rx).instrument(tracing::Span::current()));
 
+    let idle_timeout = Duration::from_millis(config.websocket.idle_timeout_ms);
+    let mut last_inbound = tokio::time::Instant::now();
     loop {
+        let idle_deadline = last_inbound + idle_timeout;
         tokio::select! {
             // The deadline reached this session. It closes cleanly: the actor is told to stop,
             // sends its terminal close frame and lets the writer drain, and this loop only exits
@@ -1104,7 +1130,16 @@ async fn handle_socket(
                 let _ = ingress_tx.send(SessionEvent::Shutdown).await;
                 break;
             }
+            // Nothing at all — not even a Pong to the writer's Pings — has arrived for the idle
+            // window: the peer is gone without a close (power loss, NAT drop). The session ends
+            // now instead of when the operating system eventually notices.
+            _ = tokio::time::sleep_until(idle_deadline), if !idle_timeout.is_zero() => {
+                info!(event = "ws_idle_timeout", idle_timeout_ms = config.websocket.idle_timeout_ms, "closing a voice session with no inbound frames");
+                let _ = urgent_tx.try_send(OutboundMessage::Close(1001));
+                break;
+            }
             next = receiver.next() => {
+                last_inbound = tokio::time::Instant::now();
                 let Some(next) = next else { break; };
                 match next {
             Ok(Message::Text(text)) => {
@@ -1359,6 +1394,7 @@ fn tool_status_enabled(is_web_assistant: bool, features: &crate::protocol::Clien
 
 async fn send_outbound(
     sender: &mut futures_util::stream::SplitSink<WebSocket, Message>,
+    write_timeout: Duration,
     message: OutboundMessage,
     generation_gate: &crate::session::GenerationGate,
     pipeline_request: &std::sync::atomic::AtomicU64,
@@ -1397,7 +1433,7 @@ async fn send_outbound(
             let llm_message = serde_json::from_str::<serde_json::Value>(&text)
                 .ok()
                 .filter(|value| value["type"] == "llm");
-            let result = sender.send(Message::Text(text.into())).await;
+            let result = send_frame(sender, write_timeout, Message::Text(text.into())).await;
             if result.is_ok()
                 && let Some(message) = llm_message
                 && let Some(llm_text) = message["text"].as_str()
@@ -1411,26 +1447,34 @@ async fn send_outbound(
             }
             result
         }
-        OutboundMessage::Binary { packet, .. } => sender.send(Message::Binary(packet.into())).await,
+        OutboundMessage::Binary { packet, .. } => {
+            send_frame(sender, write_timeout, Message::Binary(packet.into())).await
+        }
         // Semantic playback commands must be consumed by the writer state machine above.
         OutboundMessage::BeginTurn { .. }
         | OutboundMessage::FinishTurn { .. }
         | OutboundMessage::AbortTurn { .. } => return false,
         OutboundMessage::Close(code) => {
-            sender
-                .send(Message::Close(Some(CloseFrame {
+            send_frame(
+                sender,
+                write_timeout,
+                Message::Close(Some(CloseFrame {
                     code,
                     reason: "".into(),
-                })))
-                .await
+                })),
+            )
+            .await
         }
         OutboundMessage::CloseWithReason { code, reason } => {
-            sender
-                .send(Message::Close(Some(CloseFrame {
+            send_frame(
+                sender,
+                write_timeout,
+                Message::Close(Some(CloseFrame {
                     code,
                     reason: reason.into(),
-                })))
-                .await
+                })),
+            )
+            .await
         }
     };
     if let Err(ref error) = result {
@@ -1444,13 +1488,63 @@ async fn send_outbound(
     closes || result.is_err()
 }
 
-async fn close_direct(sender: &mut futures_util::stream::SplitSink<WebSocket, Message>, code: u16) {
-    let _ = sender
-        .send(Message::Close(Some(CloseFrame {
+async fn close_direct(
+    sender: &mut futures_util::stream::SplitSink<WebSocket, Message>,
+    write_timeout: Duration,
+    code: u16,
+) {
+    let _ = send_frame(
+        sender,
+        write_timeout,
+        Message::Close(Some(CloseFrame {
             code,
             reason: "".into(),
-        })))
-        .await;
+        })),
+    )
+    .await;
+}
+
+/// Why one WebSocket send failed.
+enum WriteFailure {
+    Socket(axum::Error),
+    /// The peer stopped reading and the send did not finish inside the write timeout.
+    TimedOut,
+}
+
+impl std::fmt::Display for WriteFailure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Socket(error) => error.fmt(f),
+            Self::TimedOut => f.write_str("write timed out"),
+        }
+    }
+}
+
+/// Every WebSocket send goes through here so no send can wait on a peer that stopped reading for
+/// longer than the write timeout; a writer that cannot finish is a session the drain never sees
+/// end.
+async fn send_frame(
+    sender: &mut futures_util::stream::SplitSink<WebSocket, Message>,
+    write_timeout: Duration,
+    message: Message,
+) -> Result<(), WriteFailure> {
+    match timeout(write_timeout, sender.send(message)).await {
+        Ok(result) => result.map_err(WriteFailure::Socket),
+        Err(_) => Err(WriteFailure::TimedOut),
+    }
+}
+
+/// The next frame of the handshake phase, skipping transport control: a keepalive Ping or Pong
+/// before ClientHello is not the client's first application message.
+async fn next_application_frame(
+    receiver: &mut futures_util::stream::SplitStream<WebSocket>,
+) -> Option<Result<Message, axum::Error>> {
+    loop {
+        match receiver.next().await {
+            Some(Ok(Message::Ping(_) | Message::Pong(_))) => continue,
+            other => return other,
+        }
+    }
 }
 
 /// Install optional, Agent-scoped speaker identification. No voice-based admission

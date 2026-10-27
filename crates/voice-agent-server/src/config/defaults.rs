@@ -100,6 +100,18 @@ pub(super) fn default_channels() -> u8 {
 pub(super) fn default_frame_ms() -> u16 {
     60
 }
+pub(super) fn default_ws_ping_interval_ms() -> u64 {
+    20_000
+}
+
+pub(super) fn default_ws_idle_timeout_ms() -> u64 {
+    60_000
+}
+
+pub(super) fn default_ws_write_timeout_ms() -> u64 {
+    10_000
+}
+
 pub(super) fn default_max_frame_bytes() -> usize {
     65_536
 }

@@ -80,6 +80,13 @@ max_utterance_ms = 30000
 
 [websocket]
 max_frame_bytes = 65536
+# Server Ping interval; 0 disables Pings.
+ping_interval_ms = 20000
+# Close (1001) a connection with no inbound frame (including Pong) for this long; 0 disables.
+# When set, ping_interval_ms must be positive and shorter.
+idle_timeout_ms = 60000
+# Upper bound on one WebSocket send to a peer that stopped reading.
+write_timeout_ms = 10000
 
 [limits]
 session_event_queue = 64

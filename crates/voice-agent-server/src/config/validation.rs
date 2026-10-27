@@ -388,6 +388,19 @@ fn validate_transport(config: &AppConfig) -> Result<(), ConfigError> {
             "hello timeout and WebSocket maximum frame size must be valid".into(),
         ));
     }
+    let ws = &config.websocket;
+    // An idle close without Pings would close healthy clients that are merely quiet; Pings must
+    // arrive often enough that a responsive peer always answers inside the idle window.
+    if ws.write_timeout_ms == 0
+        || (ws.idle_timeout_ms > 0
+            && (ws.ping_interval_ms == 0 || ws.ping_interval_ms >= ws.idle_timeout_ms))
+    {
+        return Err(ConfigError::Validation(
+            "websocket.write_timeout_ms must be positive and, when websocket.idle_timeout_ms is \
+             set, websocket.ping_interval_ms must be positive and shorter than it"
+                .into(),
+        ));
+    }
     Ok(())
 }
 

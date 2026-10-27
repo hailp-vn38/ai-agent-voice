@@ -1178,12 +1178,25 @@ impl Default for AudioConfig {
 pub struct WebsocketConfig {
     #[serde(default = "default_max_frame_bytes")]
     pub max_frame_bytes: usize,
+    /// Interval between server Pings on an upgraded connection; `0` sends none.
+    #[serde(default = "default_ws_ping_interval_ms")]
+    pub ping_interval_ms: u64,
+    /// A connection from which no frame of any kind (including Pong) has arrived for this long is
+    /// closed with 1001; `0` disables the idle close.
+    #[serde(default = "default_ws_idle_timeout_ms")]
+    pub idle_timeout_ms: u64,
+    /// Upper bound on a single WebSocket send; a peer that stops reading cannot hold the writer.
+    #[serde(default = "default_ws_write_timeout_ms")]
+    pub write_timeout_ms: u64,
 }
 
 impl Default for WebsocketConfig {
     fn default() -> Self {
         Self {
             max_frame_bytes: default_max_frame_bytes(),
+            ping_interval_ms: default_ws_ping_interval_ms(),
+            idle_timeout_ms: default_ws_idle_timeout_ms(),
+            write_timeout_ms: default_ws_write_timeout_ms(),
         }
     }
 }

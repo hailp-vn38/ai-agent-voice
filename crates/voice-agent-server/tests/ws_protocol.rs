@@ -422,3 +422,87 @@ async fn physical_device_admission_does_not_wait_on_web_assistant_publication() 
     );
     task.abort();
 }
+
+fn heartbeat(ping_interval_ms: u64, idle_timeout_ms: u64) -> impl FnOnce(AppConfig) -> AppConfig {
+    move |mut config| {
+        config.websocket.ping_interval_ms = ping_interval_ms;
+        config.websocket.idle_timeout_ms = idle_timeout_ms;
+        config
+    }
+}
+
+/// Keepalive Pings are transport control, not the handshake's first application message.
+#[tokio::test]
+async fn ping_before_client_hello_is_not_a_protocol_error() {
+    let (base, task) = start(1_024).await;
+    let (mut socket, _) = connect_async(request(&base)).await.unwrap();
+    socket
+        .send(Message::Ping(b"keepalive".to_vec().into()))
+        .await
+        .unwrap();
+    socket.send(Message::Text(hello().into())).await.unwrap();
+    let server_hello = timeout(Duration::from_secs(1), async {
+        loop {
+            match socket.next().await {
+                Some(Ok(Message::Pong(_))) => continue,
+                other => return other,
+            }
+        }
+    })
+    .await
+    .unwrap();
+    assert!(
+        matches!(server_hello, Some(Ok(Message::Text(_)))),
+        "expected ServerHello, got {server_hello:?}"
+    );
+    task.abort();
+}
+
+/// A peer that stops answering (power loss, NAT drop) must not hold a Voice Session open until
+/// the operating system notices: it is closed once nothing has arrived for the idle timeout.
+#[tokio::test]
+async fn silent_peer_is_closed_after_idle_timeout() {
+    let (base, task, _, _) =
+        start_with_state(1_024, String::new(), None, heartbeat(100, 300)).await;
+    let (mut socket, _) = connect_async(request(&base)).await.unwrap();
+    socket.send(Message::Text(hello().into())).await.unwrap();
+    let _ = next_message(&mut socket).await;
+    // Not reading means not answering the server's Pings.
+    tokio::time::sleep(Duration::from_millis(600)).await;
+    let closed = timeout(Duration::from_secs(1), async {
+        loop {
+            match socket.next().await {
+                Some(Ok(Message::Close(frame))) => return frame.map(|f| u16::from(f.code)),
+                Some(Ok(_)) => continue,
+                None | Some(Err(_)) => return None,
+            }
+        }
+    })
+    .await
+    .expect("silent peer was never closed");
+    assert_eq!(closed, Some(1001));
+    task.abort();
+}
+
+/// A peer that keeps answering the server's Pings stays connected past the idle timeout even
+/// without sending any application message.
+#[tokio::test]
+async fn responsive_peer_survives_idle_timeout_and_receives_pings() {
+    let (base, task, _, _) =
+        start_with_state(1_024, String::new(), None, heartbeat(100, 300)).await;
+    let (mut socket, _) = connect_async(request(&base)).await.unwrap();
+    socket.send(Message::Text(hello().into())).await.unwrap();
+    let _ = next_message(&mut socket).await;
+    let mut pings = 0;
+    let deadline = tokio::time::Instant::now() + Duration::from_millis(1_000);
+    while let Ok(message) = tokio::time::timeout_at(deadline, socket.next()).await {
+        match message {
+            Some(Ok(Message::Ping(_))) => pings += 1,
+            Some(Ok(Message::Close(frame))) => panic!("responsive peer was closed: {frame:?}"),
+            None | Some(Err(_)) => panic!("responsive peer connection ended"),
+            Some(Ok(_)) => {}
+        }
+    }
+    assert!(pings >= 2, "expected periodic server Pings, got {pings}");
+    task.abort();
+}

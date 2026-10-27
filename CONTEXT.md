@@ -499,6 +499,10 @@ _Avoid_: task abort, uncounted broadcast, estimated session count
 A protocol close performed by the Voice Session itself when the drain deadline arrives or the process stops, distinct from forcibly aborting a task; the client still receives a normal close code.
 _Avoid_: task abort, silent socket drop, ungraceful server shutdown
 
+**Idle Close**:
+A close with code 1001 that a Voice Session performs itself when no frame of any kind has arrived from the peer within the idle window; server Pings give a responsive peer something to answer, so only a peer that is gone without closing is affected. It is distinct from Controlled Close, which is driven by shutdown, and from a protocol fault.
+_Avoid_: session timeout, inactivity hangup of a quiet but responsive client, OS keepalive reliance
+
 **Liveness**:
 The sole question of whether the process is still running, independent of the database, External MCP, or shutdown; `/health` answers only this question.
 _Avoid_: readiness synonym, dependency-aware health check, restart when the database fails

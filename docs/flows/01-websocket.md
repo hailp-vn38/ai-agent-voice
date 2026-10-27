@@ -110,7 +110,8 @@ flowchart LR
 ## 3. Handshake trong socket
 
 Ngay sau upgrade, server chờ đúng một text `hello` trong
-`server.hello_timeout_ms`. Trước `ServerHello`, socket chưa có Voice Session
+`server.hello_timeout_ms`. Ping/Pong keepalive trước hello là transport control,
+không bị coi là message đầu tiên. Trước `ServerHello`, socket chưa có Voice Session
 sẵn sàng nhận command hoặc audio.
 
 ```mermaid
@@ -194,7 +195,9 @@ flowchart TD
 
 Sau handshake, malformed JSON, message không biết, command sai schema hoặc
 sai phase không làm chết Voice Session: reader/actor ghi telemetry và ignore.
-Riêng text hoặc binary vượt frame cap vẫn đóng `1009` trước parse/decode. Khi
+Riêng text hoặc binary vượt frame cap vẫn đóng `1009` trước parse/decode.
+Message phân mảnh cũng bị giới hạn ở cùng cap (`max_message_size`): kết nối kết
+thúc ngay khi phần đã ghép vượt cap, không đệm tới mặc định của thư viện. Khi
 mailbox control đầy, reader đóng `1013`; audio mailbox đầy chỉ drop frame để
 giữ bounded memory.
 
@@ -215,6 +218,22 @@ Chi tiết capture/VAD, ASR, interrupt và MCP lần lượt ở [Flow 02](02-va
 [Flow 03](03-asr.md), [Flow 06](06-interrupt-cancellation.md) và
 [Flow 07](07-device-mcp.md).
 
+### Heartbeat, Idle Close và write timeout
+
+| Config `[websocket]` | Mặc định | Ý nghĩa |
+| --- | ---: | --- |
+| `ping_interval_ms` | 20 000 | Writer gửi Ping định kỳ; `0` tắt. |
+| `idle_timeout_ms` | 60 000 | Không nhận frame nào (kể cả Pong) trong khoảng này ⇒ Idle Close `1001`; `0` tắt. |
+| `write_timeout_ms` | 10 000 | Giới hạn mỗi lần send; peer ngừng đọc ⇒ writer coi là lỗi và kết thúc. |
+
+Khi bật idle close, `ping_interval_ms` phải dương và nhỏ hơn `idle_timeout_ms`
+để peer khỏe luôn có Ping để trả lời trong cửa sổ idle. Ping đi qua WebSocket
+Writer như mọi frame khác; reader chỉ đo thời điểm frame inbound cuối cùng.
+
+Chỉ Web Assistant tham gia credential publication. Physical Device không bao
+giờ chờ guard này, nên một System save hoặc một Web Assistant admission chậm
+không chặn Device reconnect.
+
 ## 5. State của Voice Session
 
 ```mermaid
@@ -232,7 +251,7 @@ stateDiagram-v2
     Listening --> Ready: manual abort
     Listening --> Listening: auto/realtime abort re-arms cycle
     Speaking --> Processing: eligible acoustic barge-in
-    Ready --> [*]: disconnect, shutdown or security invalidation
+    Ready --> [*]: disconnect, shutdown, security invalidation or Idle Close (1001)
     Listening --> [*]: disconnect, shutdown or security invalidation
     Processing --> [*]: disconnect, shutdown or security invalidation
     Speaking --> [*]: disconnect, shutdown or security invalidation
