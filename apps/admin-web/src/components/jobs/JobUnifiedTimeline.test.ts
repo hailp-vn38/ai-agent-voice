@@ -129,11 +129,15 @@ describe('nested Job timeline', () => {
       expect((wrapper.get('.child-group ol').element as HTMLElement).style.display).toBe('none')
 
       expect(wrapper.find('[data-canvas-inspector]').exists()).toBe(false)
+      expect(wrapper.find('[data-activity-modal]').exists()).toBe(false)
       await wrapper.get('[data-step="join:turn"]').trigger('click')
-      const inspector = wrapper.get('[data-canvas-inspector]')
-      expect(inspector.text()).toContain('Join completed')
-      await inspector.get('[data-inspector-close]').trigger('click')
       expect(wrapper.find('[data-canvas-inspector]').exists()).toBe(false)
+      const modal = wrapper.get('[data-activity-modal]')
+      expect(modal.attributes('role')).toBe('dialog')
+      expect(modal.attributes('aria-modal')).toBe('true')
+      expect(modal.text()).toContain('Join completed')
+      await modal.get('[data-inspector-close]').trigger('click')
+      expect(wrapper.find('[data-activity-modal]').exists()).toBe(false)
 
       await wrapper.get('[data-zoom-in]').trigger('click')
       expect(wrapper.get('[data-zoom-readout]').text()).toBe('82%')

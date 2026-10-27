@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
-import { Cpu, Download, Eye, File } from '@lucide/vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { Cpu, Download, Eye, File, X } from '@lucide/vue'
 import { agentJobsApi } from '@/api/agent-jobs'
 import { formatApiError } from '@/api/errors'
 import type { JobArtifact, JobEvent } from '@/api/types/agent-jobs'
@@ -16,9 +16,8 @@ const props = withDefaults(
     jobId?: string
     activity: UnifiedActivity | null
     open?: boolean
-    closable?: boolean
   }>(),
-  { open: false, closable: false },
+  { open: true },
 )
 const emit = defineEmits<{
   close: []
@@ -35,6 +34,19 @@ const report = computed(() => jobResultReport(props.activity?.jobResult))
 const selectedArtifact = ref<JobArtifact | null>(null)
 const artifactError = ref('')
 const downloadingId = ref<string | null>(null)
+
+function onKeydown(event: KeyboardEvent) {
+  if (event.key === 'Escape' && props.open) {
+    if (selectedArtifact.value) {
+      selectedArtifact.value = null
+      return
+    }
+    emit('close')
+  }
+}
+
+onMounted(() => window.addEventListener('keydown', onKeydown))
+onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
 
 function canPreview(item: JobArtifact): boolean {
   const preview = artifactPreview(item)
@@ -140,26 +152,40 @@ function stageNote(event: JobEvent): string {
 </script>
 
 <template>
-  <details :key="activity?.id" :open="props.open || undefined" class="studio-panel inspector overflow-hidden">
-    <summary class="surface-head flex cursor-pointer list-none items-center justify-between gap-2 border-b px-4 py-3">
-      <h3 class="inline-flex items-center gap-2 text-xs font-semibold">
-        <Cpu class="size-4 text-studio-violet" />{{ t('jobUi.eventInspector') }}
-      </h3>
-      <div class="flex items-center gap-1.5">
-        <Badge variant="outline" class="ml-2 text-[10px]">{{ t('jobUi.llmReadOnly') }}</Badge>
-        <button
-          v-if="props.closable"
-          type="button"
-          class="inspector-close"
-          data-inspector-close
-          :aria-label="t('common.close')"
-          @click.stop.prevent="emit('close')"
-        >
-          ✕
-        </button>
-      </div>
-    </summary>
-    <div class="ins-body p-4">
+  <div
+    v-if="props.open"
+    class="fixed inset-0 z-50 flex items-center justify-center bg-black/65 p-4 backdrop-blur-[2px] sm:p-6"
+    role="presentation"
+    data-activity-modal-backdrop
+    @click.self="emit('close')"
+  >
+    <section
+      :key="activity?.id"
+      role="dialog"
+      aria-modal="true"
+      :aria-label="activity?.title || t('jobUi.eventInspector')"
+      data-activity-modal
+      class="studio-panel inspector relative z-10 flex max-h-[88vh] w-full max-w-2xl flex-col overflow-hidden border bg-background shadow-2xl"
+    >
+      <header class="surface-head flex shrink-0 items-center justify-between gap-2 border-b px-5 py-3.5">
+        <h3 class="inline-flex items-center gap-2 text-xs font-semibold">
+          <Cpu class="size-4 text-studio-violet" />{{ t('jobUi.eventInspector') }}
+        </h3>
+        <div class="flex items-center gap-1.5">
+          <Badge variant="outline" class="ml-2 text-[10px]">{{ t('jobUi.llmReadOnly') }}</Badge>
+          <Button
+            variant="ghost"
+            size="icon"
+            class="size-7"
+            data-inspector-close
+            :aria-label="t('common.close')"
+            @click="emit('close')"
+          >
+            <X class="size-4" />
+          </Button>
+        </div>
+      </header>
+      <div class="ins-body overflow-y-auto p-5">
       <p v-if="!activity" class="text-xs text-muted-foreground">{{ t('jobUi.selectTimelineEvent') }}</p>
       <template v-else>
         <div class="ins-heading mb-3 flex flex-wrap items-center justify-between gap-2">
@@ -403,36 +429,20 @@ function stageNote(event: JobEvent): string {
           <pre class="ins-pre mt-2 max-h-64 overflow-auto whitespace-pre-wrap break-all rounded-lg bg-muted p-2">{{ JSON.stringify(activity.agentRun.result, null, 2) }}</pre>
         </details>
       </template>
-    </div>
-    <ArtifactPreviewDialog
-      v-if="selectedArtifact && props.jobId"
-      :key="selectedArtifact.id"
-      :job-id="props.jobId"
-      :artifact="selectedArtifact"
-      @close="selectedArtifact = null"
-      @download="selectedArtifact && downloadArtifact(selectedArtifact)"
-    />
-  </details>
+      </div>
+      <ArtifactPreviewDialog
+        v-if="selectedArtifact && props.jobId"
+        :key="selectedArtifact.id"
+        :job-id="props.jobId"
+        :artifact="selectedArtifact"
+        @close="selectedArtifact = null"
+        @download="selectedArtifact && downloadArtifact(selectedArtifact)"
+      />
+    </section>
+  </div>
 </template>
 
 <style scoped>
-.surface-head::-webkit-details-marker {
-  display: none;
-}
-.inspector-close {
-  width: 24px;
-  height: 24px;
-  border-radius: 6px;
-  background: #1d2738;
-  border: 1px solid #33425a;
-  font-size: 11px;
-  color: #a5b3ce;
-  display: inline-grid;
-  place-items: center;
-}
-.inspector-close:hover {
-  background: #29364b;
-}
 .ins-type {
   display: inline-flex;
   align-items: center;

@@ -176,7 +176,7 @@ function onWheel(event: WheelEvent) {
 
 function onPointerDown(event: PointerEvent) {
   const target = event.target as HTMLElement | null
-  if (!viewportRef.value || target?.closest('button, summary, details, .result-card-body, .media-card-body, video')) return
+  if (!viewportRef.value || target?.closest('button, summary, details, .graph-node, .result-card-body, .media-card-body, video')) return
   dragging.value = true
   dragStart = {
     x: event.clientX,
@@ -910,21 +910,14 @@ function footerRight(activity: UnifiedActivity): string {
         </div>
         <div v-if="activities.length" class="canvas-help">{{ t('jobUi.canvasHelp') }}</div>
       </div>
-
-      <aside
-        v-if="inspectedActivity"
-        class="canvas-inspector"
-        data-canvas-inspector
-      >
-        <JobActivityInspector
-          :job-id="jobId"
-          :activity="inspectedActivity"
-          open
-          closable
-          @close="closeInspector"
-        />
-      </aside>
     </div>
+    <JobActivityInspector
+      v-if="inspectedActivity"
+      :job-id="jobId"
+      :activity="inspectedActivity"
+      :open="inspectorOpen"
+      @close="closeInspector"
+    />
     <ArtifactPreviewDialog
       v-if="previewedArtifact && jobId"
       :key="previewedArtifact.id"
@@ -1067,30 +1060,6 @@ function footerRight(activity: UnifiedActivity): string {
 .canvas-scale-box {
   margin: auto;
   flex-shrink: 0;
-}
-.canvas-inspector {
-  width: 340px;
-  max-width: 45%;
-  height: 100%;
-  overflow-y: auto;
-  border-left: 1px solid #283348;
-  background: #131b2c;
-  scrollbar-color: #3e4860 transparent;
-  flex-shrink: 0;
-  z-index: 4;
-}
-.canvas-inspector :deep(.inspector) {
-  border: 0;
-  border-radius: 0;
-  background: transparent;
-  box-shadow: none;
-}
-.canvas-inspector :deep(.surface-head) {
-  position: sticky;
-  top: 0;
-  background: #151e30;
-  border-color: #283348;
-  z-index: 1;
 }
 .canvas-stage {
   position: relative;
@@ -1267,7 +1236,7 @@ details.lane-details[open] > .lane-title .branch-toggle {
   padding: 13px 14px;
   border-color: #3c695d;
   background: linear-gradient(155deg, #1b283b, #131c2b);
-  cursor: default;
+  cursor: pointer;
 }
 .media-card {
   border-color: #3b5f82;
@@ -1494,15 +1463,6 @@ details.lane-details[open] > .lane-title .branch-toggle {
   }
   .canvas-viewport.has-stats-hud {
     padding-top: 132px;
-  }
-  .canvas-inspector {
-    position: absolute;
-    top: 0;
-    right: 0;
-    bottom: 0;
-    width: min(320px, 88%);
-    max-width: 88%;
-    box-shadow: -12px 0 28px #0007;
   }
 }
 </style>

@@ -19,20 +19,25 @@ function events(count: number): JobEvent[] {
 beforeEach(() => setLocale('en'))
 
 describe('Job activity presentation', () => {
-  it('starts collapsed, toggles from the heading and collapses for another activity', async () => {
+  it('renders activity details inside a modal dialog and emits close on close button, backdrop, or Escape', async () => {
     const activity = projectUnifiedActivity(view, events(5))[0]!
-    const wrapper = mount(JobActivityInspector, { props: { activity } })
+    const wrapper = mount(JobActivityInspector, { props: { activity, open: false } })
     try {
-      const details = () => wrapper.get('details').element as HTMLDetailsElement
-      expect(details().open).toBe(false)
-      wrapper.get('summary').element.click()
-      expect(details().open).toBe(true)
-      expect(wrapper.text()).toContain(activity.title)
-      wrapper.get('summary').element.click()
-      expect(details().open).toBe(false)
-      wrapper.get('summary').element.click()
-      await wrapper.setProps({ activity: { ...activity, id: 'another-invocation' } })
-      expect(details().open).toBe(false)
+      expect(wrapper.find('[data-activity-modal]').exists()).toBe(false)
+      await wrapper.setProps({ open: true })
+      const modal = wrapper.get('[data-activity-modal]')
+      expect(modal.attributes('role')).toBe('dialog')
+      expect(modal.attributes('aria-modal')).toBe('true')
+      expect(modal.text()).toContain(activity.title)
+
+      await modal.get('[data-inspector-close]').trigger('click')
+      expect(wrapper.emitted('close')).toHaveLength(1)
+
+      await wrapper.get('[data-activity-modal-backdrop]').trigger('click')
+      expect(wrapper.emitted('close')).toHaveLength(2)
+
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
+      expect(wrapper.emitted('close')).toHaveLength(3)
     } finally { wrapper.unmount() }
   })
 
@@ -80,7 +85,7 @@ describe('Job activity presentation', () => {
     try {
       expect(wrapper.text()).toContain('core.web')
       expect(wrapper.text()).toContain('extract')
-      const sections = wrapper.findAll('details details')
+      const sections = wrapper.findAll('details')
       expect(sections).toHaveLength(2)
       expect(sections[0]!.get('pre').text()).toContain('https://example.org/article')
       expect(sections[1]!.get('pre').text()).toContain('Article text')
