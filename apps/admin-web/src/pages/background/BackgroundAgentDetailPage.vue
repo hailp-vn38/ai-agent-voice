@@ -1209,6 +1209,12 @@ onBeforeUnmount(() => controller?.abort())
                       >
                         {{ findSkillSummary(skill)?.is_builtin ? t('jobUi.skillBuiltinBadge') : t('jobUi.skillCustomBadge') }}
                       </Badge>
+                      <Badge
+                        v-if="(agentSpec.default_allowed_skills ?? []).includes(skill)"
+                        variant="outline"
+                      >
+                        {{ t('jobUi.skillAgentDefaultBadge') }}
+                      </Badge>
                     </div>
                     <p
                       v-if="findSkillSummary(skill)?.description"
@@ -1221,13 +1227,14 @@ onBeforeUnmount(() => controller?.abort())
 
                 <Button
                   size="sm"
-                  variant="ghost"
+                  variant="outline"
                   type="button"
+                  class="shrink-0"
                   :title="t('jobUi.skillViewEdit')"
                   :data-agent-edit-skill="skill"
                   @click="openEditSkillModal(skill)"
                 >
-                  <Pencil class="size-3.5" aria-hidden="true" />
+                  <Eye class="size-3.5" aria-hidden="true" />{{ t('jobUi.skillViewEditShort') }}
                 </Button>
               </div>
             </div>

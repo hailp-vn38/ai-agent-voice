@@ -29,7 +29,7 @@ const saving = ref(false)
 const deleting = ref(false)
 const error = ref('')
 const detail = ref<JobSkillDetail | null>(null)
-const editorMode = ref<'edit' | 'preview' | 'split'>('edit')
+const editorMode = ref<'edit' | 'preview' | 'split' | 'default'>('split')
 
 const form = ref({
   id: '',
@@ -78,6 +78,9 @@ const bodyLineCount = computed(() => {
 const bodyCharCount = computed(() => form.value.body.length)
 
 const renderedBodyHtml = computed(() => renderMarkdown(form.value.body || ''))
+const renderedDefaultBodyHtml = computed(() =>
+  renderMarkdown(detail.value?.default?.body || ''),
+)
 
 async function loadSkill(id: string) {
   loading.value = true
@@ -103,7 +106,7 @@ watch(
   ([open, mode, skillId]) => {
     if (!open) return
     error.value = ''
-    editorMode.value = 'edit'
+    editorMode.value = mode === 'create' ? 'edit' : 'split'
     if (mode === 'create') {
       detail.value = null
       form.value = {
@@ -360,6 +363,18 @@ async function removeSkill() {
                   >
                     <Columns2 class="size-3" aria-hidden="true" />{{ t('jobUi.promptModeSplit') }}
                   </button>
+                  <button
+                    v-if="mode === 'edit' && isBuiltin && detail?.default"
+                    type="button"
+                    role="tab"
+                    :aria-selected="editorMode === 'default'"
+                    data-skill-editor-mode="default"
+                    class="inline-flex items-center gap-1 rounded-md px-2.5 py-1 font-medium transition-colors"
+                    :class="editorMode === 'default' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground'"
+                    @click="editorMode = 'default'"
+                  >
+                    <BookOpen class="size-3" aria-hidden="true" />{{ t('jobUi.skillModeDefault') }}
+                  </button>
                 </div>
 
                 <Button
@@ -377,11 +392,47 @@ async function removeSkill() {
             </div>
 
             <div
+              v-if="editorMode === 'default' && detail?.default"
+              class="space-y-3 rounded-xl border border-studio-violet/30 bg-studio-violet/5 p-4 text-xs"
+              data-skill-default-view
+            >
+              <div class="flex flex-wrap items-center justify-between gap-2 border-b border-border/60 pb-2.5">
+                <span class="font-medium text-foreground">
+                  {{ t('jobUi.skillDefaultReadOnlyNotice', { id: effectiveId }) }}
+                </span>
+                <Button
+                  v-if="hasChangesFromDefault"
+                  size="sm"
+                  variant="outline"
+                  type="button"
+                  @click="restoreDefault(); editorMode = 'split'"
+                >
+                  <RotateCcw class="size-3.5" aria-hidden="true" />{{ t('jobUi.skillRestoreDefault') }}
+                </Button>
+              </div>
+              <div class="grid gap-2 sm:grid-cols-2">
+                <div>
+                  <span class="text-muted-foreground">{{ t('jobUi.skillNameLabel') }}: </span>
+                  <code class="font-semibold text-foreground">{{ detail.default.name }}</code>
+                </div>
+                <div>
+                  <span class="text-muted-foreground">{{ t('jobUi.skillDescriptionLabel') }}: </span>
+                  <span class="text-foreground">{{ detail.default.description }}</span>
+                </div>
+              </div>
+              <div
+                class="skill-markdown-preview max-h-[380px] overflow-y-auto rounded-xl border border-border/80 bg-background p-4 text-xs leading-relaxed"
+                v-html="renderedDefaultBodyHtml"
+              />
+            </div>
+
+            <div
+              v-else
               class="grid gap-3"
               :class="editorMode === 'split' ? 'lg:grid-cols-2' : 'grid-cols-1'"
             >
               <textarea
-                v-if="editorMode !== 'preview'"
+                v-if="editorMode === 'edit' || editorMode === 'split'"
                 id="skill-body-textarea"
                 v-model="form.body"
                 rows="14"
@@ -391,7 +442,7 @@ async function removeSkill() {
                 data-skill-body-textarea
               />
               <div
-                v-if="editorMode !== 'edit'"
+                v-if="editorMode === 'preview' || editorMode === 'split'"
                 class="skill-markdown-preview min-h-[300px] max-h-[420px] overflow-y-auto rounded-xl border border-border/80 bg-surface/60 p-4 text-xs leading-relaxed"
                 data-skill-body-preview
                 v-html="renderedBodyHtml"

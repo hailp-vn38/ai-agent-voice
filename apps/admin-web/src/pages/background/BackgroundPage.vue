@@ -51,12 +51,26 @@ function providerOptionsForAgent(agent: BackgroundAgentConfig | null): Backgroun
 }
 const agentsCatalog = computed(() => settings.value?.agents ?? [])
 const skillsCatalog = computed(() => settings.value?.skills ?? [])
+const skillFilter = ref<'all' | 'builtin' | 'custom'>('all')
+const builtinSkillsCount = computed(() => skillsCatalog.value.filter(s => s.is_builtin).length)
+const customSkillsCount = computed(() => skillsCatalog.value.filter(s => !s.is_builtin).length)
+const filteredSkillsCatalog = computed(() => {
+  if (skillFilter.value === 'builtin') return skillsCatalog.value.filter(s => s.is_builtin)
+  if (skillFilter.value === 'custom') return skillsCatalog.value.filter(s => !s.is_builtin)
+  return skillsCatalog.value
+})
 const dailyFlowAgents = computed(() => agentsCatalog.value.filter(a => a.flow_id === 'daily'))
 const wikiFlowAgents = computed(() => agentsCatalog.value.filter(a => a.flow_id === 'wiki'))
 
 const skillModalOpen = ref(false)
 const skillModalMode = ref<'create' | 'edit'>('create')
 const activeSkillId = ref<string | null>(null)
+
+function scrollToSkillCatalog() {
+  if (typeof document !== 'undefined') {
+    document.getElementById('job-skill-catalog')?.scrollIntoView({ behavior: 'smooth' })
+  }
+}
 
 function openCreateSkillModal() {
   skillModalMode.value = 'create'
@@ -256,6 +270,9 @@ onBeforeUnmount(() => controller?.abort())
         <span class="line-clamp-2">{{ t('jobUi.backgroundDescription') }}</span>
       </template>
       <template #actions>
+        <Button variant="outline" :disabled="loading || saving" @click="scrollToSkillCatalog">
+          <BookOpen class="size-4" />{{ t('jobUi.skillCatalogShort') }} ({{ skillsCatalog.length }})
+        </Button>
         <Button variant="outline" :disabled="loading || saving" @click="router.push({ name: 'providers', query: { type: 'llm' } })">
           <ExternalLink class="size-4" />{{ t('jobUi.manageProviders') }}
         </Button>
@@ -540,6 +557,16 @@ onBeforeUnmount(() => controller?.abort())
                 <Badge variant="outline">
                   {{ t('jobUi.skillsAllowed') }}: {{ (draftAgent(agent).allowed_skills ?? agent.allowed_skills).length }}/{{ agent.available_skills.length }}
                 </Badge>
+                <button
+                  v-for="skillId in (draftAgent(agent).allowed_skills ?? agent.allowed_skills)"
+                  :key="skillId"
+                  type="button"
+                  class="inline-flex cursor-pointer items-center gap-1 rounded-full border border-studio-violet/30 bg-studio-violet/10 px-2 py-0.5 font-mono text-[11px] font-medium text-studio-violet hover:bg-studio-violet/20"
+                  :title="t('jobUi.skillViewEdit')"
+                  @click="openEditSkillModal(skillId)"
+                >
+                  <BookOpen class="size-3" />{{ skillId }}
+                </button>
               </div>
             </div>
           </div>
@@ -547,7 +574,7 @@ onBeforeUnmount(() => controller?.abort())
       </section>
 
       <!-- Job Skill Catalog (skills/) -->
-      <section class="studio-panel space-y-4 p-5" data-skill-catalog>
+      <section id="job-skill-catalog" class="studio-panel space-y-4 p-5" data-skill-catalog>
         <div class="flex flex-wrap items-start justify-between gap-3">
           <div>
             <h2 class="flex items-center gap-2 font-semibold">
@@ -555,8 +582,42 @@ onBeforeUnmount(() => controller?.abort())
             </h2>
             <p class="mt-1 text-xs text-muted-foreground">{{ t('jobUi.skillCatalogHint') }}</p>
           </div>
-          <div class="flex items-center gap-2">
-            <Badge variant="outline">{{ skillsCatalog.length }} skills</Badge>
+          <div class="flex flex-wrap items-center gap-2">
+            <div class="inline-flex rounded-lg border border-border bg-surface/80 p-0.5 text-xs" role="tablist">
+              <button
+                type="button"
+                role="tab"
+                :aria-selected="skillFilter === 'all'"
+                data-skill-filter="all"
+                class="rounded-md px-2.5 py-1 font-medium transition-colors"
+                :class="skillFilter === 'all' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground'"
+                @click="skillFilter = 'all'"
+              >
+                {{ t('jobUi.skillFilterAll') }} ({{ skillsCatalog.length }})
+              </button>
+              <button
+                type="button"
+                role="tab"
+                :aria-selected="skillFilter === 'builtin'"
+                data-skill-filter="builtin"
+                class="rounded-md px-2.5 py-1 font-medium transition-colors"
+                :class="skillFilter === 'builtin' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground'"
+                @click="skillFilter = 'builtin'"
+              >
+                {{ t('jobUi.skillFilterBuiltin') }} ({{ builtinSkillsCount }})
+              </button>
+              <button
+                type="button"
+                role="tab"
+                :aria-selected="skillFilter === 'custom'"
+                data-skill-filter="custom"
+                class="rounded-md px-2.5 py-1 font-medium transition-colors"
+                :class="skillFilter === 'custom' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground'"
+                @click="skillFilter = 'custom'"
+              >
+                {{ t('jobUi.skillFilterCustom') }} ({{ customSkillsCount }})
+              </button>
+            </div>
             <Button
               size="sm"
               type="button"
@@ -571,7 +632,7 @@ onBeforeUnmount(() => controller?.abort())
 
         <div class="grid gap-3 md:grid-cols-2">
           <div
-            v-for="skill in skillsCatalog"
+            v-for="skill in filteredSkillsCatalog"
             :key="skill.id"
             class="flex flex-col justify-between rounded-xl border bg-background p-4"
             :data-skill-card="skill.id"
