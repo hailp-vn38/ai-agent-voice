@@ -503,6 +503,10 @@ fn tts_binding(instance: &TtsInstanceConfig) -> TtsBinding {
             voice: config.voice.clone(),
             language: config.language.clone(),
         },
+        TtsInstanceConfig::VifastttsOnnx(config) => TtsBinding {
+            voice: config.voice.clone(),
+            language: config.language.clone(),
+        },
         _ => TtsBinding::readiness(),
     }
 }

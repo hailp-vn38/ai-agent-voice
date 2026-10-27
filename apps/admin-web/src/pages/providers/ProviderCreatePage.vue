@@ -160,6 +160,21 @@ const ADAPTER_CATALOG_META: Record<string, AdapterPresentation> = {
       speed_percent: '100',
     },
   },
+  vifasttts_onnx: {
+    name: 'ViFastTts Ngọc Huyền ONNX',
+    detail: 'Pure-Rust Vietnamese TTS · CPU FP32',
+    mode: 'Local',
+    cap: ['Offline', 'Voice'],
+    defaults: {
+      voice: 'ngoc_huyen',
+      language: 'vi-VN',
+      speed_percent: 100,
+    },
+    placeholders: {
+      voice: 'ngoc_huyen',
+      speed_percent: '100',
+    },
+  },
   zipformer_sherpa: {
     name: 'Zipformer Sherpa',
     detail: 'Vietnamese ASR · local streaming',

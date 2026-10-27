@@ -15,6 +15,7 @@ pub mod kokoro_vi;
 #[cfg(feature = "qualification-providers")]
 pub mod qualification;
 pub mod vieneu;
+pub mod vifasttts;
 pub mod zerotts;
 pub(crate) use chillaudio::ChillAudioWsProvider;
 pub(crate) use edge_tts::EdgeTtsProvider;

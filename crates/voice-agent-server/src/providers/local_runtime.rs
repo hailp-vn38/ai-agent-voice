@@ -3,7 +3,7 @@
 use crate::{
     config::{
         GipformerSherpaOfflineConfig, KokoroViOnnxConfig, SileroOnnxConfig, VieneuNativeConfig,
-        ZeroTtsOnnxConfig, ZipformerSherpaConfig,
+        VifastttsOnnxConfig, ZeroTtsOnnxConfig, ZipformerSherpaConfig,
     },
     providers::ProviderLoadError,
     services::provider_runtime::LocalRuntimePlan,
@@ -36,6 +36,7 @@ struct ZipformerSherpaPlanner;
 struct GipformerSherpaOfflinePlanner;
 struct ZeroTtsOnnxPlanner;
 struct KokoroViOnnxPlanner;
+struct VifastttsOnnxPlanner;
 struct VieneuNativePlanner;
 
 impl LocalRuntimeAdapter for SileroOnnxPlanner {
@@ -198,6 +199,33 @@ impl LocalRuntimeAdapter for KokoroViOnnxPlanner {
     }
 }
 
+impl LocalRuntimeAdapter for VifastttsOnnxPlanner {
+    fn adapter_id(&self) -> &'static str {
+        "vifasttts_onnx"
+    }
+
+    fn physical_plan(
+        &self,
+        effective_config: serde_json::Value,
+    ) -> Result<LocalRuntimePlan, ProviderLoadError> {
+        let mut config: VifastttsOnnxConfig =
+            serde_json::from_value(effective_config).map_err(|_| {
+                ProviderLoadError::Configuration("invalid ViFastTts local runtime config".into())
+            })?;
+        if !config.valid_selection() {
+            return Err(ProviderLoadError::Configuration(
+                "invalid ViFastTts local runtime config".into(),
+            ));
+        }
+        config.preload = false;
+        let model = config.model.clone();
+        let spec = serde_json::to_value(config).map_err(|_| {
+            ProviderLoadError::Configuration("invalid ViFastTts physical spec".into())
+        })?;
+        Ok(LocalRuntimePlan::onnx(self.adapter_id(), model, spec))
+    }
+}
+
 impl LocalRuntimeAdapter for VieneuNativePlanner {
     fn adapter_id(&self) -> &'static str {
         "vieneu"
@@ -229,14 +257,16 @@ static GIPFORMER_SHERPA_OFFLINE_PLANNER: GipformerSherpaOfflinePlanner =
     GipformerSherpaOfflinePlanner;
 static ZEROTTS_ONNX_PLANNER: ZeroTtsOnnxPlanner = ZeroTtsOnnxPlanner;
 static KOKORO_VI_ONNX_PLANNER: KokoroViOnnxPlanner = KokoroViOnnxPlanner;
+static VIFASTTTS_ONNX_PLANNER: VifastttsOnnxPlanner = VifastttsOnnxPlanner;
 static VIENEU_NATIVE_PLANNER: VieneuNativePlanner = VieneuNativePlanner;
-static LOCAL_RUNTIME_ADAPTERS: [&dyn LocalRuntimeAdapter; 7] = [
+static LOCAL_RUNTIME_ADAPTERS: [&dyn LocalRuntimeAdapter; 8] = [
     &CAMPPLUS_PLANNER,
     &SILERO_ONNX_PLANNER,
     &ZIPFORMER_SHERPA_PLANNER,
     &GIPFORMER_SHERPA_OFFLINE_PLANNER,
     &ZEROTTS_ONNX_PLANNER,
     &KOKORO_VI_ONNX_PLANNER,
+    &VIFASTTTS_ONNX_PLANNER,
     &VIENEU_NATIVE_PLANNER,
 ];
 static LOCAL_RUNTIME_ADAPTER_REGISTRY: LocalRuntimeAdapterRegistry = LocalRuntimeAdapterRegistry {

@@ -183,6 +183,15 @@ token = "set-deployment-token-here"
 # [runtime.kokoro_vi]
 # g2p_executable = "runtime/kokoro-vi/kokoro_vi_g2p"
 
+# Local Pure-Rust ViFastTts Ngọc Huyền Small (CPU FP32). Model Preparation
+# downloads the pinned acoustic.onnx and vocoder.onnx artifacts automatically.
+# [providers.tts.instances.vifasttts_default]
+# adapter = "vifasttts_onnx"
+# voice = "ngoc_huyen"
+# language = "vi-VN"
+# speed_percent = 100
+# preload = false
+
 [tts]
 # Voice: maximum wait for first/next non-empty PCM; diagnostics: total synthesis budget.
 timeout_ms = 15000
@@ -254,6 +263,7 @@ gipformer_sherpa_offline = 4
 zerotts_onnx = 2
 vieneu = 2
 kokoro_vi_onnx = 2
+vifasttts_onnx = 2
 
 [runtime.chillaudio]
 # ws_url = "wss://your-deployment-chillaudio-endpoint.example/ws"
@@ -315,6 +325,7 @@ Bạn trả lời tự nhiên, thân thiện và súc tích.
 # silero_onnx = 134217728
 # gipformer_sherpa_offline = 536870912
 # kokoro_vi_onnx = 3221225472
+# vifasttts_onnx = 536870912
 # ZeroTTS: 2 streaming workers peaked at 2729220 KiB RSS in a short development smoke test.
 # Reservation covers the whole configured pool; requalify when widening it.
 # zerotts_onnx = 4294967296

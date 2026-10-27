@@ -764,6 +764,11 @@ fn validate_providers(config: &AppConfig) -> Result<(), ConfigError> {
                     "Kokoro Vietnamese instance `{id}` has invalid model, voice, language, threads, or speed"
                 )));
             }
+            TtsInstanceConfig::VifastttsOnnx(tts) if !tts.valid_selection() => {
+                return Err(ConfigError::Validation(format!(
+                    "ViFastTts instance `{id}` has invalid model, voice, language, threads, or speed"
+                )));
+            }
             #[cfg(feature = "qualification-providers")]
             TtsInstanceConfig::QualificationTts(_) => {}
             _ => {}

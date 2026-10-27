@@ -40,6 +40,10 @@ fn registry_exposes_only_adapters_compiled_into_the_binary() {
         registry.tts_factory("kokoro_vi_onnx").unwrap().adapter(),
         "kokoro_vi_onnx"
     );
+    assert_eq!(
+        registry.tts_factory("vifasttts_onnx").unwrap().adapter(),
+        "vifasttts_onnx"
+    );
     assert!(registry.tts_factory("http_tts").is_err());
 }
 
@@ -89,6 +93,7 @@ fn admin_adapter_descriptors_are_bounded_unique_and_cover_the_active_tts_adapter
     assert!(adapters.contains("chillaudio_ws"));
     assert!(adapters.contains("edge_tts"));
     assert!(adapters.contains("kokoro_vi_onnx"));
+    assert!(adapters.contains("vifasttts_onnx"));
     let factory_adapters: HashSet<_> = compiled_provider_registry()
         .admin_adapters()
         .map(|(_, adapter)| adapter)
@@ -167,6 +172,7 @@ fn descriptors_expose_only_user_configuration_and_typed_decoding_choices() {
             "silero_onnx"
                 | "zerotts_onnx"
                 | "kokoro_vi_onnx"
+                | "vifasttts_onnx"
                 | "zipformer_sherpa"
                 | "gipformer_sherpa_offline"
         ) {
@@ -219,6 +225,13 @@ fn every_advertised_local_voice_is_an_installed_voice_asset() {
                 .map(|voice| voice.id)
                 .collect::<Vec<_>>(),
         ),
+        (
+            "vifasttts_onnx",
+            voice_agent_server::providers::tts::vifasttts::assets::VOICES
+                .iter()
+                .map(|voice| voice.id)
+                .collect::<Vec<_>>(),
+        ),
     ] {
         let descriptor = compiled_provider_adapter_registry().get(adapter).unwrap();
         let advertised: HashSet<_> = descriptor
@@ -262,6 +275,7 @@ fn every_local_adapter_pins_an_immutable_upstream_revision() {
         "gipformer_sherpa_offline",
         "zerotts_onnx",
         "kokoro_vi_onnx",
+        "vifasttts_onnx",
     ] {
         let revision = compiled_provider_adapter_registry()
             .assets(adapter)

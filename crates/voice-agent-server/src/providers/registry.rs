@@ -106,6 +106,7 @@ static REGISTRATIONS: &[ProviderAdapterRegistration] = &[
     super::tts::edge_tts::descriptor::REGISTRATION,
     super::tts::vieneu::descriptor::REGISTRATION,
     super::tts::kokoro_vi::descriptor::REGISTRATION,
+    super::tts::vifasttts::descriptor::REGISTRATION,
 ];
 
 pub fn compiled_provider_adapter_registry() -> &'static ProviderAdapterRegistry {

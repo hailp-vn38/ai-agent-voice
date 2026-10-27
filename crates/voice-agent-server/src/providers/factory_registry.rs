@@ -21,6 +21,7 @@ use crate::{
             ChillAudioWsProvider, ConfiguredZeroTts, EdgeTtsProvider, ZeroTtsArtifacts,
             kokoro_vi::{ConfiguredKokoroVi, KokoroViArtifacts, assets as kokoro_assets},
             vieneu::{ConfiguredVieneuNative, assets as vieneu_assets},
+            vifasttts::{ConfiguredVifasttts, assets as vifasttts_assets},
             zerotts::assets as zerotts_assets,
         },
         vad::{LoadedSileroVad, silero::assets as silero_assets},
@@ -484,6 +485,51 @@ impl TtsFactory for VieneuNativeFactory {
 
 struct ChillAudioWsFactory;
 struct KokoroViOnnxFactory;
+struct VifastttsOnnxFactory;
+
+impl TtsFactory for VifastttsOnnxFactory {
+    fn adapter(&self) -> &'static str {
+        "vifasttts_onnx"
+    }
+    fn model_identity<'a>(
+        &self,
+        config: &'a TtsInstanceConfig,
+    ) -> Result<Option<&'a str>, ProviderLoadError> {
+        match config {
+            TtsInstanceConfig::VifastttsOnnx(_) => Ok(local_model_identity(self.adapter())),
+            _ => Err(ProviderLoadError::Configuration(
+                "vifasttts_onnx factory received another adapter config".into(),
+            )),
+        }
+    }
+    fn build(
+        &self,
+        config: &TtsInstanceConfig,
+        runtime: &RuntimeConfig,
+    ) -> Result<Arc<dyn TtsProvider>, ProviderLoadError> {
+        let TtsInstanceConfig::VifastttsOnnx(options) = config else {
+            return Err(ProviderLoadError::Configuration(
+                "vifasttts_onnx factory received another adapter config".into(),
+            ));
+        };
+        let mut options = options.clone();
+        options.model = local_model_identity(self.adapter())
+            .expect("compiled local adapter")
+            .into();
+        options.num_threads = runtime.onnx.threads_for(self.adapter());
+        validate_threads(self.adapter(), runtime)?;
+        if !options.valid_selection() {
+            return Err(ProviderLoadError::Configuration(
+                "ViFastTts requires vi-VN, a supported voice, positive threads, and speed_percent 50..=200".into(),
+            ));
+        }
+        let assets = resolve(vifasttts_assets::resolve_assets())?;
+        Ok(Arc::new(
+            ConfiguredVifasttts::load(&options, runtime, assets)
+                .map_err(|error| ProviderLoadError::Provider(error.to_string()))?,
+        ))
+    }
+}
 
 impl TtsFactory for KokoroViOnnxFactory {
     fn adapter(&self) -> &'static str {
@@ -750,6 +796,7 @@ static VIENEU_NATIVE_FACTORY: VieneuNativeFactory = VieneuNativeFactory;
 static CHILLAUDIO_WS_FACTORY: ChillAudioWsFactory = ChillAudioWsFactory;
 static EDGE_TTS_FACTORY: EdgeTtsFactory = EdgeTtsFactory;
 static KOKORO_VI_ONNX_FACTORY: KokoroViOnnxFactory = KokoroViOnnxFactory;
+static VIFASTTTS_ONNX_FACTORY: VifastttsOnnxFactory = VifastttsOnnxFactory;
 #[cfg(feature = "qualification-providers")]
 static QUALIFICATION_VAD_FACTORY: QualificationVadFactory = QualificationVadFactory;
 #[cfg(feature = "qualification-providers")]
@@ -781,6 +828,7 @@ static TTS_FACTORIES: &[&dyn TtsFactory] = &[
     &EDGE_TTS_FACTORY,
     &VIENEU_NATIVE_FACTORY,
     &KOKORO_VI_ONNX_FACTORY,
+    &VIFASTTTS_ONNX_FACTORY,
     #[cfg(feature = "qualification-providers")]
     &QUALIFICATION_TTS_FACTORY,
 ];
@@ -828,6 +876,7 @@ pub fn local_model_identity(adapter: &str) -> Option<&'static str> {
         "zerotts_onnx" => Some("zerotts_default"),
         "vieneu" => Some(super::tts::vieneu::config::MODEL_ID),
         "kokoro_vi_onnx" => Some("kokoro_vi_contextbox"),
+        "vifasttts_onnx" => Some(super::tts::vifasttts::config::MODEL_ID),
         _ => None,
     }
 }

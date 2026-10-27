@@ -1191,6 +1191,11 @@ async fn provider_adapter_descriptors_and_bootstrap_discovery_are_public_read_on
             "adapter": "kokoro_vi_onnx",
             "type": "tts",
             "display_name": "Kokoro Vietnamese ONNX"
+        },
+        {
+            "adapter": "vifasttts_onnx",
+            "type": "tts",
+            "display_name": "ViFastTts Ngọc Huyền ONNX"
         }
     ]);
     if cfg!(feature = "qualification-providers") {

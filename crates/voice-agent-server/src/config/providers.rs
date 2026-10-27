@@ -12,6 +12,7 @@ pub use crate::providers::{
         edge_tts::config::EdgeTtsConfig,
         kokoro_vi::config::KokoroViOnnxConfig,
         vieneu::config::VieneuNativeConfig,
+        vifasttts::config::VifastttsOnnxConfig,
         zerotts::config::{ZeroTtsDeliveryMode, ZeroTtsOnnxConfig},
     },
 };
@@ -174,6 +175,8 @@ pub enum TtsInstanceConfig {
     Vieneu(VieneuNativeConfig),
     #[serde(rename = "kokoro_vi_onnx")]
     KokoroViOnnx(KokoroViOnnxConfig),
+    #[serde(rename = "vifasttts_onnx")]
+    VifastttsOnnx(VifastttsOnnxConfig),
     #[cfg(feature = "qualification-providers")]
     QualificationTts(QualificationConfig),
 }
@@ -186,6 +189,7 @@ impl TtsInstanceConfig {
             Self::EdgeTts(_) => "edge_tts",
             Self::Vieneu(_) => "vieneu",
             Self::KokoroViOnnx(_) => "kokoro_vi_onnx",
+            Self::VifastttsOnnx(_) => "vifasttts_onnx",
             #[cfg(feature = "qualification-providers")]
             Self::QualificationTts(_) => "qualification_tts",
         }
@@ -197,6 +201,7 @@ impl TtsInstanceConfig {
             Self::EdgeTts(config) => config.preload,
             Self::Vieneu(config) => config.preload,
             Self::KokoroViOnnx(config) => config.preload,
+            Self::VifastttsOnnx(config) => config.preload,
             #[cfg(feature = "qualification-providers")]
             Self::QualificationTts(_) => false,
         }

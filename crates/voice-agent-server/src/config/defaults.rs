@@ -171,6 +171,15 @@ pub(crate) fn default_kokoro_vi_speed_percent() -> u16 {
 pub(super) fn default_kokoro_vi_g2p_executable() -> PathBuf {
     PathBuf::from("runtime/kokoro-vi/kokoro_vi_g2p")
 }
+pub(crate) fn default_vifasttts_model() -> String {
+    "vifasttts_ngochuyen_small".into()
+}
+pub(crate) fn default_vifasttts_voice() -> String {
+    "ngoc_huyen".into()
+}
+pub(crate) fn default_vifasttts_speed_percent() -> u16 {
+    100
+}
 pub(crate) fn default_vietnamese_language() -> String {
     "vi-VN".into()
 }

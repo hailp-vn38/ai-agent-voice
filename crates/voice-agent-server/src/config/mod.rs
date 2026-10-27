@@ -1284,6 +1284,7 @@ fn default_runtime_threads() -> std::collections::BTreeMap<String, i32> {
         ("zerotts_onnx", 2),
         ("vieneu", 2),
         ("kokoro_vi_onnx", 2),
+        ("vifasttts_onnx", 2),
     ]
     .into_iter()
     .map(|(key, value)| (key.into(), value))

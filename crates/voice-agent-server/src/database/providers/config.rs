@@ -50,6 +50,7 @@ pub fn validate_raw(adapter: &str, raw: &str) -> Result<String, ProviderConfigEr
             )
         }
         "kokoro_vi_onnx" => canonical::<Kokoro, _>(&value, Kokoro::valid),
+        "vifasttts_onnx" => canonical::<Vifasttts, _>(&value, Vifasttts::valid),
         "chillaudio_ws" => canonical::<ChillAudio, _>(&value, ChillAudio::valid),
         "edge_tts" => canonical::<EdgeTts, _>(&value, EdgeTts::valid),
         #[cfg(feature = "qualification-providers")]
@@ -261,6 +262,27 @@ struct Kokoro {
 impl Kokoro {
     fn valid(&self) -> bool {
         crate::providers::tts::kokoro_vi::descriptor::DESCRIPTOR
+            .capabilities
+            .voices
+            .is_some_and(|voices| voices.iter().any(|voice| voice.id == self.voice))
+            && self.language == "vi-VN"
+            && (50..=200).contains(&self.speed_percent)
+    }
+}
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct Vifasttts {
+    voice: String,
+    #[serde(default = "default_vietnamese_language")]
+    language: String,
+    #[serde(default = "crate::config::defaults::default_vifasttts_speed_percent")]
+    speed_percent: u16,
+    #[serde(default)]
+    preload: bool,
+}
+impl Vifasttts {
+    fn valid(&self) -> bool {
+        crate::providers::tts::vifasttts::descriptor::DESCRIPTOR
             .capabilities
             .voices
             .is_some_and(|voices| voices.iter().any(|voice| voice.id == self.voice))
