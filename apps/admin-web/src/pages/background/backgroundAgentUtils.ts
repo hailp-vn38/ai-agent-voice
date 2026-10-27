@@ -1,0 +1,181 @@
+import type {
+  BackgroundAgentConfig,
+  BackgroundAgentConfigUpdate,
+  BackgroundProviderOption,
+} from '@/api/types/agent-jobs'
+
+export function providerSupportsAnyTag(
+  option: BackgroundProviderOption,
+  requiredTags: string[],
+): boolean {
+  const tags = option.tags && option.tags.length > 0 ? option.tags : ['chat']
+  return requiredTags.some(tag => tags.includes(tag))
+}
+
+export function chatProviderOptions(
+  providers: BackgroundProviderOption[],
+): BackgroundProviderOption[] {
+  return providers.filter(option => providerSupportsAnyTag(option, ['chat', 'reasoning']))
+}
+
+export function allowedCapabilityTagsForAgent(agent: BackgroundAgentConfig | null): string[] {
+  if (!agent) return ['chat', 'reasoning']
+  if (agent.allowed_capability_tags && agent.allowed_capability_tags.length > 0) {
+    return agent.allowed_capability_tags
+  }
+  return agent.id === 'media_creator'
+    ? ['chat', 'reasoning', 'image', 'video']
+    : ['chat', 'reasoning']
+}
+
+export function providerOptionsForAgent(
+  providers: BackgroundProviderOption[],
+  agent: BackgroundAgentConfig | null,
+): BackgroundProviderOption[] {
+  if (!agent) return chatProviderOptions(providers)
+  const allowedTags = allowedCapabilityTagsForAgent(agent)
+  return providers.filter(option => providerSupportsAnyTag(option, allowedTags))
+}
+
+export function toolCapabilityEntries(
+  agent: BackgroundAgentConfig | null,
+): Array<[string, string]> {
+  if (!agent) return []
+  if (agent.tool_capability_tags && Object.keys(agent.tool_capability_tags).length > 0) {
+    return Object.entries(agent.tool_capability_tags)
+  }
+  if (agent.id === 'media_creator') {
+    return [
+      ['image_create', 'image'],
+      ['video_create', 'video'],
+      ['tts_synthesize', 'audio'],
+    ]
+  }
+  return []
+}
+
+export function providerOptionsForTag(
+  providers: BackgroundProviderOption[],
+  tag: string,
+): BackgroundProviderOption[] {
+  return providers.filter(option => providerSupportsAnyTag(option, [tag]))
+}
+
+export function formatProviderOptionLabel(option: BackgroundProviderOption): string {
+  const modelPart = option.model && option.model !== option.name ? ` (${option.model})` : ''
+  const tagsPart = option.tags && option.tags.length > 0 ? ` [${option.tags.join(', ')}]` : ''
+  return `${option.name}${modelPart}${tagsPart} · ${option.source}`
+}
+
+export function findProvider(
+  providers: BackgroundProviderOption[],
+  refId: string | null | undefined,
+): BackgroundProviderOption | undefined {
+  if (!refId) return undefined
+  return providers.find(p => p.ref === refId)
+}
+
+export function domainToolsForAgent(agent: BackgroundAgentConfig): string[] {
+  return agent.available_tools.filter(tool => tool !== 'skill')
+}
+
+export function defaultDomainToolsForAgent(agent: BackgroundAgentConfig): string[] {
+  return (agent.default_allowed_tools ?? agent.available_tools).filter(tool => tool !== 'skill')
+}
+
+export function normalizeTools(tools: string[], skills: string[], isPrimary: boolean): string[] {
+  if (isPrimary) return ['subagent']
+  const set = new Set(tools.filter(t => t !== 'skill'))
+  const out = Array.from(set)
+  if (skills.length > 0) out.unshift('skill')
+  return out
+}
+
+export function normalizeToolProviders(
+  map: Record<string, string> | undefined,
+): Record<string, string> {
+  const out: Record<string, string> = {}
+  for (const [tool, pref] of Object.entries(map ?? {})) {
+    const trimmed = (pref ?? '').trim()
+    if (trimmed) out[tool] = trimmed
+  }
+  return out
+}
+
+export function sameStringRecord(
+  a: Record<string, string> | undefined,
+  b: Record<string, string> | undefined,
+): boolean {
+  const left = normalizeToolProviders(a)
+  const right = normalizeToolProviders(b)
+  const leftKeys = Object.keys(left).sort()
+  const rightKeys = Object.keys(right).sort()
+  return (
+    leftKeys.length === rightKeys.length &&
+    leftKeys.every((key, idx) => key === rightKeys[idx] && left[key] === right[key])
+  )
+}
+
+export function sameStringArray(a: string[] | undefined, b: string[] | undefined): boolean {
+  const left = [...(a ?? [])].sort()
+  const right = [...(b ?? [])].sort()
+  return left.length === right.length && left.every((val, idx) => val === right[idx])
+}
+
+export function toAgentUpdate(agent: BackgroundAgentConfig): BackgroundAgentConfigUpdate {
+  const toolProviders = normalizeToolProviders(agent.tool_providers)
+  return {
+    enabled: agent.enabled,
+    provider_ref: agent.provider_ref ?? null,
+    ...(Object.keys(toolProviders).length > 0 ? { tool_providers: toolProviders } : {}),
+    steps: agent.steps,
+    allowed_tools: [...agent.allowed_tools],
+    allowed_skills: [...agent.allowed_skills],
+    description: agent.description,
+    system_prompt: agent.system_prompt,
+  }
+}
+
+export function isAgentDirty(
+  agent: BackgroundAgentConfig,
+  draft: BackgroundAgentConfigUpdate | undefined,
+): boolean {
+  if (!draft) return false
+  return (
+    draft.enabled !== agent.enabled ||
+    (draft.provider_ref ?? null) !== (agent.provider_ref ?? null) ||
+    !sameStringRecord(draft.tool_providers, agent.tool_providers) ||
+    (draft.steps ?? agent.steps) !== agent.steps ||
+    !sameStringArray(draft.allowed_tools, agent.allowed_tools) ||
+    !sameStringArray(draft.allowed_skills, agent.allowed_skills) ||
+    (draft.description ?? agent.description).trim() !== agent.description.trim() ||
+    (draft.system_prompt ?? agent.system_prompt).trim() !== agent.system_prompt.trim()
+  )
+}
+
+export function isAgentCustomizedFromDefault(
+  agent: BackgroundAgentConfig,
+  current?: BackgroundAgentConfigUpdate,
+): boolean {
+  const enabled = current ? current.enabled : agent.enabled
+  const providerRef = current ? (current.provider_ref ?? null) : (agent.provider_ref ?? null)
+  const toolProviders = normalizeToolProviders(current ? current.tool_providers : agent.tool_providers)
+  const steps = current?.steps ?? agent.steps
+  const skills = current?.allowed_skills ?? agent.allowed_skills
+  const tools = (current?.allowed_tools ?? agent.allowed_tools).filter(t => t !== 'skill')
+  const defaultTools = defaultDomainToolsForAgent(agent)
+  const defaultSkills = agent.default_allowed_skills ?? []
+  const description = (current?.description ?? agent.description).trim()
+  const systemPrompt = (current?.system_prompt ?? agent.system_prompt).trim()
+
+  return (
+    !enabled ||
+    Boolean(providerRef) ||
+    Object.keys(toolProviders).length > 0 ||
+    steps !== agent.default_steps ||
+    (agent.mode !== 'primary' && !sameStringArray(tools, defaultTools)) ||
+    (agent.mode !== 'primary' && !sameStringArray(skills, defaultSkills)) ||
+    description !== agent.default_description.trim() ||
+    systemPrompt !== agent.default_system_prompt.trim()
+  )
+}

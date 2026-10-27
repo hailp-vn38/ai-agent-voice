@@ -10,8 +10,11 @@ describe('Agent Job detail routing', () => {
     expect(detail.params.jobId).toBe('job-2847')
   })
 
-  it('uses a dedicated Jobs settings route without an Agent permission route', () => {
+  it('uses a dedicated Jobs settings route and Subagent config route without an Agent permission route', () => {
     expect(router.resolve('/jobs/settings').name).toBe('jobs-settings')
+    const subagentRoute = router.resolve('/jobs/settings/agents/wiki_researcher')
+    expect(subagentRoute.name).toBe('jobs-settings-agent')
+    expect(subagentRoute.params.agentId).toBe('wiki_researcher')
     expect(router.resolve('/agents/demo-agent').name).toBe('agent-detail')
   })
 })

@@ -34,6 +34,8 @@ pub struct AgentConfigOverride {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub provider_ref: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_providers: Option<BTreeMap<String, String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub steps: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub allowed_tools: Option<Vec<String>>,
@@ -94,6 +96,11 @@ pub fn load_persisted_settings(store_dir: &Path) -> Option<PersistedBackgroundSe
             }
             if let Some(ref mut skills) = ovr.allowed_skills {
                 skills.retain(|s| spec.available_skills.contains(&s.as_str()));
+            }
+            if let Some(ref mut tool_map) = ovr.tool_providers {
+                tool_map.retain(|tool, pref| {
+                    !pref.trim().is_empty() && spec.tool_required_tag(tool).is_some()
+                });
             }
         }
     }
@@ -160,6 +167,22 @@ pub fn validate_agent_overrides(
                 };
                 if !agent_supports_provider(spec.id, prov) {
                     return Err("provider_capability_mismatch");
+                }
+            }
+        }
+        if let Some(ref tool_map) = ovr.tool_providers {
+            for (tool_name, pref) in tool_map {
+                let Some(required_tag) = spec.tool_required_tag(tool_name) else {
+                    return Err("invalid_arguments");
+                };
+                let trimmed = pref.trim();
+                if !trimmed.is_empty() {
+                    let Some(prov) = find_prov(trimmed) else {
+                        return Err("invalid_provider");
+                    };
+                    if !prov.supports_tag(required_tag) {
+                        return Err("provider_capability_mismatch");
+                    }
                 }
             }
         }

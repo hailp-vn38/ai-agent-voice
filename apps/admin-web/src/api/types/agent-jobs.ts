@@ -23,6 +23,9 @@ export interface BackgroundAgentConfig {
   provider_ref: string | null
   effective_provider_ref: string
   effective_model: string
+  tool_capability_tags?: Record<string, string>
+  tool_providers?: Record<string, string>
+  effective_tool_providers?: Record<string, string | null>
   steps: number
   default_steps: number
   allowed_tools: string[]
@@ -41,6 +44,7 @@ export interface BackgroundAgentConfig {
 export interface BackgroundAgentConfigUpdate {
   enabled: boolean
   provider_ref?: string | null
+  tool_providers?: Record<string, string>
   steps?: number
   allowed_tools?: string[]
   allowed_skills?: string[]

@@ -73,6 +73,13 @@ const routes: RouteRecordRaw[] = [
     meta: { titleKey: 'nav.background' },
   },
   {
+    path: '/jobs/settings/agents/:agentId',
+    alias: ['/jobs/settings/:agentId'],
+    name: 'jobs-settings-agent',
+    component: () => import('@/pages/background/BackgroundAgentDetailPage.vue'),
+    meta: { titleKey: 'jobUi.agentModalTitle' },
+  },
+  {
     path: '/jobs/:jobId',
     name: 'job-detail',
     component: () => import('@/pages/jobs/JobDetailPage.vue'),

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import {
-  Activity, Bot, Cpu, ExternalLink, RefreshCw, RotateCcw,
+  Activity, ArrowRight, Bot, Cpu, ExternalLink, RefreshCw,
   Save, Settings2, Sliders, Wrench,
 } from '@lucide/vue'
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
@@ -11,11 +11,20 @@ import type {
   BackgroundSettings, BackgroundSettingsUpdate,
 } from '@/api/types/agent-jobs'
 import { formatApiError, isApiError } from '@/api/errors'
-import BaseModal from '@/components/admin/BaseModal.vue'
 import DetailHeader from '@/components/admin/DetailHeader.vue'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { useI18n } from '@/composables/useI18n'
+import {
+  chatProviderOptions as filterChatProviderOptions,
+  domainToolsForAgent,
+  findProvider as findCatalogProvider,
+  formatProviderOptionLabel,
+  isAgentCustomizedFromDefault,
+  isAgentDirty as checkAgentDirty,
+  providerOptionsForAgent as filterProviderOptionsForAgent,
+  toAgentUpdate,
+} from './backgroundAgentUtils'
 
 const router = useRouter()
 const { t } = useI18n()
@@ -32,109 +41,23 @@ const error = ref('')
 const notice = ref('')
 const unavailable = ref(false)
 
-const editingAgentId = ref<string | null>(null)
-const modalOpen = ref(false)
-const modalForm = ref<{
-  enabled: boolean
-  provider_ref: string | null
-  steps: number
-  allowed_tools: string[]
-  allowed_skills: string[]
-  description: string
-  system_prompt: string
-}>({
-  enabled: true,
-  provider_ref: null,
-  steps: 12,
-  allowed_tools: [],
-  allowed_skills: [],
-  description: '',
-  system_prompt: '',
-})
-
 let controller: AbortController | undefined
 
 const providerOptions = computed(() => settings.value?.llm_providers ?? [])
-function providerSupportsAnyTag(option: BackgroundProviderOption, requiredTags: string[]): boolean {
-  const tags = option.tags && option.tags.length > 0 ? option.tags : ['chat']
-  return requiredTags.some(tag => tags.includes(tag))
-}
-const chatProviderOptions = computed(() =>
-  providerOptions.value.filter(option => providerSupportsAnyTag(option, ['chat', 'reasoning'])),
-)
+const chatProviderOptions = computed(() => filterChatProviderOptions(providerOptions.value))
 function providerOptionsForAgent(agent: BackgroundAgentConfig | null): BackgroundProviderOption[] {
-  if (!agent) return chatProviderOptions.value
-  const allowedTags =
-    agent.allowed_capability_tags && agent.allowed_capability_tags.length > 0
-      ? agent.allowed_capability_tags
-      : agent.id === 'media_creator'
-        ? ['chat', 'reasoning', 'image', 'video']
-        : ['chat', 'reasoning']
-  return providerOptions.value.filter(option => providerSupportsAnyTag(option, allowedTags))
-}
-function formatProviderOptionLabel(option: BackgroundProviderOption): string {
-  const modelPart = option.model && option.model !== option.name ? ` (${option.model})` : ''
-  const tagsPart = option.tags && option.tags.length > 0 ? ` [${option.tags.join(', ')}]` : ''
-  return `${option.name}${modelPart}${tagsPart} · ${option.source}`
+  return filterProviderOptionsForAgent(providerOptions.value, agent)
 }
 const agentsCatalog = computed(() => settings.value?.agents ?? [])
 const dailyFlowAgents = computed(() => agentsCatalog.value.filter(a => a.flow_id === 'daily'))
 const wikiFlowAgents = computed(() => agentsCatalog.value.filter(a => a.flow_id === 'wiki'))
-const editingAgentSpec = computed(() =>
-  agentsCatalog.value.find(a => a.id === editingAgentId.value) ?? null,
-)
-const modalSelectedProvider = computed<BackgroundProviderOption | undefined>(() => {
-  const spec = editingAgentSpec.value
-  if (!spec) return undefined
-  const fallbackRef = spec.mode === 'primary'
-    ? draft.value.orchestrator_llm_provider
-    : draft.value.worker_llm_provider
-  return findProvider(modalForm.value.provider_ref || fallbackRef || spec.effective_provider_ref)
-})
 
 function findProvider(refId: string | null | undefined): BackgroundProviderOption | undefined {
-  if (!refId) return undefined
-  return providerOptions.value.find(p => p.ref === refId)
-}
-
-function normalizeTools(tools: string[], skills: string[], isPrimary: boolean): string[] {
-  if (isPrimary) return ['subagent']
-  const set = new Set(tools.filter(t => t !== 'skill'))
-  const out = Array.from(set)
-  if (skills.length > 0) out.unshift('skill')
-  return out
-}
-
-function toAgentUpdate(agent: BackgroundAgentConfig): BackgroundAgentConfigUpdate {
-  return {
-    enabled: agent.enabled,
-    provider_ref: agent.provider_ref ?? null,
-    steps: agent.steps,
-    allowed_tools: [...agent.allowed_tools],
-    allowed_skills: [...agent.allowed_skills],
-    description: agent.description,
-    system_prompt: agent.system_prompt,
-  }
-}
-
-function sameStringArray(a: string[] | undefined, b: string[] | undefined): boolean {
-  const left = [...(a ?? [])].sort()
-  const right = [...(b ?? [])].sort()
-  return left.length === right.length && left.every((val, idx) => val === right[idx])
+  return findCatalogProvider(providerOptions.value, refId)
 }
 
 function isAgentDirty(agent: BackgroundAgentConfig): boolean {
-  const d = draft.value.agents?.[agent.id]
-  if (!d) return false
-  return (
-    d.enabled !== agent.enabled ||
-    (d.provider_ref ?? null) !== (agent.provider_ref ?? null) ||
-    (d.steps ?? agent.steps) !== agent.steps ||
-    !sameStringArray(d.allowed_tools, agent.allowed_tools) ||
-    !sameStringArray(d.allowed_skills, agent.allowed_skills) ||
-    (d.description ?? agent.description).trim() !== agent.description.trim() ||
-    (d.system_prompt ?? agent.system_prompt).trim() !== agent.system_prompt.trim()
-  )
+  return checkAgentDirty(agent, draft.value.agents?.[agent.id])
 }
 
 const dirty = computed(() => {
@@ -184,10 +107,6 @@ function effectiveProviderForAgent(agent: BackgroundAgentConfig): BackgroundProv
   return findProvider(explicitRef || fallbackRef || agent.effective_provider_ref)
 }
 
-function domainToolsForAgent(agent: BackgroundAgentConfig): string[] {
-  return agent.available_tools.filter(tool => tool !== 'skill')
-}
-
 function activeSubagentsForRoot(root: BackgroundAgentConfig): string[] {
   const flowSubagents = agentsCatalog.value.filter(
     a => a.flow_id === root.flow_id && a.mode !== 'primary',
@@ -197,66 +116,8 @@ function activeSubagentsForRoot(root: BackgroundAgentConfig): string[] {
     .map(sub => sub.id)
 }
 
-function openConfigureModal(agent: BackgroundAgentConfig) {
-  const d = draftAgent(agent)
-  editingAgentId.value = agent.id
-  modalForm.value = {
-    enabled: d.enabled,
-    provider_ref: d.provider_ref ?? null,
-    steps: d.steps ?? agent.steps,
-    allowed_tools: [...(d.allowed_tools ?? agent.allowed_tools)].filter(t => t !== 'skill'),
-    allowed_skills: [...(d.allowed_skills ?? agent.allowed_skills)],
-    description: d.description ?? agent.description,
-    system_prompt: d.system_prompt ?? agent.system_prompt,
-  }
-  modalOpen.value = true
-}
-
-function toggleModalTool(tool: string, checked: boolean) {
-  const set = new Set(modalForm.value.allowed_tools)
-  if (checked) set.add(tool)
-  else set.delete(tool)
-  modalForm.value.allowed_tools = Array.from(set)
-}
-
-function toggleModalSkill(skill: string, checked: boolean) {
-  const set = new Set(modalForm.value.allowed_skills)
-  if (checked) set.add(skill)
-  else set.delete(skill)
-  modalForm.value.allowed_skills = Array.from(set)
-}
-
-function resetModalToDefault() {
-  const spec = editingAgentSpec.value
-  if (!spec) return
-  modalForm.value = {
-    enabled: true,
-    provider_ref: null,
-    steps: spec.default_steps,
-    allowed_tools: (spec.default_allowed_tools ?? spec.available_tools).filter(t => t !== 'skill'),
-    allowed_skills: [...(spec.default_allowed_skills ?? [])],
-    description: spec.default_description,
-    system_prompt: spec.default_system_prompt,
-  }
-}
-
-function applyModalChanges() {
-  const spec = editingAgentSpec.value
-  if (!spec) return
-  if (!draft.value.agents) draft.value.agents = {}
-  const steps = Math.max(1, Math.min(100, Number(modalForm.value.steps) || spec.default_steps))
-  const skills = [...modalForm.value.allowed_skills]
-  const tools = normalizeTools(modalForm.value.allowed_tools, skills, spec.mode === 'primary')
-  draft.value.agents[spec.id] = {
-    enabled: spec.mode === 'primary' ? true : modalForm.value.enabled,
-    provider_ref: modalForm.value.provider_ref || null,
-    steps,
-    allowed_tools: tools,
-    allowed_skills: skills,
-    description: modalForm.value.description.trim() || spec.default_description,
-    system_prompt: modalForm.value.system_prompt.trim() || spec.default_system_prompt,
-  }
-  modalOpen.value = false
+function openConfigurePage(agent: BackgroundAgentConfig) {
+  void router.push({ name: 'jobs-settings-agent', params: { agentId: agent.id } })
 }
 
 async function load() {
@@ -488,11 +349,20 @@ onBeforeUnmount(() => controller?.abort())
             <div class="space-y-3">
               <div class="flex flex-wrap items-center justify-between gap-2">
                 <div class="flex items-center gap-2">
-                  <code class="rounded bg-muted px-2 py-0.5 text-sm font-semibold">{{ agent.id }}</code>
+                  <button
+                    type="button"
+                    class="cursor-pointer rounded bg-muted px-2 py-0.5 font-mono text-sm font-semibold hover:text-studio-violet"
+                    @click="openConfigurePage(agent)"
+                  >
+                    {{ agent.id }}
+                  </button>
                   <Badge variant="default">{{ t('jobUi.primaryAgent') }}</Badge>
+                  <Badge v-if="isAgentCustomizedFromDefault(agent, draftAgent(agent))" variant="outline">
+                    {{ t('jobUi.customizedBadge') }}
+                  </Badge>
                 </div>
-                <Button size="sm" variant="outline" :disabled="saving" @click="openConfigureModal(agent)">
-                  <Wrench class="size-3.5" />{{ t('jobUi.configureAgent') }}
+                <Button size="sm" variant="outline" :disabled="saving" @click="openConfigurePage(agent)">
+                  <Wrench class="size-3.5" />{{ t('jobUi.configureAgent') }}<ArrowRight class="size-3.5" />
                 </Button>
               </div>
               <p class="text-xs text-muted-foreground">
@@ -540,8 +410,17 @@ onBeforeUnmount(() => controller?.abort())
               <div class="space-y-3">
                 <div class="flex flex-wrap items-center justify-between gap-2">
                   <div class="flex items-center gap-2">
-                    <code class="rounded bg-muted px-2 py-0.5 text-sm font-semibold">{{ agent.id }}</code>
+                    <button
+                      type="button"
+                      class="cursor-pointer rounded bg-muted px-2 py-0.5 font-mono text-sm font-semibold hover:text-studio-violet"
+                      @click="openConfigurePage(agent)"
+                    >
+                      {{ agent.id }}
+                    </button>
                     <Badge variant="secondary">{{ t('jobUi.subagentRole') }}</Badge>
+                    <Badge v-if="isAgentCustomizedFromDefault(agent, draftAgent(agent))" variant="outline">
+                      {{ t('jobUi.customizedBadge') }}
+                    </Badge>
                   </div>
                   <div class="flex items-center gap-2">
                     <label class="flex cursor-pointer items-center gap-2 text-xs font-medium">
@@ -553,8 +432,8 @@ onBeforeUnmount(() => controller?.abort())
                         :disabled="saving"
                       />
                     </label>
-                    <Button size="sm" variant="outline" :disabled="saving" @click="openConfigureModal(agent)">
-                      <Wrench class="size-3.5" />{{ t('jobUi.configureAgent') }}
+                    <Button size="sm" variant="outline" :disabled="saving" @click="openConfigurePage(agent)">
+                      <Wrench class="size-3.5" />{{ t('jobUi.configureAgent') }}<ArrowRight class="size-3.5" />
                     </Button>
                   </div>
                 </div>
@@ -602,137 +481,5 @@ onBeforeUnmount(() => controller?.abort())
         </div>
       </section>
     </template>
-
-    <!-- Configure Agent / Sub-Agent Modal -->
-    <BaseModal
-      v-model="modalOpen"
-      :title="editingAgentSpec ? `${t('jobUi.agentModalTitle')}: ${editingAgentSpec.id}` : t('jobUi.agentModalTitle')"
-      width-class="max-w-3xl"
-    >
-      <div v-if="editingAgentSpec" class="space-y-4">
-        <div class="grid gap-4 sm:grid-cols-2">
-          <label class="block space-y-1.5">
-            <span class="text-sm font-medium">{{ t('jobUi.providers') }}</span>
-            <select v-model="modalForm.provider_ref" class="admin-input">
-              <option :value="null">
-                {{ t('jobUi.inheritProvider') }} ({{ editingAgentSpec.mode === 'primary' ? draft.orchestrator_llm_provider : draft.worker_llm_provider }})
-              </option>
-              <option v-for="option in providerOptionsForAgent(editingAgentSpec)" :key="option.ref" :value="option.ref">
-                {{ formatProviderOptionLabel(option) }}
-              </option>
-            </select>
-          </label>
-
-          <label class="block space-y-1.5">
-            <span class="text-sm font-medium">{{ t('jobUi.stepsLimit') }} (1 - 100)</span>
-            <input
-              v-model.number="modalForm.steps"
-              type="number"
-              min="1"
-              max="100"
-              class="admin-input"
-            />
-          </label>
-        </div>
-
-        <div
-          v-if="modalSelectedProvider"
-          class="flex flex-wrap items-center justify-between gap-2 rounded-lg border bg-muted/40 p-3 text-xs"
-        >
-          <div class="flex flex-wrap items-center gap-1.5">
-            <Badge v-if="modalSelectedProvider.model" variant="secondary">
-              model: {{ modalSelectedProvider.model }}
-            </Badge>
-            <Badge v-if="modalSelectedProvider.base_url" variant="outline">
-              {{ modalSelectedProvider.base_url }}
-            </Badge>
-            <Badge v-if="modalSelectedProvider.max_tokens" variant="outline">
-              max_tokens: {{ modalSelectedProvider.max_tokens }}
-            </Badge>
-            <Badge v-if="modalSelectedProvider.context_limit_tokens" variant="outline">
-              ctx: {{ modalSelectedProvider.context_limit_tokens }}
-            </Badge>
-            <Badge v-if="modalSelectedProvider.reasoning_effort" variant="outline">
-              reasoning: {{ modalSelectedProvider.reasoning_effort }}
-            </Badge>
-          </div>
-          <Button
-            size="sm"
-            variant="ghost"
-            @click="router.push(
-              modalSelectedProvider.source === 'database'
-                ? `/providers/${modalSelectedProvider.ref}`
-                : { name: 'providers', query: { type: 'llm' } }
-            )"
-          >
-            <ExternalLink class="size-3.5" />{{ t('jobUi.manageProviders') }}
-          </Button>
-        </div>
-
-        <label class="block space-y-1.5">
-          <span class="text-sm font-medium">{{ t('jobUi.agentDescriptionLabel') }}</span>
-          <input v-model="modalForm.description" type="text" maxlength="1024" class="admin-input" />
-        </label>
-
-        <div v-if="editingAgentSpec.mode !== 'primary' && domainToolsForAgent(editingAgentSpec).length" class="space-y-2">
-          <span class="block text-sm font-medium">{{ t('jobUi.toolsAllowed') }}</span>
-          <div class="grid grid-cols-2 gap-2 rounded-lg border p-3 sm:grid-cols-3">
-            <label
-              v-for="tool in domainToolsForAgent(editingAgentSpec)"
-              :key="tool"
-              class="flex cursor-pointer items-center gap-2 text-xs"
-            >
-              <input
-                type="checkbox"
-                class="size-4 accent-primary"
-                :checked="modalForm.allowed_tools.includes(tool)"
-                @change="toggleModalTool(tool, ($event.target as HTMLInputElement).checked)"
-              />
-              <code class="truncate">{{ tool }}</code>
-            </label>
-          </div>
-        </div>
-
-        <div v-if="editingAgentSpec.mode !== 'primary' && editingAgentSpec.available_skills.length" class="space-y-2">
-          <span class="block text-sm font-medium">{{ t('jobUi.skillsAllowed') }}</span>
-          <div class="flex flex-wrap gap-3 rounded-lg border p-3">
-            <label
-              v-for="skill in editingAgentSpec.available_skills"
-              :key="skill"
-              class="flex cursor-pointer items-center gap-2 text-xs"
-            >
-              <input
-                type="checkbox"
-                class="size-4 accent-primary"
-                :checked="modalForm.allowed_skills.includes(skill)"
-                @change="toggleModalSkill(skill, ($event.target as HTMLInputElement).checked)"
-              />
-              <code>{{ skill }}</code>
-            </label>
-          </div>
-        </div>
-
-        <label class="block space-y-1.5">
-          <span class="text-sm font-medium">{{ t('jobUi.systemPromptLabel') }}</span>
-          <textarea
-            v-model="modalForm.system_prompt"
-            rows="12"
-            class="admin-input font-mono text-xs leading-relaxed"
-          />
-        </label>
-      </div>
-
-      <template #footer>
-        <div class="flex flex-wrap items-center justify-between gap-2">
-          <Button variant="outline" type="button" @click="resetModalToDefault">
-            <RotateCcw class="size-4" />{{ t('jobUi.resetAgentDefault') }}
-          </Button>
-          <div class="flex gap-2">
-            <Button variant="outline" type="button" @click="modalOpen = false">Hủy</Button>
-            <Button type="button" @click="applyModalChanges">{{ t('jobUi.applyAgentChanges') }}</Button>
-          </div>
-        </div>
-      </template>
-    </BaseModal>
   </section>
 </template>

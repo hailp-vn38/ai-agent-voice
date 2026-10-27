@@ -584,6 +584,83 @@ fn resolved_llm_provider_exposes_capability_tags_and_enforces_agent_compatibilit
         validate_agent_overrides("llm_chat", "llm_chat", &wiki_overrides, &catalog),
         Err("provider_capability_mismatch")
     );
+
+    // Per-tool provider configuration (`tool_providers`) on `media_creator`:
+    // allows binding `media_creator` brain to `llm_chat` while binding `image_create` -> `llm_image`,
+    // `video_create` -> `llm_video`, and `tts_synthesize` -> `llm_audio`.
+    let mut per_tool_overrides = BTreeMap::new();
+    per_tool_overrides.insert(
+        "media_creator".to_owned(),
+        AgentConfigOverride {
+            enabled: true,
+            provider_ref: Some("llm_chat".to_owned()),
+            tool_providers: Some(BTreeMap::from([
+                ("image_create".to_owned(), "llm_image".to_owned()),
+                ("video_create".to_owned(), "llm_video".to_owned()),
+                ("tts_synthesize".to_owned(), "llm_audio".to_owned()),
+            ])),
+            ..Default::default()
+        },
+    );
+    assert!(validate_agent_overrides("llm_chat", "llm_chat", &per_tool_overrides, &catalog).is_ok());
+
+    let per_tool_settings = crate::services::task_flow::PersistedBackgroundSettings {
+        orchestrator_llm_provider: "llm_chat".into(),
+        worker_llm_provider: "llm_chat".into(),
+        agents: per_tool_overrides,
+        ..Default::default()
+    };
+    let projected_per_tool = crate::services::task_flow::project_agents_json(
+        &crate::config::OrchestratorSectionConfig::default(),
+        &per_tool_settings,
+        &catalog,
+    );
+    let media_per_tool_json = projected_per_tool
+        .iter()
+        .find(|a| a["id"] == "media_creator")
+        .unwrap();
+    assert_eq!(
+        media_per_tool_json["tool_capability_tags"],
+        serde_json::json!({
+            "image_create": "image",
+            "video_create": "video",
+            "tts_synthesize": "audio"
+        })
+    );
+    assert_eq!(
+        media_per_tool_json["tool_providers"],
+        serde_json::json!({
+            "image_create": "llm_image",
+            "video_create": "llm_video",
+            "tts_synthesize": "llm_audio"
+        })
+    );
+    assert_eq!(
+        media_per_tool_json["effective_tool_providers"],
+        serde_json::json!({
+            "image_create": "llm_image",
+            "video_create": "llm_video",
+            "tts_synthesize": "llm_audio"
+        })
+    );
+
+    // Assigning a non-image provider (`llm_video`) to `image_create` must fail with `provider_capability_mismatch`
+    let mut bad_tool_overrides = BTreeMap::new();
+    bad_tool_overrides.insert(
+        "media_creator".to_owned(),
+        AgentConfigOverride {
+            enabled: true,
+            tool_providers: Some(BTreeMap::from([(
+                "image_create".to_owned(),
+                "llm_video".to_owned(),
+            )])),
+            ..Default::default()
+        },
+    );
+    assert_eq!(
+        validate_agent_overrides("llm_chat", "llm_chat", &bad_tool_overrides, &catalog),
+        Err("provider_capability_mismatch")
+    );
 }
 
 #[tokio::test]
@@ -760,5 +837,33 @@ async fn catalog_media_backend_and_reasoning_tag_wire_provider_capabilities() {
     assert_eq!(fallback_vid.provider, "builtin_mp4_renderer");
     assert_eq!(&fallback_vid.bytes[4..8], b"ftyp");
 
+    // Default dimensions when width/height are 0 (1024x1024 for PNG, 640x360 for MP4)
+    let default_dim_img = backend
+        .generate_image(&ImageGenerationRequest {
+            prompt: "Default size diagram".into(),
+            title: None,
+            filename: "default-size.png".into(),
+            format: "png".into(),
+            width: 0,
+            height: 0,
+            svg_content: None,
+        })
+        .await
+        .unwrap();
+    assert_eq!(default_dim_img.width, orchestrator_flow_rs::DEFAULT_PNG_WIDTH);
+    assert_eq!(default_dim_img.height, orchestrator_flow_rs::DEFAULT_PNG_HEIGHT);
+
     server.abort();
+}
+
+#[test]
+fn canonical_prompts_enforce_summarize_analyze_visualize_pipeline_and_flexible_dimensions() {
+    assert!(DAILY_ROOT_PROMPT.contains("Standard Multi-Step Pipeline: Summarize → Analyze → Visualize"));
+    assert!(DAILY_ROOT_PROMPT.contains("STRICT SEQUENTIAL RULE"));
+    assert!(DAILY_ROOT_PROMPT.contains("Visual Brief"));
+    assert!(SOURCE_COLLECTOR_PROMPT.contains("Phân tích chi tiết (Deep Analysis)"));
+    assert!(SOURCE_COLLECTOR_PROMPT.contains("Điểm nhấn trực quan (Key Visual Concepts)"));
+    assert!(WIKI_RESEARCHER_PROMPT.contains("Điểm nhấn trực quan (Key Visual Concepts)"));
+    assert!(MEDIA_CREATOR_PROMPT.contains("Agent-Selectable or Smart Default"));
+    assert!(MEDIA_CREATOR_PROMPT.contains("svg_content"));
 }

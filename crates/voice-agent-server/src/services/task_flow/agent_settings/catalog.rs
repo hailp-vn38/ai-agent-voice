@@ -601,40 +601,60 @@ impl CatalogMediaBackend {
             .clone()
     }
 
-    fn select_provider(&self, required_tag: &str) -> Option<ResolvedLlmProvider> {
+    fn select_provider(&self, tool_name: &str, required_tag: &str) -> Option<ResolvedLlmProvider> {
         let guard = self.catalog.read().unwrap_or_else(|e| e.into_inner());
-        if let Some(settings) = self.effective_settings() {
-            if matches!(required_tag, "image" | "video")
-                && let Some(explicit_ref) = settings
-                    .agents
-                    .get("media_creator")
-                    .and_then(|o| o.provider_ref.as_deref())
-                    .map(str::trim)
-                    .filter(|s| !s.is_empty())
-                && let Some(found) = guard.iter().find(|p| {
-                    p.provider_ref == explicit_ref
-                        && p.supports_tag(required_tag)
-                        && p.api_key.is_some()
-                })
-            {
-                return Some(found.clone());
-            }
-            let worker_ref = settings.worker_llm_provider.trim();
-            if !worker_ref.is_empty()
-                && let Some(found) = guard.iter().find(|p| {
-                    p.provider_ref == worker_ref
-                        && p.supports_tag(required_tag)
-                        && p.api_key.is_some()
-                })
-            {
-                return Some(found.clone());
-            }
-        }
-        guard
-            .iter()
-            .find(|p| p.supports_tag(required_tag) && p.api_key.is_some())
-            .cloned()
+        let settings = self.effective_settings();
+        resolve_media_tool_provider(&guard, settings.as_ref(), tool_name, required_tag, true)
     }
+}
+
+fn resolve_media_tool_provider(
+    catalog: &[ResolvedLlmProvider],
+    settings: Option<&PersistedBackgroundSettings>,
+    tool_name: &str,
+    required_tag: &str,
+    require_api_key: bool,
+) -> Option<ResolvedLlmProvider> {
+    let matches_prov = |p: &ResolvedLlmProvider, pref: &str| -> bool {
+        p.provider_ref == pref
+            && p.supports_tag(required_tag)
+            && (!require_api_key || p.api_key.is_some())
+    };
+    if let Some(settings) = settings {
+        if let Some(tool_ref) = settings
+            .agents
+            .get("media_creator")
+            .and_then(|o| o.tool_providers.as_ref())
+            .and_then(|m| m.get(tool_name))
+            .map(String::as_str)
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            && let Some(found) = catalog.iter().find(|p| matches_prov(p, tool_ref))
+        {
+            return Some(found.clone());
+        }
+        if matches!(required_tag, "image" | "video")
+            && let Some(explicit_ref) = settings
+                .agents
+                .get("media_creator")
+                .and_then(|o| o.provider_ref.as_deref())
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+            && let Some(found) = catalog.iter().find(|p| matches_prov(p, explicit_ref))
+        {
+            return Some(found.clone());
+        }
+        let worker_ref = settings.worker_llm_provider.trim();
+        if !worker_ref.is_empty()
+            && let Some(found) = catalog.iter().find(|p| matches_prov(p, worker_ref))
+        {
+            return Some(found.clone());
+        }
+    }
+    catalog
+        .iter()
+        .find(|p| p.supports_tag(required_tag) && (!require_api_key || p.api_key.is_some()))
+        .cloned()
 }
 
 #[async_trait::async_trait]
@@ -643,15 +663,13 @@ impl orchestrator_flow_rs::ImageGeneratorBackend for CatalogMediaBackend {
         &self,
         req: &orchestrator_flow_rs::ImageGenerationRequest,
     ) -> Result<orchestrator_flow_rs::GeneratedImagePayload, String> {
-        let fmt = req.format.trim().to_ascii_lowercase();
-        if fmt == "svg" || req.svg_content.is_some() {
+        if req.is_svg() {
             return self.default_image.generate_image(req).await;
         }
-        let Some(resolved) = self.select_provider("image") else {
+        let Some(resolved) = self.select_provider("image_create", "image") else {
             return self.default_image.generate_image(req).await;
         };
-        let width = req.width.clamp(16, 2048);
-        let height = req.height.clamp(16, 2048);
+        let (width, height) = req.effective_dimensions();
         let provider = resolved.to_llm_provider().map_err(|e| e.to_string())?;
         let output = provider
             .invoke(crate::providers::LlmOperation::ImageGeneration {
@@ -688,11 +706,10 @@ impl orchestrator_flow_rs::VideoGeneratorBackend for CatalogMediaBackend {
         &self,
         req: &orchestrator_flow_rs::VideoGenerationRequest,
     ) -> Result<orchestrator_flow_rs::GeneratedVideoPayload, String> {
-        let Some(resolved) = self.select_provider("video") else {
+        let Some(resolved) = self.select_provider("video_create", "video") else {
             return self.default_video.generate_video(req).await;
         };
-        let width = req.width.clamp(16, 2048);
-        let height = req.height.clamp(16, 2048);
+        let (width, height) = req.effective_dimensions();
         let duration_secs = req.duration_secs.clamp(1, 60);
         let provider = resolved.to_llm_provider().map_err(|e| e.to_string())?;
         let output = provider
@@ -733,7 +750,7 @@ impl orchestrator_flow_rs::TtsSynthesizerBackend for CatalogMediaBackend {
         &self,
         req: &orchestrator_flow_rs::TtsSynthesisRequest,
     ) -> Result<orchestrator_flow_rs::SynthesizedAudioPayload, String> {
-        let Some(resolved) = self.select_provider("audio") else {
+        let Some(resolved) = self.select_provider("tts_synthesize", "audio") else {
             return self.default_tts.synthesize_tts(req).await;
         };
         let provider = resolved.to_llm_provider().map_err(|e| e.to_string())?;
@@ -777,6 +794,41 @@ pub fn project_agents_json(
     resolve_effective_agents(cfg, settings, catalog)
         .into_iter()
         .map(|eff| {
+            let tool_capability_tags: std::collections::BTreeMap<&str, &str> = eff
+                .spec
+                .tool_capability_tags()
+                .iter()
+                .copied()
+                .collect();
+            let tool_providers: std::collections::BTreeMap<String, String> = settings
+                .agents
+                .get(eff.spec.id)
+                .and_then(|o| o.tool_providers.as_ref())
+                .map(|m| {
+                    m.iter()
+                        .filter(|(t, p)| {
+                            !p.trim().is_empty() && eff.spec.tool_required_tag(t).is_some()
+                        })
+                        .map(|(t, p)| (t.clone(), p.trim().to_owned()))
+                        .collect()
+                })
+                .unwrap_or_default();
+            let effective_tool_providers: std::collections::BTreeMap<&str, Option<String>> = eff
+                .spec
+                .tool_capability_tags()
+                .iter()
+                .map(|(tool_name, required_tag)| {
+                    let resolved = resolve_media_tool_provider(
+                        catalog,
+                        Some(settings),
+                        tool_name,
+                        required_tag,
+                        false,
+                    )
+                    .map(|p| p.provider_ref);
+                    (*tool_name, resolved)
+                })
+                .collect();
             json!({
                 "id": eff.spec.id,
                 "flow_id": eff.spec.flow_id,
@@ -790,6 +842,9 @@ pub fn project_agents_json(
                 "provider_ref": eff.explicit_ref,
                 "effective_provider_ref": eff.resolved_provider.provider_ref,
                 "effective_model": eff.resolved_provider.model,
+                "tool_capability_tags": tool_capability_tags,
+                "tool_providers": tool_providers,
+                "effective_tool_providers": effective_tool_providers,
                 "steps": eff.steps,
                 "default_steps": eff.spec.default_steps,
                 "allowed_tools": eff.allowed_tools,

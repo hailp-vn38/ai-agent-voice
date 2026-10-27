@@ -41,6 +41,26 @@ impl AgentSpec {
             _ => &["chat", "reasoning"],
         }
     }
+
+    /// Maps media/specialized tools on this agent to their required provider capability tag
+    /// (e.g. `"image_create"` -> `"image"`, `"video_create"` -> `"video"`, `"tts_synthesize"` -> `"audio"`).
+    pub const fn tool_capability_tags(&self) -> &'static [(&'static str, &'static str)] {
+        match self.id.as_bytes() {
+            b"media_creator" => &[
+                ("image_create", "image"),
+                ("video_create", "video"),
+                ("tts_synthesize", "audio"),
+            ],
+            _ => &[],
+        }
+    }
+
+    pub fn tool_required_tag(&self, tool_name: &str) -> Option<&'static str> {
+        self.tool_capability_tags()
+            .iter()
+            .find(|(tool, _)| *tool == tool_name)
+            .map(|(_, tag)| *tag)
+    }
 }
 
 const SOURCE_COLLECTOR_TOOLS: &[&str] = &[
@@ -147,7 +167,7 @@ pub const AGENT_SPECS: &[AgentSpec] = &[
         parent_id: Some("daily_root"),
         mode: AgentMode::Subagent,
         user_routable: false,
-        default_description: "Inspects external sources using read-only extraction tools (YouTube videos/playlists via yt_list_playlist/yt_fetch_transcript, PDF via anydoc_inspect_pdf, or Web via fetch_html/html_*) to return summaries/answers directly, OR calls the unified add_to_sources tool to save into sources/<domain>/<topic>/<slug>.md ONLY when the user explicitly requests saving/adding to sources/ or the Wiki.",
+        default_description: "Inspects external sources using read-only extraction tools (YouTube videos/playlists via yt_list_playlist/yt_fetch_transcript, PDF via anydoc_inspect_pdf, or Web via fetch_html/html_*) to return structured summaries, deep analyses, and visual keypoints directly, OR calls the unified add_to_sources tool to save into sources/<domain>/<topic>/<slug>.md ONLY when the user explicitly requests saving/adding to sources/ or the Wiki.",
         default_prompt: SOURCE_COLLECTOR_PROMPT,
         default_steps: 35,
         default_allowed_tools: SOURCE_COLLECTOR_TOOLS,
@@ -162,7 +182,7 @@ pub const AGENT_SPECS: &[AgentSpec] = &[
         parent_id: Some("daily_root"),
         mode: AgentMode::Subagent,
         user_routable: false,
-        default_description: "Read-only specialist for querying and reading the LLM Wiki and inspecting web pages.",
+        default_description: "Read-only specialist for querying and reading the LLM Wiki and inspecting web pages to return structured summaries, deep analyses with citations, and visual keypoints.",
         default_prompt: WIKI_RESEARCHER_PROMPT,
         default_steps: 12,
         default_allowed_tools: WIKI_RESEARCHER_TOOLS,
@@ -192,7 +212,7 @@ pub const AGENT_SPECS: &[AgentSpec] = &[
         parent_id: Some("daily_root"),
         mode: AgentMode::Subagent,
         user_routable: false,
-        default_description: "Generates PNG/SVG images via image_create, MP4 videos via video_create, synthesizes TTS audio via tts_synthesize, and publishes structured Task Artifacts via artifact_create.",
+        default_description: "Generates PNG illustrations and SVG vector diagrams/infographics via image_create (with agent-selected or default dimensions), MP4 videos via video_create, synthesizes TTS audio via tts_synthesize, and publishes structured Task Artifacts via artifact_create.",
         default_prompt: MEDIA_CREATOR_PROMPT,
         default_steps: 12,
         default_allowed_tools: &[
