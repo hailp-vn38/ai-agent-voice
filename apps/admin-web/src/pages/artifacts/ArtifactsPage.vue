@@ -242,11 +242,16 @@ async function hydrateInlineMediaBlobs(loadedItems: AdminArtifactItem[]) {
   )
 }
 
-async function load(nextPage = page.value) {
+/**
+ * `silent` is used by SSE-driven reconciles: the stream always emits `ready`
+ * right after connecting, which would otherwise flash the skeleton a second
+ * time immediately after the initial mount load.
+ */
+async function load(nextPage = page.value, { silent = false }: { silent?: boolean } = {}) {
   controller?.abort()
   const pending = new AbortController()
   controller = pending
-  loading.value = true
+  if (!silent) loading.value = true
   error.value = ''
   try {
     const result = await agentJobsApi.listArtifacts(
@@ -325,7 +330,7 @@ function reconcile() {
       try {
         while (dirty && mounted) {
           dirty = false
-          await load(page.value)
+          await load(page.value, { silent: true })
         }
       } finally {
         reconciling = false

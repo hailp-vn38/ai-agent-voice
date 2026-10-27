@@ -1,18 +1,9 @@
-<script lang="ts">
-const mountedBellUids = new Set<number>()
-</script>
-
 <script setup lang="ts">
 import { Bell, CheckCheck, Settings2, Sparkles, Trash2, X } from '@lucide/vue'
+import { storeToRefs } from 'pinia'
 import { computed, getCurrentInstance, onMounted, onUnmounted, ref } from 'vue'
 
-import {
-  isNotificationsDemoMode,
-  listenNotificationStream,
-  notificationsApi,
-  resolveNotificationHref,
-  subscribeNotificationEvents,
-} from '@/api/notifications'
+import { resolveNotificationHref } from '@/api/notifications'
 import type {
   NotificationItem,
   NotificationSeverity,
@@ -23,6 +14,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { useI18n } from '@/composables/useI18n'
 import type { MessageKey } from '@/i18n/messages'
+import { useNotificationsStore } from '@/stores/notifications'
 
 const props = withDefaults(
   defineProps<{
@@ -40,22 +32,16 @@ const props = withDefaults(
 
 const instance = getCurrentInstance()
 const instanceUid = instance?.uid ?? Math.random()
-const isToastHost = ref(false)
 const { t } = useI18n()
+const notifications = useNotificationsStore()
+const { filter, items, unreadCount, activeToast, demoMode, toastHostUid } =
+  storeToRefs(notifications)
+const isToastHost = computed(() => toastHostUid.value === instanceUid)
 
 const triggerEl = ref<HTMLButtonElement | null>(null)
 const open = ref(false)
-const filter = ref<'all' | 'unread'>('all')
-const items = ref<NotificationItem[]>([])
-const unreadCount = ref(0)
-const toastEnabled = ref(true)
-const activeToast = ref<NotificationItem | null>(null)
-const demoMode = ref(false)
 const anchorLeftPx = ref<number | null>(null)
 const anchorOrigin = ref<string | null>(null)
-let toastTimer: ReturnType<typeof setTimeout> | null = null
-let unsubscribeEvents: (() => void) | null = null
-let streamAbort: AbortController | null = null
 
 const popoverStyle = computed(() => {
   const style: Record<string, string> = {}
@@ -117,34 +103,8 @@ function updateAnchorPosition(): void {
   }
 }
 
-async function refresh(): Promise<void> {
-  const [page, settings] = await Promise.all([
-    notificationsApi.list({ unread_only: filter.value === 'unread', page_size: 30 }),
-    notificationsApi.settings(),
-  ])
-  items.value = page.items
-  unreadCount.value = page.unread_count
-  toastEnabled.value = settings.web_ui.toast_enabled
-  demoMode.value = isNotificationsDemoMode()
-}
-
-function showToast(item: NotificationItem): void {
-  if (!toastEnabled.value || !isToastHost.value) return
-  activeToast.value = item
-  if (toastTimer) clearTimeout(toastTimer)
-  toastTimer = setTimeout(() => {
-    if (activeToast.value?.id === item.id) {
-      activeToast.value = null
-    }
-  }, 6000)
-}
-
 function dismissToast(): void {
-  activeToast.value = null
-  if (toastTimer) {
-    clearTimeout(toastTimer)
-    toastTimer = null
-  }
+  notifications.dismissToast()
 }
 
 async function toggleOpen(): Promise<void> {
@@ -154,18 +114,19 @@ async function toggleOpen(): Promise<void> {
   }
   open.value = nextOpen
   if (nextOpen) {
-    await refresh()
+    await notifications.refresh()
   }
 }
 
 async function setFilter(next: 'all' | 'unread'): Promise<void> {
-  filter.value = next
-  await refresh()
+  await notifications.setFilter(next)
 }
 
 async function openNotification(item: NotificationItem): Promise<void> {
   if (!item.is_read) {
-    await notificationsApi.markRead([item.id])
+    await notifications.markRead([item.id])
+  } else {
+    await notifications.refresh()
   }
   open.value = false
   const href = resolveNotificationHref(item)
@@ -181,27 +142,22 @@ async function openNotification(item: NotificationItem): Promise<void> {
       await globalRouter?.push?.(href)
     }
   }
-  await refresh()
 }
 
 async function markAllRead(): Promise<void> {
-  await notificationsApi.markAllRead()
-  await refresh()
+  await notifications.markAllRead()
 }
 
 async function purgeRead(): Promise<void> {
-  await notificationsApi.purgeRead()
-  await refresh()
+  await notifications.purgeRead()
 }
 
 async function removeItem(id: string): Promise<void> {
-  await notificationsApi.remove(id)
-  await refresh()
+  await notifications.removeItem(id)
 }
 
 async function simulateDemo(): Promise<void> {
-  await notificationsApi.simulateDemoNotification()
-  await refresh()
+  await notifications.simulateDemo()
 }
 
 async function openSettingsPage(): Promise<void> {
@@ -246,34 +202,13 @@ function onKeydown(event: KeyboardEvent): void {
 }
 
 onMounted(() => {
-  mountedBellUids.add(instanceUid)
-  isToastHost.value = mountedBellUids.values().next().value === instanceUid
   window.addEventListener('keydown', onKeydown)
-  void refresh()
-  const handlers = {
-    onCreated: (item: NotificationItem) => {
-      showToast(item)
-      void refresh()
-    },
-    onChanged: () => {
-      void refresh()
-    },
-  }
-  if (isToastHost.value) {
-    streamAbort = new AbortController()
-    void listenNotificationStream(handlers, streamAbort.signal)
-  } else {
-    unsubscribeEvents = subscribeNotificationEvents(handlers)
-  }
+  notifications.registerBell(instanceUid)
 })
 
 onUnmounted(() => {
-  mountedBellUids.delete(instanceUid)
   window.removeEventListener('keydown', onKeydown)
-  streamAbort?.abort()
-  streamAbort = null
-  unsubscribeEvents?.()
-  if (toastTimer) clearTimeout(toastTimer)
+  notifications.unregisterBell(instanceUid)
 })
 </script>
 
@@ -507,7 +442,7 @@ onUnmounted(() => {
       <!-- Live Toast Popup (top-right so Floating Chat at bottom-right never covers it) -->
       <Transition name="notification-toast">
         <div
-          v-if="activeToast"
+          v-if="isToastHost && activeToast"
           data-testid="notification-toast"
           class="notification-toast fixed top-4 right-4 z-[60] flex w-80 max-w-[calc(100vw-2rem)] items-start justify-between gap-2.5 rounded-2xl border border-border bg-card p-3.5 text-card-foreground shadow-2xl"
           role="status"

@@ -272,4 +272,43 @@ describe('ArtifactsPage Library & Detail Modal', () => {
       wrapper.unmount()
     }
   })
+
+  it('reconciles silently on the SSE ready event without flashing the skeleton again', async () => {
+    vi.useFakeTimers()
+    const { listenJobChanges } = await import('@/api/job-updates')
+    let onReady: (() => void) | undefined
+    vi.mocked(listenJobChanges).mockImplementation(async callbacks => {
+      onReady = callbacks.onReady
+    })
+    let finishSecond!: (value: ArtifactCatalogPage) => void
+    const listSpy = vi
+      .spyOn(agentJobsApi, 'listArtifacts')
+      .mockResolvedValueOnce(sampleCatalogPage)
+      .mockImplementationOnce(() => new Promise(resolve => { finishSecond = resolve }))
+    vi.spyOn(agentJobsApi, 'artifact').mockResolvedValue(new Blob(['x']))
+
+    const router = makeRouter()
+    await router.push('/artifacts')
+    await router.isReady()
+    const wrapper = mount(ArtifactsPage, { global: { plugins: [router] } })
+
+    try {
+      await flushPromises()
+      expect(listSpy).toHaveBeenCalledTimes(1)
+      expect(wrapper.findAll('[data-artifact-card]')).toHaveLength(3)
+
+      onReady?.()
+      await vi.advanceTimersByTimeAsync(300)
+      expect(listSpy).toHaveBeenCalledTimes(2)
+      expect(wrapper.find('[data-artifact-skeleton]').exists()).toBe(false)
+      expect(wrapper.findAll('[data-artifact-card]')).toHaveLength(3)
+
+      finishSecond(sampleCatalogPage)
+      await flushPromises()
+      expect(wrapper.find('[data-artifact-skeleton]').exists()).toBe(false)
+    } finally {
+      wrapper.unmount()
+      vi.useRealTimers()
+    }
+  })
 })

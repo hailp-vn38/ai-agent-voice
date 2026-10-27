@@ -134,6 +134,43 @@ describe('notificationsApi & stateful demo store fallback', () => {
     expect(testRes.external_message_id).toBe('tg-msg-42')
   })
 
+  it('coalesces concurrent identical settings/list reads into one request each', async () => {
+    const settingsPayload = {
+      revision: 1,
+      web_ui: { enabled: true, toast_enabled: true, retention_days: 30 },
+      telegram: {
+        enabled: false, chat_id: '', thread_id: null, subscribed_topics: [],
+        has_saved_token: false, has_env_fallback: false, credential_metadata: null,
+      },
+      zalo: {
+        enabled: false, recipient_id: '', subscribed_topics: [],
+        has_saved_token: false, has_env_fallback: false, credential_metadata: null,
+      },
+    }
+    const pagePayload = { items: [], total: 0, unread_count: 0, page: 1, page_size: 30 }
+    const fetchMock = vi.fn().mockImplementation((url: string) =>
+      Promise.resolve(json(url.includes('/settings') ? settingsPayload : pagePayload)),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+
+    const [a, b] = await Promise.all([notificationsApi.settings(), notificationsApi.settings()])
+    await Promise.all([
+      notificationsApi.list({ page_size: 30 }),
+      notificationsApi.list({ page_size: 30 }),
+      notificationsApi.list({ page_size: 30, unread_only: true }),
+    ])
+
+    const urls = fetchMock.mock.calls.map(call => String(call[0]))
+    expect(urls.filter(url => url.includes('/settings'))).toHaveLength(1)
+    expect(urls.filter(url => !url.includes('/settings'))).toHaveLength(2)
+    expect(a).toEqual(b)
+    expect(a).not.toBe(b)
+
+    // Once settled, the next read hits the network again.
+    await notificationsApi.settings()
+    expect(fetchMock.mock.calls.filter(call => String(call[0]).includes('/settings'))).toHaveLength(2)
+  })
+
   it('seamlessly falls back to stateful demo inbox when backend returns 404', async () => {
     vi.stubGlobal(
       'fetch',

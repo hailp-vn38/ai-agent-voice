@@ -61,19 +61,18 @@ const { t } = useI18n()
 
     <div class="shrink-0 border-t border-border/60 transition-[padding] duration-300 motion-reduce:transition-none"
       :class="collapsed ? 'flex flex-col items-center gap-2 p-2' : 'p-4'">
-      <template v-if="collapsed">
-        <NotificationBell v-if="collapsible" compact placement="sidebar" />
+      <div
+        v-if="collapsible"
+        :class="collapsed ? 'contents' : 'mb-2 flex items-center justify-between gap-2 text-xs'"
+      >
+        <span v-if="!collapsed" class="font-medium">{{ t('notifications.title') }}</span>
+        <NotificationBell compact placement="sidebar" />
+      </div>
+      <div :class="collapsed ? 'contents' : 'flex items-center justify-between gap-2 text-xs'">
+        <span v-if="!collapsed" class="font-medium">{{ t('app.theme') }}</span>
         <ThemeToggle />
-      </template>
-      <template v-else>
-        <div v-if="collapsible" class="mb-2 flex items-center justify-between gap-2 text-xs">
-          <span class="font-medium">{{ t('notifications.title') }}</span>
-          <NotificationBell compact placement="sidebar" />
-        </div>
-        <div class="flex items-center justify-between gap-2 text-xs">
-          <span class="font-medium">{{ t('app.theme') }}</span>
-          <ThemeToggle />
-        </div>
+      </div>
+      <template v-if="!collapsed">
         <LanguageSwitcher class="mt-2" />
         <p class="mt-3 text-xs text-muted-foreground">{{ t('studio.sidebarHint') }}</p>
       </template>

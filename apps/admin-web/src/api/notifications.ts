@@ -20,6 +20,7 @@ import { readAdminToken } from '@/stores/auth'
 export interface NotificationStreamHandlers {
   onCreated?: (item: NotificationItem) => void
   onChanged?: () => void
+  onSettingsUpdated?: (settings: NotificationSettings) => void
 }
 
 const BASE_TIME_MS = 1792977120000
@@ -256,9 +257,14 @@ let demoSettings: NotificationSettings = buildInitialDemoSettings()
 let demoItems: NotificationItem[] = buildInitialDemoItems()
 let demoCounter = 100
 const subscribers = new Set<NotificationStreamHandlers>()
+const resetHooks = new Set<() => void>()
 
 export function isNotificationsDemoMode(): boolean {
   return demoMode
+}
+
+export function onResetNotificationsForTest(hook: () => void): void {
+  resetHooks.add(hook)
 }
 
 export function resetDemoNotificationsForTest(): void {
@@ -267,6 +273,10 @@ export function resetDemoNotificationsForTest(): void {
   demoItems = buildInitialDemoItems()
   demoCounter = 100
   subscribers.clear()
+  inFlightReads.clear()
+  for (const hook of resetHooks) {
+    hook()
+  }
 }
 
 function shouldFallbackToDemo(err: unknown): boolean {
@@ -280,6 +290,24 @@ function clone<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T
 }
 
+/**
+ * Coalesces concurrent identical reads. Several `NotificationBell` instances
+ * (sidebar + mobile header, the latter only CSS-hidden) mount together and
+ * would otherwise each fire the same GET. Every caller gets its own clone.
+ */
+const inFlightReads = new Map<string, Promise<unknown>>()
+
+function dedupeRead<T>(key: string, fetcher: () => Promise<T>): Promise<T> {
+  let pending = inFlightReads.get(key) as Promise<T> | undefined
+  if (!pending) {
+    pending = fetcher().finally(() => {
+      inFlightReads.delete(key)
+    })
+    inFlightReads.set(key, pending)
+  }
+  return pending.then(clone)
+}
+
 function notifyCreated(item: NotificationItem): void {
   const snapshot = clone(item)
   for (const sub of subscribers) {
@@ -290,6 +318,14 @@ function notifyCreated(item: NotificationItem): void {
 
 function notifyChanged(): void {
   for (const sub of subscribers) {
+    sub.onChanged?.()
+  }
+}
+
+function notifySettingsUpdated(settings: NotificationSettings): void {
+  const snapshot = clone(settings)
+  for (const sub of subscribers) {
+    sub.onSettingsUpdated?.(snapshot)
     sub.onChanged?.()
   }
 }
@@ -393,26 +429,50 @@ function buildDeliveriesForTopic(topic: NotificationTopic, nowMs: number): Chann
   return deliveries
 }
 
-export const notificationsApi = {
-  async list(params: NotificationListQuery = {}): Promise<NotificationInboxPage> {
-    try {
-      const response = await requestJson<NotificationInboxPage>(
-        withQuery('/api/admin/notifications', {
-          page: params.page ?? 1,
-          page_size: params.page_size ?? 30,
-          unread_only: params.unread_only ? 'true' : undefined,
-          topic: params.topic,
-        }),
-      )
-      if (isValidInboxPage(response)) {
-        demoMode = Boolean(response.demo_mode)
-        return response
-      }
-    } catch (err) {
-      if (!shouldFallbackToDemo(err)) throw err
+async function fetchInboxPage(params: NotificationListQuery): Promise<NotificationInboxPage> {
+  try {
+    const response = await requestJson<NotificationInboxPage>(
+      withQuery('/api/admin/notifications', {
+        page: params.page ?? 1,
+        page_size: params.page_size ?? 30,
+        unread_only: params.unread_only ? 'true' : undefined,
+        topic: params.topic,
+      }),
+    )
+    if (isValidInboxPage(response)) {
+      demoMode = Boolean(response.demo_mode)
+      return response
     }
-    demoMode = true
-    return computeDemoInboxPage(params)
+  } catch (err) {
+    if (!shouldFallbackToDemo(err)) throw err
+  }
+  demoMode = true
+  return computeDemoInboxPage(params)
+}
+
+async function fetchSettings(): Promise<NotificationSettings> {
+  try {
+    const response = await requestJson<NotificationSettings>('/api/admin/notifications/settings')
+    if (isValidSettings(response)) {
+      demoMode = Boolean(response.demo_mode)
+      return response
+    }
+  } catch (err) {
+    if (!shouldFallbackToDemo(err)) throw err
+  }
+  demoMode = true
+  return clone(demoSettings)
+}
+
+export const notificationsApi = {
+  list(params: NotificationListQuery = {}): Promise<NotificationInboxPage> {
+    const key = `list:${JSON.stringify([
+      params.page ?? 1,
+      params.page_size ?? 30,
+      Boolean(params.unread_only),
+      params.topic ?? null,
+    ])}`
+    return dedupeRead(key, () => fetchInboxPage(params))
   },
 
   async markRead(ids: string[]): Promise<MarkNotificationsReadResult> {
@@ -516,18 +576,8 @@ export const notificationsApi = {
     }
   },
 
-  async settings(): Promise<NotificationSettings> {
-    try {
-      const response = await requestJson<NotificationSettings>('/api/admin/notifications/settings')
-      if (isValidSettings(response)) {
-        demoMode = Boolean(response.demo_mode)
-        return response
-      }
-    } catch (err) {
-      if (!shouldFallbackToDemo(err)) throw err
-    }
-    demoMode = true
-    return clone(demoSettings)
+  settings(): Promise<NotificationSettings> {
+    return dedupeRead('settings', fetchSettings)
   },
 
   async updateSettings(
@@ -542,7 +592,7 @@ export const notificationsApi = {
           { revision },
         )
         if (isValidSettings(response)) {
-          notifyChanged()
+          notifySettingsUpdated(response)
           return response
         }
       } catch (err) {
@@ -593,7 +643,7 @@ export const notificationsApi = {
       demo_mode: true,
     }
 
-    notifyChanged()
+    notifySettingsUpdated(demoSettings)
     return clone(demoSettings)
   },
 
