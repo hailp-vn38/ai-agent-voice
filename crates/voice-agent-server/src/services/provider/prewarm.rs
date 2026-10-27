@@ -5,7 +5,10 @@ use crate::{
 };
 use std::{
     collections::HashMap,
-    sync::{Arc, Mutex, Weak},
+    sync::{
+        Arc, Mutex, Weak,
+        atomic::{AtomicU64, Ordering},
+    },
 };
 use tokio::sync::Notify;
 
@@ -17,11 +20,7 @@ enum PrewarmKey {
 pub struct ProviderPrewarm {
     database: Arc<Database>,
     manager: Weak<ProviderRuntimeManager>,
-    pending: Arc<Mutex<HashMap<PrewarmKey, DesiredProvider>>>,
-    /// Busy attempts per intent. A fresh intent for the same key starts over.
-    retries: Arc<Mutex<HashMap<PrewarmKey, u32>>>,
-    notify: Arc<Notify>,
-    capacity: usize,
+    intents: Arc<IntentQueue>,
     config: Arc<crate::config::AppConfig>,
     metrics: Arc<crate::services::provider_runtime::RuntimeMetrics>,
 }
@@ -32,31 +31,32 @@ impl ProviderPrewarm {
         config: Arc<crate::config::AppConfig>,
     ) -> Option<Arc<Self>> {
         let runtime = tokio::runtime::Handle::try_current().ok()?;
+        let metrics = manager.metrics().clone();
+        let intents = Arc::new(IntentQueue {
+            pending: Mutex::new(HashMap::new()),
+            epochs: Mutex::new(HashMap::new()),
+            next_epoch: AtomicU64::new(1),
+            notify: Notify::new(),
+            capacity: (manager.prewarm_capacity() * 4).max(8),
+            metrics: metrics.clone(),
+        });
         let service = Arc::new(Self {
             database,
             config,
             manager: Arc::downgrade(manager),
-            pending: Arc::new(Mutex::new(HashMap::new())),
-            retries: Arc::new(Mutex::new(HashMap::new())),
-            notify: Arc::new(Notify::new()),
-            capacity: (manager.prewarm_capacity() * 4).max(8),
-            metrics: manager.metrics().clone(),
+            intents: intents.clone(),
+            metrics,
         });
-        let metrics = service.metrics.clone();
-        let pending = service.pending.clone();
-        let retries = service.retries.clone();
-        let capacity = service.capacity;
-        let notify = service.notify.clone();
         let manager = service.manager.clone();
         let stopping = manager.upgrade()?.stopping_token();
         runtime.spawn(async move {
             loop {
-                tokio::select! { _ = stopping.cancelled() => break, _ = notify.notified() => {} }
+                tokio::select! { _ = stopping.cancelled() => break, _ = intents.notify.notified() => {} }
                 // Coalesce rapid edits without holding a DB transaction or delaying their HTTP response.
                 tokio::select! { _ = stopping.cancelled() => break, _ = tokio::time::sleep(std::time::Duration::from_millis(100)) => {} }
-                let snapshots = std::mem::take(&mut *pending.lock().expect("prewarm queue poisoned"));
+                let snapshots = intents.take();
                 let mut batch_leases = std::collections::VecDeque::with_capacity(4);
-                for (key, snapshot) in snapshots {
+                for (key, (snapshot, epoch)) in snapshots {
                     if stopping.is_cancelled() { break; }
                     let Some(manager) = manager.upgrade() else { return };
                     // Pin at most the four most recently warmed resources while the batch runs,
@@ -70,30 +70,13 @@ impl ProviderPrewarm {
                     // with backoff; explicit acquisition remains available meanwhile.
                     match manager.acquire_speculative(snapshot.clone()).await {
                         Ok(lease) => {
-                            retries.lock().expect("prewarm retries poisoned").remove(&key);
+                            intents.settle(&key, epoch);
                             batch_leases.push_back(lease);
                         }
                         Err(crate::services::provider_runtime::RuntimeError::Busy) => {
-                            let attempt = {
-                                let mut retries = retries.lock().expect("prewarm retries poisoned");
-                                let attempt = retries.entry(key.clone()).or_insert(0);
-                                *attempt += 1;
-                                *attempt
-                            };
-                            match retry_delay(attempt) {
-                                Some(delay) => schedule_retry(
-                                    key, snapshot, delay, pending.clone(), notify.clone(),
-                                    capacity, stopping.clone(), metrics.clone(),
-                                ),
-                                None => {
-                                    retries.lock().expect("prewarm retries poisoned").remove(&key);
-                                    metrics.increment(crate::services::provider_runtime::RuntimeCounter::DroppedIntent);
-                                }
-                            }
+                            intents.busy(key, snapshot, epoch, stopping.clone());
                         }
-                        Err(_) => {
-                            retries.lock().expect("prewarm retries poisoned").remove(&key);
-                        }
+                        Err(_) => intents.settle(&key, epoch),
                     }
                 }
                 drop(batch_leases);
@@ -102,19 +85,7 @@ impl ProviderPrewarm {
         Some(service)
     }
     fn enqueue(&self, key: PrewarmKey, snapshot: DesiredProvider) -> bool {
-        let mut pending = self.pending.lock().expect("prewarm queue poisoned");
-        if pending.len() >= self.capacity && !pending.contains_key(&key) {
-            self.metrics
-                .increment(crate::services::provider_runtime::RuntimeCounter::DroppedIntent);
-            return false;
-        }
-        self.retries
-            .lock()
-            .expect("prewarm retries poisoned")
-            .remove(&key);
-        pending.insert(key, snapshot);
-        self.notify.notify_one();
-        true
+        self.intents.offer(key, snapshot)
     }
     async fn enqueue_rows(&self, rows: Vec<DesiredProvider>) -> bool {
         if rows.is_empty() {
@@ -188,34 +159,100 @@ fn retry_delay(attempt: u32) -> Option<std::time::Duration> {
     })
 }
 
-/// Re-queue a busy intent after its delay unless a newer intent for the same key arrived.
-#[allow(clippy::too_many_arguments)]
-fn schedule_retry(
-    key: PrewarmKey,
-    snapshot: DesiredProvider,
-    delay: std::time::Duration,
-    pending: Arc<Mutex<HashMap<PrewarmKey, DesiredProvider>>>,
-    notify: Arc<Notify>,
+/// Pending prewarm intents, coalesced per key. Every fresh intent gets a new epoch; a busy
+/// retry re-queues only while its epoch is still current, so a retry can never resurrect an
+/// older snapshot after a newer intent for the same key arrived.
+struct IntentQueue {
+    pending: Mutex<HashMap<PrewarmKey, (DesiredProvider, u64)>>,
+    /// Current epoch and busy attempts of each unsettled intent. Lock order: pending, epochs.
+    epochs: Mutex<HashMap<PrewarmKey, (u64, u32)>>,
+    next_epoch: AtomicU64,
+    notify: Notify,
     capacity: usize,
-    stopping: tokio_util::sync::CancellationToken,
     metrics: Arc<crate::services::provider_runtime::RuntimeMetrics>,
-) {
-    tokio::spawn(async move {
-        tokio::select! {
-            _ = stopping.cancelled() => return,
-            _ = tokio::time::sleep(delay) => {}
+}
+impl IntentQueue {
+    fn offer(&self, key: PrewarmKey, snapshot: DesiredProvider) -> bool {
+        let mut pending = self.pending.lock().expect("prewarm queue poisoned");
+        if pending.len() >= self.capacity && !pending.contains_key(&key) {
+            self.dropped();
+            return false;
         }
-        let mut pending = pending.lock().expect("prewarm queue poisoned");
-        if pending.contains_key(&key) {
+        let epoch = self.next_epoch.fetch_add(1, Ordering::Relaxed);
+        self.epochs
+            .lock()
+            .expect("prewarm epochs poisoned")
+            .insert(key.clone(), (epoch, 0));
+        pending.insert(key, (snapshot, epoch));
+        self.notify.notify_one();
+        true
+    }
+    fn take(&self) -> HashMap<PrewarmKey, (DesiredProvider, u64)> {
+        std::mem::take(&mut *self.pending.lock().expect("prewarm queue poisoned"))
+    }
+    /// The intent reached a final outcome; forget it unless a newer intent replaced it.
+    fn settle(&self, key: &PrewarmKey, epoch: u64) {
+        let mut epochs = self.epochs.lock().expect("prewarm epochs poisoned");
+        if epochs.get(key).is_some_and(|(current, _)| *current == epoch) {
+            epochs.remove(key);
+        }
+    }
+    fn busy(
+        self: &Arc<Self>,
+        key: PrewarmKey,
+        snapshot: DesiredProvider,
+        epoch: u64,
+        stopping: tokio_util::sync::CancellationToken,
+    ) {
+        let attempt = {
+            let mut epochs = self.epochs.lock().expect("prewarm epochs poisoned");
+            match epochs.get_mut(&key) {
+                Some((current, attempts)) if *current == epoch => {
+                    *attempts += 1;
+                    *attempts
+                }
+                // Superseded by a newer intent, which carries its own outcome.
+                _ => return,
+            }
+        };
+        let Some(delay) = retry_delay(attempt) else {
+            self.settle(&key, epoch);
+            self.dropped();
+            return;
+        };
+        let queue = Arc::clone(self);
+        tokio::spawn(async move {
+            tokio::select! {
+                _ = stopping.cancelled() => return,
+                _ = tokio::time::sleep(delay) => {}
+            }
+            queue.requeue(key, snapshot, epoch);
+        });
+    }
+    fn requeue(&self, key: PrewarmKey, snapshot: DesiredProvider, epoch: u64) {
+        let mut pending = self.pending.lock().expect("prewarm queue poisoned");
+        let current = self
+            .epochs
+            .lock()
+            .expect("prewarm epochs poisoned")
+            .get(&key)
+            .is_some_and(|(current, _)| *current == epoch);
+        if !current || pending.contains_key(&key) {
             return;
         }
-        if pending.len() >= capacity {
-            metrics.increment(crate::services::provider_runtime::RuntimeCounter::DroppedIntent);
+        if pending.len() >= self.capacity {
+            drop(pending);
+            self.settle(&key, epoch);
+            self.dropped();
             return;
         }
-        pending.insert(key, snapshot);
-        notify.notify_one();
-    });
+        pending.insert(key, (snapshot, epoch));
+        self.notify.notify_one();
+    }
+    fn dropped(&self) {
+        self.metrics
+            .increment(crate::services::provider_runtime::RuntimeCounter::DroppedIntent);
+    }
 }
 
 async fn snapshots(
@@ -232,6 +269,31 @@ async fn snapshots(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn busy_retry_never_resurrects_a_snapshot_older_than_the_current_intent() {
+        let queue = IntentQueue {
+            pending: Mutex::new(HashMap::new()),
+            epochs: Mutex::new(HashMap::new()),
+            next_epoch: AtomicU64::new(1),
+            notify: Notify::new(),
+            capacity: 8,
+            metrics: Arc::new(Default::default()),
+        };
+        let key = PrewarmKey::Resource(ResourceKey([7; 32]));
+        assert!(queue.offer(key.clone(), snapshot(1, 1)));
+        let (_, (_, stale)) = queue.take().into_iter().next().unwrap();
+        // The current intent's own retry is re-queued.
+        queue.requeue(key.clone(), snapshot(1, 1), stale);
+        let (_, (retried, _)) = queue.take().into_iter().next().unwrap();
+        assert_eq!(retried.revision, 1);
+        // A newer intent is taken and in flight when the older retry fires.
+        assert!(queue.offer(key.clone(), snapshot(1, 2)));
+        let (_, (current, _)) = queue.take().into_iter().next().unwrap();
+        assert_eq!(current.revision, 2);
+        queue.requeue(key, snapshot(1, 1), stale);
+        assert!(queue.take().is_empty());
+    }
 
     #[test]
     fn busy_intents_back_off_to_a_cap_and_then_give_up() {
