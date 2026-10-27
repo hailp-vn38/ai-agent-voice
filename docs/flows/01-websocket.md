@@ -228,6 +228,15 @@ Chi tiết capture/VAD, ASR, interrupt và MCP lần lượt ở [Flow 02](02-va
 [Flow 03](03-asr.md), [Flow 06](06-interrupt-cancellation.md) và
 [Flow 07](07-device-mcp.md).
 
+### Credential qua query
+
+`authorization` và `ticket` trên query chỉ dành cho browser (WebSocket API không
+đặt được header). Query string thường xuất hiện trong access log của
+proxy/load balancer, nên client có thể đặt header phải dùng header
+`Authorization`; proxy phía trước nên tắt hoặc che query trong access log của
+đường `/voice/v1/`. Ticket Web Assistant chỉ dùng một lần và hết hạn sau 30 giây
+nên rủi ro thấp hơn bearer dùng chung.
+
 ### Heartbeat, Idle Close và write timeout
 
 | Config `[websocket]` | Mặc định | Ý nghĩa |

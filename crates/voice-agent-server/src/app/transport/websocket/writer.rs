@@ -40,6 +40,16 @@ pub(super) struct WebSocketWriter {
     pub(super) done: tokio::sync::watch::Sender<bool>,
 }
 
+/// Why the writer loop ended early.
+enum WriterStop {
+    /// A close frame went out: the connection is ending normally.
+    Closed,
+    /// A send failed or timed out: nothing more can reach the peer.
+    Failed,
+}
+
+type Step = std::ops::ControlFlow<WriterStop>;
+
 impl WebSocketWriter {
     pub(super) async fn run(mut self, mut lanes: WriterLanes) {
         // Server Pings are opt-in (ADR 0020: no heartbeat by default). When configured they keep
@@ -50,41 +60,25 @@ impl WebSocketWriter {
         ping.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         let mut arbiter = PlaybackArbiter::default();
         let mut hello_pending = true;
-        loop {
-            tokio::select! {
+        let stop = loop {
+            let step = tokio::select! {
                 biased;
-                Some(message) = lanes.urgent.recv() => {
-                    if self.on_urgent(&mut arbiter, message).await.is_break() {
-                        break;
-                    }
-                },
+                Some(message) = lanes.urgent.recv() => self.on_urgent(&mut arbiter, message).await,
                 // A normal stop follows the final paced packet, but only after the urgent
                 // lane has had its chance to preempt it.
                 _ = std::future::ready(()), if arbiter.has_deferred_finish() && lanes.audio.is_empty() => {
                     let (turn_id, text) = arbiter.take_deferred_finish().expect("checked above");
-                    if self.send_stop(&mut arbiter, turn_id, text).await.is_break() {
-                        break;
-                    }
+                    self.send_stop(&mut arbiter, turn_id, text).await
                 },
                 Some(message) = lanes.control.recv() => {
-                    if self.on_control(&mut arbiter, &mut hello_pending, message, lanes.audio.is_empty()).await.is_break() {
-                        break;
-                    }
+                    self.on_control(&mut arbiter, &mut hello_pending, message, lanes.audio.is_empty()).await
                 },
-                _ = ping.tick(), if pings_enabled => {
-                    if let Err(error) = send_frame(&mut self.sender, self.write_timeout, Message::Ping(Default::default())).await {
-                        warn!(event = "ws_writer_failed", outcome = "failure", %error, "websocket ping failed");
-                        break;
+                _ = ping.tick(), if pings_enabled => self.ping().await,
+                Some(message) = lanes.audio.recv() => match &message {
+                    OutboundMessage::Binary { turn_id, .. } if arbiter.plays(*turn_id) => {
+                        self.send(message).await
                     }
-                    self.activity.touch();
-                },
-                Some(message) = lanes.audio.recv() => {
-                    if let OutboundMessage::Binary { turn_id, .. } = &message
-                        && arbiter.plays(*turn_id)
-                        && self.send(message).await
-                    {
-                        break;
-                    }
+                    _ => Step::Continue(()),
                 },
                 // The application's stop signal for this writer is deliberately the *last* branch,
                 // and `biased` makes that deterministic: every lane above is served first, so a
@@ -100,27 +94,39 @@ impl WebSocketWriter {
                 // session the drain can never observe finishing.
                 changed = lanes.shutdown.changed() => {
                     if changed.is_err() || *lanes.shutdown.borrow() {
-                        break;
+                        break None;
                     }
+                    Step::Continue(())
                 },
                 else => {
-                    if let Some((turn_id, text)) = arbiter.take_deferred_finish() {
-                        let _ = self.send_stop(&mut arbiter, turn_id, text).await;
-                    }
-                    break;
+                    let step = match arbiter.take_deferred_finish() {
+                        Some((turn_id, text)) => self.send_stop(&mut arbiter, turn_id, text).await,
+                        None => Step::Continue(()),
+                    };
+                    break step.break_value();
                 },
+            };
+            if let Step::Break(stop) = step {
+                break Some(stop);
             }
+        };
+        // A writer that can no longer reach the peer tells the actor once, whatever it was doing:
+        // the actor fails the session closed instead of holding the turn's delivery and Active
+        // Turn capacity until the reader eventually notices.
+        if matches!(stop, Some(WriterStop::Failed)) {
+            let _ = self
+                .writer_events
+                .send(WriterEvent::Failed {
+                    turn_id: arbiter.active_turn(),
+                })
+                .await;
         }
         let _ = self.done.send(true);
     }
 
-    async fn on_urgent(
-        &mut self,
-        arbiter: &mut PlaybackArbiter,
-        message: OutboundMessage,
-    ) -> std::ops::ControlFlow<()> {
+    async fn on_urgent(&mut self, arbiter: &mut PlaybackArbiter, message: OutboundMessage) -> Step {
         let OutboundMessage::AbortTurn { turn_id, text } = message else {
-            return flow(self.send(message).await);
+            return self.send(message).await;
         };
         let start_was_sent = match arbiter.abort(turn_id) {
             AbortStep::Active { start_was_sent } => start_was_sent,
@@ -129,24 +135,18 @@ impl WebSocketWriter {
             // generation is rejected at the gate.
             AbortStep::NotActive => false,
         };
-        let stop_was_sent = if start_was_sent {
-            if self.send(OutboundMessage::Text(text)).await {
-                self.report_failed(turn_id).await;
-                return std::ops::ControlFlow::Break(());
-            }
-            true
-        } else {
-            false
-        };
+        if start_was_sent {
+            self.send(OutboundMessage::Text(text)).await?;
+        }
         self.report_closed(
             turn_id,
             WriterTurnOutcome::Aborted {
                 start_was_sent,
-                stop_was_sent,
+                stop_was_sent: start_was_sent,
             },
         )
         .await;
-        std::ops::ControlFlow::Continue(())
+        Step::Continue(())
     }
 
     async fn on_control(
@@ -155,7 +155,7 @@ impl WebSocketWriter {
         hello_pending: &mut bool,
         message: OutboundMessage,
         audio_drained: bool,
-    ) -> std::ops::ControlFlow<()> {
+    ) -> Step {
         match message {
             OutboundMessage::BeginTurn {
                 generation,
@@ -163,13 +163,10 @@ impl WebSocketWriter {
                 text,
             } => {
                 if arbiter.admits_begin(self.generation_gate.admits(generation)) {
-                    if self.send(OutboundMessage::Text(text)).await {
-                        self.report_failed(turn_id).await;
-                        return std::ops::ControlFlow::Break(());
-                    }
+                    self.send(OutboundMessage::Text(text)).await?;
                     arbiter.started(turn_id);
                 }
-                std::ops::ControlFlow::Continue(())
+                Step::Continue(())
             }
             OutboundMessage::FinishTurn { turn_id, text } => {
                 match arbiter.finish(turn_id, text, audio_drained) {
@@ -182,22 +179,20 @@ impl WebSocketWriter {
                             },
                         )
                         .await;
-                        std::ops::ControlFlow::Continue(())
+                        Step::Continue(())
                     }
-                    FinishStep::Deferred => std::ops::ControlFlow::Continue(()),
+                    FinishStep::Deferred => Step::Continue(()),
                     FinishStep::SendStop(text) => self.send_stop(arbiter, turn_id, text).await,
                 }
             }
             message => {
                 let sends_hello = *hello_pending && matches!(&message, OutboundMessage::Text(_));
-                if self.send(message).await {
-                    return std::ops::ControlFlow::Break(());
-                }
+                self.send(message).await?;
                 if sends_hello {
                     *hello_pending = false;
                     self.report_connected();
                 }
-                std::ops::ControlFlow::Continue(())
+                Step::Continue(())
             }
         }
     }
@@ -208,19 +203,34 @@ impl WebSocketWriter {
         arbiter: &mut PlaybackArbiter,
         turn_id: crate::session::TurnId,
         text: String,
-    ) -> std::ops::ControlFlow<()> {
-        if self.send(OutboundMessage::Text(text)).await {
-            self.report_failed(turn_id).await;
-            return std::ops::ControlFlow::Break(());
-        }
+    ) -> Step {
+        self.send(OutboundMessage::Text(text)).await?;
         arbiter.stopped();
         self.report_closed(turn_id, WriterTurnOutcome::Normal).await;
-        std::ops::ControlFlow::Continue(())
+        Step::Continue(())
     }
 
-    /// Returns `true` when the writer must stop.
-    async fn send(&mut self, message: OutboundMessage) -> bool {
-        send_outbound(
+    async fn ping(&mut self) -> Step {
+        match send_frame(
+            &mut self.sender,
+            self.write_timeout,
+            Message::Ping(Default::default()),
+        )
+        .await
+        {
+            Ok(()) => {
+                self.activity.touch();
+                Step::Continue(())
+            }
+            Err(error) => {
+                warn!(event = "ws_writer_failed", outcome = "failure", %error, "websocket ping failed");
+                Step::Break(WriterStop::Failed)
+            }
+        }
+    }
+
+    async fn send(&mut self, message: OutboundMessage) -> Step {
+        match send_outbound(
             &mut self.sender,
             &self.activity,
             self.write_timeout,
@@ -229,15 +239,11 @@ impl WebSocketWriter {
             &self.pipeline_request,
         )
         .await
-    }
-
-    async fn report_failed(&self, turn_id: crate::session::TurnId) {
-        let _ = self
-            .writer_events
-            .send(WriterEvent::Failed {
-                turn_id: Some(turn_id),
-            })
-            .await;
+        {
+            Ok(Sent::Continue) => Step::Continue(()),
+            Ok(Sent::Closed) => Step::Break(WriterStop::Closed),
+            Err(_) => Step::Break(WriterStop::Failed),
+        }
     }
 
     /// Reports a turn's terminal outcome to the actor, giving a test harness its boundary probe.
@@ -279,14 +285,6 @@ impl WebSocketWriter {
             after_upgrade_ms = hello.socket_started.elapsed().as_millis() as u64,
             "ServerHello sent; voice session connected"
         );
-    }
-}
-
-fn flow(stop: bool) -> std::ops::ControlFlow<()> {
-    if stop {
-        std::ops::ControlFlow::Break(())
-    } else {
-        std::ops::ControlFlow::Continue(())
     }
 }
 
@@ -332,6 +330,10 @@ impl PlaybackArbiter {
             id: turn_id,
             start_was_sent: true,
         });
+    }
+
+    fn active_turn(&self) -> Option<crate::session::TurnId> {
+        self.active.as_ref().map(|active| active.id)
     }
 
     fn is_active(&self, turn_id: crate::session::TurnId) -> bool {

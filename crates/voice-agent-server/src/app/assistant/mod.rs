@@ -60,6 +60,16 @@ pub(crate) struct Ticket {
     ticket: String,
     expires_in_seconds: u8,
 }
+/// Why a Web Assistant ticket did not admit a connection.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum TicketRefusal {
+    /// Unknown, expired, already used, or bound to another Device row, revision, client or
+    /// Origin. The ticket is gone.
+    Invalid,
+    /// Both connection slots are taken. The ticket stays redeemable until it expires.
+    CapacityExceeded,
+}
+
 pub(crate) struct Connection {
     pub(crate) close: Arc<CancellationToken>,
     pub(crate) reminder_target: Arc<Mutex<Option<BoundReminderTarget>>>,
@@ -188,15 +198,15 @@ impl WebAssistantAuth {
         device: &Device,
         client: &str,
         origin: &str,
-    ) -> Result<Connection, &'static str> {
+    ) -> Result<Connection, TicketRefusal> {
         if ticket.len() != 43 {
-            return Err("invalid_ticket");
+            return Err(TicketRefusal::Invalid);
         }
         let now = Instant::now();
         let mut store = self.tickets.lock().unwrap_or_else(|e| e.into_inner());
         store.pending.retain(|_, b| b.expires > now);
         let hash: [u8; 32] = Sha256::digest(ticket.as_bytes()).into();
-        let binding = store.pending.remove(&hash).ok_or("invalid_ticket")?;
+        let binding = store.pending.remove(&hash).ok_or(TicketRefusal::Invalid)?;
         if device.kind != "web_assistant"
             || device.enabled != 1
             || binding.device != device.id
@@ -205,7 +215,7 @@ impl WebAssistantAuth {
             || binding.revision != device.revision
             || binding.origin != origin
         {
-            return Err("invalid_ticket");
+            return Err(TicketRefusal::Invalid);
         }
         let permit = match self.capacity.clone().try_acquire_owned() {
             Ok(permit) => permit,
@@ -213,7 +223,7 @@ impl WebAssistantAuth {
                 // Capacity is not a use of the ticket: it stays redeemable until it expires, so the
                 // client can retry once a slot frees. Every other refusal above burns it.
                 store.pending.insert(hash, binding);
-                return Err("assistant_capacity_exceeded");
+                return Err(TicketRefusal::CapacityExceeded);
             }
         };
         let close = Arc::new(CancellationToken::new());

@@ -212,39 +212,41 @@ pub(super) async fn admit(
     // registration; System saves cannot rebind between credential validation and the immutable
     // profile snapshot. The row is re-read under the guard so validation never uses a row a save
     // replaced while this connection waited.
-    let publication = if device.as_ref().is_some_and(|d| d.kind == "web_assistant") {
+    let publication = if device.as_ref().is_some_and(is_web_assistant) {
         let guard = assistant_auth.publication.read().await;
         device = lookup_device(state, device_id).await?;
         Some(guard)
     } else {
         None
     };
-    let assistant_connection =
-        if let Some(device) = device.as_ref().filter(|d| d.kind == "web_assistant") {
-            if headers.contains_key(header::AUTHORIZATION) || query.authorization.is_some() {
-                return Err(Rejection::AmbiguousAuthentication);
+    let assistant_connection = if let Some(device) = device.as_ref().filter(|d| is_web_assistant(d))
+    {
+        if headers.contains_key(header::AUTHORIZATION) || query.authorization.is_some() {
+            return Err(Rejection::AmbiguousAuthentication);
+        }
+        let ticket = query.ticket.as_deref().ok_or(Rejection::TicketRequired)?;
+        let origin = crate::app::assistant::trusted_origin(state, headers)
+            .ok_or(Rejection::UntrustedOrigin)?;
+        match assistant_auth.consume(ticket, device, client_id, &origin) {
+            Ok(connection) => Some(connection),
+            Err(crate::app::assistant::TicketRefusal::CapacityExceeded) => {
+                return Err(Rejection::AssistantCapacityExceeded);
             }
-            let ticket = query.ticket.as_deref().ok_or(Rejection::TicketRequired)?;
-            let origin = crate::app::assistant::trusted_origin(state, headers)
-                .ok_or(Rejection::UntrustedOrigin)?;
-            match assistant_auth.consume(ticket, device, client_id, &origin) {
-                Ok(connection) => Some(connection),
-                Err("assistant_capacity_exceeded") => {
-                    return Err(Rejection::AssistantCapacityExceeded);
-                }
-                Err(_) => return Err(Rejection::InvalidTicket),
+            Err(crate::app::assistant::TicketRefusal::Invalid) => {
+                return Err(Rejection::InvalidTicket);
             }
-        } else {
-            if query.ticket.is_some() {
-                return Err(Rejection::TicketRequiresManagedDevice);
-            }
-            if !config.auth.token.is_empty()
-                && !bearer_matches(headers, query.authorization.as_deref(), &config.auth.token)
-            {
-                return Err(Rejection::InvalidBearerToken);
-            }
-            None
-        };
+        }
+    } else {
+        if query.ticket.is_some() {
+            return Err(Rejection::TicketRequiresManagedDevice);
+        }
+        if !config.auth.token.is_empty()
+            && !bearer_matches(headers, query.authorization.as_deref(), &config.auth.token)
+        {
+            return Err(Rejection::InvalidBearerToken);
+        }
+        None
+    };
     // A row re-read under the guard that is no longer the Web Assistant releases it here.
     let publication = assistant_connection.as_ref().and(publication);
     let routing_timer = metrics
@@ -404,6 +406,11 @@ fn protocol_identity<'a>(
         return Err(Rejection::InvalidClientId);
     }
     Ok((device_id, client_id))
+}
+
+/// The System-owned Virtual Device of the Web Assistant, as opposed to a physical Device.
+fn is_web_assistant(device: &crate::database::devices::Device) -> bool {
+    device.kind == "web_assistant"
 }
 
 async fn lookup_device(

@@ -204,44 +204,57 @@ enum CloseReason {
     Revoked,
 }
 
-/// Every external signal that can end one Voice Session, observed in one place. Tokens a session
-/// does not use (no Web Assistant, no System MCP, ...) are fresh ones that never fire.
+/// Every external signal that can end one Voice Session, observed in one place and listed once,
+/// in priority order: shutdown signals win when several fire together.
 struct SessionCloseSet {
-    stopping: CancellationToken,
-    drain_deadline: CancellationToken,
+    signals: Vec<(CloseReason, CancellationToken)>,
     replaced: CancellationToken,
-    assistant_revoked: CancellationToken,
-    system_mcp_revoked: CancellationToken,
-    external_tools_revoked: CancellationToken,
-    speaker_revoked: CancellationToken,
 }
 
 impl SessionCloseSet {
-    /// Completes with the first signal that fired; shutdown signals take precedence.
+    /// `revocations` are the security snapshots this session pinned (System MCP grants, External
+    /// MCP tools, speaker policy); `None` for a capability the session does not hold.
+    fn new(
+        stopping: CancellationToken,
+        drain_deadline: CancellationToken,
+        assistant_revoked: Option<CancellationToken>,
+        revocations: impl IntoIterator<Item = Option<CancellationToken>>,
+    ) -> Self {
+        let replaced = CancellationToken::new();
+        let mut signals = vec![
+            (CloseReason::Stopping, stopping),
+            (CloseReason::DrainDeadline, drain_deadline),
+            (CloseReason::Replaced, replaced.clone()),
+        ];
+        signals.extend(assistant_revoked.map(|token| (CloseReason::Replaced, token)));
+        signals.extend(
+            revocations
+                .into_iter()
+                .flatten()
+                .map(|token| (CloseReason::Revoked, token)),
+        );
+        Self { signals, replaced }
+    }
+
+    /// The token a newer connection of the same Device cancels to take this session's place.
+    fn replacement(&self) -> CancellationToken {
+        self.replaced.clone()
+    }
+
+    /// Completes with the first signal that fired; on a tie the earlier entry wins.
     async fn cancelled(&self) -> CloseReason {
-        tokio::select! {
-            biased;
-            _ = self.stopping.cancelled() => CloseReason::Stopping,
-            _ = self.drain_deadline.cancelled() => CloseReason::DrainDeadline,
-            _ = self.replaced.cancelled() => CloseReason::Replaced,
-            _ = self.assistant_revoked.cancelled() => CloseReason::Replaced,
-            _ = self.system_mcp_revoked.cancelled() => CloseReason::Revoked,
-            _ = self.external_tools_revoked.cancelled() => CloseReason::Revoked,
-            _ = self.speaker_revoked.cancelled() => CloseReason::Revoked,
-        }
+        let waits = self.signals.iter().map(|(reason, token)| {
+            Box::pin(async move {
+                token.cancelled().await;
+                *reason
+            })
+        });
+        futures_util::future::select_all(waits).await.0
     }
 
     /// The same signals for SessionActor, which stops new work as soon as any fires.
-    fn tokens(&self) -> [CancellationToken; 7] {
-        [
-            self.replaced.clone(),
-            self.external_tools_revoked.clone(),
-            self.system_mcp_revoked.clone(),
-            self.speaker_revoked.clone(),
-            self.assistant_revoked.clone(),
-            self.stopping.clone(),
-            self.drain_deadline.clone(),
-        ]
+    fn tokens(&self) -> impl Iterator<Item = CancellationToken> + '_ {
+        self.signals.iter().map(|(_, token)| token.clone())
     }
 }
 
@@ -263,33 +276,28 @@ async fn handle_socket(
     // materialized snapshot, its admission-time switch catalog and the External MCP tools it may
     // call, never a Database/pool or a live Device/Agent row.
     let admitted = runtimes.profile.into_admitted_profile();
-    let closes = SessionCloseSet {
-        stopping: control.stopping.clone(),
-        drain_deadline: control.drain_close.clone(),
-        replaced: CancellationToken::new(),
-        assistant_revoked: assistant_connection
-            .as_ref()
-            .map(|c| (*c.close).clone())
-            .unwrap_or_default(),
-        system_mcp_revoked: runtimes
-            .system_mcp
-            .as_ref()
-            .map(|system| (*system.context.revoked).clone())
-            .unwrap_or_default(),
-        external_tools_revoked: admitted
-            .external_mcp
-            .guard
-            .as_ref()
-            .map(|g| (*g.close).clone())
-            .unwrap_or_default(),
-        // The Speaker/grant/policy/template snapshot this session pinned. Cancelled by the
-        // registry on any mutation that revokes it, exactly like the external tool guard.
-        speaker_revoked: runtimes
-            .speaker_observe
-            .as_ref()
-            .map(|observe| (*observe.security_token()).clone())
-            .unwrap_or_default(),
-    };
+    let closes = SessionCloseSet::new(
+        control.stopping.clone(),
+        control.drain_close.clone(),
+        assistant_connection.as_ref().map(|c| (*c.close).clone()),
+        [
+            runtimes
+                .system_mcp
+                .as_ref()
+                .map(|system| (*system.context.revoked).clone()),
+            admitted
+                .external_mcp
+                .guard
+                .as_ref()
+                .map(|g| (*g.close).clone()),
+            // The Speaker/grant/policy/template snapshot this session pinned. Cancelled by the
+            // registry on any mutation that revokes it, exactly like the external tool guard.
+            runtimes
+                .speaker_observe
+                .as_ref()
+                .map(|observe| (*observe.security_token()).clone()),
+        ],
+    );
     let writer_probe = runtimes.writer_probe;
     let session_id = runtimes.session_id;
     // `control` itself is held to the end of this function: its registration is the connection's
@@ -398,6 +406,9 @@ async fn handle_socket(
             assistant_connection.is_some(),
             &hello.features,
         ));
+    // The reader also watches the writer: once nothing can reach the peer, there is no session left
+    // to read for.
+    let mut writer_stopped = pipeline_writer_terminal.clone();
     let actor = actor.with_pipeline_writer_terminal(pipeline_writer_terminal);
     let actor =
         actor.with_pilot_admission(runtimes.pilot_admission, hello.features.pipeline_status);
@@ -539,7 +550,7 @@ async fn handle_socket(
             session_id.clone(),
             hello.features.clone(),
             ingress_tx.clone(),
-            closes.replaced.clone(),
+            closes.replacement(),
         );
     }
     let session = tokio::spawn(actor.run(ingress_rx).instrument(tracing::Span::current()));
@@ -588,7 +599,13 @@ async fn handle_socket(
                     continue;
                 }
                 info!(event = "ws_idle_close", idle_timeout_ms = config.websocket.idle_timeout_ms, "closing a voice session with no transport activity");
-                let _ = urgent_tx.try_send(OutboundMessage::Close(1001));
+                // Bounded like any send: a full urgent lane means the writer is stuck on the peer,
+                // and the write timeout ends that anyway.
+                let _ = timeout(write_timeout, urgent_tx.send(OutboundMessage::Close(1001))).await;
+                break;
+            }
+            // The guard `wait_for` returns is not `Send`; drop it inside the branch future.
+            _ = async { drop(writer_stopped.wait_for(|stopped| *stopped).await) } => {
                 break;
             }
             next = receiver.next() => {
@@ -727,6 +744,14 @@ fn tool_status_enabled(is_web_assistant: bool, features: &crate::protocol::Clien
     is_web_assistant || features.tool_status
 }
 
+/// What became of one outbound message that did not fail.
+enum Sent {
+    /// Sent, or deliberately dropped as stale; the writer keeps going.
+    Continue,
+    /// A close frame went out; nothing may follow it.
+    Closed,
+}
+
 async fn send_outbound(
     sender: &mut futures_util::stream::SplitSink<WebSocket, Message>,
     activity: &TransportActivity,
@@ -734,11 +759,11 @@ async fn send_outbound(
     message: OutboundMessage,
     generation_gate: &crate::session::GenerationGate,
     pipeline_request: &std::sync::atomic::AtomicU64,
-) -> bool {
+) -> Result<Sent, WriteFailure> {
     if let OutboundMessage::PipelineStatus { request, .. } = &message
         && *request != pipeline_request.load(std::sync::atomic::Ordering::Acquire)
     {
-        return false;
+        return Ok(Sent::Continue);
     }
     let generation = match &message {
         OutboundMessage::TurnText { generation, .. }
@@ -758,7 +783,7 @@ async fn send_outbound(
             generation,
             "Dropped stale turn-scoped outbound message"
         );
-        return false;
+        return Ok(Sent::Continue);
     }
     let closes = matches!(message, OutboundMessage::Close(_));
     let result = match message {
@@ -792,7 +817,7 @@ async fn send_outbound(
         // Semantic playback commands must be consumed by the writer state machine above.
         OutboundMessage::BeginTurn { .. }
         | OutboundMessage::FinishTurn { .. }
-        | OutboundMessage::AbortTurn { .. } => return false,
+        | OutboundMessage::AbortTurn { .. } => return Ok(Sent::Continue),
         OutboundMessage::Close(code) => {
             send_frame(
                 sender,
@@ -816,9 +841,6 @@ async fn send_outbound(
             .await
         }
     };
-    if result.is_ok() {
-        activity.touch();
-    }
     if let Err(ref error) = result {
         warn!(
             event = "ws_writer_failed",
@@ -827,7 +849,9 @@ async fn send_outbound(
             "websocket writer failed"
         );
     }
-    closes || result.is_err()
+    result?;
+    activity.touch();
+    Ok(if closes { Sent::Closed } else { Sent::Continue })
 }
 
 async fn close_direct(

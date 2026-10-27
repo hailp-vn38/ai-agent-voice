@@ -468,7 +468,8 @@ async fn connection_without_transport_activity_is_idle_closed() {
     socket.send(Message::Text(hello().into())).await.unwrap();
     let _ = next_message(&mut socket).await;
     tokio::time::sleep(Duration::from_millis(600)).await;
-    // The connection ending is the contract; a Close frame, when observed, must carry 1001.
+    // No Pings were sent, so there is nothing for the client to answer late and no reset can hide
+    // the close frame: the Idle Close must arrive with 1001.
     let closed = timeout(Duration::from_secs(1), async {
         loop {
             match socket.next().await {
@@ -480,10 +481,7 @@ async fn connection_without_transport_activity_is_idle_closed() {
     })
     .await
     .expect("silent peer was never closed");
-    assert!(
-        closed.is_none_or(|code| code == 1001),
-        "unexpected close code {closed:?}"
-    );
+    assert_eq!(closed, Some(1001));
     task.abort();
 }
 
