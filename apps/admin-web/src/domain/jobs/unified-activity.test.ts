@@ -498,4 +498,73 @@ describe('unified Job activity', () => {
     ])
   })
 
+  it('separates image and video artifacts into a dedicated job:media card on the DAG canvas', () => {
+    const mediaJob: AdminJob = {
+      ...job,
+      id: 'job-media',
+      status: 'succeeded',
+      created_at: '2026-10-15T00:00:00Z',
+      result: {
+        summary: 'Generated infographic and demo clip.\n\n![Architecture Diagram](/static/arch_diagram.png)',
+      },
+      artifacts: [
+        {
+          id: 'art-doc',
+          step_key: null,
+          filename: 'summary.md',
+          media_type: 'text/markdown',
+          size_bytes: 1024,
+          sha256: '1'.repeat(64),
+          created_at: '2026-10-15T00:00:00Z',
+        },
+        {
+          id: 'art-img',
+          step_key: null,
+          filename: 'infographic.png',
+          media_type: 'image/png',
+          size_bytes: 20480,
+          sha256: '2'.repeat(64),
+          created_at: '2026-10-15T00:00:00Z',
+        },
+        {
+          id: 'art-vid',
+          step_key: null,
+          filename: 'walkthrough.mp4',
+          media_type: 'video/mp4',
+          size_bytes: 102400,
+          sha256: '3'.repeat(64),
+          created_at: '2026-10-15T00:00:00Z',
+        },
+      ],
+    }
+
+    const rows = projectUnifiedActivity(mediaJob, [event(1, 'job_finished', { status: 'succeeded' })])
+    expect(rows.map(r => r.id)).toEqual(['job:terminal', 'job:result', 'job:media'])
+
+    const resultRow = rows.find(r => r.id === 'job:result')!
+    expect(resultRow.kind).toBe('result')
+    expect(resultRow.artifacts?.map(a => a.id)).toEqual(['art-doc'])
+
+    const mediaRow = rows.find(r => r.id === 'job:media')!
+    expect(mediaRow.kind).toBe('media')
+    expect(mediaRow.artifacts?.map(a => a.id)).toEqual(['art-img', 'art-vid'])
+    expect(mediaRow.mediaEmbeds).toEqual([
+      {
+        id: 'embed:0:arch_diagram.png',
+        kind: 'image',
+        title: 'Architecture Diagram',
+        url: '/static/arch_diagram.png',
+      },
+    ])
+
+    const dag = layoutDagCanvas(rows)
+    const mediaNode = dag.nodes.find(n => n.id === 'job:media')!
+    expect(mediaNode.width).toBe(420)
+    expect(mediaNode.height).toBe(320)
+    expect(dag.edges.map(e => `${e.fromId}->${e.toId}`)).toEqual([
+      'job:terminal->job:result',
+      'job:result->job:media',
+    ])
+  })
+
 })

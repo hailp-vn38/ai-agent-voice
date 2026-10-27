@@ -1,7 +1,7 @@
 import type { AdminJob, AgentRunView, JobArtifact, JobEvent, JobStep } from '@/api/types/agent-jobs'
 import { projectLlmRuns, type LlmRun } from './llm-activity'
 
-export type ActivityKind = 'llm' | 'plugin' | 'fork' | 'join' | 'agent' | 'job' | 'plan' | 'result'
+export type ActivityKind = 'llm' | 'plugin' | 'fork' | 'join' | 'agent' | 'job' | 'plan' | 'result' | 'media'
 export type ActivityStatus = 'running' | 'completed' | 'failed' | 'interrupted' | 'cancelled' | 'skipped' | 'unknown'
 export type ActivityFilter =
   | { kind: 'all' }
@@ -10,6 +10,13 @@ export type ActivityFilter =
   | { kind: 'root' }
   | { kind: 'role'; role: string }
   | { kind: 'agent'; id: string }
+
+export interface JobMediaEmbed {
+  id: string
+  kind: 'image' | 'video'
+  title: string
+  url: string
+}
 
 export interface UnifiedActivity {
   id: string
@@ -28,10 +35,58 @@ export interface UnifiedActivity {
   note: string
   assistantMessage?: string | null
   artifacts?: JobArtifact[]
+  mediaEmbeds?: JobMediaEmbed[]
   jobResult?: Record<string, unknown> | null
   llm?: LlmRun
   step?: JobStep
   event?: JobEvent
+}
+
+const IMAGE_EXT_RE = /\.(png|jpe?g|webp|gif|svg|bmp|avif)(?:[?#].*)?$/i
+const VIDEO_EXT_RE = /\.(mp4|webm|mov|m4v|ogv)(?:[?#].*)?$/i
+
+export function mediaArtifactKind(artifact: JobArtifact): 'image' | 'video' | null {
+  if (artifact.kind === 'image') return 'image'
+  if (artifact.kind === 'video') return 'video'
+  const mime = (artifact.media_type ?? artifact.mime_type ?? '').trim().toLowerCase()
+  if (mime.startsWith('image/')) return 'image'
+  if (mime.startsWith('video/')) return 'video'
+  const name = (artifact.filename ?? artifact.name ?? artifact.id ?? '').trim()
+  if (IMAGE_EXT_RE.test(name)) return 'image'
+  if (VIDEO_EXT_RE.test(name)) return 'video'
+  return null
+}
+
+export function isVisualMediaArtifact(artifact: JobArtifact): boolean {
+  return mediaArtifactKind(artifact) !== null
+}
+
+export function extractMarkdownMediaEmbeds(markdown: string | null | undefined): JobMediaEmbed[] {
+  if (!markdown) return []
+  const embeds: JobMediaEmbed[] = []
+  const seen = new Set<string>()
+  const re = /!\[([^\]]*)\]\(([^)\s]+)(?:\s+"[^"]*")?\)/g
+  let match: RegExpExecArray | null
+  while ((match = re.exec(markdown)) !== null) {
+    const alt = (match[1] ?? '').trim()
+    const rawUrl = (match[2] ?? '').trim()
+    if (!rawUrl || seen.has(rawUrl)) continue
+    const kind: 'image' | 'video' | null = VIDEO_EXT_RE.test(rawUrl)
+      ? 'video'
+      : IMAGE_EXT_RE.test(rawUrl)
+        ? 'image'
+        : null
+    if (!kind) continue
+    seen.add(rawUrl)
+    const fallbackName = rawUrl.split(/[?#]/)[0]?.split('/').filter(Boolean).pop() ?? rawUrl
+    embeds.push({
+      id: `embed:${embeds.length}:${fallbackName}`,
+      kind,
+      title: alt || fallbackName,
+      url: rawUrl,
+    })
+  }
+  return embeds
 }
 
 const count = (value: unknown): number | null =>
@@ -180,6 +235,10 @@ export function projectUnifiedActivity(job: AdminJob, events: JobEvent[]): Unifi
       const resultText =
         text(job.result?.text) ?? text(job.result?.summary) ?? text(job.result?.markdown)
       const allArtifacts = job.artifacts && job.artifacts.length > 0 ? job.artifacts : undefined
+      const mediaArtifacts = (job.artifacts ?? []).filter(isVisualMediaArtifact)
+      const nonMediaArtifacts = (job.artifacts ?? []).filter(art => !isVisualMediaArtifact(art))
+      const mediaEmbeds = extractMarkdownMediaEmbeds(resultText)
+      const hasVisualMedia = mediaArtifacts.length > 0 || mediaEmbeds.length > 0
       const hasJobResult = Boolean(job.result && Object.keys(job.result).length > 0)
       const status: ActivityStatus =
         payload.status === 'succeeded' || payload.status === 'partial_success'
@@ -202,7 +261,7 @@ export function projectUnifiedActivity(job: AdminJob, events: JobEvent[]): Unifi
         artifacts: allArtifacts,
         event,
       })
-      if (hasJobResult || allArtifacts) {
+      if (hasJobResult || nonMediaArtifacts.length > 0) {
         items.push({
           id: 'job:result',
           sequence: event.sequence + 0.5,
@@ -215,7 +274,27 @@ export function projectUnifiedActivity(job: AdminJob, events: JobEvent[]): Unifi
           note: resultText ?? 'Job output',
           assistantMessage: resultText,
           jobResult: job.result ?? null,
-          artifacts: allArtifacts,
+          artifacts: nonMediaArtifacts.length > 0 ? nonMediaArtifacts : undefined,
+          event,
+        })
+      }
+      if (hasVisualMedia) {
+        const mediaNote = [
+          ...mediaArtifacts.map(a => a.filename || a.name || a.id),
+          ...mediaEmbeds.map(e => e.title),
+        ].join(', ')
+        items.push({
+          id: 'job:media',
+          sequence: event.sequence + 0.75,
+          time: event.created_at,
+          kind: 'media',
+          status,
+          agentRunId,
+          role,
+          title: 'Media',
+          note: mediaNote || 'Media output',
+          artifacts: mediaArtifacts.length > 0 ? mediaArtifacts : undefined,
+          mediaEmbeds: mediaEmbeds.length > 0 ? mediaEmbeds : undefined,
           event,
         })
       }
@@ -224,29 +303,54 @@ export function projectUnifiedActivity(job: AdminJob, events: JobEvent[]): Unifi
         text(payload.code) ?? 'Legacy DAG', event.event_type === 'plan_rejected' ? 'failed' : 'completed')
     }
   }
-  const allArtifacts = job.artifacts && job.artifacts.length > 0 ? job.artifacts : undefined
+  const mediaArtifacts = (job.artifacts ?? []).filter(isVisualMediaArtifact)
+  const nonMediaArtifacts = (job.artifacts ?? []).filter(art => !isVisualMediaArtifact(art))
+  const resultText =
+    text(job.result?.text) ?? text(job.result?.summary) ?? text(job.result?.markdown)
+  const mediaEmbeds = extractMarkdownMediaEmbeds(resultText)
+  const hasVisualMedia = mediaArtifacts.length > 0 || mediaEmbeds.length > 0
   const hasJobResult = Boolean(job.result && Object.keys(job.result).length > 0)
-  if ((hasJobResult || allArtifacts) && !items.some(item => item.id === 'job:result')) {
-    const rootRunId =
-      (job.agent_runs ?? []).find(
-        run => run.role === 'orchestrator' || run.role === 'root' || !run.parent_agent_run_id,
-      )?.agent_run_id ?? null
-    const resultText =
-      text(job.result?.text) ?? text(job.result?.summary) ?? text(job.result?.markdown)
+  const rootRunId =
+    (job.agent_runs ?? []).find(
+      run => run.role === 'orchestrator' || run.role === 'root' || !run.parent_agent_run_id,
+    )?.agent_run_id ?? null
+  const fallbackStatus: ActivityStatus =
+    job.status === 'failed' ? 'failed' : job.status === 'cancelled' ? 'cancelled' : 'completed'
+  if ((hasJobResult || nonMediaArtifacts.length > 0) && !items.some(item => item.id === 'job:result')) {
     const lastSeq = items.reduce((max, item) => Math.max(max, item.sequence), 0)
     items.push({
       id: 'job:result',
       sequence: lastSeq + 1,
       time: job.created_at,
       kind: 'result',
-      status: job.status === 'failed' ? 'failed' : job.status === 'cancelled' ? 'cancelled' : 'completed',
+      status: fallbackStatus,
       agentRunId: rootRunId,
       role: rootRunId ? roles.get(rootRunId) ?? null : null,
       title: 'Result',
       note: resultText ?? 'Job output',
       assistantMessage: resultText,
       jobResult: job.result ?? null,
-      artifacts: allArtifacts,
+      artifacts: nonMediaArtifacts.length > 0 ? nonMediaArtifacts : undefined,
+    })
+  }
+  if (hasVisualMedia && !items.some(item => item.id === 'job:media')) {
+    const lastSeq = items.reduce((max, item) => Math.max(max, item.sequence), 0)
+    const mediaNote = [
+      ...mediaArtifacts.map(a => a.filename || a.name || a.id),
+      ...mediaEmbeds.map(e => e.title),
+    ].join(', ')
+    items.push({
+      id: 'job:media',
+      sequence: lastSeq + 1,
+      time: job.created_at,
+      kind: 'media',
+      status: fallbackStatus,
+      agentRunId: rootRunId,
+      role: rootRunId ? roles.get(rootRunId) ?? null : null,
+      title: 'Media',
+      note: mediaNote || 'Media output',
+      artifacts: mediaArtifacts.length > 0 ? mediaArtifacts : undefined,
+      mediaEmbeds: mediaEmbeds.length > 0 ? mediaEmbeds : undefined,
     })
   }
   const created = new Map(ordered.filter(event => event.event_type === 'agent_run_created')
@@ -375,6 +479,8 @@ const BASE_NODE_H = 122
 const EXTRA_NODE_H = 138
 const RESULT_NODE_W = 420
 const RESULT_NODE_H = 320
+const MEDIA_NODE_W = 420
+const MEDIA_NODE_H = 320
 const NODE_ROW_GAP = 32
 const LANE_HEADER_OFFSET = 62
 const LANE_BOTTOM_PAD = 22
@@ -385,11 +491,14 @@ const LANE_GAP = 46
 const TOP_PAD = 48
 
 function activityNodeWidth(act: UnifiedActivity): number {
-  return act.kind === 'result' ? RESULT_NODE_W : NODE_W
+  if (act.kind === 'result') return RESULT_NODE_W
+  if (act.kind === 'media') return MEDIA_NODE_W
+  return NODE_W
 }
 
 function activityNodeHeight(act: UnifiedActivity): number {
   if (act.kind === 'result') return RESULT_NODE_H
+  if (act.kind === 'media') return MEDIA_NODE_H
   if (
     (act.llm && act.step) ||
     (act.childRuns && act.childRuns.length > 0) ||

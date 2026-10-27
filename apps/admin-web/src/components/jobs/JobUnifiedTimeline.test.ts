@@ -164,4 +164,70 @@ describe('nested Job timeline', () => {
       wrapper.unmount()
     }
   })
+
+  it('renders a separate Media card on the DAG canvas for image and video artifacts', async () => {
+    const mediaJob = {
+      ...job,
+      id: 'job-media-1',
+      result: { summary: 'Final report text' },
+      artifacts: [
+        {
+          id: 'art-note',
+          filename: 'notes.md',
+          media_type: 'text/markdown',
+          size_bytes: 512,
+          sha256: 'a'.repeat(64),
+        },
+        {
+          id: 'art-poster',
+          filename: 'poster.png',
+          media_type: 'image/png',
+          size_bytes: 4096,
+          sha256: 'b'.repeat(64),
+          download_url: '/api/admin/jobs/job-media-1/artifacts/art-poster',
+        },
+        {
+          id: 'art-demo',
+          filename: 'demo.mp4',
+          media_type: 'video/mp4',
+          size_bytes: 8192,
+          sha256: 'c'.repeat(64),
+          download_url: '/api/admin/jobs/job-media-1/artifacts/art-demo',
+        },
+      ],
+    } as unknown as AdminJob
+
+    const activities = projectUnifiedActivity(mediaJob, [event(7, 'job_finished', { status: 'succeeded' })])
+    const wrapper = mount(JobUnifiedTimeline, {
+      props: {
+        jobId: 'job-media-1',
+        activities,
+        selectedId: null,
+        filter: { kind: 'all' },
+        roles: [],
+      },
+    })
+    try {
+      const resultCard = wrapper.get('[data-step="job:result"]')
+      expect(resultCard.text()).toContain('Final report text')
+      expect(resultCard.text()).toContain('notes.md')
+      expect(resultCard.text()).not.toContain('poster.png')
+      expect(resultCard.text()).not.toContain('demo.mp4')
+
+      const mediaCard = wrapper.get('[data-step="job:media"]')
+      expect(mediaCard.attributes('data-kind')).toBe('media')
+      expect(mediaCard.text()).toContain('Media')
+      expect(mediaCard.text()).toContain('poster.png')
+      expect(mediaCard.text()).toContain('demo.mp4')
+
+      const img = mediaCard.get('[data-canvas-media-image]')
+      expect(img.attributes('alt')).toBe('poster.png')
+      expect(img.attributes('src')).toContain('/api/admin/jobs/job-media-1/artifacts/art-poster')
+
+      const video = mediaCard.get('[data-canvas-media-video]')
+      expect(video.attributes('src')).toContain('/api/admin/jobs/job-media-1/artifacts/art-demo')
+    } finally {
+      wrapper.unmount()
+    }
+  })
 })

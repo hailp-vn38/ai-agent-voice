@@ -1,12 +1,13 @@
 <script setup lang="ts">
 import { BrainCircuit, ChevronRight, Cpu, Download, Eye, Layers, Puzzle } from '@lucide/vue'
-import { computed, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { agentJobsApi } from '@/api/agent-jobs'
 import type { JobArtifact } from '@/api/types/agent-jobs'
 import { jobResultReport, type JobReport } from '@/domain/jobs/result-report'
 import {
   groupTimelineActivities,
   layoutDagCanvas,
+  mediaArtifactKind,
   type ActivityFilter,
   type ActivityKind,
   type UnifiedActivity,
@@ -175,7 +176,7 @@ function onWheel(event: WheelEvent) {
 
 function onPointerDown(event: PointerEvent) {
   const target = event.target as HTMLElement | null
-  if (!viewportRef.value || target?.closest('button, summary, details, .result-card-body')) return
+  if (!viewportRef.value || target?.closest('button, summary, details, .result-card-body, .media-card-body, video')) return
   dragging.value = true
   dragStart = {
     x: event.clientX,
@@ -195,6 +196,120 @@ function onPointerUp() {
 
 const previewedArtifact = ref<JobArtifact | null>(null)
 const downloadingArtifactId = ref<string | null>(null)
+
+export interface CanvasMediaItem {
+  id: string
+  kind: 'image' | 'video'
+  title: string
+  subtitle: string | null
+  src: string
+  artifact?: JobArtifact
+}
+
+const mediaBlobUrls = ref<Record<string, string>>({})
+let activeBlobUrls: Record<string, string> = {}
+let loadedMediaJobId: string | undefined
+let mediaLoadGeneration = 0
+
+function revokeAllMediaBlobs() {
+  for (const url of Object.values(activeBlobUrls)) {
+    if (url.startsWith('blob:')) {
+      URL.revokeObjectURL(url)
+    }
+  }
+  activeBlobUrls = {}
+  mediaBlobUrls.value = {}
+}
+
+watch(
+  [() => props.jobId, () => props.activities],
+  async ([jobId, activities]) => {
+    const gen = ++mediaLoadGeneration
+    if (jobId !== loadedMediaJobId) {
+      revokeAllMediaBlobs()
+      loadedMediaJobId = jobId
+    }
+    const visualArtifacts = new Map<string, JobArtifact>()
+    for (const activity of activities) {
+      if (activity.kind !== 'media') continue
+      for (const art of activity.artifacts ?? []) {
+        if (mediaArtifactKind(art)) {
+          visualArtifacts.set(art.id, art)
+        }
+      }
+    }
+    if (!jobId || visualArtifacts.size === 0 || typeof agentJobsApi.artifact !== 'function') {
+      revokeAllMediaBlobs()
+      return
+    }
+    for (const [id, url] of Object.entries(activeBlobUrls)) {
+      if (!visualArtifacts.has(id)) {
+        if (url.startsWith('blob:')) URL.revokeObjectURL(url)
+        delete activeBlobUrls[id]
+      }
+    }
+    mediaBlobUrls.value = { ...activeBlobUrls }
+    await Promise.all(
+      [...visualArtifacts.values()].map(async art => {
+        if (activeBlobUrls[art.id]) return
+        try {
+          const file = await agentJobsApi.artifact(jobId, art.id)
+          if (gen !== mediaLoadGeneration) return
+          const mime = (art.media_type ?? art.mime_type ?? '').trim() || undefined
+          const blobUrl = URL.createObjectURL(mime ? new Blob([file], { type: mime }) : file)
+          activeBlobUrls = { ...activeBlobUrls, [art.id]: blobUrl }
+          mediaBlobUrls.value = { ...activeBlobUrls }
+        } catch {
+          // Fallback to download_url or API path via resolveArtifactMediaSrc
+        }
+      }),
+    )
+  },
+  { immediate: true },
+)
+
+onBeforeUnmount(() => {
+  mediaLoadGeneration++
+  revokeAllMediaBlobs()
+})
+
+function resolveArtifactMediaSrc(art: JobArtifact): string {
+  const blobUrl = mediaBlobUrls.value[art.id]
+  if (blobUrl) return blobUrl
+  if (art.download_url) return art.download_url
+  if (props.jobId) {
+    return `/api/admin/jobs/${encodeURIComponent(props.jobId)}/artifacts/${encodeURIComponent(art.id)}`
+  }
+  return ''
+}
+
+function mediaItemsForActivity(activity: UnifiedActivity): CanvasMediaItem[] {
+  const items: CanvasMediaItem[] = []
+  for (const art of activity.artifacts ?? []) {
+    const kind = mediaArtifactKind(art)
+    if (!kind) continue
+    const mime = art.media_type || art.mime_type || kind
+    const sizeLabel = art.size_bytes >= 0 ? `${(art.size_bytes / 1024).toFixed(1)} KiB` : null
+    items.push({
+      id: `artifact:${art.id}`,
+      kind,
+      title: art.filename || art.name || art.id,
+      subtitle: sizeLabel ? `${mime} · ${sizeLabel}` : mime,
+      src: resolveArtifactMediaSrc(art),
+      artifact: art,
+    })
+  }
+  for (const embed of activity.mediaEmbeds ?? []) {
+    items.push({
+      id: embed.id,
+      kind: embed.kind,
+      title: embed.title,
+      subtitle: embed.kind.toUpperCase(),
+      src: embed.url,
+    })
+  }
+  return items
+}
 
 function resultReport(activity: UnifiedActivity): JobReport {
   return jobResultReport(activity.jobResult)
@@ -258,6 +373,8 @@ function nodeIcon(kind: ActivityKind): string {
       return '⑃'
     case 'result':
       return '📄'
+    case 'media':
+      return '🖼️'
     default:
       return '✓'
   }
@@ -273,6 +390,10 @@ function footerLeft(activity: UnifiedActivity): string {
   }
   if (activity.kind === 'plugin') return activity.step?.step_key ?? 'plugin'
   if (activity.kind === 'fork' || activity.kind === 'join') return activity.forkGroupId ?? activity.kind
+  if (activity.kind === 'media') {
+    const count = (activity.artifacts?.length ?? 0) + (activity.mediaEmbeds?.length ?? 0)
+    return `${count} ${t('jobUi.media').toLowerCase()}`
+  }
   if ((activity.kind === 'job' || activity.kind === 'result') && activity.artifacts?.length) {
     return `${activity.artifacts.length} ${t('jobUi.artifacts').toLowerCase()}`
   }
@@ -617,6 +738,94 @@ function footerRight(activity: UnifiedActivity): string {
                               >
                                 <Eye class="size-3" />Preview
                               </button>
+                            </div>
+                          </div>
+                        </div>
+                        <div class="node-footer">
+                          <span class="truncate">{{ footerLeft(node.activity) }}</span>
+                          <span class="shrink-0">{{ footerRight(node.activity) }}</span>
+                        </div>
+                      </div>
+                      <div
+                        v-else-if="node.activity.kind === 'media'"
+                        class="graph-node media-card"
+                        :class="{
+                          selected: activeSelectedId === node.activity.id,
+                        }"
+                        :data-step="node.activity.id"
+                        :data-kind="node.activity.kind"
+                        data-media-card
+                        :style="{
+                          left: node.x + 'px',
+                          top: node.y + 'px',
+                          width: node.width + 'px',
+                          height: node.height + 'px',
+                        }"
+                        @click="onNodeClick(node.activity.id)"
+                      >
+                        <div class="node-header">
+                          <div class="flex min-w-0 items-center gap-2">
+                            <span class="node-icon" aria-hidden="true">{{ nodeIcon(node.activity.kind) }}</span>
+                            <b class="truncate text-xs" :title="t('jobUi.media')">{{ t('jobUi.media') }}</b>
+                          </div>
+                          <span class="node-status" :class="node.activity.status">
+                            ● {{ node.activity.status }}
+                          </span>
+                        </div>
+                        <div class="media-card-body" @wheel.stop>
+                          <div
+                            v-for="media in mediaItemsForActivity(node.activity)"
+                            :key="media.id"
+                            class="media-item-card"
+                            :data-media-kind="media.kind"
+                          >
+                            <div class="media-item-preview">
+                              <video
+                                v-if="media.kind === 'video' && media.src"
+                                :src="media.src"
+                                controls
+                                preload="metadata"
+                                class="media-card-video"
+                                data-canvas-media-video
+                                @click.stop
+                              />
+                              <img
+                                v-else-if="media.kind === 'image' && media.src"
+                                :src="media.src"
+                                :alt="media.title"
+                                loading="lazy"
+                                class="media-card-image"
+                                data-canvas-media-image
+                              />
+                            </div>
+                            <div class="media-item-meta">
+                              <div class="min-w-0">
+                                <span class="block truncate font-medium text-[#e3eaf6]" :title="media.title">
+                                  {{ media.kind === 'video' ? '🎬' : '🖼️' }} {{ media.title }}
+                                </span>
+                                <span v-if="media.subtitle" class="block truncate text-[9px] text-[#8b9db9]">
+                                  {{ media.subtitle }}
+                                </span>
+                              </div>
+                              <div v-if="media.artifact && jobId" class="flex shrink-0 items-center gap-1">
+                                <button
+                                  type="button"
+                                  class="artifact-btn"
+                                  :disabled="downloadingArtifactId !== null"
+                                  @click.stop="downloadArtifact(media.artifact)"
+                                >
+                                  <Download class="size-3" />{{ t('jobUi.download') }}
+                                </button>
+                                <button
+                                  v-if="canPreviewArtifact(media.artifact)"
+                                  type="button"
+                                  class="artifact-btn"
+                                  data-canvas-artifact-preview
+                                  @click.stop="previewedArtifact = media.artifact"
+                                >
+                                  <Eye class="size-3" />Preview
+                                </button>
+                              </div>
                             </div>
                           </div>
                         </div>
@@ -1049,13 +1258,22 @@ details.lane-details[open] > .lane-title .branch-toggle {
   background: #2b5549;
   color: #a5ecd6;
 }
-.result-card {
+.graph-node[data-kind='media'] .node-icon {
+  background: #2c4a6b;
+  color: #93d5ff;
+}
+.result-card,
+.media-card {
   padding: 13px 14px;
   border-color: #3c695d;
   background: linear-gradient(155deg, #1b283b, #131c2b);
   cursor: default;
 }
-.result-card-body {
+.media-card {
+  border-color: #3b5f82;
+}
+.result-card-body,
+.media-card-body {
   flex: 1 1 0%;
   min-height: 0;
   overflow-y: auto;
@@ -1065,6 +1283,45 @@ details.lane-details[open] > .lane-title .branch-toggle {
   border: 1px solid #2b3850;
   scrollbar-color: #3e4860 transparent;
   user-select: text;
+}
+.media-card-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.media-item-card {
+  border-radius: 7px;
+  border: 1px solid #2a3a53;
+  background: #141e2f;
+  padding: 6px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.media-item-preview {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  background: #0b111c;
+  overflow: hidden;
+  max-height: 170px;
+}
+.media-card-image,
+.media-card-video {
+  display: block;
+  max-width: 100%;
+  max-height: 170px;
+  width: auto;
+  height: auto;
+  object-fit: contain;
+}
+.media-item-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  font-size: 9.5px;
 }
 .result-markdown {
   font-size: 11px;

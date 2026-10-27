@@ -90,6 +90,8 @@ function kindBadge(kind: ActivityKind): string {
       return '✓ JOB'
     case 'result':
       return '📄 RESULT'
+    case 'media':
+      return '🖼️ MEDIA'
     case 'agent':
       return '◉ AGENT RUN'
     case 'plan':
