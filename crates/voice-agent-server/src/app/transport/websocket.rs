@@ -190,6 +190,61 @@ struct SessionControl {
     registration: crate::lifecycle::DrainRegistration,
 }
 
+/// Why the application ended a Voice Session from outside its own protocol flow.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum CloseReason {
+    /// The process is finishing outright.
+    Stopping,
+    /// The shutdown drain deadline reached this session: Controlled Close.
+    DrainDeadline,
+    /// A newer connection of the same Device, or a revoked Web Assistant credential, replaces it.
+    Replaced,
+    /// A security mutation revoked a snapshot the session pinned (System MCP grants, External MCP
+    /// tools, speaker policy).
+    Revoked,
+}
+
+/// Every external signal that can end one Voice Session, observed in one place. Tokens a session
+/// does not use (no Web Assistant, no System MCP, ...) are fresh ones that never fire.
+struct SessionCloseSet {
+    stopping: CancellationToken,
+    drain_deadline: CancellationToken,
+    replaced: CancellationToken,
+    assistant_revoked: CancellationToken,
+    system_mcp_revoked: CancellationToken,
+    external_tools_revoked: CancellationToken,
+    speaker_revoked: CancellationToken,
+}
+
+impl SessionCloseSet {
+    /// Completes with the first signal that fired; shutdown signals take precedence.
+    async fn cancelled(&self) -> CloseReason {
+        tokio::select! {
+            biased;
+            _ = self.stopping.cancelled() => CloseReason::Stopping,
+            _ = self.drain_deadline.cancelled() => CloseReason::DrainDeadline,
+            _ = self.replaced.cancelled() => CloseReason::Replaced,
+            _ = self.assistant_revoked.cancelled() => CloseReason::Replaced,
+            _ = self.system_mcp_revoked.cancelled() => CloseReason::Revoked,
+            _ = self.external_tools_revoked.cancelled() => CloseReason::Revoked,
+            _ = self.speaker_revoked.cancelled() => CloseReason::Revoked,
+        }
+    }
+
+    /// The same signals for SessionActor, which stops new work as soon as any fires.
+    fn tokens(&self) -> [CancellationToken; 7] {
+        [
+            self.replaced.clone(),
+            self.external_tools_revoked.clone(),
+            self.system_mcp_revoked.clone(),
+            self.speaker_revoked.clone(),
+            self.assistant_revoked.clone(),
+            self.stopping.clone(),
+            self.drain_deadline.clone(),
+        ]
+    }
+}
+
 async fn handle_socket(
     socket: WebSocket,
     config: Arc<AppConfig>,
@@ -200,17 +255,7 @@ async fn handle_socket(
     let database = runtimes.database;
     let device_db_id = runtimes.profile.device_db_id;
     let physical_connection = runtimes.assistant_connection.is_none();
-    let replacement_close = CancellationToken::new();
     let assistant_connection = runtimes.assistant_connection;
-    let assistant_close = assistant_connection
-        .as_ref()
-        .map(|c| c.close.clone())
-        .unwrap_or_else(|| Arc::new(CancellationToken::new()));
-    let system_security_close = runtimes
-        .system_mcp
-        .as_ref()
-        .map(|system| system.context.revoked.clone())
-        .unwrap_or_else(|| Arc::new(CancellationToken::new()));
     let socket_started = Instant::now();
     let connect_started = runtimes.connect_started;
     let metrics = runtimes.metrics;
@@ -218,23 +263,35 @@ async fn handle_socket(
     // materialized snapshot, its admission-time switch catalog and the External MCP tools it may
     // call, never a Database/pool or a live Device/Agent row.
     let admitted = runtimes.profile.into_admitted_profile();
-    let tool_security_close = admitted
-        .external_mcp
-        .guard
-        .as_ref()
-        .map(|g| g.close.clone())
-        .unwrap_or_else(|| Arc::new(CancellationToken::new()));
-    // The Speaker/grant/policy/template snapshot this session pinned. Cancelled by the registry on
-    // any mutation that revokes it, exactly like the external tool guard above.
-    let speaker_security_close = runtimes
-        .speaker_observe
-        .as_ref()
-        .map(|observe| observe.security_token())
-        .unwrap_or_else(|| Arc::new(CancellationToken::new()));
+    let closes = SessionCloseSet {
+        stopping: control.stopping.clone(),
+        drain_deadline: control.drain_close.clone(),
+        replaced: CancellationToken::new(),
+        assistant_revoked: assistant_connection
+            .as_ref()
+            .map(|c| (*c.close).clone())
+            .unwrap_or_default(),
+        system_mcp_revoked: runtimes
+            .system_mcp
+            .as_ref()
+            .map(|system| (*system.context.revoked).clone())
+            .unwrap_or_default(),
+        external_tools_revoked: admitted
+            .external_mcp
+            .guard
+            .as_ref()
+            .map(|g| (*g.close).clone())
+            .unwrap_or_default(),
+        // The Speaker/grant/policy/template snapshot this session pinned. Cancelled by the
+        // registry on any mutation that revokes it, exactly like the external tool guard.
+        speaker_revoked: runtimes
+            .speaker_observe
+            .as_ref()
+            .map(|observe| (*observe.security_token()).clone())
+            .unwrap_or_default(),
+    };
     let writer_probe = runtimes.writer_probe;
     let session_id = runtimes.session_id;
-    let stopping = control.stopping.clone();
-    let drain_close = control.drain_close.clone();
     // `control` itself is held to the end of this function: its registration is the connection's
     // place in the drain registry, and dropping it early would un-count a live session.
     let (mut sender, mut receiver) = socket.split();
@@ -243,11 +300,17 @@ async fn handle_socket(
         .as_ref()
         .map(|metrics| metrics.timer(RuntimePhase::WsHelloWait));
     let first = tokio::select! {
-        _ = stopping.cancelled() => return,
-        _ = assistant_close.cancelled() => { close_direct(&mut sender, write_timeout, 1008).await; return; },
-        _ = system_security_close.cancelled() => { close_direct(&mut sender, write_timeout, 1008).await; return; },
-        _ = tool_security_close.cancelled() => { close_direct(&mut sender, write_timeout, 1008).await; return; },
-        _ = speaker_security_close.cancelled() => { close_direct(&mut sender, write_timeout, 1008).await; return; },
+        reason = closes.cancelled() => {
+            // No Voice Session exists yet, so there is nothing to drain: close directly.
+            match reason {
+                CloseReason::Stopping => {}
+                CloseReason::DrainDeadline => close_direct(&mut sender, write_timeout, 1001).await,
+                CloseReason::Replaced | CloseReason::Revoked => {
+                    close_direct(&mut sender, write_timeout, 1008).await;
+                }
+            }
+            return;
+        },
         first = timeout(Duration::from_millis(config.server.hello_timeout_ms), next_application_frame(&mut receiver)) => first,
     };
     drop(hello_wait_timer);
@@ -328,13 +391,7 @@ async fn handle_socket(
     }
     let (pipeline_writer_done, pipeline_writer_terminal) = tokio::sync::watch::channel(false);
     let actor = actor
-        .with_direct_session_close(replacement_close.clone())
-        .with_direct_session_close((*tool_security_close).clone())
-        .with_direct_session_close((*system_security_close).clone())
-        .with_direct_session_close((*speaker_security_close).clone())
-        .with_direct_session_close((*assistant_close).clone())
-        .with_direct_session_close(stopping.clone())
-        .with_direct_session_close(drain_close.clone())
+        .with_direct_session_closes(closes.tokens())
         .with_direct_metadata(hello.features.direct_tts || hello.features.reminders)
         .with_turn_status(assistant_connection.is_some() && hello.features.turn_status)
         .with_tool_status(tool_status_enabled(
@@ -370,31 +427,40 @@ async fn handle_socket(
             return;
         }
     };
-    let (reminder_event_tx, reminder_worker) = if physical_connection && hello.features.reminders {
-        let (tx, mut rx) = mpsc::channel::<crate::protocol::ReminderEvent>(8);
-        let db = database.clone();
-        let sessions = Arc::clone(&active_device_sessions);
-        let sid = session_id.clone();
-        let ingress = ingress_tx.clone();
-        let worker = tokio::spawn(
-            async move {
-                while let Some(event) = rx.recv().await {
-                    handle_reminder_message(
-                        db.as_deref(),
-                        &sessions,
-                        device_db_id,
-                        &sid,
-                        event,
-                        &ingress,
-                    )
-                    .await;
+    // The Device's reminder protocol is the notification service's business; this task only
+    // carries its events in and its replies back through the actor's mailbox.
+    let (reminder_event_tx, reminder_worker) = match &database {
+        Some(database) if physical_connection && hello.features.reminders => {
+            let (tx, mut rx) = mpsc::channel::<crate::protocol::ReminderEvent>(8);
+            let coordinator = crate::services::notifications::ReminderCoordinator::from_database(
+                (**database).clone(),
+                Arc::clone(&active_device_sessions),
+            );
+            let sid = session_id.clone();
+            let ingress = ingress_tx.clone();
+            let worker = tokio::spawn(
+                async move {
+                    while let Some(event) = rx.recv().await {
+                        if let Some(text) = coordinator
+                            .on_device_reminder_event(device_db_id, &sid, event)
+                            .await
+                            && ingress
+                                .try_send(SessionEvent::ReminderControl { text })
+                                .is_err()
+                        {
+                            warn!(
+                                subsystem = "notification",
+                                event = "reminder_control_dropped",
+                                "reminder reply dropped because the session mailbox is full or closed"
+                            );
+                        }
+                    }
                 }
-            }
-            .instrument(tracing::Span::current()),
-        );
-        (Some(tx), Some(worker))
-    } else {
-        (None, None)
+                .instrument(tracing::Span::current()),
+            );
+            (Some(tx), Some(worker))
+        }
+        _ => (None, None),
     };
     // Ticket 10: install Observe only when the Agent policy enables it. Best-effort and
     // admission-time: a resolution/DB failure degrades to `off`, never fails the session.
@@ -471,7 +537,7 @@ async fn handle_socket(
             session_id.clone(),
             hello.features.clone(),
             ingress_tx.clone(),
-            replacement_close.clone(),
+            closes.replaced.clone(),
         );
     }
     let session = tokio::spawn(actor.run(ingress_rx).instrument(tracing::Span::current()));
@@ -481,47 +547,36 @@ async fn handle_socket(
     loop {
         let idle_deadline = last_inbound + idle_timeout;
         tokio::select! {
-            // The deadline reached this session. It closes cleanly: the actor is told to stop,
-            // sends its terminal close frame and lets the writer drain, and this loop only exits
-            // once the connection itself is done. No task is aborted.
-            _ = replacement_close.cancelled() => {
-                let _ = ingress_tx.send(SessionEvent::SecurityInvalidated).await;
-                break;
-            }
-            _ = assistant_close.cancelled() => {
-                let _ = ingress_tx.send(SessionEvent::SecurityInvalidated).await;
-                break;
-            }
-            _ = system_security_close.cancelled() => {
-                let _ = urgent_tx.send(OutboundMessage::Close(1008)).await;
-                let _ = ingress_tx.try_send(SessionEvent::SecurityInvalidated);
-                break;
-            }
-            _ = tool_security_close.cancelled() => {
-                let _ = urgent_tx.send(OutboundMessage::Close(1008)).await;
-                let _ = ingress_tx.try_send(SessionEvent::SecurityInvalidated);
-                break;
-            }
-            // A Speaker/grant/policy/template mutation revoked this session's snapshot. Same close
-            // as the external-tool path: no new dispatch, close 1008, terminal event. If the mailbox
-            // is gone the send fails and this loop simply ends, which is the shutdown escape path.
-            _ = speaker_security_close.cancelled() => {
-                let _ = urgent_tx.send(OutboundMessage::Close(1008)).await;
-                let _ = ingress_tx.try_send(SessionEvent::SecurityInvalidated);
-                break;
-            }
-            _ = drain_close.cancelled() => {
-                info!(
-                    event = "ws_controlled_close_issued",
-                    "controlled close issued at the shutdown grace deadline"
-                );
-                let _ = ingress_tx.send(SessionEvent::Shutdown).await;
-                break;
-            }
-            // The process is finishing outright. There is no deadline left to wait for, so this
-            // session ends now rather than holding the process open.
-            _ = stopping.cancelled() => {
-                let _ = ingress_tx.send(SessionEvent::Shutdown).await;
+            reason = closes.cancelled() => {
+                match reason {
+                    // A newer connection of this Device, or the Web Assistant credential, took
+                    // this session's place: the actor ends it as a security invalidation.
+                    CloseReason::Replaced => {
+                        let _ = ingress_tx.send(SessionEvent::SecurityInvalidated).await;
+                    }
+                    // A security mutation revoked a snapshot this session pinned: no new
+                    // dispatch, close 1008, terminal event. If the mailbox is gone the send fails
+                    // and this loop simply ends, which is the shutdown escape path.
+                    CloseReason::Revoked => {
+                        let _ = urgent_tx.send(OutboundMessage::Close(1008)).await;
+                        let _ = ingress_tx.try_send(SessionEvent::SecurityInvalidated);
+                    }
+                    // The drain deadline reached this session. It closes cleanly: the actor is
+                    // told to stop, sends its terminal close frame and lets the writer drain, and
+                    // this loop only exits once the connection itself is done. No task is aborted.
+                    CloseReason::DrainDeadline => {
+                        info!(
+                            event = "ws_controlled_close_issued",
+                            "controlled close issued at the shutdown grace deadline"
+                        );
+                        let _ = ingress_tx.send(SessionEvent::Shutdown).await;
+                    }
+                    // The process is finishing outright. There is no deadline left to wait for, so
+                    // this session ends now rather than holding the process open.
+                    CloseReason::Stopping => {
+                        let _ = ingress_tx.send(SessionEvent::Shutdown).await;
+                    }
+                }
                 break;
             }
             // Nothing at all — not even a Pong to the writer's Pings — has arrived for the idle
@@ -547,8 +602,13 @@ async fn handle_socket(
                             if hello.features.reminders
                                 && inbound == session_id
                                 && let Some(tx) = &reminder_event_tx
+                                && tx.try_send(event).is_err()
                             {
-                                let _ = tx.try_send(event);
+                                warn!(
+                                    subsystem = "notification",
+                                    event = "reminder_event_dropped",
+                                    "Device reminder event dropped because the reminder queue is full"
+                                );
                             }
                             continue;
                         }
@@ -637,129 +697,6 @@ async fn handle_socket(
     );
 }
 
-async fn handle_reminder_message(
-    database: Option<&crate::database::Database>,
-    sessions: &Arc<crate::services::active_device_sessions::ActiveDeviceSessions>,
-    device: i64,
-    session_id: &str,
-    event: crate::protocol::ReminderEvent,
-    ingress: &mpsc::Sender<SessionEvent>,
-) {
-    let Some(database) = database else { return };
-    let coordinator = crate::services::notifications::ReminderCoordinator::from_database(
-        database.clone(),
-        Arc::clone(sessions),
-    );
-    match event {
-        crate::protocol::ReminderEvent::SyncRequest { known_revision } => {
-            let Ok(snapshot) = coordinator.repo().snapshot(device).await else {
-                return;
-            };
-            let snapshot_id = Uuid::new_v4().to_string();
-            let ids = snapshot.items.iter().map(|item| item.id.clone()).collect();
-            if !sessions.remember_snapshot(
-                device,
-                session_id,
-                snapshot_id.clone(),
-                snapshot.revision,
-                ids,
-            ) {
-                return;
-            }
-            tracing::info!(
-                subsystem = "notification",
-                event = "reminder_snapshot_sent",
-                device_row_id = device,
-                session_id = %session_id,
-                snapshot_id = %snapshot_id,
-                known_revision = ?known_revision,
-                revision = snapshot.revision,
-                items_count = snapshot.items.len(),
-                has_more = snapshot.has_more,
-                "reminder snapshot sent to device"
-            );
-            let text = serde_json::json!({
-                "type":"reminder", "event":"sync", "session_id":session_id,
-                "snapshot_id":snapshot_id, "revision":snapshot.revision,
-                "server_time_ms":snapshot.server_time_ms, "items":snapshot.items,
-                "has_more":snapshot.has_more, "next_sync_at_ms":snapshot.server_time_ms + 60_000,
-            })
-            .to_string();
-            let _ = ingress.try_send(SessionEvent::ReminderControl { text });
-        }
-        crate::protocol::ReminderEvent::SyncAck {
-            snapshot_id,
-            revision,
-            next_wake_at_ms,
-        } => {
-            let Some(snapshot) =
-                sessions.acknowledge_snapshot(device, session_id, &snapshot_id, revision)
-            else {
-                return;
-            };
-            tracing::info!(
-                subsystem = "notification",
-                event = "reminder_snapshot_acked",
-                device_row_id = device,
-                session_id = %session_id,
-                snapshot_id = %snapshot_id,
-                revision = snapshot.revision,
-                acked_items_count = snapshot.item_ids.len(),
-                next_wake_at_ms = ?next_wake_at_ms,
-                "reminder snapshot acknowledged by device"
-            );
-            let _ = coordinator
-                .repo()
-                .acknowledge_snapshot(
-                    device,
-                    snapshot.revision,
-                    &snapshot.item_ids,
-                    next_wake_at_ms,
-                )
-                .await;
-        }
-        crate::protocol::ReminderEvent::Played {
-            reminder_id,
-            attempt_id,
-        } => {
-            sessions.clear_in_flight_reminder(device, session_id);
-            let Ok(Some(outcome)) = coordinator
-                .complete_attempt_with_outcome(device, session_id, &reminder_id, &attempt_id)
-                .await
-            else {
-                return;
-            };
-            let text = serde_json::json!({
-                "type":"reminder", "event":"delivery_result", "session_id":session_id,
-                "reminder_id":reminder_id, "attempt_id":attempt_id,
-                "outcome":"completed", "revision":outcome.schedule_revision,
-            })
-            .to_string();
-            let _ = ingress.try_send(SessionEvent::ReminderControl { text });
-        }
-        crate::protocol::ReminderEvent::Failed {
-            reminder_id,
-            attempt_id,
-            reason,
-        } => {
-            sessions.clear_in_flight_reminder(device, session_id);
-            let Ok(Some(outcome)) = coordinator
-                .fail_attempt(device, session_id, &reminder_id, &attempt_id, &reason)
-                .await
-            else {
-                return;
-            };
-            let text = serde_json::json!({
-                "type":"reminder", "event":"delivery_result", "session_id":session_id,
-                "reminder_id":reminder_id, "attempt_id":attempt_id,
-                "outcome":"failed", "revision":outcome.schedule_revision,
-            })
-            .to_string();
-            let _ = ingress.try_send(SessionEvent::ReminderControl { text });
-        }
-    }
-}
-
 fn vision_capability(config: &AppConfig) -> Option<crate::tools::device_mcp::VisionCapability> {
     if config.vision.enabled && config.vision.advertise_via_mcp {
         Some(crate::tools::device_mcp::VisionCapability {
@@ -824,8 +761,11 @@ async fn send_outbound(
         | OutboundMessage::TurnText { text, .. }
         | OutboundMessage::SpeakerStatus { text }
         | OutboundMessage::PipelineStatus { text, .. } => {
-            let llm_message = serde_json::from_str::<serde_json::Value>(&text)
-                .ok()
+            // Only `llm` messages are logged; skip parsing the (frequent) rest of the text stream.
+            let llm_message = text
+                .contains("\"llm\"")
+                .then(|| serde_json::from_str::<serde_json::Value>(&text).ok())
+                .flatten()
                 .filter(|value| value["type"] == "llm");
             let result = send_frame(sender, write_timeout, Message::Text(text.into())).await;
             if result.is_ok()

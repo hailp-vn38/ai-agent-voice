@@ -1,4 +1,5 @@
 pub mod reminder_scheduler;
+mod session_protocol;
 
 use crate::{
     database::{

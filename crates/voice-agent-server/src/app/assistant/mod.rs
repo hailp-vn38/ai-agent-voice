@@ -207,11 +207,15 @@ impl WebAssistantAuth {
         {
             return Err("invalid_ticket");
         }
-        let permit = self
-            .capacity
-            .clone()
-            .try_acquire_owned()
-            .map_err(|_| "assistant_capacity_exceeded")?;
+        let permit = match self.capacity.clone().try_acquire_owned() {
+            Ok(permit) => permit,
+            Err(_) => {
+                // Capacity is not a use of the ticket: it stays redeemable until it expires, so the
+                // client can retry once a slot frees. Every other refusal above burns it.
+                store.pending.insert(hash, binding);
+                return Err("assistant_capacity_exceeded");
+            }
+        };
         let close = Arc::new(CancellationToken::new());
         store.sessions.retain(|t| t.strong_count() != 0);
         store.sessions.push(Arc::downgrade(&close));

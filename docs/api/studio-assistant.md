@@ -40,14 +40,17 @@ even when physical bearer authentication is disabled.
 Tickets contain 256 bits of CSPRNG entropy. Only hashes and minimal bindings live
 in RAM. Consume is atomic and irreversible, bound to Device row/identity/revision,
 Client ID and Origin, and expires after 30 seconds on a monotonic clock. Failed
-upgrade/profile preparation also consumes the ticket. The fixed limits are 20
+upgrade/profile preparation also consumes the ticket. The one exception is
+`429 assistant capacity exceeded`: a capacity refusal is not a use, so the same
+ticket stays redeemable (until it expires) once a connection slot frees. The fixed limits are 20
 issues per minute, 32 pending tickets, and two admitted connections (including
 handshake). Expired entries are evicted lazily. Origin must match the deployment's
 HTTPS public WS origin, or the existing trusted LAN/localhost Origin policy.
 Public HTTP origins are not trusted. CORS alone does not protect WS upgrades.
 
 System Save invalidates pending tickets and cancels live/pre-hello web connections.
-Publication locks prevent a save between ticket validation and profile admission;
+Publication locks prevent a save between ticket validation and profile admission
+(only Web Assistant upgrades take this lock; physical Devices never wait on it);
 External MCP publication is also locked during save/revocation so new tool dispatch
 cannot cross that boundary. Runtime shutdown continues through the existing drain.
 Browser token changes/app teardown disconnect and clear the local conversation;

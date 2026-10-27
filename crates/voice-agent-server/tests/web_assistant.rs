@@ -568,3 +568,97 @@ impl voice_agent_server::providers::VadProvider for VoiceVad {
 
 #[path = "web_assistant/system_mcp.rs"]
 mod system_mcp;
+
+/// A capacity refusal is not a use of the ticket: the same one-time ticket admits the connection
+/// once a slot frees, while every other refusal still burns it.
+#[tokio::test]
+async fn capacity_refusal_does_not_consume_the_web_assistant_ticket() {
+    use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+    let providers = Arc::new(ProviderSet::with_all(
+        Arc::new(VoiceVad),
+        Arc::new(VoiceAsr),
+        Arc::new(VoiceLlm),
+        Arc::new(VoiceTts),
+    ));
+    let (base, task) = start(providers, "physical-token").await;
+    let client = Client::new();
+    let auth = "admin-test-token";
+    client
+        .post(format!("{base}/api/admin/agents"))
+        .bearer_auth(auth)
+        .json(&serde_json::json!({"key":"studio","name":"Studio"}))
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap();
+    let settings = client
+        .put(format!("{base}/api/admin/system/assistant-device"))
+        .bearer_auth(auth)
+        .json(&serde_json::json!({"agent_key":"studio","enabled":true}))
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap()
+        .json::<serde_json::Value>()
+        .await
+        .unwrap();
+    let identity = settings["device_id"].as_str().unwrap().to_owned();
+    let ws = base.replacen("http", "ws", 1);
+    let ticket_request = || async {
+        let ticket = client
+            .post(format!("{base}/api/admin/assistant/ws-ticket"))
+            .bearer_auth(auth)
+            .header("Origin", "http://localhost")
+            .send()
+            .await
+            .unwrap()
+            .error_for_status()
+            .unwrap()
+            .json::<serde_json::Value>()
+            .await
+            .unwrap();
+        let mut request = format!(
+            "{ws}/voice/v1/?device-id={identity}&client-id={}&ticket={}",
+            ticket["client_id"].as_str().unwrap(),
+            ticket["ticket"].as_str().unwrap()
+        )
+        .into_client_request()
+        .unwrap();
+        request
+            .headers_mut()
+            .insert("Origin", "http://localhost".parse().unwrap());
+        request
+    };
+    let mut sockets = Vec::new();
+    for _ in 0..2 {
+        sockets.push(
+            tokio_tungstenite::connect_async(ticket_request().await)
+                .await
+                .unwrap()
+                .0,
+        );
+    }
+    let waiting = ticket_request().await;
+    let refused = tokio_tungstenite::connect_async(waiting.clone()).await;
+    assert!(
+        matches!(refused.unwrap_err(), tokio_tungstenite::tungstenite::Error::Http(r) if r.status() == 429)
+    );
+    let mut freed = sockets.pop().unwrap();
+    let _ = freed.close(None).await;
+    drop(freed);
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(2);
+    loop {
+        match tokio_tungstenite::connect_async(waiting.clone()).await {
+            Ok(_) => break,
+            Err(tokio_tungstenite::tungstenite::Error::Http(r))
+                if r.status() == 429 && tokio::time::Instant::now() < deadline =>
+            {
+                tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+            }
+            Err(error) => panic!("the ticket refused for capacity no longer admits: {error:?}"),
+        }
+    }
+    task.abort();
+}

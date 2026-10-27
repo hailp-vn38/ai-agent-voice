@@ -87,8 +87,12 @@ impl SessionActor {
         self
     }
 
-    pub(crate) fn with_direct_session_close(mut self, close: CancellationToken) -> Self {
-        self.direct_session_closes.push(close);
+    /// Installs every external close signal of the connection at once.
+    pub(crate) fn with_direct_session_closes(
+        mut self,
+        closes: impl IntoIterator<Item = CancellationToken>,
+    ) -> Self {
+        self.direct_session_closes.extend(closes);
         self
     }
 

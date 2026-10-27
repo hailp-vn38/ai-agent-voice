@@ -286,10 +286,6 @@ pub(super) async fn admit(
     {
         assistant_auth.register_close(&guard.close);
     }
-    let system_mcp = match &assistant_connection {
-        Some(_) => resolve_system_mcp(state, &assistant_auth, &profile).await,
-        None => None,
-    };
     let resolved_runtimes = profile
         .selected_runtimes
         .clone()
@@ -308,15 +304,26 @@ pub(super) async fn admit(
     {
         assistant_auth.register_session(session_id.clone(), profile.agent_key.clone(), conn);
     }
-    let reminder_tools =
-        resolve_reminder_tools(state, &profile, device_id, assistant_connection.as_ref()).await;
     let transcript = state.transcript_capture(&session_id, &profile);
-    // Resolve the immutable, Agent-scoped candidate snapshot before the upgrade closure owns state.
-    let speaker_timer = metrics
-        .as_ref()
-        .map(|metrics| metrics.timer(RuntimePhase::WsSpeaker));
-    let speaker_observe = resolve_speaker_observe(state, &profile, config).await;
-    drop(speaker_timer);
+    // The optional per-session capabilities are independent snapshots: resolve them together so
+    // connect latency pays for the slowest, not the sum. None of them can refuse the session.
+    let (system_mcp, reminder_tools, speaker_observe) = tokio::join!(
+        async {
+            match &assistant_connection {
+                Some(_) => resolve_system_mcp(state, &assistant_auth, &profile).await,
+                None => None,
+            }
+        },
+        resolve_reminder_tools(state, &profile, device_id, assistant_connection.as_ref()),
+        // The immutable, Agent-scoped candidate snapshot, resolved before the upgrade closure
+        // owns state.
+        async {
+            let _speaker_timer = metrics
+                .as_ref()
+                .map(|metrics| metrics.timer(RuntimePhase::WsSpeaker));
+            resolve_speaker_observe(state, &profile, config).await
+        },
+    );
     // Publication protected credential validation through connection registration; the snapshot
     // is complete, so a System save may proceed.
     drop(publication);
@@ -607,13 +614,31 @@ fn header_or_query_is_or_absent(
     }
 }
 
-/// The Voice bearer credential, from the header or the browser query fallback.
+/// The Voice bearer credential, from the header or the browser query fallback. The comparison
+/// does not stop at the first differing byte, so response timing does not reveal how much of a
+/// guessed token was right.
 fn bearer_matches(headers: &HeaderMap, query_value: Option<&str>, token: &str) -> bool {
-    let expected = format!("Bearer {token}");
-    match headers.get(header::AUTHORIZATION) {
-        Some(_) => header_is(headers, header::AUTHORIZATION.as_str(), &expected),
-        None => query_value == Some(expected.as_str()),
-    }
+    let presented = match headers.get(header::AUTHORIZATION) {
+        Some(value) => value.as_bytes(),
+        None => match query_value {
+            Some(value) => value.as_bytes(),
+            None => return false,
+        },
+    };
+    let Some(credential) = presented.strip_prefix(b"Bearer ") else {
+        return false;
+    };
+    constant_time_eq(credential, token.as_bytes())
+}
+
+/// Equality whose running time depends only on the lengths, never on where the inputs differ.
+fn constant_time_eq(left: &[u8], right: &[u8]) -> bool {
+    left.len() == right.len()
+        && left
+            .iter()
+            .zip(right)
+            .fold(0u8, |difference, (l, r)| difference | (l ^ r))
+            == 0
 }
 
 /// Browser WebSocket APIs cannot set custom headers, so accept identity query fallbacks.
