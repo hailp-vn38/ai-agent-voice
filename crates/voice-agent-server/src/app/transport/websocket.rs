@@ -3,6 +3,11 @@ use crate::services::provider_runtime::{RuntimeMetrics, RuntimePhase};
 use std::time::Instant;
 use tracing::Instrument;
 
+mod admission;
+mod writer;
+
+use admission::Admission;
+
 pub(crate) async fn handler(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -23,178 +28,21 @@ pub(crate) async fn handler(
     // even if it never reaches the handshake.  The handle is moved into the socket task, which is
     // what keeps this connection counted for exactly as long as it exists.
     let drain = state.register_session();
-    if !state.admission_gate().is_open() {
-        log_ws_auth(
-            bearer_auth_enabled,
-            "not_checked",
-            "unavailable",
-            "denied",
-            "shutting_down",
-        );
-        return (StatusCode::SERVICE_UNAVAILABLE, "server is shutting down").into_response();
-    }
-    for name in [
-        "protocol-version",
-        "device-id",
-        "client-id",
-        "authorization",
-    ] {
-        if headers.get_all(name).iter().count() > 1 {
-            log_ws_auth(
-                bearer_auth_enabled,
-                "not_checked",
-                "not_checked",
-                "denied",
-                "duplicate_protocol_header",
-            );
-            return (StatusCode::BAD_REQUEST, "duplicate protocol header").into_response();
-        }
-    }
-    for (name, value) in [
-        ("protocol-version", &query.protocol_version),
-        ("device-id", &query.device_id),
-        ("client-id", &query.client_id),
-        ("authorization", &query.authorization),
-    ] {
-        if headers.contains_key(name) && value.is_some() {
-            return (StatusCode::BAD_REQUEST, "ambiguous protocol identity").into_response();
-        }
-    }
-    if !header_or_query_is_or_absent(
-        &headers,
-        "protocol-version",
-        query.protocol_version.as_deref(),
-        "1",
-    ) || !header_or_query_present(&headers, "device-id", query.device_id.as_deref())
-        || !header_or_query_present(&headers, "client-id", query.client_id.as_deref())
+    let admission = match admission::admit(&state, &headers, &query, connect_started, metrics).await
     {
-        log_ws_auth(
-            bearer_auth_enabled,
-            "not_checked",
-            "not_checked",
-            "denied",
-            "invalid_protocol_headers",
-        );
-        return (
-            StatusCode::BAD_REQUEST,
-            "Protocol-Version, Device-Id and Client-Id are required",
-        )
-            .into_response();
-    }
-    let device_id = header_or_query_value(&headers, "device-id", query.device_id.as_deref())
-        .expect("validated above");
-    if !valid_device_identity(device_id) {
-        log_ws_auth(
-            bearer_auth_enabled,
-            bearer_auth_result(bearer_auth_enabled),
-            "denied",
-            "denied",
-            "invalid_device_id",
-        );
-        return (StatusCode::BAD_REQUEST, "invalid Device-Id").into_response();
-    }
-    let client_id = header_or_query_value(&headers, "client-id", query.client_id.as_deref())
-        .expect("validated above");
-    if !valid_device_identity(client_id) {
-        log_ws_auth(
-            bearer_auth_enabled,
-            bearer_auth_result(bearer_auth_enabled),
-            "denied",
-            "denied",
-            "invalid_client_id",
-        );
-        return (StatusCode::BAD_REQUEST, "invalid Client-Id").into_response();
-    }
-    let assistant_auth = state.web_assistant.clone();
-    let lookup_device = || async {
-        match &state.database {
-            Some(db) => match crate::database::devices::get_device_by(db, device_id).await {
-                Ok(d) => Ok(Some(d)),
-                Err(sqlx::Error::RowNotFound) => Ok(None),
-                Err(_) => Err((
-                    StatusCode::SERVICE_UNAVAILABLE,
-                    "device admission unavailable",
-                )
-                    .into_response()),
-            },
-            None => Ok(None),
+        Ok(admission) => admission,
+        Err(rejection) => {
+            rejection.log(bearer_auth_enabled);
+            return rejection.into_response();
         }
     };
-    let mut device = match lookup_device().await {
-        Ok(device) => device,
-        Err(response) => return response,
-    };
-    // Only the Web Assistant takes part in credential publication. A physical Device never waits
-    // on it, so a System save (or a slow Web Assistant admission queued ahead of one) cannot
-    // stall Device reconnects.
-    //
-    // For the Web Assistant, publication is held through graph resolution and connection
-    // registration; System saves cannot rebind between credential validation and the immutable
-    // profile snapshot. The row is re-read under the guard so validation never uses a row a save
-    // replaced while this connection waited.
-    let publication = if device.as_ref().is_some_and(|d| d.kind == "web_assistant") {
-        let guard = assistant_auth.publication.read().await;
-        device = match lookup_device().await {
-            Ok(device) => device,
-            Err(response) => return response,
-        };
-        Some(guard)
-    } else {
-        None
-    };
-    let assistant_connection = if device.as_ref().is_some_and(|d| d.kind == "web_assistant") {
-        if headers.contains_key(header::AUTHORIZATION) || query.authorization.is_some() {
-            return (StatusCode::BAD_REQUEST, "ambiguous authentication").into_response();
-        }
-        let Some(ticket) = query.ticket.as_deref() else {
-            return (StatusCode::UNAUTHORIZED, "ticket required").into_response();
-        };
-        let Some(origin) = super::super::assistant::trusted_origin(&state, &headers) else {
-            return (StatusCode::FORBIDDEN, "untrusted origin").into_response();
-        };
-        match assistant_auth.consume(
-            ticket,
-            device.as_ref().expect("managed Device"),
-            client_id,
-            &origin,
-        ) {
-            Ok(connection) => Some(connection),
-            Err("assistant_capacity_exceeded") => {
-                return (StatusCode::TOO_MANY_REQUESTS, "assistant capacity exceeded")
-                    .into_response();
-            }
-            Err(_) => return (StatusCode::UNAUTHORIZED, "invalid ticket").into_response(),
-        }
-    } else {
-        drop(publication);
-        if query.ticket.is_some() {
-            return (StatusCode::UNAUTHORIZED, "ticket requires managed Device").into_response();
-        }
-        if bearer_auth_enabled
-            && !header_or_query_is(
-                &headers,
-                header::AUTHORIZATION.as_str(),
-                query.authorization.as_deref(),
-                &format!("Bearer {}", config.auth.token),
-            )
-        {
-            log_ws_auth(
-                true,
-                "denied",
-                "not_checked",
-                "denied",
-                "invalid_bearer_token",
-            );
-            return (StatusCode::UNAUTHORIZED, "invalid bearer token").into_response();
-        }
-        None
-    };
-    let routing_timer = metrics
-        .as_ref()
-        .map(|metrics| metrics.timer(RuntimePhase::WsRouting));
-    match super::super::enrollment::route(&state, device_id, client_id).await {
-        Ok(super::super::enrollment::Route::Voice) => {}
-        Ok(super::super::enrollment::Route::Pending(connection)) => {
+    // The transport cap bounds the whole message, not only each frame: continuation frames that
+    // each fit `max_frame_size` would otherwise be reassembled up to the library default before
+    // the application size check ever runs.
+    let cap = config.websocket.max_frame_bytes.saturating_add(1024);
+    let upgrade = upgrade.max_frame_size(cap).max_message_size(cap);
+    let runtimes = match admission {
+        Admission::Enrollment(connection) => {
             log_ws_auth(
                 bearer_auth_enabled,
                 bearer_auth_result(bearer_auth_enabled),
@@ -202,221 +50,25 @@ pub(crate) async fn handler(
                 "accepted",
                 "pending_enrollment",
             );
-            let cap = config.websocket.max_frame_bytes.saturating_add(1024);
             return upgrade
-                .max_frame_size(cap)
-                .max_message_size(cap)
                 .on_upgrade(move |socket| {
                     super::super::enrollment::run(socket, state, connection, drain)
                 })
                 .into_response();
         }
-        Err(response) => {
-            log_ws_auth(
-                bearer_auth_enabled,
-                bearer_auth_result(bearer_auth_enabled),
-                "denied",
-                "denied",
-                "device_route_rejected",
-            );
-            return *response;
-        }
-    }
-    drop(routing_timer);
-    // One immutable Effective Session Profile per connection.  Resolution is fail-closed: a
-    // database-backed Agent whose default Template cannot be materialized is never silently
-    // downgraded to the deployment's server defaults.
-    let profile = match state.resolve_session_profile(device_id).await {
-        Ok(profile) => profile,
-        Err(SessionProfileAdmissionError::Runtime(error)) => {
-            log_ws_auth(
-                bearer_auth_enabled,
-                bearer_auth_result(bearer_auth_enabled),
-                "unavailable",
-                "denied",
-                "profile_runtime_unavailable",
-            );
-            return (StatusCode::SERVICE_UNAVAILABLE, error.to_string()).into_response();
-        }
-        Err(SessionProfileAdmissionError::Denied) => {
-            log_ws_auth(
-                bearer_auth_enabled,
-                bearer_auth_result(bearer_auth_enabled),
-                "denied",
-                "denied",
-                "device_not_admitted",
-            );
-            return (StatusCode::FORBIDDEN, "device not admitted").into_response();
-        }
-        Err(SessionProfileAdmissionError::AdmissionUnavailable) => {
-            log_ws_auth(
-                bearer_auth_enabled,
-                bearer_auth_result(bearer_auth_enabled),
-                "unavailable",
-                "denied",
-                "device_admission_unavailable",
-            );
-            return (
-                StatusCode::SERVICE_UNAVAILABLE,
-                "device admission unavailable",
-            )
-                .into_response();
-        }
-        Err(SessionProfileAdmissionError::ProfileUnavailable) => {
-            debug!(
-                device_id = %device_id,
-                "the admitted agent has no usable effective session profile"
-            );
-            log_ws_auth(
-                bearer_auth_enabled,
-                bearer_auth_result(bearer_auth_enabled),
-                "unavailable",
-                "denied",
-                "profile_unavailable",
-            );
-            return (StatusCode::SERVICE_UNAVAILABLE, "agent profile unavailable").into_response();
-        }
-        Err(SessionProfileAdmissionError::ShuttingDown) => {
-            log_ws_auth(
-                bearer_auth_enabled,
-                bearer_auth_result(bearer_auth_enabled),
-                "unavailable",
-                "denied",
-                "shutting_down",
-            );
-            return (StatusCode::SERVICE_UNAVAILABLE, "server is shutting down").into_response();
-        }
+        Admission::Voice(runtimes) => *runtimes,
     };
-    if assistant_connection.is_some()
-        && let Some(guard) = &profile.external_mcp().guard
-    {
-        assistant_auth.register_close(&guard.close);
-    }
-    // Only the consumed, origin-bound ticket plus managed admission can create this capability.
-    let system_mcp =
-        if assistant_connection.is_some() && profile.device_db_id > 0 && profile.agent_id > 0 {
-            if let (Some(core), Some(database)) = (&state.system_mcp, &state.database) {
-                let _publication = database.tool_security.publication.read().await;
-                match database
-                    .system_mcp_grants(state.config.system_mcp.enabled)
-                    .await
-                {
-                    Ok(settings) => {
-                        let context = crate::tools::system_mcp::SystemToolContext {
-                            caller: crate::tools::system_mcp::SystemCaller::WebAssistant {
-                                device_db_id: profile.device_db_id,
-                                agent_id: profile.agent_id,
-                            },
-                            grants: settings.grants,
-                            revoked: database.tool_security.register_system_mcp(profile.agent_id),
-                            cancellation: CancellationToken::new(),
-                            deadline: tokio::time::Instant::now(),
-                        };
-                        assistant_auth.register_close(&context.revoked);
-                        Some(crate::tools::system_mcp::SessionSystemMcp {
-                            core: core.clone(),
-                            tools: core.list_tools(&context),
-                            context,
-                        })
-                    }
-                    Err(_) => None,
-                }
-            } else {
-                None
-            }
-        } else {
-            None
-        };
-    let resolved_runtimes = match profile
-        .selected_runtimes
-        .clone()
-        .map(Ok)
-        .unwrap_or_else(|| state.runtimes.resolve(&profile.providers))
-    {
-        Ok(runtimes) => runtimes,
-        Err(error) => {
-            debug!(%error, "configured provider runtime is unavailable");
-            return (
-                StatusCode::SERVICE_UNAVAILABLE,
-                "configured provider runtime is unavailable",
-            )
-                .into_response();
-        }
-    };
-    // One session identity, used both as the Voice Session's own id and as the archive's session
-    // key: a transcript row groups by the same WebSocket connection, so a second database-side
-    // session identity would be a second thing to keep in step.
-    let session_id = Uuid::new_v4().to_string();
-    if let Some(ref conn) = assistant_connection
-        && !profile.agent_key.is_empty()
-    {
-        assistant_auth.register_session(session_id.clone(), profile.agent_key.clone(), conn);
-    }
-    let reminder_tools = if let Some(ref database) = state.database
-        && profile.device_db_id > 0
-        && profile.agent_id > 0
-    {
-        match crate::database::notifications::DeviceNotifications::new(database.as_ref().clone())
-            .grant(&profile.agent_key)
-            .await
-        {
-            Ok((true, _)) => {
-                let coordinator =
-                    crate::services::notifications::ReminderCoordinator::from_database(
-                        database.as_ref().clone(),
-                        Arc::clone(&state.active_device_sessions),
-                    );
-                let target = match &assistant_connection {
-                    Some(conn) => {
-                        crate::services::notifications::SessionReminderTarget::WebAssistant {
-                            assistant_device_id: device_id.to_owned(),
-                            bound_target: Arc::clone(&conn.reminder_target),
-                        }
-                    }
-                    None => crate::services::notifications::SessionReminderTarget::Physical {
-                        device_row_id: profile.device_db_id,
-                        device_id: device_id.to_owned(),
-                    },
-                };
-                Some(crate::services::notifications::SessionReminderTools {
-                    coordinator,
-                    agent_id: profile.agent_id,
-                    agent_key: profile.agent_key.clone(),
-                    default_timezone: config.orchestrator.default_timezone.clone(),
-                    target,
-                })
-            }
-            _ => None,
-        }
-    } else {
-        None
-    };
-    let transcript = state.transcript_capture(&session_id, &profile);
-    let admission_gate = Arc::clone(state.admission_gate());
-    // Resolve the immutable, Agent-scoped candidate snapshot before the upgrade closure owns state.
-    let speaker_timer = metrics
-        .as_ref()
-        .map(|metrics| metrics.timer(RuntimePhase::WsSpeaker));
-    let speaker_observe =
-        match resolve_speaker_observe(&state, &profile, &resolved_runtimes, &config).await {
-            Ok(resolved) => resolved,
-            Err(response) => return response,
-        };
-    drop(speaker_timer);
-    let active_turn_limiter = state.active_turn_limiter;
-    let pilot_admission = state.pilot_admission;
     let stopping = state.lifecycle.stopping().clone();
-    let writer_probe = state.writer_outcome_probe.clone();
     let session_span = tracing::info_span!(
         "voice_session",
-        session_id = %session_id,
-        agent_key = %profile.agent_key,
+        session_id = %runtimes.session_id,
+        agent_key = %runtimes.profile.agent_key,
     );
     session_span.in_scope(|| {
         info!(
             event = "ws_upgrade_accepted",
-            agent_key = %profile.agent_key,
-            template = ?profile.source,
+            agent_key = %runtimes.profile.agent_key,
+            template = ?runtimes.profile.source,
             "WebSocket upgrade accepted"
         );
         log_ws_auth(
@@ -427,45 +79,12 @@ pub(crate) async fn handler(
             "ok",
         );
     });
-    let max = config.websocket.max_frame_bytes;
     upgrade
-        // The transport cap bounds the whole message, not only each frame: continuation frames
-        // that each fit `max_frame_size` would otherwise be reassembled up to the library default
-        // before the application size check below ever runs.
-        .max_frame_size(max.saturating_add(1024))
-        .max_message_size(max.saturating_add(1024))
         .on_upgrade(move |socket| {
             handle_socket(
                 socket,
                 config,
-                SocketRuntimes {
-                    job_submit: crate::services::task_flow::VoiceTaskSubmit::admitted(
-                        state.task_manager.as_ref(),
-                        profile.device_db_id,
-                        profile.agent_id,
-                    ),
-                    asr: resolved_runtimes.asr,
-                    vad: resolved_runtimes.vad,
-                    llm: resolved_runtimes.llm,
-                    tts: resolved_runtimes.tts,
-                    vad_segmenter: resolved_runtimes.vad_segmenter,
-                    vad_pre_roll_samples: resolved_runtimes.vad_pre_roll_samples,
-                    active_turn_limiter,
-                    pilot_admission,
-                    writer_probe,
-                    profile,
-                    session_id,
-                    transcript,
-                    speaker_observe,
-                    admission_gate,
-                    connect_started,
-                    metrics,
-                    assistant_connection,
-                    system_mcp,
-                    reminder_tools,
-                    active_device_sessions: state.active_device_sessions.clone(),
-                    database: state.database.clone(),
-                },
+                runtimes,
                 SessionControl {
                     stopping,
                     drain_close: drain.close_signal(),
@@ -522,99 +141,6 @@ pub(crate) struct WebsocketQuery {
     client_id: Option<String>,
     authorization: Option<String>,
     ticket: Option<String>,
-}
-
-struct PlaybackTurn {
-    id: crate::session::TurnId,
-    start_was_sent: bool,
-}
-
-/// Reports a turn's terminal outcome to the actor, giving a test harness its boundary probe.
-/// Every `TurnClosed` the writer produces goes through here so no boundary can bypass the seam.
-async fn report_turn_closed(
-    writer_event_tx: &mpsc::Sender<WriterEvent>,
-    probe: Option<&Arc<dyn crate::session::WriterOutcomeProbe>>,
-    turn_id: crate::session::TurnId,
-    outcome: WriterTurnOutcome,
-) {
-    if let Some(probe) = probe {
-        probe
-            .before_terminal_outcome(turn_id, outcome.clone())
-            .await;
-    }
-    let _ = writer_event_tx
-        .send(WriterEvent::TurnClosed {
-            turn_id,
-            outcome: outcome.clone(),
-        })
-        .await;
-    if let Some(probe) = probe {
-        probe
-            .after_terminal_outcome_reported(turn_id, outcome)
-            .await;
-    }
-}
-
-fn header_is(headers: &HeaderMap, name: &str, expected: &str) -> bool {
-    headers.get(name).and_then(|value| value.to_str().ok()) == Some(expected)
-}
-
-/// Browser clients cannot set custom headers; legacy clients may omit the version entirely.
-fn header_or_query_is_or_absent(
-    headers: &HeaderMap,
-    header_name: &str,
-    query_value: Option<&str>,
-    expected: &str,
-) -> bool {
-    match headers.get(header_name) {
-        Some(_) => header_is(headers, header_name, expected),
-        None => query_value.is_none_or(|value| value == expected),
-    }
-}
-
-fn header_or_query_is(
-    headers: &HeaderMap,
-    header_name: &str,
-    query_value: Option<&str>,
-    expected: &str,
-) -> bool {
-    match headers.get(header_name) {
-        Some(_) => header_is(headers, header_name, expected),
-        None => query_value == Some(expected),
-    }
-}
-
-/// Browser WebSocket APIs cannot set custom headers, so accept identity query fallbacks.
-fn header_or_query_present(
-    headers: &HeaderMap,
-    header_name: &str,
-    query_value: Option<&str>,
-) -> bool {
-    match headers.get(header_name) {
-        Some(value) => value.to_str().is_ok_and(|value| !value.is_empty()),
-        None => query_value.is_some_and(|value| !value.is_empty()),
-    }
-}
-
-fn header_or_query_value<'a>(
-    headers: &'a HeaderMap,
-    header_name: &str,
-    query_value: Option<&'a str>,
-) -> Option<&'a str> {
-    headers
-        .get(header_name)
-        .and_then(|value| value.to_str().ok())
-        .filter(|value| !value.is_empty())
-        .or(query_value.filter(|value| !value.is_empty()))
-}
-
-/// Device identity is an opaque protocol key: bounded, printable and never normalized before
-/// admission so the database unique key retains the exact client-provided identity.
-fn valid_device_identity(value: &str) -> bool {
-    (1..=128).contains(&value.len())
-        && !value
-            .bytes()
-            .any(|byte| byte == b'\0' || byte.is_ascii_control())
 }
 
 struct SocketRuntimes {
@@ -755,13 +281,13 @@ async fn handle_socket(
         "ClientHello accepted"
     );
 
-    let (control_tx, mut control_rx) = mpsc::channel(config.limits.outbound_control_queue);
-    let (urgent_tx, mut urgent_rx) = mpsc::channel(config.limits.urgent_control_queue);
-    let (audio_tx, mut audio_rx) = mpsc::channel(config.limits.outbound_audio_queue);
+    let (control_tx, control_rx) = mpsc::channel(config.limits.outbound_control_queue);
+    let (urgent_tx, urgent_rx) = mpsc::channel(config.limits.urgent_control_queue);
+    let (audio_tx, audio_rx) = mpsc::channel(config.limits.outbound_audio_queue);
     let (writer_event_tx, writer_event_rx) = mpsc::channel(config.limits.session_event_queue);
     let generation_gate = Arc::new(crate::session::GenerationGate::new());
     let (ingress_tx, ingress_rx) = mpsc::channel(config.limits.session_event_queue);
-    let (shutdown_tx, mut shutdown_rx) = tokio::sync::watch::channel(false);
+    let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
     // The writer reads this to learn the application stopped it. It must outlive SessionActor's own
     // sender — an actor that ends for an ordinary reason would otherwise stop the writer mid-drain —
     // and is released explicitly once the actor has finished and every lane has been closed.
@@ -913,163 +439,31 @@ async fn handle_socket(
     drop(hello_init_timer);
     let hello_queued = Instant::now();
     actor.start_mcp_discovery();
-    let ping_period = Duration::from_millis(config.websocket.ping_interval_ms);
-    let pings_enabled = !ping_period.is_zero();
-    let writer = tokio::spawn(async move {
-        let probe = writer_probe.clone();
-        // Server Pings keep NAT/proxy state alive and give a responsive peer something to answer,
-        // which is what the reader's idle close measures.
-        let mut ping = tokio::time::interval_at(
-            tokio::time::Instant::now() + ping_period.max(Duration::from_millis(1)),
-            ping_period.max(Duration::from_millis(1)),
-        );
-        ping.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-        let mut active_turn: Option<PlaybackTurn> = None;
-        let mut deferred_finish: Option<OutboundMessage> = None;
-        let mut hello_pending = true;
-        loop {
-            tokio::select! {
-                biased;
-                Some(message) = urgent_rx.recv() => {
-                    match message {
-                        OutboundMessage::AbortTurn { turn_id, text } => {
-                            if active_turn.as_ref().is_some_and(|active| active.id == turn_id) {
-                                deferred_finish = None;
-                                let start_was_sent = active_turn.as_ref().is_some_and(|active| active.start_was_sent);
-                                let stop_was_sent = if start_was_sent {
-                                    if send_outbound(&mut sender, write_timeout, OutboundMessage::Text(text), &generation_gate, &pipeline_request).await {
-                                        let _ = writer_event_tx.send(WriterEvent::Failed { turn_id: Some(turn_id) }).await;
-                                        break;
-                                    }
-                                    true
-                                } else {
-                                    false
-                                };
-                                active_turn = None;
-                                report_turn_closed(&writer_event_tx, probe.as_ref(), turn_id, WriterTurnOutcome::Aborted { start_was_sent, stop_was_sent }).await;
-                            } else {
-                                // Begin may still be queued behind this urgent command. The
-                                // actor needs a terminal outcome so it can release this turn's
-                                // permit; a later Begin for the same invalid generation is
-                                // rejected at the gate.
-                                report_turn_closed(&writer_event_tx, probe.as_ref(), turn_id, WriterTurnOutcome::Aborted { start_was_sent: false, stop_was_sent: false }).await;
-                            }
-                        }
-                        message => if send_outbound(&mut sender, write_timeout, message, &generation_gate, &pipeline_request).await {
-                            break;
-                        },
-                    }
-                },
-                // A normal stop follows the final paced packet, but only after the urgent
-                // lane has had its chance to preempt it.
-                _ = std::future::ready(()), if deferred_finish.is_some() && audio_rx.is_empty() => {
-                    let OutboundMessage::FinishTurn { turn_id, text } = deferred_finish.take().expect("checked above") else { unreachable!() };
-                    if send_outbound(&mut sender, write_timeout, OutboundMessage::Text(text), &generation_gate, &pipeline_request).await {
-                        let _ = writer_event_tx.send(WriterEvent::Failed { turn_id: Some(turn_id) }).await;
-                        break;
-                    }
-                    active_turn = None;
-                    report_turn_closed(&writer_event_tx, probe.as_ref(), turn_id, WriterTurnOutcome::Normal).await;
-                },
-                Some(message) = control_rx.recv() => {
-                    match message {
-                        OutboundMessage::BeginTurn { generation, turn_id, text } => {
-                            if active_turn.is_none() && generation_gate.admits(generation) {
-                                if send_outbound(&mut sender, write_timeout, OutboundMessage::Text(text), &generation_gate, &pipeline_request).await {
-                                    let _ = writer_event_tx.send(WriterEvent::Failed { turn_id: Some(turn_id) }).await;
-                                    break;
-                                }
-                                active_turn = Some(PlaybackTurn { id: turn_id, start_was_sent: true });
-                            }
-                        }
-                        OutboundMessage::FinishTurn { turn_id, text } => {
-                            // Every turn-scoped command ends in exactly one terminal outcome the
-                            // actor can act on: it holds the turn's delivery and Active Turn
-                            // capacity until it hears one. Only the active turn is deferred behind
-                            // its paced audio; a Finish for a turn whose Begin the writer never
-                            // admitted (stale generation, or another turn still playing) closes
-                            // immediately as aborted with nothing sent. A duplicate for a turn
-                            // already closed is ignored by the actor, since Turn IDs never repeat.
-                            if !active_turn.as_ref().is_some_and(|active| active.id == turn_id) {
-                                report_turn_closed(&writer_event_tx, probe.as_ref(), turn_id, WriterTurnOutcome::Aborted { start_was_sent: false, stop_was_sent: false }).await;
-                            } else if !audio_rx.is_empty() {
-                                deferred_finish = Some(OutboundMessage::FinishTurn { turn_id, text });
-                            } else {
-                                if send_outbound(&mut sender, write_timeout, OutboundMessage::Text(text), &generation_gate, &pipeline_request).await {
-                                    let _ = writer_event_tx.send(WriterEvent::Failed { turn_id: Some(turn_id) }).await;
-                                    break;
-                                }
-                                active_turn = None;
-                                report_turn_closed(&writer_event_tx, probe.as_ref(), turn_id, WriterTurnOutcome::Normal).await;
-                            }
-                        }
-                        message => {
-                            let sends_hello = hello_pending && matches!(&message, OutboundMessage::Text(_));
-                            if send_outbound(&mut sender, write_timeout, message, &generation_gate, &pipeline_request).await {
-                                break;
-                            }
-                            if sends_hello {
-                                hello_pending = false;
-                                if let Some(metrics) = &metrics {
-                                    metrics.observe(RuntimePhase::WsHelloSend, hello_queued.elapsed());
-                                    metrics.observe(RuntimePhase::WsConnect, connect_started.elapsed());
-                                }
-                                info!(
-                                    event = "ws_connected",
-                                    outcome = "success",
-                                    elapsed_ms = connect_started.elapsed().as_millis() as u64,
-                                    pre_upgrade_ms = socket_started.duration_since(connect_started).as_millis() as u64,
-                                    after_upgrade_ms = socket_started.elapsed().as_millis() as u64,
-                                    "ServerHello sent; voice session connected"
-                                );
-                            }
-                        },
-                    }
-                },
-                _ = ping.tick(), if pings_enabled => {
-                    if let Err(error) = send_frame(&mut sender, write_timeout, Message::Ping(Default::default())).await {
-                        warn!(event = "ws_writer_failed", outcome = "failure", %error, "websocket ping failed");
-                        break;
-                    }
-                },
-                Some(message) = audio_rx.recv() => {
-                    if let OutboundMessage::Binary { turn_id, .. } = &message
-                        && active_turn.as_ref().is_some_and(|active| active.start_was_sent && active.id == *turn_id)
-                        && send_outbound(&mut sender, write_timeout, message, &generation_gate, &pipeline_request).await
-                    {
-                        break;
-                    }
-                },
-                // The application's stop signal for this writer is deliberately the *last* branch,
-                // and `biased` makes that deterministic: every lane above is served first, so a
-                // terminal control message the actor already queued — `Close(1001)` on a controlled
-                // close — still reaches the client before the loop ends. Stopping here first would
-                // discard it.
-                //
-                // It is also the only branch that can stay pending once every lane has closed,
-                // because it never completes while any sender for the watch channel lives — and
-                // until it completes, `select!` keeps the whole loop pending no matter how many
-                // lanes have closed. That is why the sender is released explicitly during teardown
-                // rather than left to the end of this function: a writer waiting on it is a session
-                // the drain can never observe finishing.
-                changed = shutdown_rx.changed() => {
-                    if changed.is_err() || *shutdown_rx.borrow() {
-                        break;
-                    }
-                },
-                else => {
-                    if let Some(OutboundMessage::FinishTurn { turn_id, text }) = deferred_finish.take()
-                        && send_outbound(&mut sender, write_timeout, OutboundMessage::Text(text), &generation_gate, &pipeline_request).await
-                    {
-                        let _ = writer_event_tx.send(WriterEvent::Failed { turn_id: Some(turn_id) }).await;
-                        break;
-                    }
-                    break;
-                },
-            }
+    let writer = tokio::spawn(
+        writer::WebSocketWriter {
+            sender,
+            write_timeout,
+            ping_period: Duration::from_millis(config.websocket.ping_interval_ms),
+            generation_gate,
+            pipeline_request,
+            writer_events: writer_event_tx,
+            probe: writer_probe,
+            hello: writer::HelloTelemetry {
+                metrics,
+                connect_started,
+                socket_started,
+                hello_queued,
+            },
+            done: pipeline_writer_done,
         }
-        let _ = pipeline_writer_done.send(true);
-    }.instrument(tracing::Span::current()));
+        .run(writer::WriterLanes {
+            urgent: urgent_rx,
+            control: control_rx,
+            audio: audio_rx,
+            shutdown: shutdown_rx,
+        })
+        .instrument(tracing::Span::current()),
+    );
 
     if physical_connection {
         active_device_sessions.register(
@@ -1545,111 +939,6 @@ async fn next_application_frame(
             other => return other,
         }
     }
-}
-
-/// Install optional, Agent-scoped speaker identification. No voice-based admission
-/// or tool gate exists: inference failures do not interrupt the ordinary pipeline.
-#[allow(clippy::result_large_err)] // The admission boundary returns its HTTP rejection directly.
-async fn resolve_speaker_observe(
-    state: &AppState,
-    profile: &crate::session::EffectiveSessionProfile,
-    _resolved: &crate::providers::ResolvedAgentRuntimes,
-    config: &AppConfig,
-) -> Result<Option<Arc<SpeakerObserve>>, Response> {
-    let Some(database) = state.database.as_ref() else {
-        return Ok(None);
-    };
-    let policy = match crate::session::resolve_speaker_policy(database, profile.agent_id).await {
-        Ok(Some(mode)) => mode,
-        Ok(None) => crate::session::SpeakerPolicyMode::Off,
-        Err(cause) => {
-            warn!(
-                subsystem = "voice.speaker",
-                event = "speaker_policy_unavailable",
-                %cause,
-                "speaker identification preference unavailable"
-            );
-            return Ok(None);
-        }
-    };
-    let enabled = policy == crate::session::SpeakerPolicyMode::Observe;
-    let runtime = state.speaker_runtime.as_ref();
-    if !enabled || runtime.is_none() {
-        info!(
-            subsystem = "voice.speaker",
-            event = "speaker_observe_configured",
-            agent_key = %profile.agent_key,
-            speaker_enabled = enabled,
-            engine_available = runtime.is_some(),
-            candidate_count = 0,
-            "ws speaker identification configuration"
-        );
-        return Ok(None);
-    }
-    let runtime = runtime.expect("checked built-in speaker runtime availability");
-    let plan = match crate::session::resolve_observe_plan(
-        database,
-        profile.agent_id,
-        0,
-        runtime.embedding_space_id(),
-    )
-    .await
-    {
-        Ok(crate::session::ObserveResolution::Plan(plan)) => plan,
-        Ok(_) => {
-            info!(
-                subsystem = "voice.speaker",
-                event = "speaker_observe_configured",
-                agent_key = %profile.agent_key,
-                speaker_enabled = true,
-                engine_available = true,
-                candidate_count = 0,
-                "ws speaker identification configuration"
-            );
-            return Ok(None);
-        }
-        Err(cause) => {
-            warn!(
-                subsystem = "voice.speaker",
-                event = "speaker_candidates_unavailable",
-                %cause,
-                "speaker candidates unavailable, continuing without identification"
-            );
-            return Ok(None);
-        }
-    };
-    if plan.candidates.len() > config.speaker_recognition.max_candidates_per_agent {
-        warn!(
-            subsystem = "voice.speaker",
-            event = "speaker_candidate_cap_exceeded",
-            agent_key = %profile.agent_key,
-            "speaker candidate cap exceeded"
-        );
-        return Ok(None);
-    }
-    info!(
-        subsystem = "voice.speaker",
-        event = "speaker_observe_configured",
-        agent_key = %profile.agent_key,
-        speaker_enabled = true,
-        engine_available = true,
-        candidate_count = plan.candidates.len(),
-        "ws speaker identification configuration"
-    );
-    let observe_config = &config.speaker_recognition.observe;
-    let quality = crate::audio::enrollment::QualityProfile {
-        min_clip_ms: observe_config.min_clip_ms,
-        max_clip_ms: 6_000, // Observe PCM buffer hard cap.
-        min_speech_ms: observe_config.min_speech_ms,
-        max_window_ms: observe_config.max_window_ms,
-    };
-    Ok(Some(Arc::new(SpeakerObserve::new_builtin(
-        Arc::clone(runtime),
-        plan,
-        quality,
-        config.speaker_recognition.similarity_threshold,
-        observe_config.join_timeout_ms,
-    ))))
 }
 
 #[cfg(test)]

@@ -469,6 +469,9 @@ async fn silent_peer_is_closed_after_idle_timeout() {
     let _ = next_message(&mut socket).await;
     // Not reading means not answering the server's Pings.
     tokio::time::sleep(Duration::from_millis(600)).await;
+    // The client answers the queued Pings only now, after the server already closed; its Pong can
+    // meet a reset socket and hide the Close frame, so the end of the connection is the contract
+    // and a Close frame, when it is observed, must carry 1001.
     let closed = timeout(Duration::from_secs(1), async {
         loop {
             match socket.next().await {
@@ -480,7 +483,10 @@ async fn silent_peer_is_closed_after_idle_timeout() {
     })
     .await
     .expect("silent peer was never closed");
-    assert_eq!(closed, Some(1001));
+    assert!(
+        closed.is_none_or(|code| code == 1001),
+        "unexpected close code {closed:?}"
+    );
     task.abort();
 }
 

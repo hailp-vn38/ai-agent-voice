@@ -35,6 +35,16 @@ flowchart LR
     S --> H[HTTP 101]
 ```
 
+Toàn bộ quyết định trước 101 nằm trong
+[`admission::admit`](../../crates/voice-agent-server/src/app/transport/websocket/admission.rs):
+handler chỉ nhận `Admission` (Voice hoặc Enrollment) hoặc đúng một `Rejection`;
+mỗi `Rejection` tự mang HTTP response và log `ws_auth` (`reason_code`,
+`bearer_auth_result`, `device_admission_result`), nên mọi lần từ chối đều được
+log cùng một cách. WebSocket Writer nằm ở
+[`writer.rs`](../../crates/voice-agent-server/src/app/transport/websocket/writer.rs);
+phần trọng tài playback (`PlaybackArbiter`) không làm I/O và bảo đảm mỗi lệnh
+turn kết thúc bằng đúng một `TurnClosed`.
+
 Runtime bắt buộc lỗi vẫn trả HTTP 503 trước upgrade, hủy phần discovery còn
 chờ; native attempts vẫn do manager giữ accounting đến completion. MCP lỗi
 chỉ exclude tools. Hai phần cùng thành công hoặc MCP bị exclude mới hoàn tất
