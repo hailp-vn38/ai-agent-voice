@@ -231,7 +231,6 @@ watch(
     }
     const visualArtifacts = new Map<string, JobArtifact>()
     for (const activity of activities) {
-      if (activity.kind !== 'media') continue
       for (const art of activity.artifacts ?? []) {
         if (mediaArtifactKind(art)) {
           visualArtifacts.set(art.id, art)
@@ -787,7 +786,6 @@ function footerRight(activity: UnifiedActivity): string {
                                 preload="metadata"
                                 class="media-card-video"
                                 data-canvas-media-video
-                                @click.stop
                               />
                               <img
                                 v-else-if="media.kind === 'image' && media.src"
@@ -916,6 +914,7 @@ function footerRight(activity: UnifiedActivity): string {
       :job-id="jobId"
       :activity="inspectedActivity"
       :open="inspectorOpen"
+      :media-urls="mediaBlobUrls"
       @close="closeInspector"
     />
     <ArtifactPreviewDialog

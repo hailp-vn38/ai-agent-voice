@@ -1,23 +1,38 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { Cpu, Download, Eye, File, X } from '@lucide/vue'
 import { agentJobsApi } from '@/api/agent-jobs'
 import { formatApiError } from '@/api/errors'
 import type { JobArtifact, JobEvent } from '@/api/types/agent-jobs'
 import { jobResultReport } from '@/domain/jobs/result-report'
-import type { ActivityKind, UnifiedActivity } from '@/domain/jobs/unified-activity'
+import {
+  extractMarkdownMediaEmbeds,
+  mediaArtifactKind,
+  type ActivityKind,
+  type UnifiedActivity,
+} from '@/domain/jobs/unified-activity'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { useI18n } from '@/composables/useI18n'
 import ArtifactPreviewDialog, { artifactPreview } from './artifacts/ArtifactPreviewDialog.vue'
+
+export interface InspectorMediaItem {
+  id: string
+  kind: 'image' | 'video'
+  title: string
+  subtitle: string | null
+  src: string
+  artifact?: JobArtifact
+}
 
 const props = withDefaults(
   defineProps<{
     jobId?: string
     activity: UnifiedActivity | null
     open?: boolean
+    mediaUrls?: Record<string, string>
   }>(),
-  { open: true },
+  { open: true, mediaUrls: undefined },
 )
 const emit = defineEmits<{
   close: []
@@ -30,10 +45,96 @@ const agentMessages = computed(() =>
   (props.activity?.agentRun?.messages ?? []).filter(m => m.text && m.text.trim().length > 0),
 )
 const activityArtifacts = computed(() => props.activity?.artifacts ?? [])
+const nonMediaArtifacts = computed(() =>
+  activityArtifacts.value.filter(item => !mediaArtifactKind(item)),
+)
 const report = computed(() => jobResultReport(props.activity?.jobResult))
 const selectedArtifact = ref<JobArtifact | null>(null)
 const artifactError = ref('')
 const downloadingId = ref<string | null>(null)
+
+const localBlobUrls = ref<Record<string, string>>({})
+let activeLocalBlobs: Record<string, string> = {}
+let blobLoadGen = 0
+
+function revokeLocalBlobs() {
+  for (const url of Object.values(activeLocalBlobs)) {
+    if (url.startsWith('blob:')) URL.revokeObjectURL(url)
+  }
+  activeLocalBlobs = {}
+  localBlobUrls.value = {}
+}
+
+watch(
+  [() => props.jobId, () => props.activity, () => props.open],
+  async ([jobId, activity, isOpen]) => {
+    const gen = ++blobLoadGen
+    if (!isOpen || !activity || !jobId || typeof agentJobsApi.artifact !== 'function') {
+      return
+    }
+    const visualArtifacts = (activity.artifacts ?? []).filter(art => mediaArtifactKind(art) !== null)
+    await Promise.all(
+      visualArtifacts.map(async art => {
+        if (props.mediaUrls?.[art.id] || activeLocalBlobs[art.id]) return
+        try {
+          const file = await agentJobsApi.artifact(jobId, art.id)
+          if (gen !== blobLoadGen) return
+          const mime = (art.media_type ?? art.mime_type ?? '').trim() || undefined
+          const blobUrl = URL.createObjectURL(mime ? new Blob([file], { type: mime }) : file)
+          activeLocalBlobs = { ...activeLocalBlobs, [art.id]: blobUrl }
+          localBlobUrls.value = { ...activeLocalBlobs }
+        } catch {
+          // Fallback to download_url or API path
+        }
+      }),
+    )
+  },
+  { immediate: true },
+)
+
+function resolveArtifactMediaSrc(art: JobArtifact): string {
+  const preloaded = props.mediaUrls?.[art.id] ?? localBlobUrls.value[art.id]
+  if (preloaded) return preloaded
+  if (art.download_url) return art.download_url
+  if (props.jobId) {
+    return `/api/admin/jobs/${encodeURIComponent(props.jobId)}/artifacts/${encodeURIComponent(art.id)}`
+  }
+  return ''
+}
+
+const mediaItems = computed<InspectorMediaItem[]>(() => {
+  const activity = props.activity
+  if (!activity) return []
+  const items: InspectorMediaItem[] = []
+  for (const art of activity.artifacts ?? []) {
+    const kind = mediaArtifactKind(art)
+    if (!kind) continue
+    const mime = art.media_type || art.mime_type || kind
+    const sizeLabel = art.size_bytes >= 0 ? `${(art.size_bytes / 1024).toFixed(1)} KiB` : null
+    items.push({
+      id: `artifact:${art.id}`,
+      kind,
+      title: art.filename || art.name || art.id,
+      subtitle: sizeLabel ? `${mime} · ${sizeLabel}` : mime,
+      src: resolveArtifactMediaSrc(art),
+      artifact: art,
+    })
+  }
+  const embeds =
+    activity.mediaEmbeds && activity.mediaEmbeds.length > 0
+      ? activity.mediaEmbeds
+      : extractMarkdownMediaEmbeds(activity.assistantMessage)
+  for (const embed of embeds) {
+    items.push({
+      id: embed.id,
+      kind: embed.kind,
+      title: embed.title,
+      subtitle: embed.kind.toUpperCase(),
+      src: embed.url,
+    })
+  }
+  return items
+})
 
 function onKeydown(event: KeyboardEvent) {
   if (event.key === 'Escape' && props.open) {
@@ -46,7 +147,11 @@ function onKeydown(event: KeyboardEvent) {
 }
 
 onMounted(() => window.addEventListener('keydown', onKeydown))
-onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
+onBeforeUnmount(() => {
+  blobLoadGen++
+  revokeLocalBlobs()
+  window.removeEventListener('keydown', onKeydown)
+})
 
 function canPreview(item: JobArtifact): boolean {
   const preview = artifactPreview(item)
@@ -165,7 +270,7 @@ function stageNote(event: JobEvent): string {
       aria-modal="true"
       :aria-label="activity?.title || t('jobUi.eventInspector')"
       data-activity-modal
-      class="studio-panel inspector relative z-10 flex max-h-[88vh] w-full max-w-2xl flex-col overflow-hidden border bg-background shadow-2xl"
+      class="studio-panel inspector relative z-10 flex max-h-[88vh] w-full max-w-3xl flex-col overflow-hidden border bg-background shadow-2xl"
     >
       <header class="surface-head flex shrink-0 items-center justify-between gap-2 border-b px-5 py-3.5">
         <h3 class="inline-flex items-center gap-2 text-xs font-semibold">
@@ -380,11 +485,73 @@ function stageNote(event: JobEvent): string {
             class="ins-pre mt-2 max-h-64 overflow-auto whitespace-pre-wrap break-all rounded-lg bg-muted p-2"
           >{{ report.text }}</pre>
         </details>
-        <details v-if="activityArtifacts.length" class="mt-3 border-t pt-3 text-xs" open>
-          <summary class="cursor-pointer font-medium">{{ t('jobUi.artifacts') }} ({{ activityArtifacts.length }})</summary>
+        <details v-if="mediaItems.length" class="mt-3 border-t pt-3 text-xs" open>
+          <summary class="cursor-pointer font-medium">{{ t('jobUi.media') }} ({{ mediaItems.length }})</summary>
+          <div class="mt-2 space-y-3" data-modal-media-list>
+            <div
+              v-for="media in mediaItems"
+              :key="media.id"
+              class="overflow-hidden rounded-xl border border-border/70 bg-muted/40 p-3"
+              :data-modal-media-kind="media.kind"
+            >
+              <div class="flex items-center justify-center overflow-hidden rounded-lg bg-black/80">
+                <video
+                  v-if="media.kind === 'video' && media.src"
+                  :src="media.src"
+                  controls
+                  preload="metadata"
+                  class="max-h-[55vh] w-full object-contain"
+                  data-modal-media-video
+                />
+                <img
+                  v-else-if="media.kind === 'image' && media.src"
+                  :src="media.src"
+                  :alt="media.title"
+                  loading="lazy"
+                  class="max-h-[55vh] w-full object-contain"
+                  data-modal-media-image
+                />
+              </div>
+              <div class="mt-2.5 flex items-center justify-between gap-2">
+                <div class="min-w-0">
+                  <p class="truncate font-medium" :title="media.title">
+                    {{ media.kind === 'video' ? '🎬' : '🖼️' }} {{ media.title }}
+                  </p>
+                  <p v-if="media.subtitle" class="truncate text-[10px] text-muted-foreground">
+                    {{ media.subtitle }}
+                  </p>
+                </div>
+                <div v-if="media.artifact && props.jobId" class="flex shrink-0 items-center gap-1">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    class="h-7 px-2 text-[10px]"
+                    :disabled="downloadingId !== null"
+                    @click="downloadArtifact(media.artifact)"
+                  >
+                    <Download class="size-3" />{{ t('jobUi.download') }}
+                  </Button>
+                  <Button
+                    v-if="canPreview(media.artifact)"
+                    variant="outline"
+                    size="sm"
+                    class="h-7 px-2 text-[10px]"
+                    data-artifact-preview
+                    @click="selectedArtifact = media.artifact"
+                  >
+                    <Eye class="size-3" />Preview
+                  </Button>
+                </div>
+              </div>
+            </div>
+            <p v-if="artifactError && !nonMediaArtifacts.length" role="alert" class="text-xs text-danger">{{ artifactError }}</p>
+          </div>
+        </details>
+        <details v-if="nonMediaArtifacts.length" class="mt-3 border-t pt-3 text-xs" open>
+          <summary class="cursor-pointer font-medium">{{ t('jobUi.artifacts') }} ({{ nonMediaArtifacts.length }})</summary>
           <div class="mt-2 space-y-2">
             <div
-              v-for="item in activityArtifacts"
+              v-for="item in nonMediaArtifacts"
               :key="item.id"
               class="flex items-center justify-between gap-2 rounded-lg bg-muted p-2"
             >

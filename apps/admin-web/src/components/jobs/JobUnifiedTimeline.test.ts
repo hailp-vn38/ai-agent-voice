@@ -230,6 +230,16 @@ describe('nested Job timeline', () => {
 
       const video = mediaCard.get('[data-canvas-media-video]')
       expect(video.attributes('src')).toContain('/api/admin/jobs/job-media-1/artifacts/art-demo')
+
+      await mediaCard.trigger('click')
+      const modal = wrapper.get('[data-activity-modal]')
+      expect(modal.text()).toContain('poster.png')
+      expect(modal.text()).toContain('demo.mp4')
+      const modalImg = modal.get('[data-modal-media-image]')
+      expect(modalImg.attributes('alt')).toBe('poster.png')
+      expect(modalImg.attributes('src')).toContain('/api/admin/jobs/job-media-1/artifacts/art-poster')
+      const modalVideo = modal.get('[data-modal-media-video]')
+      expect(modalVideo.attributes('src')).toContain('/api/admin/jobs/job-media-1/artifacts/art-demo')
     } finally {
       wrapper.unmount()
     }
