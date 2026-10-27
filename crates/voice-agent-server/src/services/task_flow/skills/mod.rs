@@ -442,7 +442,9 @@ pub async fn save(
     {
         tracing::warn!(error = %err, skill_id = %id, "failed to reload orchestrator skills after save");
     }
-    sync_orchestrator_from_state(state).await;
+    if let Err(err) = sync_orchestrator_from_state(state).await {
+        tracing::warn!(error = %err, skill_id = %id, "failed to reconfigure orchestrator after skill save");
+    }
 
     let indexed = read_one_skill_from_dir(skills_dir, id)?;
     let settings = current_settings(state);
@@ -507,7 +509,9 @@ pub async fn delete(
     {
         tracing::warn!(error = %err, skill_id = %id, "failed to reload orchestrator skills after delete");
     }
-    sync_orchestrator_from_state(state).await;
+    if let Err(err) = sync_orchestrator_from_state(state).await {
+        tracing::warn!(error = %err, skill_id = %id, "failed to reconfigure orchestrator after skill delete");
+    }
 
     Ok(())
 }
