@@ -253,7 +253,7 @@ async fn failed_attempt_is_coalesced_during_cooldown_and_does_not_publish_ready(
     assert_eq!(manager.accounting().reserved_bytes, 0);
 }
 #[tokio::test]
-async fn uncertain_cleanup_retains_memory_and_loader_and_refuses_replacement() {
+async fn uncertain_cleanup_retains_memory_and_refuses_replacement_but_returns_the_loader() {
     let count = Arc::new(AtomicUsize::new(0));
     let manager = failure_manager(count.clone(), RuntimeError::Quarantined);
     assert!(matches!(
@@ -266,14 +266,21 @@ async fn uncertain_cleanup_retains_memory_and_loader_and_refuses_replacement() {
     ));
     assert_eq!(count.load(Ordering::SeqCst), 1);
     assert_eq!(manager.accounting().reserved_bytes, 10);
-    // A different revision queues but cannot start native work through the held loader slot.
+    // The quarantined attempt's thread has returned, so another revision still gets the loader.
     assert!(matches!(
         manager.acquire(snapshot(2)).await,
-        Err(RuntimeError::Timeout)
+        Err(RuntimeError::Quarantined)
     ));
-    assert_eq!(count.load(Ordering::SeqCst), 1);
+    assert_eq!(count.load(Ordering::SeqCst), 2);
     assert_eq!(manager.accounting().reserved_bytes, 20);
-    assert!(!manager.shutdown_until(tokio::time::Instant::now()).await);
+    // Reservations nothing can reclaim do not hold shutdown until its deadline.
+    let started = std::time::Instant::now();
+    assert!(
+        !manager
+            .shutdown_until(tokio::time::Instant::now() + std::time::Duration::from_secs(10))
+            .await
+    );
+    assert!(started.elapsed() < std::time::Duration::from_secs(1));
     assert!(matches!(
         manager.acquire(snapshot(3)).await,
         Err(RuntimeError::ShuttingDown)
@@ -397,13 +404,57 @@ async fn draining_resource_keeps_memory_until_actual_unload_acknowledgement() {
         manager.acquire(snapshot(2)).await,
         Err(RuntimeError::MemoryPressure)
     ));
-    assert!(matches!(
-        manager.acquire(snapshot(1)).await,
-        Err(RuntimeError::Unavailable)
-    ));
     release.send(()).unwrap();
     assert_eq!(unload.await.unwrap().unwrap(), 1);
     assert_eq!(manager.accounting().reserved_bytes, 0);
+}
+
+#[tokio::test]
+async fn acquiring_a_draining_version_waits_for_unload_and_rebuilds() {
+    let (entered, mut entered_rx) = tokio::sync::mpsc::unbounded_channel();
+    let (release, release_rx) = std::sync::mpsc::channel();
+    let manager = ProviderRuntimeManager::new(
+        RuntimeLimits {
+            max_parallel_loads: 1,
+            max_pending_loads: 1,
+            max_waiters: 2,
+            max_resident_bytes: 10,
+            max_resources: 1,
+            max_version_entries: 2,
+            admission_timeout_ms: 1000,
+            failure_cooldown_ms: 100,
+            idle_ttl_ms: 1000,
+        },
+        Arc::new(DrainingBuilder(Arc::new(DrainingResource {
+            entered,
+            release: std::sync::Mutex::new(release_rx),
+        }))),
+        AdmissionGate::open(),
+    )
+    .unwrap();
+    drop(manager.acquire(snapshot(1)).await.unwrap());
+    let unload = {
+        let manager = manager.clone();
+        tokio::spawn(async move { manager.evict_idle().await })
+    };
+    entered_rx.recv().await.unwrap();
+    let reacquire = {
+        let manager = manager.clone();
+        tokio::spawn(async move { manager.acquire(snapshot(1)).await })
+    };
+    tokio::time::timeout(std::time::Duration::from_secs(1), async {
+        while manager.accounting().waiters != 1 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    release.send(()).unwrap();
+    assert_eq!(unload.await.unwrap().unwrap(), 1);
+    let lease = reacquire.await.unwrap().unwrap();
+    assert_eq!(lease.version(), &ProviderVersion::database(1, 1));
+    assert_eq!(manager.accounting().reserved_bytes, 10);
+    assert_eq!(manager.accounting().build_attempts, 2);
 }
 
 #[tokio::test]
@@ -603,6 +654,50 @@ async fn unhealthy_retained_worker_is_quarantined_without_releasing_memory_or_re
     assert_eq!(manager.accounting().reserved_bytes, 10);
     assert_eq!(manager.accounting().build_attempts, 1);
     drop(lease);
+}
+
+#[tokio::test]
+async fn unhealthy_retained_deployment_is_drained_and_retained_again_after_rebuild() {
+    let health = Arc::new(std::sync::atomic::AtomicBool::new(true));
+    let manager = ProviderRuntimeManager::new(
+        RuntimeLimits {
+            max_parallel_loads: 1,
+            max_pending_loads: 4,
+            max_waiters: 16,
+            max_resident_bytes: 40,
+            max_resources: 4,
+            max_version_entries: 8,
+            admission_timeout_ms: 1000,
+            failure_cooldown_ms: 100,
+            idle_ttl_ms: 1000,
+        },
+        Arc::new(HealthBuilder(health.clone())),
+        AdmissionGate::open(),
+    )
+    .unwrap();
+    let mut deployment = snapshot(1);
+    deployment.id = 0;
+    let lease = manager
+        .acquire_deployment_until(deployment.clone(), manager.admission_deadline())
+        .await
+        .unwrap();
+    manager.retain_deployment(lease.version()).unwrap();
+    drop(lease);
+    health.store(false, Ordering::Release);
+    assert!(!manager.deployment_ready("llm", "llm"));
+    assert_eq!(manager.evict_idle().await.unwrap(), 1);
+    assert_eq!(manager.accounting().reserved_bytes, 0);
+    health.store(true, Ordering::Release);
+    drop(
+        manager
+            .acquire_deployment_until(deployment, manager.admission_deadline())
+            .await
+            .unwrap(),
+    );
+    assert!(manager.deployment_ready("llm", "llm"));
+    // The rebuilt default inherits the earlier retention instead of expiring like a cache entry.
+    assert_eq!(manager.evict_idle().await.unwrap(), 0);
+    assert_eq!(manager.accounting().reserved_bytes, 10);
 }
 
 #[tokio::test]

@@ -18,6 +18,8 @@ pub struct ProviderPrewarm {
     database: Arc<Database>,
     manager: Weak<ProviderRuntimeManager>,
     pending: Arc<Mutex<HashMap<PrewarmKey, DesiredProvider>>>,
+    /// Busy attempts per intent. A fresh intent for the same key starts over.
+    retries: Arc<Mutex<HashMap<PrewarmKey, u32>>>,
     notify: Arc<Notify>,
     capacity: usize,
     config: Arc<crate::config::AppConfig>,
@@ -35,12 +37,15 @@ impl ProviderPrewarm {
             config,
             manager: Arc::downgrade(manager),
             pending: Arc::new(Mutex::new(HashMap::new())),
+            retries: Arc::new(Mutex::new(HashMap::new())),
             notify: Arc::new(Notify::new()),
             capacity: (manager.prewarm_capacity() * 4).max(8),
             metrics: manager.metrics().clone(),
         });
         let metrics = service.metrics.clone();
         let pending = service.pending.clone();
+        let retries = service.retries.clone();
+        let capacity = service.capacity;
         let notify = service.notify.clone();
         let manager = service.manager.clone();
         let stopping = manager.upgrade()?.stopping_token();
@@ -51,23 +56,44 @@ impl ProviderPrewarm {
                 tokio::select! { _ = stopping.cancelled() => break, _ = tokio::time::sleep(std::time::Duration::from_millis(100)) => {} }
                 let snapshots = std::mem::take(&mut *pending.lock().expect("prewarm queue poisoned"));
                 let mut batch_leases = std::collections::VecDeque::with_capacity(4);
-                for snapshot in snapshots.into_values() {
+                for (key, snapshot) in snapshots {
                     if stopping.is_cancelled() { break; }
                     let Some(manager) = manager.upgrade() else { return };
-                    // Hold at most one template's 4 active bindings simultaneously so cross-template
-                    // batches do not exhaust max_resources while earlier bindings in the same
-                    // template stay pinned until the template batch finishes.
+                    // Pin at most the four most recently warmed resources while the batch runs,
+                    // so a large batch cannot exhaust max_resources with its own earlier work.
+                    // Pending intents are unordered, so this window does not follow templates.
                     while batch_leases.len() >= 4 {
                         batch_leases.pop_front();
                     }
                     // No inference operation or inference capacity is consumed here. Busy
-                    // speculation is dropped; explicit acquisition remains available.
-                    match manager.acquire_speculative(snapshot).await {
-                        Ok(lease) => batch_leases.push_back(lease),
-                        Err(crate::services::provider_runtime::RuntimeError::Busy) => {
-                            metrics.increment(crate::services::provider_runtime::RuntimeCounter::DroppedIntent);
+                    // speculation (loader, waiters or the pilot envelope in use) is retried later
+                    // with backoff; explicit acquisition remains available meanwhile.
+                    match manager.acquire_speculative(snapshot.clone()).await {
+                        Ok(lease) => {
+                            retries.lock().expect("prewarm retries poisoned").remove(&key);
+                            batch_leases.push_back(lease);
                         }
-                        Err(_) => {}
+                        Err(crate::services::provider_runtime::RuntimeError::Busy) => {
+                            let attempt = {
+                                let mut retries = retries.lock().expect("prewarm retries poisoned");
+                                let attempt = retries.entry(key.clone()).or_insert(0);
+                                *attempt += 1;
+                                *attempt
+                            };
+                            match retry_delay(attempt) {
+                                Some(delay) => schedule_retry(
+                                    key, snapshot, delay, pending.clone(), notify.clone(),
+                                    capacity, stopping.clone(), metrics.clone(),
+                                ),
+                                None => {
+                                    retries.lock().expect("prewarm retries poisoned").remove(&key);
+                                    metrics.increment(crate::services::provider_runtime::RuntimeCounter::DroppedIntent);
+                                }
+                            }
+                        }
+                        Err(_) => {
+                            retries.lock().expect("prewarm retries poisoned").remove(&key);
+                        }
                     }
                 }
                 drop(batch_leases);
@@ -82,6 +108,10 @@ impl ProviderPrewarm {
                 .increment(crate::services::provider_runtime::RuntimeCounter::DroppedIntent);
             return false;
         }
+        self.retries
+            .lock()
+            .expect("prewarm retries poisoned")
+            .remove(&key);
         pending.insert(key, snapshot);
         self.notify.notify_one();
         true
@@ -148,6 +178,46 @@ impl ProviderPrewarm {
         }
     }
 }
+/// Busy speculation backs off 1s, 2s, 4s, … capped at 30s, and gives up after ten attempts
+/// (about three minutes), long enough to outlast a typical voice turn in the pilot envelope.
+fn retry_delay(attempt: u32) -> Option<std::time::Duration> {
+    const MAX_ATTEMPTS: u32 = 10;
+    (attempt <= MAX_ATTEMPTS).then(|| {
+        let seconds = 1_u64 << attempt.saturating_sub(1).min(5);
+        std::time::Duration::from_secs(seconds.min(30))
+    })
+}
+
+/// Re-queue a busy intent after its delay unless a newer intent for the same key arrived.
+#[allow(clippy::too_many_arguments)]
+fn schedule_retry(
+    key: PrewarmKey,
+    snapshot: DesiredProvider,
+    delay: std::time::Duration,
+    pending: Arc<Mutex<HashMap<PrewarmKey, DesiredProvider>>>,
+    notify: Arc<Notify>,
+    capacity: usize,
+    stopping: tokio_util::sync::CancellationToken,
+    metrics: Arc<crate::services::provider_runtime::RuntimeMetrics>,
+) {
+    tokio::spawn(async move {
+        tokio::select! {
+            _ = stopping.cancelled() => return,
+            _ = tokio::time::sleep(delay) => {}
+        }
+        let mut pending = pending.lock().expect("prewarm queue poisoned");
+        if pending.contains_key(&key) {
+            return;
+        }
+        if pending.len() >= capacity {
+            metrics.increment(crate::services::provider_runtime::RuntimeCounter::DroppedIntent);
+            return;
+        }
+        pending.insert(key, snapshot);
+        notify.notify_one();
+    });
+}
+
 async fn snapshots(
     database: &Database,
     provider: Option<(i64, i64)>,
@@ -162,6 +232,29 @@ async fn snapshots(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn busy_intents_back_off_to_a_cap_and_then_give_up() {
+        let seconds: Vec<_> = (1..=11)
+            .map(|attempt| retry_delay(attempt).map(|delay| delay.as_secs()))
+            .collect();
+        assert_eq!(
+            seconds,
+            [
+                Some(1),
+                Some(2),
+                Some(4),
+                Some(8),
+                Some(16),
+                Some(30),
+                Some(30),
+                Some(30),
+                Some(30),
+                Some(30),
+                None
+            ]
+        );
+    }
 
     #[test]
     fn pending_snapshots_coalesce_by_resource_and_reject_a_new_resource_at_capacity() {

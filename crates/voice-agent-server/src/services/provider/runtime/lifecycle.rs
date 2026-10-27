@@ -69,6 +69,7 @@ impl ProviderRuntimeManager {
 
     /// All stages use the application's existing deadline. Active leases and unresolved native
     /// builds remain accounted when that deadline expires; there is no replacement or task abort.
+    /// Returns `false` early once only quarantined, unreclaimable reservations remain.
     pub async fn shutdown_until(self: &Arc<Self>, deadline: Instant) -> bool {
         self.close();
         loop {
@@ -76,7 +77,8 @@ impl ProviderRuntimeManager {
             if self.accounting().reserved_bytes == 0 {
                 return true;
             }
-            if Instant::now() >= deadline {
+            // Quarantined builds keep their reservation forever; waiting cannot return it.
+            if Instant::now() >= deadline || self.only_unreclaimable_reserved() {
                 return false;
             }
             tokio::time::sleep_until(

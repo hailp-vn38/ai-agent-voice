@@ -42,11 +42,43 @@ impl std::fmt::Debug for ProviderRuntimeManager {
 struct Registry {
     entries: HashMap<ProviderVersion, Entry>,
     evicted: std::collections::VecDeque<(Option<super::ResourceKey>, ProviderVersion)>,
+    /// Deployment versions retained for the process lifetime. Kept apart from entries so a
+    /// default that was drained after quarantine is retained again once it is rebuilt.
+    retained_deployments: std::collections::HashSet<ProviderVersion>,
     next_generation: u64,
     reserved_bytes: u64,
     build_attempts: u64,
+    // Capacities are process-wide configuration, so an identity or kind never changes width
+    // across revisions; a mismatch is a configuration error rather than a resize.
     quotas: HashMap<super::ProviderIdentity, (usize, ProviderRuntimeAdmission)>,
     global_quotas: HashMap<String, (usize, ProviderRuntimeAdmission)>,
+}
+impl Registry {
+    /// Quarantine a backing resource as one unit: its owner and every alias sharing it.
+    fn quarantine(&mut self, owner: &ProviderVersion) {
+        for entry in self
+            .entries
+            .values_mut()
+            .filter(|entry| entry.owner == *owner)
+        {
+            entry.state = RuntimeState::Quarantined;
+            entry.error = Some(RuntimeError::Quarantined);
+            entry.changed.send_replace(RuntimeState::Quarantined);
+        }
+    }
+    /// Reservations held by quarantined builds that produced no resource. Nothing can unload
+    /// them, so they stay accounted but no drain will ever return them.
+    fn unreclaimable_bytes(&self) -> u64 {
+        self.entries
+            .iter()
+            .filter(|(version, entry)| {
+                **version == entry.owner
+                    && entry.state == RuntimeState::Quarantined
+                    && entry.resource.is_none()
+            })
+            .map(|(_, entry)| entry.bytes)
+            .sum()
+    }
 }
 struct Entry {
     owner: ProviderVersion,
@@ -65,8 +97,6 @@ struct Entry {
     waiters: usize,
     idle_since: Instant,
     retry_at: Instant,
-    quarantined_load: Option<OwnedSemaphorePermit>,
-    quarantined_attempt: Option<OwnedSemaphorePermit>,
     unload_running: bool,
 }
 impl Entry {
@@ -89,8 +119,6 @@ impl Entry {
             waiters: 0,
             idle_since: Instant::now(),
             retry_at: self.retry_at,
-            quarantined_load: None,
-            quarantined_attempt: None,
             unload_running: self.unload_running,
         }
     }
@@ -143,6 +171,7 @@ impl ProviderRuntimeManager {
             registry: Mutex::new(Registry {
                 entries: HashMap::new(),
                 evicted: Default::default(),
+                retained_deployments: Default::default(),
                 next_generation: 1,
                 reserved_bytes: 0,
                 build_attempts: 0,
@@ -190,20 +219,8 @@ impl ProviderRuntimeManager {
             return Err(RuntimeError::Configuration);
         }
         let version = ProviderVersion::database(snapshot.id, snapshot.revision);
-        for _ in 0..=self.limits.max_resources {
-            match self
-                .acquire_version_until(snapshot.clone(), version.clone(), deadline, None, None)
-                .await
-            {
-                Err(RuntimeError::MemoryPressure) => {
-                    if self.evict_pressure_until(deadline).await? == 0 {
-                        return Err(RuntimeError::MemoryPressure);
-                    }
-                }
-                outcome => return outcome,
-            }
-        }
-        Err(RuntimeError::MemoryPressure)
+        self.acquire_admitted(snapshot, version, deadline, Admission::explicit())
+            .await
     }
 
     pub async fn acquire_deployment_until(
@@ -214,27 +231,9 @@ impl ProviderRuntimeManager {
         if !bounded_snapshot(&snapshot) || snapshot.id != 0 || snapshot.revision != 1 {
             return Err(RuntimeError::Configuration);
         }
-        let version = ProviderVersion {
-            identity: super::ProviderIdentity::Deployment {
-                kind: snapshot.kind.clone(),
-                key: snapshot.key.clone(),
-            },
-            revision: 1,
-        };
-        for _ in 0..=self.limits.max_resources {
-            match self
-                .acquire_version_until(snapshot.clone(), version.clone(), deadline, None, None)
-                .await
-            {
-                Err(RuntimeError::MemoryPressure) => {
-                    if self.evict_pressure_until(deadline).await? == 0 {
-                        return Err(RuntimeError::MemoryPressure);
-                    }
-                }
-                outcome => return outcome,
-            }
-        }
-        Err(RuntimeError::MemoryPressure)
+        let version = deployment_version(&snapshot);
+        self.acquire_admitted(snapshot, version, deadline, Admission::explicit())
+            .await
     }
 
     pub async fn acquire_draft_until(
@@ -250,26 +249,48 @@ impl ProviderRuntimeManager {
             identity: super::ProviderIdentity::Draft(uuid::Uuid::new_v4()),
             revision: 1,
         };
-        for _ in 0..=self.limits.max_resources {
+        let admission = Admission {
+            draft_secrets: Some(secrets),
+            ..Admission::explicit()
+        };
+        self.acquire_admitted(snapshot, version, deadline, admission)
+            .await
+    }
+
+    /// One exact-version acquisition under a shared deadline. Memory pressure evicts one LRU
+    /// idle resource per round; a version unloaded while this caller waited is admitted again
+    /// instead of failing, since the eviction raced an acquisition it could not see.
+    async fn acquire_admitted(
+        self: &Arc<Self>,
+        snapshot: DesiredProvider,
+        version: ProviderVersion,
+        deadline: Instant,
+        mut admission: Admission,
+    ) -> Result<ResourceLease, RuntimeError> {
+        let mut exhausted = RuntimeError::MemoryPressure;
+        for _ in 0..=self.limits.max_resources + 1 {
             match self
                 .acquire_version_until(
                     snapshot.clone(),
                     version.clone(),
                     deadline,
-                    None,
-                    Some(secrets.clone()),
+                    admission.preclaimed_load.take(),
+                    admission.draft_secrets.clone(),
                 )
                 .await
             {
-                Err(RuntimeError::MemoryPressure) => {
+                Ok(Some(lease)) => return Ok(lease),
+                Ok(None) => exhausted = RuntimeError::Unavailable,
+                Err(RuntimeError::MemoryPressure) if admission.evict_on_pressure => {
                     if self.evict_pressure_until(deadline).await? == 0 {
                         return Err(RuntimeError::MemoryPressure);
                     }
+                    exhausted = RuntimeError::MemoryPressure;
                 }
-                outcome => return outcome,
+                Err(error) => return Err(error),
             }
         }
-        Err(RuntimeError::MemoryPressure)
+        Err(exhausted)
     }
 
     async fn acquire_version_until(
@@ -279,7 +300,7 @@ impl ProviderRuntimeManager {
         deadline: Instant,
         preclaimed_load: Option<OwnedSemaphorePermit>,
         draft_secrets: Option<Arc<dyn crate::database::secrets::SecretResolver>>,
-    ) -> Result<ResourceLease, RuntimeError> {
+    ) -> Result<Option<ResourceLease>, RuntimeError> {
         if Instant::now() >= deadline {
             return Err(RuntimeError::Timeout);
         }
@@ -317,7 +338,7 @@ impl ProviderRuntimeManager {
         if global_capacity.is_some_and(|value| !(1..=4096).contains(&value)) {
             return Err(RuntimeError::Configuration);
         }
-        let (mut changes, generation, start, quota, cold_permit) = {
+        let (changes, generation, start, quota, cold_permit) = {
             let mut registry = self.registry.lock().expect("runtime registry poisoned");
             let now = Instant::now();
             registry.entries.retain(|_, entry| {
@@ -384,7 +405,8 @@ impl ProviderRuntimeManager {
                         })
                     })
                     .map(|(_, entry)| entry.alias());
-                if let Some(alias) = shared {
+                if let Some(mut alias) = shared {
+                    alias.retained = registry.retained_deployments.contains(&version);
                     registry.entries.insert(version.clone(), alias);
                     None
                 } else {
@@ -426,12 +448,13 @@ impl ProviderRuntimeManager {
                     registry.next_generation += 1;
                     let (changed, _) = watch::channel(RuntimeState::Queued);
                     registry.reserved_bytes += bytes;
+                    let retained = registry.retained_deployments.contains(&version);
                     registry.entries.insert(
                         version.clone(),
                         Entry {
                             owner: version.clone(),
                             resource_key: resource_key.clone(),
-                            retained: false,
+                            retained,
                             physical_admission: None,
                             health_flags: Vec::new(),
                             capabilities: None,
@@ -445,8 +468,6 @@ impl ProviderRuntimeManager {
                             waiters: 0,
                             idle_since: now,
                             retry_at: now,
-                            quarantined_load: None,
-                            quarantined_attempt: None,
                             unload_running: false,
                         },
                     );
@@ -495,7 +516,15 @@ impl ProviderRuntimeManager {
             generation,
             _capacity: capacity,
         };
-        if let Some(attempt) = start {
+        let Some(attempt) = start else {
+            // Coalesced or hot: a speculative loader slot must not sit idle while this caller
+            // waits for an attempt that already owns its own slot.
+            drop(preclaimed_load);
+            return self
+                .wait_for_ready(snapshot, version, generation, quota, changes, deadline)
+                .await;
+        };
+        {
             let manager = Arc::clone(self);
             let version = version.clone();
             let build_snapshot = snapshot.clone();
@@ -519,22 +548,39 @@ impl ProviderRuntimeManager {
                     .await;
             });
         }
+        self.wait_for_ready(snapshot, version, generation, quota, changes, deadline)
+            .await
+    }
+
+    /// `Ok(None)` means the entry this caller joined was unloaded or replaced while it waited,
+    /// so the caller should admit the version again rather than report it unavailable.
+    async fn wait_for_ready(
+        self: &Arc<Self>,
+        snapshot: DesiredProvider,
+        version: ProviderVersion,
+        generation: u64,
+        quota: ProviderRuntimeAdmission,
+        mut changes: watch::Receiver<RuntimeState>,
+        deadline: Instant,
+    ) -> Result<Option<ResourceLease>, RuntimeError> {
         let wait = async {
             loop {
                 {
                     let mut registry = self.registry.lock().expect("runtime registry poisoned");
+                    let Some(entry) = registry.entries.get(&version) else {
+                        return Ok(None);
+                    };
+                    if entry.generation != generation {
+                        return Ok(None);
+                    }
+                    if entry.state == RuntimeState::Ready && !entry.healthy() {
+                        let owner = entry.owner.clone();
+                        registry.quarantine(&owner);
+                    }
                     let entry = registry
                         .entries
                         .get_mut(&version)
-                        .ok_or(RuntimeError::Unavailable)?;
-                    if entry.generation != generation {
-                        return Err(RuntimeError::Unavailable);
-                    }
-                    if entry.state == RuntimeState::Ready && !entry.healthy() {
-                        entry.state = RuntimeState::Quarantined;
-                        entry.error = Some(RuntimeError::Quarantined);
-                        entry.changed.send_replace(entry.state);
-                    }
+                        .expect("entry checked above");
                     match entry.state {
                         RuntimeState::Ready => {
                             if !self.gate.is_open() {
@@ -543,27 +589,27 @@ impl ProviderRuntimeManager {
                             let resource =
                                 entry.resource.clone().ok_or(RuntimeError::Unavailable)?;
                             entry.leases += 1;
-                            return Ok(ResourceLease(Arc::new(LeaseLifetime {
+                            return Ok(Some(ResourceLease(Arc::new(LeaseLifetime {
                                 manager: Arc::clone(self),
                                 snapshot: snapshot.clone(),
                                 quota: quota.clone(),
                                 version: version.clone(),
                                 generation,
                                 resource,
-                            })));
+                            }))));
                         }
                         RuntimeState::Failed | RuntimeState::Quarantined => {
                             return Err(entry.error.unwrap_or(RuntimeError::Unavailable));
                         }
-                        RuntimeState::Draining | RuntimeState::Cold => {
-                            return Err(RuntimeError::Unavailable);
-                        }
-                        RuntimeState::Queued | RuntimeState::Loading => {}
+                        RuntimeState::Cold => return Ok(None),
+                        // Draining finishes as removal (admit again) or quarantine (error).
+                        RuntimeState::Queued | RuntimeState::Loading | RuntimeState::Draining => {}
                     }
                 }
                 tokio::select! {
                     _ = self.stopping.cancelled() => return Err(RuntimeError::ShuttingDown),
-                    changed = changes.changed() => if changed.is_err() { return Err(RuntimeError::Unavailable); },
+                    // A dropped sender means the entry was removed; the next pass observes it.
+                    changed = changes.changed() => if changed.is_err() { return Ok(None); },
                 }
             }
         };
@@ -677,8 +723,8 @@ impl ProviderRuntimeManager {
         version: &ProviderVersion,
         generation: u64,
         outcome: Result<Arc<dyn RuntimeResource>, RuntimeError>,
-        mut load: Option<OwnedSemaphorePermit>,
-        mut attempt: Option<OwnedSemaphorePermit>,
+        load: Option<OwnedSemaphorePermit>,
+        attempt: Option<OwnedSemaphorePermit>,
         started: Instant,
         cold_permit: Option<PilotPermit>,
     ) {
@@ -758,11 +804,12 @@ impl ProviderRuntimeManager {
                 entry.idle_since = Instant::now();
             }
             Err(RuntimeError::Quarantined) => {
+                // Cleanup is uncertain, so the reservation stays and this version is refused.
+                // The attempt itself has returned, so its loader capacity is released below
+                // and other providers or revisions can still be materialized.
                 self.metrics.increment(super::RuntimeCounter::BuildFailure);
                 entry.state = RuntimeState::Quarantined;
                 entry.error = Some(RuntimeError::Quarantined);
-                entry.quarantined_load = load.take();
-                entry.quarantined_attempt = attempt.take();
             }
             Err(error) => {
                 self.metrics.increment(super::RuntimeCounter::BuildFailure);
@@ -777,7 +824,6 @@ impl ProviderRuntimeManager {
         // Return completed native-attempt capacity before publishing its terminal state.
         // A woken admission may immediately acquire the next cold provider with no queue.
         // Keep this inside the registry lock so Ready cannot be observed before release.
-        // Quarantined attempts retain their permits in the entry until cleanup acknowledges.
         drop(load);
         drop(attempt);
         entry.changed.send_replace(entry.state);
@@ -836,6 +882,14 @@ impl ProviderRuntimeManager {
         self: &Arc<Self>,
         snapshot: DesiredProvider,
     ) -> Result<ResourceLease, RuntimeError> {
+        // Same identity rules as the explicit paths: deployment defaults exist only at revision 1.
+        let valid = bounded_snapshot(&snapshot)
+            && snapshot.id >= 0
+            && snapshot.revision > 0
+            && (snapshot.id != 0 || snapshot.revision == 1);
+        if !valid {
+            return Err(RuntimeError::Configuration);
+        }
         if self.accounting().waiters > 0 {
             return Err(RuntimeError::Busy);
         }
@@ -845,27 +899,17 @@ impl ProviderRuntimeManager {
             .try_acquire_owned()
             .map_err(|_| RuntimeError::Busy)?;
         let version = if snapshot.id == 0 {
-            ProviderVersion {
-                identity: super::ProviderIdentity::Deployment {
-                    kind: snapshot.kind.clone(),
-                    key: snapshot.key.clone(),
-                },
-                revision: snapshot.revision,
-            }
+            deployment_version(&snapshot)
         } else {
             ProviderVersion::database(snapshot.id, snapshot.revision)
         };
-        if !bounded_snapshot(&snapshot) || snapshot.id < 0 || snapshot.revision <= 0 {
-            return Err(RuntimeError::Configuration);
-        }
-        self.acquire_version_until(
-            snapshot,
-            version,
-            self.admission_deadline(),
-            Some(load),
-            None,
-        )
-        .await
+        let admission = Admission {
+            preclaimed_load: Some(load),
+            draft_secrets: None,
+            evict_on_pressure: false,
+        };
+        self.acquire_admitted(snapshot, version, self.admission_deadline(), admission)
+            .await
     }
 
     pub fn retain_deployment(&self, version: &ProviderVersion) -> Result<(), RuntimeError> {
@@ -881,6 +925,7 @@ impl ProviderRuntimeManager {
             return Err(RuntimeError::Unavailable);
         }
         entry.retained = true;
+        registry.retained_deployments.insert(version.clone());
         Ok(())
     }
     pub fn deployment_ready(&self, kind: &str, key: &str) -> bool {
@@ -982,10 +1027,25 @@ impl ProviderRuntimeManager {
     ) -> Vec<IdleDrain> {
         let mut registry = self.registry.lock().expect("runtime registry poisoned");
         let now = Instant::now();
+        // Health is observed here too, so an unhealthy resource nobody acquires still drains.
+        let unhealthy: Vec<_> = registry
+            .entries
+            .iter()
+            .filter(|(version, entry)| {
+                **version == entry.owner && entry.state == RuntimeState::Ready && !entry.healthy()
+            })
+            .map(|(version, _)| version.clone())
+            .collect();
+        for owner in &unhealthy {
+            registry.quarantine(owner);
+        }
         let mut candidates: Vec<_> = registry
             .entries
             .iter()
             .filter(|(version, entry)| {
+                // Retention keeps a usable default resident; a quarantined one is useless, so
+                // it drains and the next acquisition rebuilds and retains it again.
+                let quarantined = entry.state == RuntimeState::Quarantined;
                 **version == entry.owner
                     && entry.resource.is_some()
                     && !entry.unload_running
@@ -997,7 +1057,7 @@ impl ProviderRuntimeManager {
                         .all(|alias| {
                             alias.leases == 0
                                 && alias.waiters == 0
-                                && (!alias.retained || self.stopping.is_cancelled())
+                                && (!alias.retained || quarantined || self.stopping.is_cancelled())
                                 && (!expired_only
                                     || now.duration_since(alias.idle_since)
                                         >= Duration::from_millis(self.limits.idle_ttl_ms))
@@ -1059,11 +1119,9 @@ impl ProviderRuntimeManager {
                 .values_mut()
                 .filter(|entry| entry.owner == *version)
             {
-                entry.state = RuntimeState::Quarantined;
-                entry.error = Some(RuntimeError::Quarantined);
                 entry.unload_running = false;
-                entry.changed.send_replace(RuntimeState::Quarantined);
             }
+            registry.quarantine(version);
             return;
         }
         let bytes = entry.bytes;
@@ -1086,13 +1144,18 @@ impl ProviderRuntimeManager {
 
     pub(super) fn drain_timeout(&self, version: &ProviderVersion, generation: u64) {
         let mut registry = self.registry.lock().expect("runtime registry poisoned");
-        for entry in registry.entries.values_mut().filter(|entry| {
-            entry.owner == *version && entry.generation == generation && entry.unload_running
-        }) {
-            entry.state = RuntimeState::Quarantined;
-            entry.error = Some(RuntimeError::Quarantined);
-            entry.changed.send_replace(RuntimeState::Quarantined);
+        let running = registry.entries.get(version).is_some_and(|entry| {
+            entry.generation == generation && entry.unload_running
+        });
+        if running {
+            registry.quarantine(version);
         }
+    }
+
+    /// Whether every remaining reservation belongs to a quarantined build nothing can unload.
+    pub(super) fn only_unreclaimable_reserved(&self) -> bool {
+        let registry = self.registry.lock().expect("runtime registry poisoned");
+        registry.reserved_bytes == registry.unreclaimable_bytes()
     }
 
     pub fn close(&self) {
@@ -1183,6 +1246,33 @@ pub(super) struct IdleDrain {
     pub version: ProviderVersion,
     pub generation: u64,
     pub resource: Arc<dyn RuntimeResource>,
+}
+
+/// How one acquisition is admitted. Explicit callers evict under memory pressure; speculative
+/// prewarm brings its own loader slot and gives up instead of evicting.
+struct Admission {
+    preclaimed_load: Option<OwnedSemaphorePermit>,
+    draft_secrets: Option<Arc<dyn crate::database::secrets::SecretResolver>>,
+    evict_on_pressure: bool,
+}
+impl Admission {
+    fn explicit() -> Self {
+        Self {
+            preclaimed_load: None,
+            draft_secrets: None,
+            evict_on_pressure: true,
+        }
+    }
+}
+
+fn deployment_version(snapshot: &DesiredProvider) -> ProviderVersion {
+    ProviderVersion {
+        identity: super::ProviderIdentity::Deployment {
+            kind: snapshot.kind.clone(),
+            key: snapshot.key.clone(),
+        },
+        revision: snapshot.revision,
+    }
 }
 
 fn bounded_snapshot(snapshot: &DesiredProvider) -> bool {

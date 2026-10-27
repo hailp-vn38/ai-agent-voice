@@ -18,6 +18,8 @@ D1 resources có thể gắn một-một với ProviderVersion. D2 thêm adapter
 
 Manager owns singleflight, bounded loaders/queue/waiters/metadata và estimated memory reservations. Caller timeout không release reservation hay load slot của native attempt còn chạy. Publish Ready chỉ sau readiness acknowledgement của workers thật; lỗi native init không được chuyển thành compatibility fallback. Quotas của logical provider tồn tại qua revisions, physical quotas thuộc backing resource. Unload/drain/quarantine giữ accounting tới acknowledgement; shutdown dùng application admission gate và cùng deadline.
 
+Build trả Quarantined (cleanup không chắc chắn) giữ memory reservation và từ chối đúng version đó suốt process, nhưng trả lại load slot và attempt slot ngay khi `build` đã return, để provider/revision khác vẫn materialize được mà không cần restart. Shutdown kết thúc sớm (trả `false`) khi chỉ còn các reservation không thể thu hồi đó. Deployment default được retain mà bị unhealthy/quarantined vẫn được drain; sau unload acknowledgement, lần acquire kế tiếp build lại và tự retain lại. Acquire gặp version đang Draining thì chờ: unload xong thì admit lại, unload thất bại thì trả Quarantined.
+
 GET/readiness không load model hoặc resolve credential. Diagnostics snapshot một desired revision, acquire exact runtime và trả safe provenance. Hot-supported provider không dùng restart làm remediation. Artifacts publish atomic theo immutable fingerprints, không overwrite file đang dùng. D3 tách operation settings khỏi engine chỉ khi adapter và audio/isolation evidence chứng minh reuse an toàn.
 
 ## Supersession

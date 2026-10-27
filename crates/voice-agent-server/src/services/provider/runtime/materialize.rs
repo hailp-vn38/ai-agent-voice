@@ -31,7 +31,8 @@ pub enum PreparedRuntime {
 
 /// Blocking/native factory seam. The manager bounds execution and reserves before build.
 /// A normal error means partial allocations have already acknowledged cleanup; uncertainty
-/// must be reported as Quarantined so accounting and loader capacity remain reserved.
+/// must be reported as Quarantined so the memory reservation stays accounted and the version is
+/// refused. Loader capacity returns once `build` itself has returned.
 pub trait RuntimeMaterializer: Send + Sync {
     /// Explicit opt-in to share a backing pool. None conservatively isolates versions.
     fn resource_key(
