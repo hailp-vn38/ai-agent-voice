@@ -227,4 +227,49 @@ describe('ArtifactsPage Library & Detail Modal', () => {
       wrapper.unmount()
     }
   })
+
+  it('shows shimmer skeletons while loading in grid and table views, then shows the loaded state', async () => {
+    let finishCatalog!: (value: ArtifactCatalogPage) => void
+    vi.spyOn(agentJobsApi, 'listArtifacts').mockImplementation(
+      () => new Promise(resolve => { finishCatalog = resolve }),
+    )
+
+    const router = makeRouter()
+    await router.push('/artifacts')
+    await router.isReady()
+
+    const wrapper = mount(ArtifactsPage, {
+      global: {
+        plugins: [router],
+      },
+    })
+
+    try {
+      await flushPromises()
+
+      expect(wrapper.find('[data-artifact-skeleton]').exists()).toBe(true)
+      expect(wrapper.get('[data-artifact-skeleton]').attributes('aria-busy')).toBe('true')
+      expect(wrapper.find('[data-artifact-grid-skeleton]').exists()).toBe(true)
+      expect(wrapper.findAll('.card-shimmer').length).toBeGreaterThan(0)
+      expect(wrapper.find('[data-artifact-empty]').exists()).toBe(false)
+
+      await wrapper.get('[data-view-mode="table"]').trigger('click')
+      expect(wrapper.find('[data-artifact-table-skeleton]').exists()).toBe(true)
+      expect(wrapper.findAll('.card-shimmer').length).toBeGreaterThan(0)
+
+      await wrapper.get('[data-view-mode="grid"]').trigger('click')
+      finishCatalog({
+        ...sampleCatalogPage,
+        items: [],
+        total: 0,
+      })
+      await flushPromises()
+
+      expect(wrapper.find('[data-artifact-skeleton]').exists()).toBe(false)
+      expect(wrapper.findAll('.card-shimmer')).toHaveLength(0)
+      expect(wrapper.find('[data-artifact-empty]').exists()).toBe(true)
+    } finally {
+      wrapper.unmount()
+    }
+  })
 })

@@ -73,6 +73,7 @@ const selectedArtifact = ref<AdminArtifactItem | null>(null)
 const downloadingId = ref<string | null>(null)
 
 const mediaBlobUrls = ref<Record<string, string>>({})
+const mediaLoadingIds = ref<Record<string, boolean>>({})
 let activeBlobUrls: Record<string, string> = {}
 let blobGeneration = 0
 
@@ -188,6 +189,7 @@ function revokeAllBlobs() {
   }
   activeBlobUrls = {}
   mediaBlobUrls.value = {}
+  mediaLoadingIds.value = {}
 }
 
 async function hydrateInlineMediaBlobs(loadedItems: AdminArtifactItem[]) {
@@ -209,6 +211,14 @@ async function hydrateInlineMediaBlobs(loadedItems: AdminArtifactItem[]) {
   }
   mediaBlobUrls.value = { ...activeBlobUrls }
 
+  const pendingIds: Record<string, boolean> = {}
+  for (const item of inlineCandidates) {
+    if (!activeBlobUrls[item.id]) {
+      pendingIds[item.id] = true
+    }
+  }
+  mediaLoadingIds.value = pendingIds
+
   await Promise.all(
     inlineCandidates.map(async item => {
       if (activeBlobUrls[item.id]) return
@@ -221,6 +231,12 @@ async function hydrateInlineMediaBlobs(loadedItems: AdminArtifactItem[]) {
         mediaBlobUrls.value = { ...activeBlobUrls }
       } catch {
         // Ignore thumbnail fetch failure; user can still click card to open modal or download
+      } finally {
+        if (gen === blobGeneration && mounted && mediaLoadingIds.value[item.id]) {
+          const next = { ...mediaLoadingIds.value }
+          delete next[item.id]
+          mediaLoadingIds.value = next
+        }
       }
     }),
   )
@@ -400,31 +416,35 @@ onBeforeUnmount(() => {
     </div>
 
     <div class="grid gap-3 sm:grid-cols-2 xl:grid-cols-4" data-artifact-summary-cards>
-      <div class="studio-panel flex items-center gap-3 p-4">
-        <FolderOpen class="size-6 text-studio-violet" />
-        <div>
-          <p class="text-xl font-semibold tabular-nums" data-summary-total>{{ summary.total_artifacts }}</p>
+      <div class="studio-panel flex items-center gap-3 p-4" :class="{ 'card-shimmer': loading }">
+        <FolderOpen class="size-6 shrink-0 text-studio-violet" />
+        <div class="min-w-0 flex-1">
+          <div v-if="loading" class="mb-1 h-6 w-12 rounded bg-muted/60" aria-hidden="true" />
+          <p v-else class="text-xl font-semibold tabular-nums" data-summary-total>{{ summary.total_artifacts }}</p>
           <p class="text-xs text-muted-foreground">{{ t('artifactsUi.totalFiles') }}</p>
         </div>
       </div>
-      <div class="studio-panel flex items-center gap-3 p-4">
-        <Sparkles class="size-6 text-success" />
-        <div>
-          <p class="text-xl font-semibold tabular-nums" data-summary-primary>{{ summary.primary_artifacts }}</p>
+      <div class="studio-panel flex items-center gap-3 p-4" :class="{ 'card-shimmer': loading }">
+        <Sparkles class="size-6 shrink-0 text-success" />
+        <div class="min-w-0 flex-1">
+          <div v-if="loading" class="mb-1 h-6 w-12 rounded bg-muted/60" aria-hidden="true" />
+          <p v-else class="text-xl font-semibold tabular-nums" data-summary-primary>{{ summary.primary_artifacts }}</p>
           <p class="text-xs text-muted-foreground">{{ t('artifactsUi.primaryDeliverables') }}</p>
         </div>
       </div>
-      <div class="studio-panel flex items-center gap-3 p-4">
-        <ImageIcon class="size-6 text-studio-cyan" />
-        <div>
-          <p class="text-xl font-semibold tabular-nums" data-summary-media>{{ mediaAssetsCount }}</p>
+      <div class="studio-panel flex items-center gap-3 p-4" :class="{ 'card-shimmer': loading }">
+        <ImageIcon class="size-6 shrink-0 text-studio-cyan" />
+        <div class="min-w-0 flex-1">
+          <div v-if="loading" class="mb-1 h-6 w-12 rounded bg-muted/60" aria-hidden="true" />
+          <p v-else class="text-xl font-semibold tabular-nums" data-summary-media>{{ mediaAssetsCount }}</p>
           <p class="text-xs text-muted-foreground">{{ t('artifactsUi.mediaAssets') }}</p>
         </div>
       </div>
-      <div class="studio-panel flex items-center gap-3 p-4">
-        <HardDrive class="size-6 text-studio-violet" />
-        <div>
-          <p class="text-xl font-semibold tabular-nums" data-summary-bytes>{{ formatBytes(summary.total_size_bytes) }}</p>
+      <div class="studio-panel flex items-center gap-3 p-4" :class="{ 'card-shimmer': loading }">
+        <HardDrive class="size-6 shrink-0 text-studio-violet" />
+        <div class="min-w-0 flex-1">
+          <div v-if="loading" class="mb-1 h-6 w-16 rounded bg-muted/60" aria-hidden="true" />
+          <p v-else class="text-xl font-semibold tabular-nums" data-summary-bytes>{{ formatBytes(summary.total_size_bytes) }}</p>
           <p class="text-xs text-muted-foreground">{{ t('artifactsUi.totalStorage') }}</p>
         </div>
       </div>
@@ -488,8 +508,75 @@ onBeforeUnmount(() => {
       </Button>
     </div>
 
-    <div v-if="loading" class="studio-panel p-8 text-center text-sm text-muted-foreground" role="status">
-      {{ t('common.loading') }}
+    <div
+      v-if="loading"
+      data-artifact-skeleton
+      role="status"
+      aria-busy="true"
+      :aria-label="t('common.loading')"
+    >
+      <span class="sr-only">{{ t('common.loading') }}</span>
+      <div
+        v-if="viewMode === 'grid'"
+        class="grid gap-4 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-4"
+        data-artifact-grid-skeleton
+        aria-hidden="true"
+      >
+        <div
+          v-for="slot in 8"
+          :key="slot"
+          class="studio-panel card-shimmer flex flex-col justify-between overflow-hidden"
+          aria-hidden="true"
+        >
+          <div class="relative aspect-[16/10] w-full border-b bg-muted/35 p-2.5">
+            <div class="flex items-center gap-1.5">
+              <div class="h-4 w-14 rounded-full bg-muted/60" />
+              <div class="h-4 w-12 rounded-full bg-muted/40" />
+            </div>
+          </div>
+          <div class="flex flex-1 flex-col justify-between gap-2.5 p-3.5">
+            <div class="space-y-2">
+              <div class="h-4 w-3/4 rounded bg-muted/60" />
+              <div class="h-3 w-1/2 rounded bg-muted/40" />
+            </div>
+            <div class="flex items-center justify-between gap-2 border-t pt-2">
+              <div class="h-3 w-24 rounded bg-muted/40" />
+              <div class="size-7 rounded-md bg-muted/50" />
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div
+        v-else
+        class="studio-panel overflow-hidden"
+        data-artifact-table-skeleton
+        aria-hidden="true"
+      >
+        <div class="divide-y">
+          <div
+            v-for="slot in 6"
+            :key="slot"
+            class="card-shimmer flex items-center justify-between gap-4 px-4 py-3.5"
+            aria-hidden="true"
+          >
+            <div class="min-w-0 flex-1 space-y-2">
+              <div class="h-4 w-48 max-w-full rounded bg-muted/60" />
+              <div class="h-3 w-28 rounded bg-muted/40" />
+            </div>
+            <div class="hidden items-center gap-1.5 sm:flex">
+              <div class="h-5 w-14 rounded-full bg-muted/50" />
+              <div class="h-5 w-16 rounded-full bg-muted/40" />
+            </div>
+            <div class="hidden h-3.5 w-16 rounded bg-muted/40 md:block" />
+            <div class="hidden h-3.5 w-28 rounded bg-muted/40 lg:block" />
+            <div class="flex items-center gap-1.5">
+              <div class="h-8 w-16 rounded-lg bg-muted/50" />
+              <div class="h-8 w-20 rounded-lg bg-muted/40" />
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
 
     <div
@@ -509,7 +596,10 @@ onBeforeUnmount(() => {
         @keydown.enter.prevent="openArtifactModal(item)"
         @keydown.space.prevent="openArtifactModal(item)"
       >
-        <div class="relative aspect-[16/10] w-full overflow-hidden border-b bg-muted/25">
+        <div
+          class="relative aspect-[16/10] w-full overflow-hidden border-b bg-muted/25"
+          :class="{ 'card-shimmer': mediaLoadingIds[item.id] }"
+        >
           <img
             v-if="item.kind === 'image' && mediaBlobUrls[item.id]"
             :src="mediaBlobUrls[item.id]"
