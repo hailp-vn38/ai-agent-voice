@@ -1,13 +1,14 @@
 use super::*;
 use crate::services::task_flow::{
     AgentConfigOverride, DEFAULT_ORCHESTRATOR_PROVIDER_REF, PersistedBackgroundSettings,
-    project_agents_json, project_task_events, project_task_to_admin_job,
-    resolve_llm_provider_catalog, save_persisted_settings, sync_orchestrator_from_state,
-    validate_agent_overrides,
+    project_agents_json, project_artifact_catalog_page, project_task_events,
+    project_task_to_admin_job, resolve_llm_provider_catalog, save_persisted_settings,
+    sync_orchestrator_from_state, validate_agent_overrides,
 };
 use orchestrator_flow_rs::{
-    CreateTaskRequest, ErrorCode, TaskError, TaskEvent, TaskFeedItem, TaskFilter, TaskManager,
-    TaskSource, TaskStatus,
+    CreateTaskRequest, ErrorCode, TaskArtifactCatalogPage, TaskArtifactFilter, TaskArtifactKind,
+    TaskArtifactRole, TaskError, TaskEvent, TaskFeedItem, TaskFilter, TaskManager, TaskSource,
+    TaskStatus,
 };
 use serde::Deserialize;
 use std::collections::BTreeMap;
@@ -389,6 +390,77 @@ pub(super) async fn list(
                 "page_size": size,
             }))
             .into_response()
+        }
+        Err(e) => task_failure(&request, e),
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct ArtifactQuery {
+    page: Option<u32>,
+    page_size: Option<u32>,
+    kind: Option<String>,
+    role: Option<String>,
+    job_id: Option<String>,
+    task_id: Option<String>,
+    flow_id: Option<String>,
+    agent_id: Option<String>,
+    q: Option<String>,
+}
+
+pub(super) async fn list_artifacts(
+    State(state): State<AppState>,
+    Query(query): Query<ArtifactQuery>,
+    request: Request,
+) -> Response {
+    let page = query.page.unwrap_or(1).max(1);
+    let size = query.page_size.unwrap_or(30).clamp(1, 200);
+    let Some(tm) = state.task_manager.as_ref() else {
+        let empty = TaskArtifactCatalogPage::default();
+        return Json(project_artifact_catalog_page(&empty, page, size)).into_response();
+    };
+
+    let kind = match query
+        .kind
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty() && *s != "all")
+    {
+        Some(raw) => match TaskArtifactKind::parse(raw) {
+            Some(k) => Some(k),
+            None => return error(&request, StatusCode::BAD_REQUEST, "invalid_arguments"),
+        },
+        None => None,
+    };
+    let role = match query
+        .role
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty() && *s != "all")
+    {
+        Some(raw) => match TaskArtifactRole::parse(raw) {
+            Some(r) => Some(r),
+            None => return error(&request, StatusCode::BAD_REQUEST, "invalid_arguments"),
+        },
+        None => None,
+    };
+
+    let offset = (page - 1).saturating_mul(size);
+    let filter = TaskArtifactFilter {
+        kind,
+        role,
+        task_id: query.job_id.or(query.task_id),
+        flow_id: query.flow_id,
+        producer_agent_id: query.agent_id,
+        query: query.q,
+        limit: Some(size),
+        offset: Some(offset),
+    };
+
+    match tm.list_all_artifacts(&filter).await {
+        Ok(catalog_page) => {
+            Json(project_artifact_catalog_page(&catalog_page, page, size)).into_response()
         }
         Err(e) => task_failure(&request, e),
     }

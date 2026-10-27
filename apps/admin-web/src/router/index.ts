@@ -86,6 +86,12 @@ const routes: RouteRecordRaw[] = [
     meta: { titleKey: 'jobUi.jobDetail' },
   },
   {
+    path: '/artifacts',
+    name: 'artifacts',
+    component: () => import('@/pages/artifacts/ArtifactsPage.vue'),
+    meta: { titleKey: 'nav.artifacts' },
+  },
+  {
     path: '/mcp',
     name: 'mcp',
     component: () => import('@/views/McpServersView.vue'),

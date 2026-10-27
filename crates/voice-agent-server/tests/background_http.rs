@@ -107,7 +107,92 @@ prompts_dir = "{}"
         response.json::<Value>().await.unwrap()["error"]["code"],
         "runtime_unavailable"
     );
+
+    // /api/admin/artifacts requires authentication and returns empty catalog when unbacked
+    assert_eq!(
+        client
+            .get(format!("{base}/artifacts"))
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::UNAUTHORIZED
+    );
+    let artifacts_resp = client
+        .get(format!("{base}/artifacts?page=1&page_size=24"))
+        .bearer_auth("background-test-token")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(artifacts_resp.status(), StatusCode::OK);
+    let artifacts_json: Value = artifacts_resp.json().await.unwrap();
+    assert_eq!(artifacts_json["items"], json!([]));
+    assert_eq!(artifacts_json["total"], 0);
+    assert_eq!(artifacts_json["summary"]["total_artifacts"], 0);
+
     server.abort();
+}
+
+#[test]
+fn project_artifact_catalog_page_maps_task_context_and_download_url() {
+    use orchestrator_flow_rs::{
+        TaskArtifactCatalogEntry, TaskArtifactCatalogPage, TaskArtifactCatalogSummary,
+        TaskArtifactKind, TaskArtifactRole, TaskArtifactView, TaskStatus,
+    };
+    use voice_agent_server::services::task_flow::project_artifact_catalog_page;
+
+    let entry = TaskArtifactCatalogEntry {
+        artifact: TaskArtifactView {
+            id: "art-1".into(),
+            task_id: "job-99".into(),
+            root_session_id: "sess-root".into(),
+            producer_session_id: "sess-child".into(),
+            producer_agent_id: "media_creator".into(),
+            turn_id: "turn-1".into(),
+            producer_invocation_id: Some("inv-1".into()),
+            producer_tool_name: Some("image_create".into()),
+            name: "topology.svg".into(),
+            mime_type: "image/svg+xml".into(),
+            kind: TaskArtifactKind::Image,
+            role: TaskArtifactRole::Primary,
+            size_bytes: 4096,
+            sha256: "abc123def456".into(),
+            created_at: 1_700_000_005_000,
+        },
+        task_title: "B200 Topology".into(),
+        task_prompt: "Draw NVLink 5 topology".into(),
+        task_status: TaskStatus::Completed,
+        flow_id: "daily".into(),
+        root_agent_id: "daily_root".into(),
+        owner_id: "personal".into(),
+        workspace_id: "homelab".into(),
+    };
+
+    let mut summary = TaskArtifactCatalogSummary::default();
+    summary.record(&entry.artifact);
+
+    let page = TaskArtifactCatalogPage {
+        items: vec![entry],
+        total: 1,
+        summary,
+    };
+
+    let json_val = project_artifact_catalog_page(&page, 1, 24);
+    assert_eq!(json_val["total"], 1);
+    assert_eq!(json_val["summary"]["total_artifacts"], 1);
+    assert_eq!(json_val["summary"]["image_artifacts"], 1);
+    assert_eq!(json_val["summary"]["primary_artifacts"], 1);
+    assert_eq!(json_val["summary"]["total_size_bytes"], 4096);
+
+    let item = &json_val["items"][0];
+    assert_eq!(item["id"], "art-1");
+    assert_eq!(item["job_id"], "job-99");
+    assert_eq!(item["job_title"], "B200 Topology");
+    assert_eq!(item["job_status"], "succeeded");
+    assert_eq!(item["kind"], "image");
+    assert_eq!(item["role"], "primary");
+    assert_eq!(item["mime_type"], "image/svg+xml");
+    assert_eq!(item["download_url"], "/api/admin/jobs/job-99/artifacts/art-1");
 }
 
 #[tokio::test]

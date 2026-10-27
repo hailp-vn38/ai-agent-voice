@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Activity, AlertTriangle, RefreshCw, RotateCcw, Square, Trash2, Workflow } from '@lucide/vue'
+import { Activity, AlertTriangle, FolderOpen, RefreshCw, RotateCcw, Square, Trash2, Workflow } from '@lucide/vue'
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { agentJobsApi } from '@/api/agent-jobs'
@@ -220,6 +220,7 @@ onBeforeUnmount(() => {
       <template #actions>
         <Badge v-if="job?.execution_mode === 'knowledge_ingest_v3'" variant="outline">{{ t('jobUi.knowledge') }}</Badge>
         <Badge v-if="job" :variant="tone(job.status)">{{ statusLabel(job.status) }}</Badge>
+        <Button v-if="job?.artifacts?.length" variant="outline" data-job-open-artifacts @click="router.push({ name: 'artifacts', query: { job_id: job.id } })"><FolderOpen class="size-4" />{{ t('jobUi.artifacts') }} ({{ job.artifacts.length }})</Button>
         <Button variant="outline" :disabled="refreshing || loading || busy" @click="load()"><RefreshCw class="size-4" :class="{ 'animate-spin': refreshing }" />{{ t('jobUi.refresh') }}</Button>
         <Button v-if="job && !isTerminal(job.status) && job.status !== 'cancelling'" variant="outline" :disabled="busy" @click="cancel"><Square class="size-4" />{{ t('jobUi.cancelJob') }}</Button>
         <Button v-if="canRetry" :disabled="busy" @click="retryOpen = true"><RotateCcw class="size-4" />{{ t('jobUi.retryJob') }}</Button>

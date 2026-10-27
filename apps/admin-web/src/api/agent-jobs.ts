@@ -1,10 +1,11 @@
 import { jsonRequest, requestBlob, requestJson, withQuery } from './client'
 import type {
-  AdminJob, BackgroundSettings, BackgroundSettingsUpdate, JobEventPage, JobPage,
+  AdminJob, ArtifactCatalogPage, BackgroundSettings, BackgroundSettingsUpdate, JobEventPage, JobPage,
 } from './types/agent-jobs'
 
 const backgroundPath = '/api/admin/background/settings'
 const jobsPath = '/api/admin/jobs'
+const artifactsPath = '/api/admin/artifacts'
 
 function jobPath(id: string) {
   return jobsPath + '/' + encodeURIComponent(id)
@@ -21,6 +22,30 @@ export const agentJobsApi = {
   listJobs(query: { page?: number; status?: string; q?: string } = {}, signal?: AbortSignal) {
     return requestJson<JobPage>(withQuery(jobsPath, {
       page: query.page ?? 1, page_size: 30, status: query.status, q: query.q,
+    }), {}, { signal })
+  },
+  listArtifacts(
+    query: {
+      page?: number
+      page_size?: number
+      kind?: string
+      role?: string
+      job_id?: string
+      flow_id?: string
+      agent_id?: string
+      q?: string
+    } = {},
+    signal?: AbortSignal,
+  ) {
+    return requestJson<ArtifactCatalogPage>(withQuery(artifactsPath, {
+      page: query.page ?? 1,
+      page_size: query.page_size ?? 24,
+      kind: query.kind,
+      role: query.role,
+      job_id: query.job_id,
+      flow_id: query.flow_id,
+      agent_id: query.agent_id,
+      q: query.q,
     }), {}, { signal })
   },
   job(id: string, signal?: AbortSignal) {

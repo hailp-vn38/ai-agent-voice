@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Activity, ArrowRight, ClipboardList, Plus, RefreshCw, Search, Settings2, Workflow } from '@lucide/vue'
+import { Activity, ArrowRight, ClipboardList, FolderOpen, Plus, RefreshCw, Search, Settings2, Workflow } from '@lucide/vue'
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { agentJobsApi } from '@/api/agent-jobs'
@@ -96,6 +96,7 @@ onBeforeUnmount(() => { controller?.abort() })
   <section class="space-y-6">
     <PageHeader :title="t('jobUi.jobs')" :description="t('jobUi.jobsDescription')">
       <template #actions>
+        <Button variant="outline" @click="router.push({ name: 'artifacts' })"><FolderOpen class="size-4" />{{ t('nav.artifacts') }}</Button>
         <Button variant="outline" :disabled="loading" @click="load()"><RefreshCw class="size-4" :class="{ 'animate-spin': loading }" />{{ t('jobUi.refresh') }}</Button>
         <Button @click="createOpen = true"><Plus class="size-4" />{{ t('jobUi.newJob') }}</Button>
         <Button variant="outline" size="icon" :aria-label="t('jobUi.background')" :title="t('jobUi.background')" @click="router.push({ name: 'jobs-settings' })"><Settings2 class="size-4" aria-hidden="true" /></Button>

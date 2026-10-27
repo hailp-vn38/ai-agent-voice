@@ -124,6 +124,7 @@ pub(super) fn router(state: AppState) -> Router<AppState> {
             "/background/settings",
             get(background::settings).put(background::save_settings),
         )
+        .route("/artifacts", get(background::list_artifacts))
         .route("/jobs", get(background::list).post(background::create))
         .route("/jobs/stream", get(background::stream))
         .route(

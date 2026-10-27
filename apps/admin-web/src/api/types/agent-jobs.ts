@@ -119,6 +119,9 @@ export interface JobStep {
   output_schema: Record<string, unknown>
   result: unknown
 }
+export type ArtifactKind = 'report' | 'image' | 'video' | 'audio' | 'document' | 'data' | 'other'
+export type ArtifactRole = 'primary' | 'intermediate'
+
 export interface JobArtifact {
   id: string
   step_key: string | null
@@ -129,13 +132,52 @@ export interface JobArtifact {
   created_at: string
   name?: string
   mime_type?: string
-  kind?: string
-  role?: string
+  kind?: ArtifactKind | (string & {})
+  role?: ArtifactRole | (string & {})
   producer_session_id?: string | null
   producer_agent_id?: string | null
   producer_tool_name?: string | null
   producer_invocation_id?: string | null
   download_url?: string
+}
+
+export interface AdminArtifactItem extends JobArtifact {
+  artifact_id: string
+  task_id: string
+  job_id: string
+  job_title: string
+  job_goal: string
+  job_status: JobStatus
+  flow_id: string
+  root_agent_id?: string
+  name: string
+  mime_type: string
+  kind: ArtifactKind
+  role: ArtifactRole
+  turn_id?: string
+  download_url: string
+}
+
+export interface ArtifactCatalogSummary {
+  total_artifacts: number
+  primary_artifacts: number
+  intermediate_artifacts: number
+  report_artifacts: number
+  image_artifacts: number
+  video_artifacts: number
+  audio_artifacts: number
+  document_artifacts: number
+  data_artifacts: number
+  other_artifacts: number
+  total_size_bytes: number
+}
+
+export interface ArtifactCatalogPage {
+  items: AdminArtifactItem[]
+  total: number
+  page: number
+  page_size: number
+  summary: ArtifactCatalogSummary
 }
 export interface AdminJob {
   knowledge_state?: KnowledgeCurrentState | null

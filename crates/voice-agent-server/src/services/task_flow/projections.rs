@@ -43,6 +43,29 @@ fn insert_optional_str(payload: &mut Value, key: &str, value: Option<&str>) {
     }
 }
 
+fn project_artifact_base(art: &orchestrator_flow_rs::TaskArtifactView) -> Value {
+    json!({
+        "id": art.id,
+        "artifact_id": art.id,
+        "task_id": art.task_id,
+        "filename": art.name,
+        "name": art.name,
+        "media_type": art.mime_type,
+        "mime_type": art.mime_type,
+        "kind": art.kind,
+        "role": art.role,
+        "size_bytes": art.size_bytes,
+        "sha256": art.sha256,
+        "producer_session_id": art.producer_session_id,
+        "producer_agent_id": art.producer_agent_id,
+        "producer_tool_name": art.producer_tool_name,
+        "producer_invocation_id": art.producer_invocation_id,
+        "turn_id": art.turn_id,
+        "created_at": (art.created_at / 1000).max(1).to_string(),
+        "download_url": format!("/api/admin/jobs/{}/artifacts/{}", art.task_id, art.id),
+    })
+}
+
 /// Projects a [`TaskView`] and optional [`TaskDetailView`] into the `AdminJob` JSON contract
 /// consumed by Admin Web UI (`/api/admin/jobs` and `/api/admin/jobs/{id}`).
 pub fn project_task_to_admin_job(task: &TaskView, detail: Option<&TaskDetailView>) -> Value {
@@ -188,27 +211,11 @@ pub fn project_task_to_admin_job(task: &TaskView, detail: Option<&TaskDetailView
                                 .get(&(art.producer_session_id.as_str(), tool_name))
                                 .cloned()
                         });
-                    json!({
-                        "id": art.id,
-                        "artifact_id": art.id,
-                        "task_id": art.task_id,
-                        "step_key": step_key,
-                        "filename": art.name,
-                        "name": art.name,
-                        "media_type": art.mime_type,
-                        "mime_type": art.mime_type,
-                        "kind": art.kind,
-                        "role": art.role,
-                        "size_bytes": art.size_bytes,
-                        "sha256": art.sha256,
-                        "producer_session_id": art.producer_session_id,
-                        "producer_agent_id": art.producer_agent_id,
-                        "producer_tool_name": art.producer_tool_name,
-                        "producer_invocation_id": art.producer_invocation_id,
-                        "turn_id": art.turn_id,
-                        "created_at": (art.created_at / 1000).max(1).to_string(),
-                        "download_url": format!("/api/admin/jobs/{}/artifacts/{}", task.id, art.id),
-                    })
+                    let mut val = project_artifact_base(art);
+                    if let Some(obj) = val.as_object_mut() {
+                        obj.insert("step_key".to_string(), json!(step_key));
+                    }
+                    val
                 })
                 .collect()
         })
@@ -431,4 +438,52 @@ pub fn project_task_events(detail: &TaskDetailView, after: i64, limit: u32) -> V
         .take(limit as usize)
         .map(|(_, ev)| ev)
         .collect()
+}
+
+/// Projects a [`orchestrator_flow_rs::TaskArtifactCatalogPage`] into the Admin Artifact Catalog JSON contract
+/// consumed by `/api/admin/artifacts`.
+pub fn project_artifact_catalog_page(
+    page: &orchestrator_flow_rs::TaskArtifactCatalogPage,
+    page_num: u32,
+    page_size: u32,
+) -> Value {
+    let items: Vec<Value> = page
+        .items
+        .iter()
+        .map(|entry| {
+            let mut val = project_artifact_base(&entry.artifact);
+            if let Some(obj) = val.as_object_mut() {
+                obj.insert("job_id".to_string(), json!(entry.artifact.task_id));
+                obj.insert("job_title".to_string(), json!(entry.task_title));
+                obj.insert("job_goal".to_string(), json!(entry.task_prompt));
+                obj.insert(
+                    "job_status".to_string(),
+                    json!(map_task_status_to_admin_job_status(entry.task_status)),
+                );
+                obj.insert("flow_id".to_string(), json!(entry.flow_id));
+                obj.insert("root_agent_id".to_string(), json!(entry.root_agent_id));
+            }
+            val
+        })
+        .collect();
+
+    json!({
+        "items": items,
+        "total": page.total,
+        "page": page_num,
+        "page_size": page_size,
+        "summary": {
+            "total_artifacts": page.summary.total_artifacts,
+            "primary_artifacts": page.summary.primary_artifacts,
+            "intermediate_artifacts": page.summary.intermediate_artifacts,
+            "report_artifacts": page.summary.report_artifacts,
+            "image_artifacts": page.summary.image_artifacts,
+            "video_artifacts": page.summary.video_artifacts,
+            "audio_artifacts": page.summary.audio_artifacts,
+            "document_artifacts": page.summary.document_artifacts,
+            "data_artifacts": page.summary.data_artifacts,
+            "other_artifacts": page.summary.other_artifacts,
+            "total_size_bytes": page.summary.total_size_bytes,
+        }
+    })
 }

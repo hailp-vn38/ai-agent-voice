@@ -1,4 +1,4 @@
-import { BookOpen, Bot, Boxes, Brain, ClipboardList, Cpu, LayoutDashboard, LayoutTemplate, Mic, Server, Workflow } from '@lucide/vue'
+import { BookOpen, Bot, Boxes, Brain, ClipboardList, Cpu, FolderOpen, LayoutDashboard, LayoutTemplate, Mic, Server, Workflow } from '@lucide/vue'
 
 import type { MessageKey } from '@/i18n/messages'
 
@@ -9,6 +9,7 @@ export const navigationGroups = [
       { label: 'nav.overview', to: '/overview', icon: LayoutDashboard },
       { label: 'nav.agents', to: '/agents', icon: Bot },
       { label: 'nav.jobs', to: '/jobs', icon: ClipboardList },
+      { label: 'nav.artifacts', to: '/artifacts', icon: FolderOpen },
       { label: 'nav.templates', to: '/templates', icon: LayoutTemplate },
       { label: 'nav.knowledge', to: '/knowledge', icon: BookOpen },
       { label: 'nav.memory', to: '/memory', icon: Brain },

@@ -115,8 +115,12 @@ Tập công cụ gắn sẵn theo vai trò Sub-Agent gồm truy vấn/biên so�
 _Avoid_: Plugin Package, External Plugin Installation, subprocess plugin runner
 
 **Job Artifact**:
-Tệp kết quả bất biến thuộc nhiều loại (báo cáo Markdown, hình ảnh PNG/SVG, âm thanh WAV hoặc dữ liệu cấu trúc) do công cụ của Sub-Agent xuất bản và gắn với một Background Task kèm mã băm SHA-256 xác minh toàn vẹn.
+Tệp kết quả bất biến thuộc nhiều phân loại (báo cáo, hình ảnh, video, âm thanh, tài liệu hoặc dữ liệu có cấu trúc) do công cụ của Root Orchestrator hoặc Sub-Agent xuất bản và gắn với một Background Task kèm thông tin nguồn gốc và kiểm chứng toàn vẹn.
 _Avoid_: Worker Output, Tool Result, temporary scratch file
+
+**Artifact Catalog**:
+Danh mục tập trung liệt kê các Job Artifact đã xuất bản trên toàn bộ các Background Task kèm ngữ cảnh Task nguồn, thống kê theo phân loại và khả năng lọc, xem trước, tải xuống có xác minh toàn vẹn.
+_Avoid_: Knowledge Browser Space, Raw Working Note, thư mục tạm trên đĩa
 
 **Job Read View**:
 Biểu diễn hiện thời và nhất quán của một Background Task cùng các Agent Run, bước gọi công cụ, Task Follow-up và metadata Job Artifact để Admin quan sát.

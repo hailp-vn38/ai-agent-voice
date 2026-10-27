@@ -19,7 +19,9 @@ pub use agent_settings::{
     save_persisted_settings, sync_orchestrator_from_state, validate_agent_overrides,
     write_agent_prompts,
 };
-pub use projections::{project_task_events, project_task_to_admin_job};
+pub use projections::{
+    project_artifact_catalog_page, project_task_events, project_task_to_admin_job,
+};
 pub use voice::{TASK_SUITE_TOOL_NAMES, VoiceTaskSubmit, is_task_suite_tool_name, voice_rejection};
 pub use workspace_seed::{
     DAILY_ROOT_PROMPT, DAILY_SYNTHESIS_STAGING_SKILL, DAILY_TASK_REMINDER_SKILL,
