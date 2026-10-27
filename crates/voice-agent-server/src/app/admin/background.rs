@@ -3,7 +3,8 @@ use crate::services::task_flow::{
     AgentConfigOverride, DEFAULT_ORCHESTRATOR_PROVIDER_REF, PersistedBackgroundSettings,
     project_agents_json, project_artifact_catalog_page, project_task_events,
     project_task_to_admin_job, resolve_llm_provider_catalog, save_persisted_settings,
-    sync_orchestrator_from_state, validate_agent_overrides,
+    skills::{self, Precondition, SaveJobSkill, SkillCatalogError},
+    sync_orchestrator_from_state, validate_agent_overrides_with_skills,
 };
 use orchestrator_flow_rs::{
     CreateTaskRequest, ErrorCode, TaskArtifactCatalogPage, TaskArtifactFilter, TaskArtifactKind,
@@ -77,6 +78,7 @@ async fn build_settings_json(
         .map(|p| p.to_json_summary())
         .collect();
     let agents = project_agents_json(&state.config.orchestrator, settings, &catalog);
+    let skills_list = skills::list(state).unwrap_or_default();
     let available_agents = state
         .task_manager
         .as_ref()
@@ -91,6 +93,7 @@ async fn build_settings_json(
         "llm_providers": llm_providers,
         "available_agents": available_agents,
         "agents": agents,
+        "skills": skills_list,
     })
 }
 
@@ -152,22 +155,30 @@ pub(super) async fn save_settings(State(state): State<AppState>, request: Reques
         .filter(|s| !s.is_empty())
         .map(str::to_owned)
         .unwrap_or_else(|| current.worker_llm_provider.clone());
+    let skill_ids = skills::catalog_ids(&state);
+    let mut pruned_current_agents = current.agents.clone();
+    for ovr in pruned_current_agents.values_mut() {
+        if let Some(ref mut allowed) = ovr.allowed_skills {
+            allowed.retain(|s| skill_ids.contains(s.as_str()));
+        }
+    }
     let next_agents = match input.agents {
         Some(incoming) => {
-            let mut merged = current.agents.clone();
+            let mut merged = pruned_current_agents;
             for (k, v) in incoming {
                 merged.insert(k, v);
             }
             merged
         }
-        None => current.agents.clone(),
+        None => pruned_current_agents,
     };
 
-    if let Err(code) = validate_agent_overrides(
+    if let Err(code) = validate_agent_overrides_with_skills(
         &next_orchestrator_provider,
         &next_worker_provider,
         &next_agents,
         &catalog,
+        &skill_ids,
     ) {
         return error(&request, StatusCode::BAD_REQUEST, code);
     }
@@ -201,6 +212,118 @@ pub(super) async fn save_settings(State(state): State<AppState>, request: Reques
     }
 
     Json(build_settings_json(&state, &next_settings, new_rev).await).into_response()
+}
+
+fn skill_error_response(request: &Request, err: SkillCatalogError) -> Response {
+    match err {
+        SkillCatalogError::InvalidId => error(request, StatusCode::BAD_REQUEST, "invalid_skill_id"),
+        SkillCatalogError::InvalidArguments(code) => error(request, StatusCode::BAD_REQUEST, code),
+        SkillCatalogError::PayloadTooLarge => {
+            error(request, StatusCode::PAYLOAD_TOO_LARGE, "skill_too_large")
+        }
+        SkillCatalogError::NotFound => error(request, StatusCode::NOT_FOUND, "not_found"),
+        SkillCatalogError::AlreadyExists => {
+            error(request, StatusCode::CONFLICT, "already_exists")
+        }
+        SkillCatalogError::RevisionConflict => {
+            error(request, StatusCode::CONFLICT, "revision_conflict")
+        }
+        SkillCatalogError::BuiltinCannotBeDeleted => error(
+            request,
+            StatusCode::BAD_REQUEST,
+            "builtin_skill_cannot_be_deleted",
+        ),
+        SkillCatalogError::Io => error(
+            request,
+            StatusCode::SERVICE_UNAVAILABLE,
+            "storage_unavailable",
+        ),
+    }
+}
+
+fn parse_skill_etag(headers: &HeaderMap) -> Option<String> {
+    let raw = headers.get(header::IF_MATCH)?.to_str().ok()?.trim();
+    let unquoted = raw
+        .strip_prefix('"')
+        .and_then(|s| s.strip_suffix('"'))
+        .unwrap_or(raw)
+        .trim();
+    (!unquoted.is_empty()).then(|| unquoted.to_owned())
+}
+
+fn parse_save_precondition(headers: &HeaderMap) -> Result<Precondition, &'static str> {
+    if let Some(if_none) = headers
+        .get(header::IF_NONE_MATCH)
+        .and_then(|v| v.to_str().ok())
+        .map(str::trim)
+        && if_none == "*"
+    {
+        return Ok(Precondition::IfNoneMatchStar);
+    }
+    if let Some(etag) = parse_skill_etag(headers) {
+        return Ok(Precondition::IfMatch(etag));
+    }
+    Err("invalid_if_match")
+}
+
+pub(super) async fn get_skill(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    request: Request,
+) -> Response {
+    match skills::get(&state, &id) {
+        Ok(detail) => {
+            let etag = format!("\"{}\"", detail.summary.etag);
+            (
+                StatusCode::OK,
+                [(header::ETAG, etag)],
+                Json(detail),
+            )
+                .into_response()
+        }
+        Err(err) => skill_error_response(&request, err),
+    }
+}
+
+pub(super) async fn save_skill(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    request: Request,
+) -> Response {
+    let precondition = match parse_save_precondition(request.headers()) {
+        Ok(p) => p,
+        Err(code) => return error(&request, StatusCode::BAD_REQUEST, code),
+    };
+    let (request, input): (_, SaveJobSkill) = match json(request).await {
+        Ok(v) => v,
+        Err(resp) => return resp,
+    };
+    match skills::save(&state, &id, input, precondition).await {
+        Ok((detail, created)) => {
+            let status = if created {
+                StatusCode::CREATED
+            } else {
+                StatusCode::OK
+            };
+            let etag = format!("\"{}\"", detail.summary.etag);
+            (status, [(header::ETAG, etag)], Json(detail)).into_response()
+        }
+        Err(err) => skill_error_response(&request, err),
+    }
+}
+
+pub(super) async fn delete_skill(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    request: Request,
+) -> Response {
+    let Some(expected_etag) = parse_skill_etag(request.headers()) else {
+        return error(&request, StatusCode::BAD_REQUEST, "invalid_if_match");
+    };
+    match skills::delete(&state, &id, &expected_etag).await {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Err(err) => skill_error_response(&request, err),
+    }
 }
 
 #[derive(Deserialize)]

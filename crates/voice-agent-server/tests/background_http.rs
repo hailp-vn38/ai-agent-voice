@@ -584,3 +584,326 @@ prompts_dir = "{}"
     server.abort();
 }
 
+#[tokio::test]
+async fn background_skills_crud_etag_preconditions_and_agent_visibility() {
+    let temp_root = std::env::temp_dir().join(format!("background-skills-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&temp_root).unwrap();
+    let config: AppConfig = toml::from_str(&format!(
+        r#"
+[server]
+bind = "127.0.0.1:0"
+public_ws_url = "ws://127.0.0.1:0/voice/v1/"
+[provider_defaults]
+vad = "test"
+asr = "test"
+llm = "test"
+tts = "test"
+[database]
+url = "sqlite://{}"
+[api]
+enabled = true
+admin_token = "background-test-token"
+[orchestrator]
+store_dir = "{}"
+prompts_dir = "{}"
+skills_dir = "{}"
+"#,
+        temp_root.join("voice-agent.db").display(),
+        temp_root.join("orch-store").display(),
+        temp_root.join("prompts").display(),
+        temp_root.join("skills").display(),
+    ))
+    .unwrap();
+    let router = bootstrap_with_providers(config, Arc::new(ProviderSet::unavailable()))
+        .await
+        .unwrap();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base = format!("http://{}/api/admin", listener.local_addr().unwrap());
+    let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    let client = Client::new();
+
+    // 1. GET /background/settings includes 6 built-in skills and dynamic subagent available_skills
+    let initial: Value = client
+        .get(format!("{base}/background/settings"))
+        .bearer_auth("background-test-token")
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let skills = initial["skills"].as_array().expect("skills array in settings");
+    assert_eq!(skills.len(), 6);
+    for expected_id in [
+        "daily-synthesis-staging",
+        "daily-task-reminder",
+        "wiki-ingest",
+        "wiki-lint",
+        "wiki-query",
+        "wiki-taxonomy",
+    ] {
+        let entry = skills
+            .iter()
+            .find(|s| s["id"] == expected_id)
+            .unwrap_or_else(|| panic!("missing built-in skill {expected_id}"));
+        assert_eq!(entry["is_builtin"], true);
+        assert_eq!(entry["is_modified"], false);
+        assert!(!entry["etag"].as_str().unwrap().is_empty());
+    }
+
+    let agents = initial["agents"].as_array().unwrap();
+    let daily_root = agents.iter().find(|a| a["id"] == "daily_root").unwrap();
+    assert_eq!(daily_root["available_skills"], json!([]));
+    let researcher = agents.iter().find(|a| a["id"] == "wiki_researcher").unwrap();
+    let researcher_avail = researcher["available_skills"].as_array().unwrap();
+    assert_eq!(researcher_avail.len(), 6);
+    assert_eq!(researcher_avail[0], "wiki-query");
+    assert_eq!(researcher_avail[1], "wiki-taxonomy");
+
+    // 2. GET /background/skills/wiki-ingest returns detail + default + ETag header
+    let detail_resp = client
+        .get(format!("{base}/background/skills/wiki-ingest"))
+        .bearer_auth("background-test-token")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(detail_resp.status(), StatusCode::OK);
+    let header_etag = detail_resp
+        .headers()
+        .get("etag")
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .to_owned();
+    let detail: Value = detail_resp.json().await.unwrap();
+    let etag1 = detail["etag"].as_str().unwrap().to_owned();
+    assert_eq!(header_etag, format!("\"{etag1}\""));
+    assert_eq!(detail["is_builtin"], true);
+    assert_eq!(detail["is_modified"], false);
+    assert!(detail["default"].is_object());
+    let default_name = detail["default"]["name"].as_str().unwrap().to_owned();
+    let default_desc = detail["default"]["description"].as_str().unwrap().to_owned();
+    let default_body = detail["default"]["body"].as_str().unwrap().to_owned();
+
+    // 3. Edit built-in skill wiki-ingest with If-Match
+    let edited_resp = client
+        .put(format!("{base}/background/skills/wiki-ingest"))
+        .bearer_auth("background-test-token")
+        .header("If-Match", format!("\"{etag1}\""))
+        .json(&json!({
+            "name": "wiki-ingest",
+            "description": "Customized ingest description",
+            "body": "# Custom Ingest Workflow\n\n1. Verify frontmatter."
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(edited_resp.status(), StatusCode::OK);
+    let edited: Value = edited_resp.json().await.unwrap();
+    assert_eq!(edited["is_builtin"], true);
+    assert_eq!(edited["is_modified"], true);
+    assert_eq!(edited["description"], "Customized ingest description");
+    let etag2 = edited["etag"].as_str().unwrap().to_owned();
+    assert_ne!(etag1, etag2);
+
+    // Stale ETag on PUT -> 409 Conflict
+    let stale_put = client
+        .put(format!("{base}/background/skills/wiki-ingest"))
+        .bearer_auth("background-test-token")
+        .header("If-Match", format!("\"{etag1}\""))
+        .json(&json!({
+            "name": "wiki-ingest",
+            "description": "Stale write",
+            "body": "# Stale"
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(stale_put.status(), StatusCode::CONFLICT);
+    assert_eq!(
+        stale_put.json::<Value>().await.unwrap()["error"]["code"],
+        "revision_conflict"
+    );
+
+    // 4. Deleting a built-in skill is rejected with 400 builtin_skill_cannot_be_deleted
+    let del_builtin = client
+        .delete(format!("{base}/background/skills/wiki-ingest"))
+        .bearer_auth("background-test-token")
+        .header("If-Match", format!("\"{etag2}\""))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(del_builtin.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(
+        del_builtin.json::<Value>().await.unwrap()["error"]["code"],
+        "builtin_skill_cannot_be_deleted"
+    );
+
+    // 5. Restore default on built-in skill via PUT using `default` fields -> is_modified becomes false
+    let restored_resp = client
+        .put(format!("{base}/background/skills/wiki-ingest"))
+        .bearer_auth("background-test-token")
+        .header("If-Match", format!("\"{etag2}\""))
+        .json(&json!({
+            "name": default_name,
+            "description": default_desc,
+            "body": default_body
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(restored_resp.status(), StatusCode::OK);
+    let restored: Value = restored_resp.json().await.unwrap();
+    assert_eq!(restored["is_modified"], false);
+
+    // 6. Create a Custom Job Skill with If-None-Match: *
+    let create_resp = client
+        .put(format!("{base}/background/skills/custom-seo-audit"))
+        .bearer_auth("background-test-token")
+        .header("If-None-Match", "*")
+        .json(&json!({
+            "name": "custom-seo-audit",
+            "description": "Audit technical SEO: headings, links, and metadata",
+            "body": "# SEO Audit\n\nCheck H1 and canonical tags."
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(create_resp.status(), StatusCode::CREATED);
+    let created_custom: Value = create_resp.json().await.unwrap();
+    assert_eq!(created_custom["id"], "custom-seo-audit");
+    assert_eq!(created_custom["is_builtin"], false);
+    assert_eq!(created_custom["is_modified"], false);
+    assert!(created_custom["default"].is_null());
+    let custom_etag = created_custom["etag"].as_str().unwrap().to_owned();
+
+    // Duplicate create with If-None-Match: * -> 409 already_exists
+    let dup_create = client
+        .put(format!("{base}/background/skills/custom-seo-audit"))
+        .bearer_auth("background-test-token")
+        .header("If-None-Match", "*")
+        .json(&json!({
+            "name": "custom-seo-audit-2",
+            "description": "Duplicate id",
+            "body": "# Dup"
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(dup_create.status(), StatusCode::CONFLICT);
+    assert_eq!(
+        dup_create.json::<Value>().await.unwrap()["error"]["code"],
+        "already_exists"
+    );
+
+    // Invalid quote in frontmatter name -> 400 invalid_skill_name
+    let bad_name = client
+        .put(format!("{base}/background/skills/bad-quote-skill"))
+        .bearer_auth("background-test-token")
+        .header("If-None-Match", "*")
+        .json(&json!({
+            "name": "bad \"quote\"",
+            "description": "ok",
+            "body": "# Body"
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(bad_name.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(
+        bad_name.json::<Value>().await.unwrap()["error"]["code"],
+        "invalid_skill_name"
+    );
+
+    // 7. Assign custom-seo-audit to wiki_researcher via PUT /background/settings
+    let assign_resp = client
+        .put(format!("{base}/background/settings"))
+        .bearer_auth("background-test-token")
+        .header("If-Match", "\"1\"")
+        .json(&json!({
+            "enabled": true,
+            "agents": {
+                "wiki_researcher": {
+                    "enabled": true,
+                    "allowed_skills": ["wiki-query", "custom-seo-audit"]
+                }
+            }
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(assign_resp.status(), StatusCode::OK);
+    let assigned_settings: Value = assign_resp.json().await.unwrap();
+    let researcher_after = assigned_settings["agents"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|a| a["id"] == "wiki_researcher")
+        .unwrap();
+    assert_eq!(
+        researcher_after["allowed_skills"],
+        json!(["wiki-query", "custom-seo-audit"])
+    );
+
+    let custom_detail: Value = client
+        .get(format!("{base}/background/skills/custom-seo-audit"))
+        .bearer_auth("background-test-token")
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(custom_detail["used_by_agents"], json!(["wiki_researcher"]));
+
+    // 8. Delete custom-seo-audit with If-Match -> 204 No Content, and read-time filtering removes it from wiki_researcher
+    let wrong_del = client
+        .delete(format!("{base}/background/skills/custom-seo-audit"))
+        .bearer_auth("background-test-token")
+        .header("If-Match", "\"wrong-etag\"")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(wrong_del.status(), StatusCode::CONFLICT);
+
+    let ok_del = client
+        .delete(format!("{base}/background/skills/custom-seo-audit"))
+        .bearer_auth("background-test-token")
+        .header("If-Match", format!("\"{custom_etag}\""))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(ok_del.status(), StatusCode::NO_CONTENT);
+
+    let get_deleted = client
+        .get(format!("{base}/background/skills/custom-seo-audit"))
+        .bearer_auth("background-test-token")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(get_deleted.status(), StatusCode::NOT_FOUND);
+
+    let after_del_settings: Value = client
+        .get(format!("{base}/background/settings"))
+        .bearer_auth("background-test-token")
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let researcher_pruned = after_del_settings["agents"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|a| a["id"] == "wiki_researcher")
+        .unwrap();
+    assert_eq!(
+        researcher_pruned["allowed_skills"],
+        json!(["wiki-query"]),
+        "deleted custom skill must be filtered out of effective allowed_skills"
+    );
+
+    server.abort();
+}
+

@@ -1,14 +1,14 @@
 <script setup lang="ts">
 import {
-  Activity, ArrowRight, Bot, Cpu, ExternalLink, RefreshCw,
-  Save, Settings2, Sliders, Wrench,
+  Activity, ArrowRight, BookOpen, Bot, Cpu, ExternalLink, Pencil, Plus, RefreshCw,
+  Save, Settings2, Sliders, Trash2, Wrench,
 } from '@lucide/vue'
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { agentJobsApi } from '@/api/agent-jobs'
 import type {
   BackgroundAgentConfig, BackgroundAgentConfigUpdate, BackgroundProviderOption,
-  BackgroundSettings, BackgroundSettingsUpdate,
+  BackgroundSettings, BackgroundSettingsUpdate, JobSkillDetail, JobSkillSummary,
 } from '@/api/types/agent-jobs'
 import { formatApiError, isApiError } from '@/api/errors'
 import DetailHeader from '@/components/admin/DetailHeader.vue'
@@ -25,6 +25,7 @@ import {
   providerOptionsForAgent as filterProviderOptionsForAgent,
   toAgentUpdate,
 } from './backgroundAgentUtils'
+import JobSkillEditorModal from './JobSkillEditorModal.vue'
 
 const router = useRouter()
 const { t } = useI18n()
@@ -49,8 +50,72 @@ function providerOptionsForAgent(agent: BackgroundAgentConfig | null): Backgroun
   return filterProviderOptionsForAgent(providerOptions.value, agent)
 }
 const agentsCatalog = computed(() => settings.value?.agents ?? [])
+const skillsCatalog = computed(() => settings.value?.skills ?? [])
 const dailyFlowAgents = computed(() => agentsCatalog.value.filter(a => a.flow_id === 'daily'))
 const wikiFlowAgents = computed(() => agentsCatalog.value.filter(a => a.flow_id === 'wiki'))
+
+const skillModalOpen = ref(false)
+const skillModalMode = ref<'create' | 'edit'>('create')
+const activeSkillId = ref<string | null>(null)
+
+function openCreateSkillModal() {
+  skillModalMode.value = 'create'
+  activeSkillId.value = null
+  skillModalOpen.value = true
+}
+
+function openEditSkillModal(id: string) {
+  skillModalMode.value = 'edit'
+  activeSkillId.value = id
+  skillModalOpen.value = true
+}
+
+async function refreshCatalogAfterSkillChange(deletedId?: string) {
+  const wasDirty = dirty.value
+  try {
+    const config = await agentJobsApi.settings()
+    settings.value = config
+    if (!wasDirty) {
+      restore(config)
+    } else if (deletedId && draft.value.agents) {
+      for (const ag of Object.values(draft.value.agents)) {
+        if (ag.allowed_skills) {
+          ag.allowed_skills = ag.allowed_skills.filter(s => s !== deletedId)
+        }
+      }
+    }
+  } catch (cause) {
+    error.value = formatApiError(cause)
+  }
+}
+
+async function onSkillSaved(_saved: JobSkillDetail) {
+  skillModalOpen.value = false
+  await refreshCatalogAfterSkillChange()
+  notice.value = t('jobUi.skillSaved')
+}
+
+async function onSkillDeleted(deletedId: string) {
+  skillModalOpen.value = false
+  await refreshCatalogAfterSkillChange(deletedId)
+  notice.value = t('jobUi.skillDeleted')
+}
+
+async function deleteCustomSkillFromCard(skill: JobSkillSummary) {
+  if (skill.is_builtin) return
+  if (typeof window !== 'undefined' && typeof window.confirm === 'function') {
+    const confirmed = window.confirm(t('jobUi.skillDeleteConfirm', { id: skill.id }))
+    if (!confirmed) return
+  }
+  error.value = ''
+  notice.value = ''
+  try {
+    await agentJobsApi.deleteSkill(skill.id, skill.etag)
+    await onSkillDeleted(skill.id)
+  } catch (cause) {
+    error.value = formatApiError(cause)
+  }
+}
 
 function findProvider(refId: string | null | undefined): BackgroundProviderOption | undefined {
   return findCatalogProvider(providerOptions.value, refId)
@@ -480,6 +545,104 @@ onBeforeUnmount(() => controller?.abort())
           </div>
         </div>
       </section>
+
+      <!-- Job Skill Catalog (skills/) -->
+      <section class="studio-panel space-y-4 p-5" data-skill-catalog>
+        <div class="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h2 class="flex items-center gap-2 font-semibold">
+              <BookOpen class="size-5 text-studio-violet" />{{ t('jobUi.skillCatalogTitle') }}
+            </h2>
+            <p class="mt-1 text-xs text-muted-foreground">{{ t('jobUi.skillCatalogHint') }}</p>
+          </div>
+          <div class="flex items-center gap-2">
+            <Badge variant="outline">{{ skillsCatalog.length }} skills</Badge>
+            <Button
+              size="sm"
+              type="button"
+              :disabled="saving"
+              data-skill-create-btn
+              @click="openCreateSkillModal"
+            >
+              <Plus class="size-4" />{{ t('jobUi.skillAdd') }}
+            </Button>
+          </div>
+        </div>
+
+        <div class="grid gap-3 md:grid-cols-2">
+          <div
+            v-for="skill in skillsCatalog"
+            :key="skill.id"
+            class="flex flex-col justify-between rounded-xl border bg-background p-4"
+            :data-skill-card="skill.id"
+          >
+            <div class="space-y-2.5">
+              <div class="flex flex-wrap items-center justify-between gap-2">
+                <div class="flex flex-wrap items-center gap-1.5">
+                  <button
+                    type="button"
+                    class="cursor-pointer rounded bg-muted px-2 py-0.5 font-mono text-xs font-semibold hover:text-studio-violet"
+                    @click="openEditSkillModal(skill.id)"
+                  >
+                    {{ skill.id }}
+                  </button>
+                  <Badge :variant="skill.is_builtin ? 'secondary' : 'outline'">
+                    {{ skill.is_builtin ? t('jobUi.skillBuiltinBadge') : t('jobUi.skillCustomBadge') }}
+                  </Badge>
+                  <Badge v-if="skill.is_builtin && skill.is_modified" variant="outline">
+                    {{ t('jobUi.customizedBadge') }}
+                  </Badge>
+                </div>
+
+                <div class="flex items-center gap-1.5">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    type="button"
+                    :data-skill-edit="skill.id"
+                    @click="openEditSkillModal(skill.id)"
+                  >
+                    <Pencil class="size-3.5" />{{ t('jobUi.skillViewEdit') }}
+                  </Button>
+                  <Button
+                    v-if="!skill.is_builtin"
+                    size="sm"
+                    variant="outline"
+                    type="button"
+                    class="border-danger/40 text-danger hover:bg-danger/10"
+                    :data-skill-delete-card="skill.id"
+                    @click="deleteCustomSkillFromCard(skill)"
+                  >
+                    <Trash2 class="size-3.5" />{{ t('common.delete') }}
+                  </Button>
+                </div>
+              </div>
+
+              <p class="text-xs font-medium text-foreground">{{ skill.name }}</p>
+              <p class="line-clamp-2 text-xs text-muted-foreground">{{ skill.description }}</p>
+            </div>
+
+            <div class="mt-3 flex flex-wrap items-center gap-1.5 border-t pt-3 text-xs">
+              <span class="text-muted-foreground">{{ t('jobUi.skillUsedBy') }}:</span>
+              <template v-if="skill.used_by_agents.length > 0">
+                <Badge v-for="ag in skill.used_by_agents" :key="ag" variant="secondary">
+                  {{ ag }}
+                </Badge>
+              </template>
+              <span v-else class="text-muted-foreground">{{ t('jobUi.skillUnused') }}</span>
+            </div>
+          </div>
+        </div>
+      </section>
     </template>
+
+    <JobSkillEditorModal
+      :open="skillModalOpen"
+      :mode="skillModalMode"
+      :skill-id="activeSkillId"
+      @close="skillModalOpen = false"
+      @saved="onSkillSaved"
+      @deleted="onSkillDeleted"
+    />
   </section>
 </template>

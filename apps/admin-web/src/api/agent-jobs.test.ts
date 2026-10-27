@@ -93,4 +93,51 @@ describe('Agent Job admin clients', () => {
     expect(fetch.mock.calls[0]?.[0]).toContain('limit=100')
   })
 
+  it('loads, creates, updates, and deletes Job Skills with ETag preconditions', async () => {
+    const detail = {
+      id: 'seo-audit',
+      name: 'SEO Audit',
+      description: 'Audit SEO structure.',
+      body: '## Steps\n- Check headings.',
+      is_builtin: false,
+      is_modified: true,
+      etag: 'abc123etag',
+      used_by_agents: ['wiki_curator'],
+      suggested_for_agents: [],
+      default: null,
+    }
+    const fetch = vi
+      .fn()
+      .mockResolvedValueOnce(json(detail))
+      .mockResolvedValueOnce(json(detail))
+      .mockResolvedValueOnce(json({ ...detail, etag: 'def456etag' }))
+      .mockResolvedValueOnce(new Response(null, { status: 204 }))
+    vi.stubGlobal('fetch', fetch)
+
+    await expect(agentJobsApi.skill('seo-audit')).resolves.toEqual(detail)
+    expect(fetch.mock.calls[0]?.[0]).toContain('/api/admin/background/skills/seo-audit')
+
+    await agentJobsApi.createSkill('seo-audit', {
+      name: detail.name,
+      description: detail.description,
+      body: detail.body,
+    })
+    const createInit = fetch.mock.calls[1]?.[1] as RequestInit
+    expect(createInit.method).toBe('PUT')
+    expect(new Headers(createInit.headers).get('if-none-match')).toBe('*')
+
+    await agentJobsApi.updateSkill(
+      'seo-audit',
+      { name: detail.name, description: detail.description, body: detail.body },
+      'abc123etag',
+    )
+    const updateInit = fetch.mock.calls[2]?.[1] as RequestInit
+    expect(updateInit.method).toBe('PUT')
+    expect(new Headers(updateInit.headers).get('if-match')).toBe('"abc123etag"')
+
+    await expect(agentJobsApi.deleteSkill('seo-audit', '"def456etag"')).resolves.toBeUndefined()
+    const deleteInit = fetch.mock.calls[3]?.[1] as RequestInit
+    expect(deleteInit.method).toBe('DELETE')
+    expect(new Headers(deleteInit.headers).get('if-match')).toBe('"def456etag"')
+  })
 })

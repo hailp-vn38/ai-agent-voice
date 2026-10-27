@@ -51,6 +51,30 @@ export interface BackgroundAgentConfigUpdate {
   description?: string
   system_prompt?: string
 }
+export interface JobSkillSummary {
+  id: string
+  name: string
+  description: string
+  is_builtin: boolean
+  is_modified: boolean
+  etag: string
+  used_by_agents: string[]
+  suggested_for_agents: string[]
+}
+export interface SkillDefaults {
+  name: string
+  description: string
+  body: string
+}
+export interface JobSkillDetail extends JobSkillSummary {
+  body: string
+  default?: SkillDefaults | null
+}
+export interface SaveJobSkillInput {
+  name: string
+  description: string
+  body: string
+}
 export interface BackgroundSettings {
   llm_providers?: BackgroundProviderOption[]
   runtime_ready: boolean
@@ -59,6 +83,7 @@ export interface BackgroundSettings {
   worker_llm_provider: string | null
   revision: number
   agents?: BackgroundAgentConfig[]
+  skills?: JobSkillSummary[]
 }
 export interface BackgroundSettingsUpdate {
   enabled: boolean

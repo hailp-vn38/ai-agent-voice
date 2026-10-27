@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import {
   Activity, ArrowLeft, ArrowRight, BookOpen, Bot, Columns2, Cpu, Eye,
-  ExternalLink, FileText, Pencil, RefreshCw, RotateCcw, Save,
+  ExternalLink, FileText, Pencil, Plus, RefreshCw, RotateCcw, Save,
   Settings2, Sliders, Wrench, Workflow,
 } from '@lucide/vue'
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
@@ -14,6 +14,8 @@ import type {
   BackgroundProviderOption,
   BackgroundSettings,
   BackgroundSettingsUpdate,
+  JobSkillDetail,
+  JobSkillSummary,
 } from '@/api/types/agent-jobs'
 import DetailHeader from '@/components/admin/DetailHeader.vue'
 import { Badge } from '@/components/ui/badge'
@@ -36,6 +38,7 @@ import {
   sameStringArray,
   toolCapabilityEntries,
 } from './backgroundAgentUtils'
+import JobSkillEditorModal from './JobSkillEditorModal.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -74,8 +77,56 @@ let controller: AbortController | undefined
 
 const providerOptions = computed(() => settings.value?.llm_providers ?? [])
 const agentsCatalog = computed(() => settings.value?.agents ?? [])
+const skillsCatalog = computed(() => settings.value?.skills ?? [])
 const dailyFlowAgents = computed(() => agentsCatalog.value.filter(a => a.flow_id === 'daily'))
 const wikiFlowAgents = computed(() => agentsCatalog.value.filter(a => a.flow_id === 'wiki'))
+
+const skillModalOpen = ref(false)
+const skillModalMode = ref<'create' | 'edit'>('create')
+const activeSkillId = ref<string | null>(null)
+
+function findSkillSummary(id: string): JobSkillSummary | undefined {
+  return skillsCatalog.value.find(s => s.id === id)
+}
+
+function openCreateSkillModal() {
+  skillModalMode.value = 'create'
+  activeSkillId.value = null
+  skillModalOpen.value = true
+}
+
+function openEditSkillModal(id: string) {
+  skillModalMode.value = 'edit'
+  activeSkillId.value = id
+  skillModalOpen.value = true
+}
+
+async function onSkillSaved(saved: JobSkillDetail) {
+  const createdNew = skillModalMode.value === 'create'
+  skillModalOpen.value = false
+  try {
+    const config = await agentJobsApi.settings()
+    settings.value = config
+    if (createdNew && !form.value.allowed_skills.includes(saved.id)) {
+      form.value.allowed_skills = [...form.value.allowed_skills, saved.id]
+    }
+    notice.value = t('jobUi.skillSaved')
+  } catch (cause) {
+    error.value = formatApiError(cause)
+  }
+}
+
+async function onSkillDeleted(deletedId: string) {
+  skillModalOpen.value = false
+  form.value.allowed_skills = form.value.allowed_skills.filter(s => s !== deletedId)
+  try {
+    const config = await agentJobsApi.settings()
+    settings.value = config
+    notice.value = t('jobUi.skillDeleted')
+  } catch (cause) {
+    error.value = formatApiError(cause)
+  }
+}
 
 const agentSpec = computed<BackgroundAgentConfig | null>(
   () => agentsCatalog.value.find(a => a.id === agentId.value) ?? null,
@@ -1073,7 +1124,7 @@ onBeforeUnmount(() => controller?.abort())
 
           <!-- Sub-Agent Allowed Skills -->
           <section
-            v-if="!isPrimary && agentSpec.available_skills.length > 0"
+            v-if="!isPrimary"
             class="studio-panel space-y-4 p-5"
             aria-labelledby="agent-allowed-skills-heading"
           >
@@ -1097,7 +1148,17 @@ onBeforeUnmount(() => controller?.abort())
                 </div>
               </div>
 
-              <div class="flex items-center gap-1.5">
+              <div class="flex flex-wrap items-center gap-1.5">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  type="button"
+                  :disabled="saving"
+                  data-agent-create-skill
+                  @click="openCreateSkillModal"
+                >
+                  <Plus class="size-3.5" aria-hidden="true" />{{ t('jobUi.skillAdd') }}
+                </Button>
                 <Button
                   size="sm"
                   variant="ghost"
@@ -1121,32 +1182,68 @@ onBeforeUnmount(() => controller?.abort())
             </div>
 
             <div class="grid gap-2 sm:grid-cols-2">
-              <label
+              <div
                 v-for="skill in agentSpec.available_skills"
                 :key="skill"
-                class="flex cursor-pointer items-center justify-between gap-2 rounded-xl border p-3 text-xs transition-colors"
+                class="flex items-start justify-between gap-2 rounded-xl border p-3 text-xs transition-colors"
                 :class="
                   form.allowed_skills.includes(skill)
                     ? 'border-studio-violet/35 bg-studio-violet/5'
                     : 'border-border/70 bg-surface/40 opacity-75 hover:opacity-100'
                 "
               >
-                <div class="flex min-w-0 items-center gap-2.5">
+                <label class="flex min-w-0 flex-1 cursor-pointer items-start gap-2.5">
                   <input
                     type="checkbox"
-                    class="size-4 shrink-0 accent-primary"
+                    class="mt-0.5 size-4 shrink-0 accent-primary"
                     :checked="form.allowed_skills.includes(skill)"
                     :disabled="saving"
                     @change="toggleSkill(skill, ($event.target as HTMLInputElement).checked)"
                   />
-                  <code class="truncate font-medium">{{ skill }}</code>
-                </div>
-              </label>
+                  <div class="min-w-0 flex-1 space-y-1">
+                    <div class="flex flex-wrap items-center gap-1.5">
+                      <code class="truncate font-medium">{{ skill }}</code>
+                      <Badge
+                        v-if="findSkillSummary(skill)"
+                        :variant="findSkillSummary(skill)?.is_builtin ? 'secondary' : 'outline'"
+                      >
+                        {{ findSkillSummary(skill)?.is_builtin ? t('jobUi.skillBuiltinBadge') : t('jobUi.skillCustomBadge') }}
+                      </Badge>
+                    </div>
+                    <p
+                      v-if="findSkillSummary(skill)?.description"
+                      class="line-clamp-2 text-[11px] text-muted-foreground"
+                    >
+                      {{ findSkillSummary(skill)?.description }}
+                    </p>
+                  </div>
+                </label>
+
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  type="button"
+                  :title="t('jobUi.skillViewEdit')"
+                  :data-agent-edit-skill="skill"
+                  @click="openEditSkillModal(skill)"
+                >
+                  <Pencil class="size-3.5" aria-hidden="true" />
+                </Button>
+              </div>
             </div>
           </section>
         </div>
       </div>
     </template>
+
+    <JobSkillEditorModal
+      :open="skillModalOpen"
+      :mode="skillModalMode"
+      :skill-id="activeSkillId"
+      @close="skillModalOpen = false"
+      @saved="onSkillSaved"
+      @deleted="onSkillDeleted"
+    />
   </main>
 </template>
 

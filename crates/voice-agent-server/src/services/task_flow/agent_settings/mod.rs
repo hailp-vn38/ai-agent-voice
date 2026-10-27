@@ -4,10 +4,10 @@
 mod catalog;
 mod specs;
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
-use orchestrator_agent_rs::AgentMode;
+use orchestrator_agent_rs::{AgentMode, valid_skill_id};
 use serde::{Deserialize, Serialize};
 
 use crate::app::AppState;
@@ -95,7 +95,11 @@ pub fn load_persisted_settings(store_dir: &Path) -> Option<PersistedBackgroundSe
                 tools.retain(|t| spec.available_tools.contains(&t.as_str()));
             }
             if let Some(ref mut skills) = ovr.allowed_skills {
-                skills.retain(|s| spec.available_skills.contains(&s.as_str()));
+                if spec.mode == AgentMode::Primary {
+                    skills.clear();
+                } else {
+                    skills.retain(|s| valid_skill_id(s));
+                }
             }
             if let Some(ref mut tool_map) = ovr.tool_providers {
                 tool_map.retain(|tool, pref| {
@@ -140,6 +144,23 @@ pub fn validate_agent_overrides(
     worker_provider: &str,
     overrides: &BTreeMap<String, AgentConfigOverride>,
     catalog: &[ResolvedLlmProvider],
+) -> Result<(), &'static str> {
+    let default_skills = super::skills::catalog_ids_from_dir(None);
+    validate_agent_overrides_with_skills(
+        orchestrator_provider,
+        worker_provider,
+        overrides,
+        catalog,
+        &default_skills,
+    )
+}
+
+pub fn validate_agent_overrides_with_skills(
+    orchestrator_provider: &str,
+    worker_provider: &str,
+    overrides: &BTreeMap<String, AgentConfigOverride>,
+    catalog: &[ResolvedLlmProvider],
+    skill_ids: &BTreeSet<String>,
 ) -> Result<(), &'static str> {
     let find_prov = |pref: &str| catalog.iter().find(|p| p.provider_ref == pref);
     let Some(orch_prov) = find_prov(orchestrator_provider.trim()) else {
@@ -203,12 +224,13 @@ pub fn validate_agent_overrides(
                 return Err("invalid_arguments");
             }
         }
-        if let Some(ref skills) = ovr.allowed_skills
-            && skills
-                .iter()
-                .any(|s| !spec.available_skills.contains(&s.as_str()))
-        {
-            return Err("invalid_arguments");
+        if let Some(ref skills) = ovr.allowed_skills {
+            if spec.mode == AgentMode::Primary && !skills.is_empty() {
+                return Err("invalid_arguments");
+            }
+            if skills.iter().any(|s| !skill_ids.contains(s.as_str())) {
+                return Err("invalid_arguments");
+            }
         }
         if let Some(ref desc) = ovr.description {
             let trimmed = desc.trim();

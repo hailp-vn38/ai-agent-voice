@@ -10,6 +10,7 @@ models/
 .DS_Store
 /output/
 /data/
+/skills/
 
 # Vue Admin local build and development state.
 /apps/admin-web/node_modules/

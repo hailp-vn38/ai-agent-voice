@@ -30,7 +30,7 @@ pub struct AgentSpec {
     pub default_allowed_tools: &'static [&'static str],
     pub available_tools: &'static [&'static str],
     pub default_allowed_skills: &'static [&'static str],
-    pub available_skills: &'static [&'static str],
+    pub suggested_skills: &'static [&'static str],
     pub default_subagents: &'static [&'static str],
 }
 
@@ -152,7 +152,7 @@ pub const AGENT_SPECS: &[AgentSpec] = &[
         default_allowed_tools: &["subagent"],
         available_tools: &["subagent"],
         default_allowed_skills: &[],
-        available_skills: &[],
+        suggested_skills: &[],
         default_subagents: &[
             "source_collector",
             "wiki_researcher",
@@ -173,7 +173,7 @@ pub const AGENT_SPECS: &[AgentSpec] = &[
         default_allowed_tools: SOURCE_COLLECTOR_TOOLS,
         available_tools: SOURCE_COLLECTOR_TOOLS,
         default_allowed_skills: &["wiki-taxonomy"],
-        available_skills: &["wiki-taxonomy", "wiki-ingest"],
+        suggested_skills: &["wiki-taxonomy", "wiki-ingest"],
         default_subagents: &[],
     },
     AgentSpec {
@@ -188,7 +188,7 @@ pub const AGENT_SPECS: &[AgentSpec] = &[
         default_allowed_tools: WIKI_RESEARCHER_TOOLS,
         available_tools: WIKI_RESEARCHER_TOOLS,
         default_allowed_skills: &["wiki-query"],
-        available_skills: &["wiki-query", "wiki-taxonomy"],
+        suggested_skills: &["wiki-query", "wiki-taxonomy"],
         default_subagents: &[],
     },
     AgentSpec {
@@ -203,7 +203,7 @@ pub const AGENT_SPECS: &[AgentSpec] = &[
         default_allowed_tools: REPORT_STAGER_TOOLS,
         available_tools: REPORT_STAGER_TOOLS,
         default_allowed_skills: &["wiki-taxonomy", "daily-synthesis-staging"],
-        available_skills: &["wiki-taxonomy", "daily-synthesis-staging", "wiki-query"],
+        suggested_skills: &["wiki-taxonomy", "daily-synthesis-staging", "wiki-query"],
         default_subagents: &[],
     },
     AgentSpec {
@@ -229,7 +229,7 @@ pub const AGENT_SPECS: &[AgentSpec] = &[
             "artifact_create",
         ],
         default_allowed_skills: &[],
-        available_skills: &["daily-synthesis-staging"],
+        suggested_skills: &["daily-synthesis-staging"],
         default_subagents: &[],
     },
     AgentSpec {
@@ -244,7 +244,7 @@ pub const AGENT_SPECS: &[AgentSpec] = &[
         default_allowed_tools: REMINDER_PLANNER_TOOLS,
         available_tools: REMINDER_PLANNER_TOOLS,
         default_allowed_skills: &["daily-task-reminder"],
-        available_skills: &["daily-task-reminder"],
+        suggested_skills: &["daily-task-reminder"],
         default_subagents: &[],
     },
     // === Flow 2: Automated Karpathy LLM Wiki Pipeline (`wiki_root`) ===
@@ -260,7 +260,7 @@ pub const AGENT_SPECS: &[AgentSpec] = &[
         default_allowed_tools: &["subagent"],
         available_tools: &["subagent"],
         default_allowed_skills: &[],
-        available_skills: &[],
+        suggested_skills: &[],
         default_subagents: &["wiki_ingestor", "wiki_curator"],
     },
     AgentSpec {
@@ -275,7 +275,7 @@ pub const AGENT_SPECS: &[AgentSpec] = &[
         default_allowed_tools: WIKI_INGESTOR_TOOLS,
         available_tools: WIKI_INGESTOR_TOOLS,
         default_allowed_skills: &["wiki-taxonomy", "wiki-ingest"],
-        available_skills: &["wiki-taxonomy", "wiki-ingest", "wiki-query"],
+        suggested_skills: &["wiki-taxonomy", "wiki-ingest", "wiki-query"],
         default_subagents: &[],
     },
     AgentSpec {
@@ -290,7 +290,7 @@ pub const AGENT_SPECS: &[AgentSpec] = &[
         default_allowed_tools: WIKI_CURATOR_TOOLS,
         available_tools: WIKI_CURATOR_TOOLS,
         default_allowed_skills: &["wiki-taxonomy", "wiki-query", "wiki-lint"],
-        available_skills: &["wiki-taxonomy", "wiki-query", "wiki-lint", "wiki-ingest"],
+        suggested_skills: &["wiki-taxonomy", "wiki-query", "wiki-lint", "wiki-ingest"],
         default_subagents: &[],
     },
 ];

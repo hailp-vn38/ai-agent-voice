@@ -3,6 +3,7 @@
 
 pub mod agent_settings;
 mod projections;
+pub mod skills;
 mod voice;
 mod workspace_seed;
 
@@ -17,19 +18,19 @@ pub use agent_settings::{
     find_agent_spec, is_user_routable_root_agent, load_persisted_settings,
     normalize_user_target_agent, project_agents_json, resolve_llm_provider_catalog,
     save_persisted_settings, sync_orchestrator_from_state, validate_agent_overrides,
-    write_agent_prompts,
+    validate_agent_overrides_with_skills, write_agent_prompts,
 };
 pub use projections::{
     project_artifact_catalog_page, project_task_events, project_task_to_admin_job,
 };
 pub use voice::{TASK_SUITE_TOOL_NAMES, VoiceTaskSubmit, is_task_suite_tool_name, voice_rejection};
 pub use workspace_seed::{
-    DAILY_ROOT_PROMPT, DAILY_SYNTHESIS_STAGING_SKILL, DAILY_TASK_REMINDER_SKILL,
+    BUILTIN_SKILLS, DAILY_ROOT_PROMPT, DAILY_SYNTHESIS_STAGING_SKILL, DAILY_TASK_REMINDER_SKILL,
     MEDIA_CREATOR_PROMPT, REMINDER_PLANNER_PROMPT, REPORT_STAGER_PROMPT, SOURCE_COLLECTOR_PROMPT,
-    WIKI_CURATOR_PROMPT, WIKI_INGESTOR_PROMPT, WIKI_RESEARCHER_PROMPT, WIKI_ROOT_PROMPT,
+    WIKI_CURATOR_PROMPT, WIKI_INGEST_SKILL, WIKI_INGESTOR_PROMPT, WIKI_LINT_SKILL,
+    WIKI_QUERY_SKILL, WIKI_RESEARCHER_PROMPT, WIKI_ROOT_PROMPT, WIKI_TAXONOMY_SKILL,
 };
 
-use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -157,22 +158,7 @@ async fn init_orchestrator_and_task_manager(
     std::fs::create_dir_all(&cfg.reports_dir)?;
     std::fs::create_dir_all(&cfg.work_dir)?;
 
-    let resolved_skills_dir = cfg.skills_dir.as_ref().map(|dir| {
-        if dir.exists() {
-            dir.clone()
-        } else {
-            let workspace_candidate = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                .join("../..")
-                .join(dir);
-            if workspace_candidate.exists() {
-                workspace_candidate
-            } else {
-                dir.clone()
-            }
-        }
-    });
-
-    ensure_prompts_and_skills(&cfg.prompts_dir, resolved_skills_dir.as_deref())?;
+    ensure_prompts_and_skills(&cfg.prompts_dir, cfg.skills_dir.as_deref())?;
 
     let read_budget = AdaptiveReadBudget::for_context_limit(cfg.context_limit_tokens);
     let media_backend = Arc::new(CatalogMediaBackend::new(&cfg.store_dir, catalog.to_vec()));
@@ -211,7 +197,7 @@ async fn init_orchestrator_and_task_manager(
 
     let mut orch_cfg = OrchestratorConfig::new(llm_cfg, agents, &cfg.store_dir)
         .with_project_instructions(engine.config().schema_path());
-    if let Some(ref skills_dir) = resolved_skills_dir {
+    if let Some(ref skills_dir) = cfg.skills_dir {
         orch_cfg = orch_cfg.with_skills_dir(skills_dir);
     }
     orch_cfg.runtime.snapshot_refresh = Duration::from_secs(1);

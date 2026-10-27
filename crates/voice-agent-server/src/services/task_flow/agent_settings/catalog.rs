@@ -331,6 +331,7 @@ struct ResolvedAgentSettings<'a> {
     steps: u32,
     allowed_tools: Vec<String>,
     allowed_skills: Vec<String>,
+    available_skills: Vec<String>,
     allowed_subagents: Vec<String>,
     description: &'a str,
     system_prompt: &'a str,
@@ -341,6 +342,8 @@ fn resolve_effective_agents<'a>(
     settings: &'a PersistedBackgroundSettings,
     catalog: &[ResolvedLlmProvider],
 ) -> Vec<ResolvedAgentSettings<'a>> {
+    let skill_ids =
+        crate::services::task_flow::skills::catalog_ids_from_dir(cfg.skills_dir.as_deref());
     let fallback = find_provider_by_tag(catalog, "chat")
         .cloned()
         .unwrap_or_else(|| default_orchestrator_provider(cfg));
@@ -391,17 +394,38 @@ fn resolve_effective_agents<'a>(
                 .and_then(|o| o.steps)
                 .unwrap_or(spec.default_steps)
                 .clamp(1, 100);
-            let allowed_skills: Vec<String> = match ovr.and_then(|o| o.allowed_skills.as_ref()) {
-                Some(list) => list
+            let available_skills: Vec<String> = if spec.mode == AgentMode::Primary {
+                Vec::new()
+            } else {
+                let mut avail: Vec<String> = spec
+                    .suggested_skills
                     .iter()
-                    .filter(|s| spec.available_skills.contains(&s.as_str()))
-                    .cloned()
-                    .collect(),
-                None => spec
-                    .default_allowed_skills
-                    .iter()
+                    .filter(|s| skill_ids.contains(**s))
                     .map(|s| (*s).to_owned())
-                    .collect(),
+                    .collect();
+                for s in &skill_ids {
+                    if !avail.iter().any(|existing| existing == s) {
+                        avail.push(s.clone());
+                    }
+                }
+                avail
+            };
+            let allowed_skills: Vec<String> = if spec.mode == AgentMode::Primary {
+                Vec::new()
+            } else {
+                match ovr.and_then(|o| o.allowed_skills.as_ref()) {
+                    Some(list) => list
+                        .iter()
+                        .filter(|s| skill_ids.contains(s.as_str()))
+                        .cloned()
+                        .collect(),
+                    None => spec
+                        .default_allowed_skills
+                        .iter()
+                        .filter(|s| skill_ids.contains(**s))
+                        .map(|s| (*s).to_owned())
+                        .collect(),
+                }
             };
             let allowed_tools: Vec<String> = if spec.mode == AgentMode::Primary {
                 vec!["subagent".to_owned()]
@@ -457,6 +481,7 @@ fn resolve_effective_agents<'a>(
                 steps,
                 allowed_tools,
                 allowed_skills,
+                available_skills,
                 allowed_subagents,
                 description,
                 system_prompt,
@@ -852,7 +877,7 @@ pub fn project_agents_json(
                 "available_tools": eff.spec.available_tools,
                 "allowed_skills": eff.allowed_skills,
                 "default_allowed_skills": eff.spec.default_allowed_skills,
-                "available_skills": eff.spec.available_skills,
+                "available_skills": eff.available_skills,
                 "allowed_subagents": eff.allowed_subagents,
                 "allowed_capability_tags": eff.spec.allowed_capability_tags(),
                 "description": eff.description,

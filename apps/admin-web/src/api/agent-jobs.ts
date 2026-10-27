@@ -1,14 +1,31 @@
 import { jsonRequest, requestBlob, requestJson, withQuery } from './client'
 import type {
-  AdminJob, ArtifactCatalogPage, BackgroundSettings, BackgroundSettingsUpdate, JobEventPage, JobPage,
+  AdminJob,
+  ArtifactCatalogPage,
+  BackgroundSettings,
+  BackgroundSettingsUpdate,
+  JobEventPage,
+  JobPage,
+  JobSkillDetail,
+  SaveJobSkillInput,
 } from './types/agent-jobs'
 
 const backgroundPath = '/api/admin/background/settings'
+const skillsPath = '/api/admin/background/skills'
 const jobsPath = '/api/admin/jobs'
 const artifactsPath = '/api/admin/artifacts'
 
 function jobPath(id: string) {
   return jobsPath + '/' + encodeURIComponent(id)
+}
+
+function skillPath(id: string) {
+  return skillsPath + '/' + encodeURIComponent(id)
+}
+
+function quoteEtag(etag: string) {
+  const trimmed = etag.trim()
+  return trimmed.startsWith('"') && trimmed.endsWith('"') ? trimmed : `"${trimmed}"`
 }
 
 /** Admin-facing module: the backend owns scheduler, authorization and durability. */
@@ -18,6 +35,30 @@ export const agentJobsApi = {
   },
   updateSettings(input: BackgroundSettingsUpdate, revision: number) {
     return requestJson<BackgroundSettings>(backgroundPath, jsonRequest('PUT', input), { revision })
+  },
+  skill(id: string, signal?: AbortSignal) {
+    return requestJson<JobSkillDetail>(skillPath(id), {}, { signal })
+  },
+  createSkill(id: string, input: SaveJobSkillInput) {
+    return requestJson<JobSkillDetail>(
+      skillPath(id),
+      jsonRequest('PUT', input),
+      { headers: { 'If-None-Match': '*' } },
+    )
+  },
+  updateSkill(id: string, input: SaveJobSkillInput, etag: string) {
+    return requestJson<JobSkillDetail>(
+      skillPath(id),
+      jsonRequest('PUT', input),
+      { headers: { 'If-Match': quoteEtag(etag) } },
+    )
+  },
+  deleteSkill(id: string, etag: string) {
+    return requestJson<void>(
+      skillPath(id),
+      { method: 'DELETE' },
+      { headers: { 'If-Match': quoteEtag(etag) } },
+    )
   },
   listJobs(query: { page?: number; status?: string; q?: string } = {}, signal?: AbortSignal) {
     return requestJson<JobPage>(withQuery(jobsPath, {

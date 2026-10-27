@@ -139,6 +139,28 @@ const fixtureSettings = () => ({
       default_system_prompt: 'You are media_creator.',
     },
   ],
+  skills: [
+    {
+      id: 'wiki-query',
+      name: 'wiki-query',
+      description: 'Answer questions from the Karpathy Wiki.',
+      is_builtin: true,
+      is_modified: true,
+      etag: 'etag-wiki-query',
+      used_by_agents: ['wiki_researcher'],
+      suggested_for_agents: ['wiki_researcher'],
+    },
+    {
+      id: 'seo-audit',
+      name: 'SEO Content Audit',
+      description: 'Audit headings and links for SEO quality.',
+      is_builtin: false,
+      is_modified: true,
+      etag: 'etag-seo-audit',
+      used_by_agents: [],
+      suggested_for_agents: [],
+    },
+  ],
 })
 
 describe('BackgroundPage & BackgroundAgentDetailPage subagent configuration', () => {
@@ -259,5 +281,200 @@ describe('BackgroundPage & BackgroundAgentDetailPage subagent configuration', ()
     expect(mediaBody.agents.media_creator.tool_providers).toEqual({
       image_create: 'llm_flux_image',
     })
+  })
+
+  it('manages Job Skills on BackgroundPage (view catalog, create custom, edit built-in + restore default, delete custom only)', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+
+    requestMock.mockImplementation((path: string, init?: RequestInit) => {
+      if (path === '/api/admin/background/settings') {
+        return Promise.resolve(fixtureSettings())
+      }
+      if (path === '/api/admin/background/skills/wiki-query' && (!init || !init.method)) {
+        return Promise.resolve({
+          id: 'wiki-query',
+          name: 'wiki-query-custom',
+          description: 'Modified wiki-query description',
+          body: '## Custom Body\n\nModified instructions.',
+          is_builtin: true,
+          is_modified: true,
+          etag: 'etag-wiki-query',
+          used_by_agents: ['wiki_researcher'],
+          suggested_for_agents: ['wiki_researcher'],
+          default: {
+            name: 'wiki-query',
+            description: 'Answer questions from the Karpathy Wiki.',
+            body: '## Default Body\n\nOriginal built-in instructions.',
+          },
+        })
+      }
+      if (path === '/api/admin/background/skills/wiki-query' && init?.method === 'PUT') {
+        return Promise.resolve({
+          id: 'wiki-query',
+          name: 'wiki-query',
+          description: 'Answer questions from the Karpathy Wiki.',
+          body: '## Default Body\n\nOriginal built-in instructions.',
+          is_builtin: true,
+          is_modified: false,
+          etag: 'etag-wiki-query-2',
+          used_by_agents: ['wiki_researcher'],
+          suggested_for_agents: ['wiki_researcher'],
+          default: {
+            name: 'wiki-query',
+            description: 'Answer questions from the Karpathy Wiki.',
+            body: '## Default Body\n\nOriginal built-in instructions.',
+          },
+        })
+      }
+      if (path === '/api/admin/background/skills/new-custom-skill' && init?.method === 'PUT') {
+        return Promise.resolve({
+          id: 'new-custom-skill',
+          name: 'New Custom Skill',
+          description: 'Custom skill created from modal',
+          body: '## Custom Steps\n\n1. Run check.',
+          is_builtin: false,
+          is_modified: true,
+          etag: 'etag-new-custom',
+          used_by_agents: [],
+          suggested_for_agents: [],
+          default: null,
+        })
+      }
+      if (path === '/api/admin/background/skills/seo-audit' && init?.method === 'DELETE') {
+        return Promise.resolve(undefined)
+      }
+      return Promise.resolve({ items: [], total: 0, page: 1, page_size: 30 })
+    })
+
+    const wrapper = mount(BackgroundPage)
+    await flushPromises()
+
+    // Catalog renders both built-in and custom skills
+    const catalog = wrapper.get('[data-skill-catalog]')
+    expect(catalog.text()).toContain('wiki-query')
+    expect(catalog.text()).toContain('Built-in')
+    expect(catalog.text()).toContain('seo-audit')
+    expect(catalog.text()).toContain('Custom')
+
+    // Built-in skill card must NOT render a delete button; custom skill card MUST render one
+    expect(wrapper.find('[data-skill-delete-card="wiki-query"]').exists()).toBe(false)
+    expect(wrapper.find('[data-skill-delete-card="seo-audit"]').exists()).toBe(true)
+
+    // 1. Open Edit Modal for built-in skill wiki-query, verify no delete button, restore default, and save
+    await wrapper.get('[data-skill-edit="wiki-query"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('[data-skill-editor-modal]').exists()).toBe(true)
+    expect(wrapper.find('[data-skill-delete]').exists()).toBe(false)
+    expect((wrapper.get('[data-skill-name-input]').element as HTMLInputElement).value).toBe(
+      'wiki-query-custom',
+    )
+
+    await wrapper.get('[data-skill-restore-default]').trigger('click')
+    expect((wrapper.get('[data-skill-name-input]').element as HTMLInputElement).value).toBe(
+      'wiki-query',
+    )
+
+    await wrapper.get('[data-skill-save]').trigger('click')
+    await flushPromises()
+
+    const updateSkillCall = requestMock.mock.calls.find(
+      c => c[0] === '/api/admin/background/skills/wiki-query' && c[1]?.method === 'PUT',
+    )
+    expect(updateSkillCall).toBeDefined()
+    expect(updateSkillCall![2]?.headers).toEqual({ 'If-Match': '"etag-wiki-query"' })
+
+    // 2. Open Create Modal, fill in new custom skill, and save
+    await wrapper.get('[data-skill-create-btn]').trigger('click')
+    await flushPromises()
+
+    await wrapper.get('[data-skill-id-input]').setValue('new-custom-skill')
+    await wrapper.get('[data-skill-name-input]').setValue('New Custom Skill')
+    await wrapper.get('[data-skill-description-input]').setValue('Custom skill created from modal')
+    await wrapper.get('[data-skill-body-textarea]').setValue('## Custom Steps\n\n1. Run check.')
+    await wrapper.get('[data-skill-save]').trigger('click')
+    await flushPromises()
+
+    const createSkillCall = requestMock.mock.calls.find(
+      c => c[0] === '/api/admin/background/skills/new-custom-skill' && c[1]?.method === 'PUT',
+    )
+    expect(createSkillCall).toBeDefined()
+    expect(createSkillCall![2]?.headers).toEqual({ 'If-None-Match': '*' })
+
+    // 3. Delete custom skill from card
+    await wrapper.get('[data-skill-delete-card="seo-audit"]').trigger('click')
+    await flushPromises()
+
+    const deleteSkillCall = requestMock.mock.calls.find(
+      c => c[0] === '/api/admin/background/skills/seo-audit' && c[1]?.method === 'DELETE',
+    )
+    expect(deleteSkillCall).toBeDefined()
+    expect(deleteSkillCall![2]?.headers).toEqual({ 'If-Match': '"etag-seo-audit"' })
+  })
+
+  it('creates a new custom skill from BackgroundAgentDetailPage and auto-selects it in allowed_skills', async () => {
+    reactiveAgentId.value = 'wiki_researcher'
+    let created = false
+    requestMock.mockImplementation((path: string, init?: RequestInit) => {
+      if (path === '/api/admin/background/settings' && (!init || !init.method)) {
+        const base = fixtureSettings()
+        if (created) {
+          base.agents[1]!.available_skills = ['wiki-query', 'wiki-taxonomy', 'fact-check']
+          base.skills.push({
+            id: 'fact-check',
+            name: 'Fact Check',
+            description: 'Cross-verify claims before synthesis.',
+            is_builtin: false,
+            is_modified: true,
+            etag: 'etag-fact-check',
+            used_by_agents: [],
+            suggested_for_agents: [],
+          })
+        }
+        return Promise.resolve(base)
+      }
+      if (path === '/api/admin/background/skills/fact-check' && init?.method === 'PUT') {
+        created = true
+        return Promise.resolve({
+          id: 'fact-check',
+          name: 'Fact Check',
+          description: 'Cross-verify claims before synthesis.',
+          body: '## Verify\n- Check primary source.',
+          is_builtin: false,
+          is_modified: true,
+          etag: 'etag-fact-check',
+          used_by_agents: [],
+          suggested_for_agents: [],
+          default: null,
+        })
+      }
+      return Promise.resolve({ ...fixtureSettings(), revision: 2 })
+    })
+
+    const wrapper = mount(BackgroundAgentDetailPage)
+    await flushPromises()
+
+    await wrapper.get('[data-agent-create-skill]').trigger('click')
+    await flushPromises()
+
+    await wrapper.get('[data-skill-id-input]').setValue('fact-check')
+    await wrapper.get('[data-skill-name-input]').setValue('Fact Check')
+    await wrapper
+      .get('[data-skill-description-input]')
+      .setValue('Cross-verify claims before synthesis.')
+    await wrapper.get('[data-skill-body-textarea]').setValue('## Verify\n- Check primary source.')
+    await wrapper.get('[data-skill-save]').trigger('click')
+    await flushPromises()
+
+    // Save the agent config and verify fact-check is included in allowed_skills
+    await wrapper.get('[data-save-agent-config]').trigger('click')
+    await flushPromises()
+
+    const putCall = requestMock.mock.calls.find(
+      c => c[0] === '/api/admin/background/settings' && c[1]?.method === 'PUT',
+    )
+    expect(putCall).toBeDefined()
+    const body = JSON.parse(String(putCall![1].body))
+    expect(body.agents.wiki_researcher.allowed_skills).toContain('fact-check')
   })
 })

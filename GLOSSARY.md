@@ -138,6 +138,14 @@ _Avoid_: Job Event, Job Result, delivery acknowledgement
 Hướng dẫn chuyên môn có tên và mô tả phạm vi áp dụng để Sub-Agent nạp vào ngữ cảnh khi thực hiện nhiệm vụ; bản thân hướng dẫn không cấp quyền thực thi công cụ.
 _Avoid_: Plugin Package, Tool Grant, executable script
 
+**Built-in Job Skill**:
+Job Skill chuẩn do hệ thống cung cấp sẵn kèm nội dung mặc định để bảo đảm các quy trình cốt lõi của Sub-Agent; Admin có thể tùy chỉnh nội dung hoặc khôi phục về mặc định nhưng không thể xóa bỏ.
+_Avoid_: hardcoded prompt, Custom Job Skill, read-only skill
+
+**Custom Job Skill**:
+Job Skill do Admin tự định nghĩa thêm để mở rộng hướng dẫn chuyên môn cho Sub-Agent, có thể chỉnh sửa hoặc xóa bỏ hoàn toàn khỏi hệ thống.
+_Avoid_: Built-in Job Skill, custom plugin, custom tool
+
 **Skill Catalog**:
 Tập các Job Skill mà một Agent Session được phép khám phá và lựa chọn thông qua công cụ `skill` cho nhiệm vụ của mình.
 _Avoid_: tool catalog, installed plugins, all deployment skills

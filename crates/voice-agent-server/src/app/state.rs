@@ -80,6 +80,7 @@ pub struct AppState {
     pub task_manager: Option<Arc<orchestrator_flow_rs::TaskManager>>,
     pub autoflow_notify: Option<Arc<tokio::sync::Notify>>,
     pub(crate) admin_task_control: Arc<std::sync::Mutex<AdminTaskControlState>>,
+    pub(crate) skill_write_lock: Arc<tokio::sync::Mutex<()>>,
     /// Monotonic process-local start marker used only by the safe Admin system summary.
     pub started_at: Instant,
     pub active_device_sessions: Arc<crate::services::active_device_sessions::ActiveDeviceSessions>,
@@ -769,6 +770,7 @@ impl AppState {
             task_manager: None,
             autoflow_notify: None,
             admin_task_control: Arc::new(std::sync::Mutex::new(AdminTaskControlState::default())),
+            skill_write_lock: Arc::new(tokio::sync::Mutex::new(())),
             started_at: Instant::now(),
             active_device_sessions: Arc::new(Default::default()),
             reminder_scheduler_started: Arc::new(std::sync::atomic::AtomicBool::new(false)),

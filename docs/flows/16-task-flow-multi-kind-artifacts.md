@@ -21,9 +21,9 @@ Tài liệu này mô tả luồng thực thi Task nền hợp nhất trên `voic
 - **Bảo vệ Điều hướng (`VoiceTaskSubmit`)**:
   - `VoiceTaskSubmit::tool_definitions()` sử dụng `is_user_routable_root_agent` để chỉ hiển thị các Root Agent có `user_routable == true` (`daily_root`) trong schema `target_agent`.
   - `VoiceTaskSubmit::execute()` sử dụng `normalize_user_target_agent` để tự động chuyển hướng mọi lệnh gọi legacy (`task_create` hoặc `reminder_create`) có `target_agent = "wiki_root"` (hoặc `"<flow>/wiki_root"`) sang `"daily_root"`.
-- **Đồng bộ Prompts & Cấu hình Lưu trữ**:
-  - Toàn bộ hằng số System Prompt & Skill chuẩn (`DAILY_ROOT_PROMPT`, `WIKI_ROOT_PROMPT`, `MEDIA_CREATOR_PROMPT`, `DAILY_SYNTHESIS_STAGING_SKILL`, ...) được dùng chung từ `orchestrator_flow_rs::prompts`.
-  - Khi nạp `agent_settings.json`, `load_persisted_settings` tự động lọc bỏ các `allowed_tools` và `allowed_skills` không còn nằm trong `spec.available_tools` / `spec.available_skills`.
+- **Đồng bộ Prompts, Built-in Skills & Cấu hình Lưu trữ**:
+  - Toàn bộ hằng số System Prompt chuẩn (`DAILY_ROOT_PROMPT`, `WIKI_ROOT_PROMPT`, `MEDIA_CREATOR_PROMPT`, ...) được dùng chung từ `orchestrator_flow_rs::prompts`. 6 Built-in Job Skills mặc định (`wiki-taxonomy`, `wiki-ingest`, `wiki-query`, `wiki-lint`, `daily-synthesis-staging`, `daily-task-reminder`) được nhúng từ `crates/voice-agent-server/builtin-skills/<id>/SKILL.md` và seed sang thư mục runtime `skills/` khi khởi động.
+  - Danh mục `available_skills` của mọi Subagent (`mode != Primary`) được tổng hợp động từ các skill hợp lệ trong `skills/` (bao gồm cả Built-in và Custom Job Skills do Admin tạo trên Web UI theo ADR 0128). Khi nạp `agent_settings.json`, hệ thống chỉ lọc `allowed_tools` theo `spec.available_tools`, còn `allowed_skills` được đối chiếu động với danh mục `skills/` hiện hành.
 
 ---
 
