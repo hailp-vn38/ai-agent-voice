@@ -10,6 +10,11 @@ const COPILOT_CLIENT_ID: &str = "Iv1.b507a08c87ecfe98";
 const GITHUB_DEVICE_CODE_URL: &str = "https://github.com/login/device/code";
 const GITHUB_ACCESS_TOKEN_URL: &str = "https://github.com/login/oauth/access_token";
 const COPILOT_TOKEN_EXCHANGE_URL: &str = "https://api.github.com/copilot_internal/v2/token";
+const GITHUB_USERINFO_URL: &str = "https://api.github.com/user";
+const GITHUB_API_VERSION: &str = "2022-11-28";
+const COPILOT_USER_AGENT: &str = "GitHubCopilotChat/0.26.7";
+const COPILOT_EDITOR_VERSION: &str = "vscode/1.110.0";
+const COPILOT_PLUGIN_VERSION: &str = "copilot-chat/0.26.7";
 
 pub struct GithubCopilotOAuthDriver {
     http: reqwest::Client,
@@ -19,7 +24,7 @@ impl GithubCopilotOAuthDriver {
     pub fn new() -> Self {
         let http = reqwest::Client::builder()
             .timeout(Duration::from_secs(20))
-            .user_agent("GitHubCopilotChat/0.24.0")
+            .user_agent(COPILOT_USER_AGENT)
             .build()
             .unwrap_or_default();
         Self { http }
@@ -39,7 +44,9 @@ impl GithubCopilotOAuthDriver {
             .get(COPILOT_TOKEN_EXCHANGE_URL)
             .header("Authorization", format!("token {github_oauth_token}"))
             .header("Accept", "application/json")
-            .header("Editor-Version", "vscode/1.96.0")
+            .header("X-GitHub-Api-Version", GITHUB_API_VERSION)
+            .header("Editor-Version", COPILOT_EDITOR_VERSION)
+            .header("Editor-Plugin-Version", COPILOT_PLUGIN_VERSION)
             .header("Copilot-Integration-Id", "vscode-chat")
             .send()
             .await
@@ -52,6 +59,30 @@ impl GithubCopilotOAuthDriver {
             .await
             .map_err(|e| GatewayError::OAuthExchangeFailed(e.to_string()))?;
         Ok((parsed.token, parsed.expires_at))
+    }
+
+    async fn fetch_github_account_identity(&self, github_oauth_token: &str) -> Option<String> {
+        #[derive(Deserialize)]
+        struct GithubUserInfo {
+            email: Option<String>,
+            login: Option<String>,
+        }
+        let resp = self
+            .http
+            .get(GITHUB_USERINFO_URL)
+            .header("Authorization", format!("Bearer {github_oauth_token}"))
+            .header("Accept", "application/json")
+            .header("X-GitHub-Api-Version", GITHUB_API_VERSION)
+            .send()
+            .await
+            .ok()?;
+        if !resp.status().is_success() {
+            return None;
+        }
+        let info: GithubUserInfo = resp.json().await.ok()?;
+        info.email
+            .filter(|s| !s.trim().is_empty())
+            .or_else(|| info.login.filter(|s| !s.trim().is_empty()))
     }
 }
 
@@ -78,15 +109,16 @@ impl OAuthVendorDriver for GithubCopilotOAuthDriver {
     }
 
     async fn start_device_flow(&self) -> Result<DeviceCodeGrant, GatewayError> {
-        let body = serde_json::json!({
-            "client_id": COPILOT_CLIENT_ID,
-            "scope": "read:user",
-        });
+        let form_body = url::form_urlencoded::Serializer::new(String::new())
+            .append_pair("client_id", COPILOT_CLIENT_ID)
+            .append_pair("scope", "read:user")
+            .finish();
         let resp = self
             .http
             .post(GITHUB_DEVICE_CODE_URL)
+            .header("Content-Type", "application/x-www-form-urlencoded")
             .header("Accept", "application/json")
-            .json(&body)
+            .body(form_body)
             .send()
             .await
             .map_err(|e| GatewayError::OAuthExchangeFailed(e.to_string()))?;
@@ -110,16 +142,17 @@ impl OAuthVendorDriver for GithubCopilotOAuthDriver {
     }
 
     async fn poll_device_flow(&self, device_code: &str) -> Result<DevicePollOutcome, GatewayError> {
-        let body = serde_json::json!({
-            "client_id": COPILOT_CLIENT_ID,
-            "device_code": device_code,
-            "grant_type": "urn:ietf:params:oauth:grant-type:device_code",
-        });
+        let form_body = url::form_urlencoded::Serializer::new(String::new())
+            .append_pair("client_id", COPILOT_CLIENT_ID)
+            .append_pair("device_code", device_code)
+            .append_pair("grant_type", "urn:ietf:params:oauth:grant-type:device_code")
+            .finish();
         let resp = self
             .http
             .post(GITHUB_ACCESS_TOKEN_URL)
+            .header("Content-Type", "application/x-www-form-urlencoded")
             .header("Accept", "application/json")
-            .json(&body)
+            .body(form_body)
             .send()
             .await
             .map_err(|e| GatewayError::OAuthExchangeFailed(e.to_string()))?;
@@ -137,6 +170,7 @@ impl OAuthVendorDriver for GithubCopilotOAuthDriver {
             let (copilot_bearer, expires_at) = self
                 .exchange_for_copilot_bearer(&github_oauth_token)
                 .await?;
+            let account_email = self.fetch_github_account_identity(&github_oauth_token).await;
             return Ok(DevicePollOutcome::Completed(ExchangedOAuthAccount {
                 bundle: OAuthTokenBundle {
                     access_token: copilot_bearer,
@@ -144,7 +178,7 @@ impl OAuthVendorDriver for GithubCopilotOAuthDriver {
                     upstream_oauth_token: Some(github_oauth_token),
                     account_context_id: None,
                 },
-                account_email: None,
+                account_email,
                 expires_at,
             }));
         }
@@ -184,8 +218,14 @@ impl OAuthVendorDriver for GithubCopilotOAuthDriver {
 
     fn extra_headers_for(&self, _bundle: &OAuthTokenBundle) -> Vec<(String, String)> {
         vec![
-            ("Editor-Version".to_owned(), "vscode/1.96.0".to_owned()),
+            ("Editor-Version".to_owned(), COPILOT_EDITOR_VERSION.to_owned()),
+            (
+                "Editor-Plugin-Version".to_owned(),
+                COPILOT_PLUGIN_VERSION.to_owned(),
+            ),
             ("Copilot-Integration-Id".to_owned(), "vscode-chat".to_owned()),
+            ("User-Agent".to_owned(), COPILOT_USER_AGENT.to_owned()),
+            ("X-GitHub-Api-Version".to_owned(), GITHUB_API_VERSION.to_owned()),
         ]
     }
 }

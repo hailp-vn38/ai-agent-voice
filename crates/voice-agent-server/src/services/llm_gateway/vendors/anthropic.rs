@@ -10,9 +10,11 @@ use crate::services::llm_gateway::types::{GatewayError, GatewayVendor, OAuthToke
 
 const ANTHROPIC_CLIENT_ID: &str = "9d1c250a-e61b-44d9-88ed-5944d1962f5e";
 const ANTHROPIC_AUTHORIZE_URL: &str = "https://claude.ai/oauth/authorize";
-const ANTHROPIC_TOKEN_URL: &str = "https://console.anthropic.com/v1/oauth/token";
+const ANTHROPIC_TOKEN_URL: &str = "https://api.anthropic.com/v1/oauth/token";
 const ANTHROPIC_REDIRECT_URI: &str = "https://console.anthropic.com/oauth/code/callback";
 const ANTHROPIC_SCOPES: &str = "org:create_api_key user:profile user:inference";
+const ANTHROPIC_BETA_HEADER: &str =
+    "claude-code-20250219,oauth-2025-04-20,interleaved-thinking-2025-05-14";
 
 pub struct AnthropicOAuthDriver {
     http: reqwest::Client,
@@ -79,17 +81,23 @@ impl OAuthVendorDriver for AnthropicOAuthDriver {
         code_verifier: &str,
         redirect_uri: &str,
     ) -> Result<ExchangedOAuthAccount, GatewayError> {
+        let (auth_code, resolved_state) = match code.split_once('#') {
+            Some((c, s)) if !s.trim().is_empty() => (c.trim(), s.trim()),
+            Some((c, _)) => (c.trim(), state),
+            None => (code.trim(), state),
+        };
         let body = json!({
             "grant_type": "authorization_code",
             "client_id": ANTHROPIC_CLIENT_ID,
-            "code": code,
-            "state": state,
+            "code": auth_code,
+            "state": resolved_state,
             "redirect_uri": redirect_uri,
             "code_verifier": code_verifier,
         });
         let resp = self
             .http
             .post(ANTHROPIC_TOKEN_URL)
+            .header("Accept", "application/json")
             .json(&body)
             .send()
             .await
@@ -135,6 +143,7 @@ impl OAuthVendorDriver for AnthropicOAuthDriver {
         let resp = self
             .http
             .post(ANTHROPIC_TOKEN_URL)
+            .header("Accept", "application/json")
             .json(&body)
             .send()
             .await
@@ -165,7 +174,10 @@ impl OAuthVendorDriver for AnthropicOAuthDriver {
     fn extra_headers_for(&self, _bundle: &OAuthTokenBundle) -> Vec<(String, String)> {
         vec![
             ("anthropic-version".to_owned(), "2023-06-01".to_owned()),
-            ("anthropic-beta".to_owned(), "oauth-2025-04-20".to_owned()),
+            (
+                "anthropic-beta".to_owned(),
+                ANTHROPIC_BETA_HEADER.to_owned(),
+            ),
         ]
     }
 }

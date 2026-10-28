@@ -264,3 +264,75 @@ async fn llm_gateway_proactive_refresh_and_zero_retry_cooldown_rotation() {
     assert!(!updated.enabled);
     assert_eq!(updated.status, GatewayAccountStatus::Disabled);
 }
+
+#[tokio::test]
+async fn openai_codex_driver_enforces_fixed_redirect_and_9router_authorize_params() {
+    use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
+    use serde_json::json;
+
+    let drivers = super::vendors::default_vendor_drivers();
+    let codex_driver = drivers.get(&GatewayVendor::OpenaiCodex).expect("codex");
+
+    // 1. Even when frontend passes a custom web app callback redirect_uri, OpenAI Codex forces localhost:1455
+    assert!(codex_driver.requires_fixed_redirect_uri());
+    let resolved_redirect = codex_driver.resolve_redirect_uri(Some(
+        "http://localhost:5173/api/admin/llm-gateway/oauth/callback",
+    ));
+    assert_eq!(resolved_redirect, "http://localhost:1455/auth/callback");
+
+    // 2. Authorize URL matches 9router Codex params & %20 scope encoding
+    let auth_url = codex_driver
+        .build_pkce_authorize_url("state_abc", "challenge_xyz", &resolved_redirect)
+        .expect("build_pkce_authorize_url");
+    assert!(
+        auth_url.contains("redirect_uri=http%3A%2F%2Flocalhost%3A1455%2Fauth%2Fcallback"),
+        "unexpected redirect_uri in {auth_url}"
+    );
+    assert!(
+        auth_url.contains("scope=openid%20profile%20email%20offline_access"),
+        "scope must use %20 encoding in {auth_url}"
+    );
+    assert!(auth_url.contains("id_token_add_organizations=true"));
+    assert!(auth_url.contains("codex_cli_simplified_flow=true"));
+    assert!(auth_url.contains("originator=codex_cli_rs"));
+    assert!(auth_url.contains("code_challenge=challenge_xyz"));
+    assert!(auth_url.contains("code_challenge_method=S256"));
+    assert!(auth_url.contains("state=state_abc"));
+
+    // 3. Direct JWT access token paste (eyJ...) extracts nested OpenAI profile email & chatgpt_account_id
+    let header_b64 = URL_SAFE_NO_PAD.encode(br#"{"alg":"RS256","typ":"JWT"}"#);
+    let payload_b64 = URL_SAFE_NO_PAD.encode(
+        json!({
+            "https://api.openai.com/profile": {
+                "email": "codex-user@openai.example"
+            },
+            "https://api.openai.com/auth": {
+                "chatgpt_account_id": "acct_9router_codex_01",
+                "chatgpt_plan_type": "plus"
+            },
+            "exp": 4_102_444_800i64
+        })
+        .to_string()
+        .as_bytes(),
+    );
+    let fake_jwt = format!("{header_b64}.{payload_b64}.sig");
+    let exchanged = codex_driver
+        .exchange_pkce_code(&fake_jwt, "state_abc", "verifier_xyz", &resolved_redirect)
+        .await
+        .expect("raw jwt exchange");
+    assert_eq!(
+        exchanged.account_email.as_deref(),
+        Some("codex-user@openai.example")
+    );
+    assert_eq!(
+        exchanged.bundle.account_context_id.as_deref(),
+        Some("acct_9router_codex_01")
+    );
+    assert_eq!(exchanged.expires_at, Some(4_102_444_800));
+    let headers = codex_driver.extra_headers_for(&exchanged.bundle);
+    assert!(headers.contains(&("originator".to_owned(), "codex_cli_rs".to_owned())));
+    assert!(headers.contains(&(
+        "ChatGPT-Account-Id".to_owned(),
+        "acct_9router_codex_01".to_owned()
+    )));
+}

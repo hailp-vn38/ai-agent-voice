@@ -47,6 +47,21 @@ pub trait OAuthVendorDriver: Send + Sync {
         "http://localhost:54545/callback"
     }
 
+    fn requires_fixed_redirect_uri(&self) -> bool {
+        false
+    }
+
+    fn resolve_redirect_uri(&self, requested: Option<&str>) -> String {
+        if self.requires_fixed_redirect_uri() {
+            return self.default_redirect_uri().to_owned();
+        }
+        requested
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| self.default_redirect_uri())
+            .to_owned()
+    }
+
     fn build_pkce_authorize_url(
         &self,
         _state: &str,

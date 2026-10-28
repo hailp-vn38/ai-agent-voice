@@ -701,13 +701,7 @@ impl LlmGatewayHub {
             OAuthLoginMode::Pkce => {
                 let (code_verifier, code_challenge) = generate_pkce_pair()?;
                 let state = generate_state_token()?;
-                let redirect_uri = req
-                    .redirect_uri
-                    .as_deref()
-                    .map(str::trim)
-                    .filter(|s| !s.is_empty())
-                    .unwrap_or_else(|| driver.default_redirect_uri())
-                    .to_owned();
+                let redirect_uri = driver.resolve_redirect_uri(req.redirect_uri.as_deref());
                 let authorize_url =
                     driver.build_pkce_authorize_url(&state, &code_challenge, &redirect_uri)?;
                 let session = OAuthLoginSession {
@@ -860,7 +854,7 @@ impl LlmGatewayHub {
                 })
                 .ok_or(GatewayError::OAuthSessionNotFound)?
         };
-        let view = self
+        match self
             .complete_oauth_login(
                 &session_id,
                 OAuthCallbackSubmission {
@@ -868,8 +862,45 @@ impl LlmGatewayHub {
                     state: Some(state_param.to_owned()),
                 },
             )
-            .await?;
-        Ok((session_id, view))
+            .await
+        {
+            Ok(view) => Ok((session_id, view)),
+            Err(err) => {
+                self.record_oauth_failure(&session_id, err.to_string());
+                Err(err)
+            }
+        }
+    }
+
+    pub fn record_oauth_failure_by_state(&self, state_param: &str, message: impl Into<String>) {
+        let msg = message.into();
+        let mut guard = self.sessions.lock().unwrap_or_else(|p| p.into_inner());
+        for session in guard.values_mut() {
+            if let OAuthSessionFlowState::Pkce {
+                state,
+                completed_account: None,
+                failure,
+                ..
+            } = &mut session.flow
+                && state == state_param
+            {
+                *failure = Some(msg);
+                break;
+            }
+        }
+    }
+
+    fn record_oauth_failure(&self, session_id: &str, message: String) {
+        let mut guard = self.sessions.lock().unwrap_or_else(|p| p.into_inner());
+        if let Some(session) = guard.get_mut(session_id)
+            && let OAuthSessionFlowState::Pkce {
+                completed_account: None,
+                failure,
+                ..
+            } = &mut session.flow
+        {
+            *failure = Some(message);
+        }
     }
 
     pub async fn poll_oauth_login(&self, session_id: &str) -> Result<OAuthPollStatus, GatewayError> {

@@ -3,6 +3,11 @@
 #[cfg(test)]
 mod tests;
 
+use std::sync::{
+    Mutex as StdMutex, OnceLock,
+    atomic::{AtomicBool, Ordering},
+};
+
 use super::*;
 use crate::services::llm_gateway::{
     GatewayError, GatewayVendor, OAuthCallbackSubmission, OAuthPollStatus, StartOAuthLoginRequest,
@@ -63,7 +68,12 @@ pub(super) async fn start_oauth(State(state): State<AppState>, request: Request)
     };
 
     match state.llm_gateway_hub.start_oauth_login(body).await {
-        Ok(challenge) => Json(challenge).into_response(),
+        Ok(challenge) => {
+            if challenge.vendor == GatewayVendor::OpenaiCodex {
+                ensure_codex_loopback_listener(state.clone());
+            }
+            Json(challenge).into_response()
+        }
         Err(err) => gateway_error(&request, err),
     }
 }
@@ -77,6 +87,16 @@ pub(super) async fn oauth_callback(
             .error_description
             .as_deref()
             .unwrap_or("Authorization was denied or failed.");
+        if let Some(state_param) = query
+            .state
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+        {
+            state
+                .llm_gateway_hub
+                .record_oauth_failure_by_state(state_param, format!("{err_code}: {desc}"));
+        }
         return callback_html_response(
             StatusCode::BAD_REQUEST,
             &serde_json::json!({
@@ -378,4 +398,53 @@ fn html_escape(input: &str) -> String {
         }
     }
     out
+}
+
+static CODEX_PROXY_ACTIVE: AtomicBool = AtomicBool::new(false);
+static CODEX_PROXY_DEADLINE: OnceLock<StdMutex<std::time::Instant>> = OnceLock::new();
+
+fn codex_deadline_cell() -> &'static StdMutex<std::time::Instant> {
+    CODEX_PROXY_DEADLINE.get_or_init(|| StdMutex::new(std::time::Instant::now()))
+}
+
+/// Spawns a temporary loopback HTTP server on `127.0.0.1:1455` (matching 9router's `startCodexProxy`)
+/// so OpenAI's fixed `http://localhost:1455/auth/callback` redirect URI is automatically captured
+/// and exchanged when the admin server runs on the same machine as the browser.
+fn ensure_codex_loopback_listener(state: AppState) {
+    let next_deadline = std::time::Instant::now() + std::time::Duration::from_secs(600);
+    if let Ok(mut guard) = codex_deadline_cell().lock() {
+        *guard = next_deadline;
+    }
+    if CODEX_PROXY_ACTIVE.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    tokio::spawn(async move {
+        let bind_addr = std::net::SocketAddr::from(([127, 0, 0, 1], 1455));
+        let Ok(listener) = tokio::net::TcpListener::bind(bind_addr).await else {
+            CODEX_PROXY_ACTIVE.store(false, Ordering::SeqCst);
+            return;
+        };
+        let app = axum::Router::new()
+            .route("/auth/callback", axum::routing::get(oauth_callback))
+            .route("/callback", axum::routing::get(oauth_callback))
+            .with_state(state);
+
+        let shutdown_signal = async {
+            loop {
+                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                let expired = codex_deadline_cell()
+                    .lock()
+                    .map(|deadline| std::time::Instant::now() >= *deadline)
+                    .unwrap_or(true);
+                if expired {
+                    break;
+                }
+            }
+        };
+
+        let _ = axum::serve(listener, app)
+            .with_graceful_shutdown(shutdown_signal)
+            .await;
+        CODEX_PROXY_ACTIVE.store(false, Ordering::SeqCst);
+    });
 }

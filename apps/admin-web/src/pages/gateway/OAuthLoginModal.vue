@@ -113,6 +113,15 @@ function startPolling(sessionId: string, intervalSecs: number) {
   }, ms)
 }
 
+function buildRedirectUri(vendor: GatewayVendor): string {
+  if (vendor === 'openai_codex') {
+    return 'http://localhost:1455/auth/callback'
+  }
+  const appPort =
+    window.location.port || (window.location.protocol === 'https:' ? '443' : '80')
+  return `http://localhost:${appPort}/api/admin/llm-gateway/oauth/callback`
+}
+
 async function handleStartOAuth() {
   const trimmedLabel = label.value.trim()
   if (!trimmedLabel) {
@@ -122,7 +131,7 @@ async function handleStartOAuth() {
   starting.value = true
   errorMessage.value = ''
   try {
-    const redirectUri = `${window.location.origin}/api/admin/llm-gateway/oauth/callback`
+    const redirectUri = buildRedirectUri(selectedVendor.value)
     const result = await llmGatewayApi.startOAuth({
       vendor: selectedVendor.value,
       label: trimmedLabel,
@@ -131,7 +140,7 @@ async function handleStartOAuth() {
     challenge.value = result
     startPolling(result.session_id, result.poll_interval_secs)
     if (result.mode === 'pkce' && result.authorize_url) {
-      window.open(result.authorize_url, '_blank', 'width=640,height=720,noopener')
+      window.open(result.authorize_url, 'oauth_popup', 'width=640,height=720')
     }
   } catch (cause) {
     errorMessage.value = formatApiError(cause)
@@ -146,7 +155,7 @@ function openAuthWindow() {
       ? challenge.value.verification_uri
       : challenge.value?.authorize_url
   if (url) {
-    window.open(url, '_blank', 'width=640,height=720,noopener')
+    window.open(url, 'oauth_popup', 'width=640,height=720')
   }
 }
 

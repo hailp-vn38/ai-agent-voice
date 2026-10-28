@@ -9,12 +9,12 @@ use crate::services::llm_gateway::types::{GatewayError, GatewayVendor, OAuthToke
 
 const GEMINI_CLIENT_ID: &str =
     "681255809395-oo8ft2oprdrnp9e3aqf6av3hmdib135j.apps.googleusercontent.com";
+const GEMINI_CLIENT_SECRET: &str = "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";
 const GEMINI_AUTHORIZE_URL: &str = "https://accounts.google.com/o/oauth2/v2/auth";
 const GEMINI_TOKEN_URL: &str = "https://oauth2.googleapis.com/token";
-const GEMINI_USERINFO_URL: &str = "https://www.googleapis.com/oauth2/v2/userinfo";
+const GEMINI_USERINFO_URL: &str = "https://www.googleapis.com/oauth2/v1/userinfo?alt=json";
 const GEMINI_REDIRECT_URI: &str = "http://localhost:8085/oauth2callback";
-const GEMINI_SCOPES: &str =
-    "https://www.googleapis.com/auth/cloud-platform https://www.googleapis.com/auth/userinfo.email openid";
+const GEMINI_SCOPES: &str = "https://www.googleapis.com/auth/cloud-platform https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/userinfo.profile";
 
 pub struct GeminiOAuthDriver {
     http: reqwest::Client,
@@ -94,6 +94,7 @@ impl OAuthVendorDriver for GeminiOAuthDriver {
         let params = [
             ("grant_type", "authorization_code"),
             ("client_id", GEMINI_CLIENT_ID),
+            ("client_secret", GEMINI_CLIENT_SECRET),
             ("code", code),
             ("redirect_uri", redirect_uri),
             ("code_verifier", code_verifier),
@@ -105,6 +106,7 @@ impl OAuthVendorDriver for GeminiOAuthDriver {
             .http
             .post(GEMINI_TOKEN_URL)
             .header("Content-Type", "application/x-www-form-urlencoded")
+            .header("Accept", "application/json")
             .body(encoded)
             .send()
             .await
@@ -146,6 +148,7 @@ impl OAuthVendorDriver for GeminiOAuthDriver {
         let params = [
             ("grant_type", "refresh_token"),
             ("client_id", GEMINI_CLIENT_ID),
+            ("client_secret", GEMINI_CLIENT_SECRET),
             ("refresh_token", refresh_token),
         ];
         let encoded = url::form_urlencoded::Serializer::new(String::new())
@@ -155,6 +158,7 @@ impl OAuthVendorDriver for GeminiOAuthDriver {
             .http
             .post(GEMINI_TOKEN_URL)
             .header("Content-Type", "application/x-www-form-urlencoded")
+            .header("Accept", "application/json")
             .body(encoded)
             .send()
             .await
