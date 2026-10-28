@@ -96,6 +96,13 @@ fn nano_config_and_voice_registry_validate_pinned_profile() {
     assert_eq!(cfg.n_style, 50);
     assert_eq!(cfg.style_dim, 256);
 
+    let mut without_model_type =
+        serde_json::from_slice::<serde_json::Value>(&nano_config_json()).unwrap();
+    without_model_type.as_object_mut().unwrap().remove("model_type");
+    let cfg_without_model_type =
+        NanoModelConfig::parse(&serde_json::to_vec(&without_model_type).unwrap()).unwrap();
+    assert_eq!(cfg_without_model_type.model_type, "vieneu_v3_nano");
+
     let mut bad_cfg = serde_json::from_slice::<serde_json::Value>(&nano_config_json()).unwrap();
     bad_cfg["latent_dim"] = serde_json::json!(16);
     assert!(NanoModelConfig::parse(&serde_json::to_vec(&bad_cfg).unwrap()).is_err());

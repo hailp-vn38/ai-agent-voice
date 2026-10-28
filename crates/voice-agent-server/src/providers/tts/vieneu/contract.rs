@@ -262,8 +262,13 @@ impl VieneuContract {
     }
 }
 
+fn default_nano_model_type() -> String {
+    "vieneu_v3_nano".into()
+}
+
 #[derive(Clone, Debug, Deserialize)]
 pub struct NanoModelConfig {
+    #[serde(default = "default_nano_model_type")]
     pub model_type: String,
     pub sample_rate: u32,
     pub latent_dim: usize,

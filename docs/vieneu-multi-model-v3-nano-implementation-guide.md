@@ -184,9 +184,9 @@ Khi mở `NanoWorker`, từng `ort::session::Session` phải được kiểm tra
 
 | Đồ thị ONNX | Inputs (`name: ElementType[rank]`) | Outputs (`name: ElementType[rank]`) |
 | :--- | :--- | :--- |
-| `text_encoder.onnx` | `ids: Int64[2]` (`[1, L]`)<br/>`style: Float32[3]` (`[1, 50, 256]`) | Output 0 (`ctx`): `Float32[3]` (`[1, L, 512]`) |
-| `duration_predictor.onnx` | `ctx: Float32[3]` (`[1, L, 512]`)<br/>`ctx_mask: Bool[2]` (`[1, L]`)<br/>`spk: Float32[2]` (`[1, 192]`) | Output 0 (`log_s`): `Float32[0..=2]` (vô hướng hoặc `[1]`) |
-| `vector_estimator.onnx` | `x: Float32[3]` (`[1, 144, T]`)<br/>`t: Float32[1]` (`[1]`)<br/>`ctx: Float32[3]` (`[1, L, 512]`)<br/>`ctx_mask: Bool[2]` (`[1, L]`)<br/>`spk: Float32[2]` (`[1, 192]`)<br/>`style: Float32[3]` (`[1, 50, 256]`) | Output 0 (`v`): `Float32[3]` (`[1, 144, T]`) |
+| `text_encoder.onnx` | `ids: Int64[2]` (`[1, L]`)<br/>`style: Float32[3]` (`[1, 50, 256]`) | Output 0 (`ctx`): `Float32[3]` (`[1, L, 256]`) |
+| `duration_predictor.onnx` | `ctx: Float32[3]` (`[1, L, 256]`)<br/>`ctx_mask: Bool[2]` (`[1, L]`)<br/>`spk: Float32[2]` (`[1, 192]`) | Output 0 (`log_s`): `Float32[0..=2]` (vô hướng hoặc `[1]`) |
+| `vector_estimator.onnx` | `x: Float32[3]` (`[1, 144, T]`)<br/>`t: Float32[1]` (`[1]`)<br/>`ctx: Float32[3]` (`[1, L, 256]`)<br/>`ctx_mask: Bool[2]` (`[1, L]`)<br/>`spk: Float32[2]` (`[1, 192]`)<br/>`style: Float32[3]` (`[1, 50, 256]`) | Output 0 (`v`): `Float32[3]` (`[1, 144, T]`) |
 | `codec_decoder.onnx` | `x: Float32[3]` (`[1, 144, T]`) | Output 0 (`wav`): `Float32[3]` (`[1, 1, N]`) |
 
 ---
@@ -519,8 +519,8 @@ pub(super) enum VieneuWorker {
 
 5. **Chạy `text_encoder` và `duration_predictor`**:
    - `seq_len = ids.len()`.
-   - Chạy `text_encoder` với `ids` (`[1, seq_len]`) và `voice.style` (`[1, 50, 256]`) $\rightarrow$ `ctx: Vec<f32>` (`[1, seq_len, 512]`).
-   - Chạy `duration_predictor` với `ctx` (`[1, seq_len, 512]`), `ctx_mask` (`[1, seq_len]`), `voice.speaker_embedding` (`[1, 192]`) $\rightarrow$ trích xuất scalar `log_s: f32`.
+   - Chạy `text_encoder` với `ids` (`[1, seq_len]`) và `voice.style` (`[1, 50, 256]`) $\rightarrow$ `ctx: Vec<f32>` (`[1, seq_len, 256]`).
+   - Chạy `duration_predictor` với `ctx` (`[1, seq_len, 256]`), `ctx_mask` (`[1, seq_len]`), `voice.speaker_embedding` (`[1, 192]`) $\rightarrow$ trích xuất scalar `log_s: f32`.
    - Kiểm tra `log_s.is_finite()`. Tính:
      ```rust
      let secs = log_s.exp().clamp(0.05, 15.0);

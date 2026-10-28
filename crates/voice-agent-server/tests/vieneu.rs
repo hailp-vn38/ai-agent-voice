@@ -64,6 +64,16 @@ preload = true
         factory.model_identity(&nano_instance).unwrap(),
         Some("vieneu_v3_nano_fp32")
     );
+    let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let app_config = AppConfig::load(root.join("config.toml")).unwrap();
+    let configured = app_config
+        .providers
+        .tts
+        .instances
+        .get("vieneu_default")
+        .expect("vieneu_default instance should exist in config.toml");
+    assert_eq!(configured.adapter(), "vieneu");
+    assert!(!configured.preload());
     for invalid in [
         json!({"voice":"unknown"}),
         json!({"model":"vieneu_v3_turbo_fp32","voice":"minh_quan"}),
@@ -326,8 +336,7 @@ fn retained_nano_worker_synthesizes_24khz_switches_voice_and_recovers_after_canc
     let contract =
         voice_agent_server::providers::tts::vieneu::contract::NanoContract::load(&assets).unwrap();
     assert_eq!(contract.config.sample_rate, 24_000);
-    let mut config = AppConfig::parse_and_resolve(root.join("config.toml")).unwrap();
-    config.runtime.onnx.library = root.join("runtime/onnxruntime/libonnxruntime.so");
+    let config = AppConfig::parse_and_resolve(root.join("config.toml")).unwrap();
     let instance = TtsInstanceConfig::Vieneu(VieneuNativeConfig {
         model: NANO_MODEL_ID.into(),
         voice: "minh_quan".into(),

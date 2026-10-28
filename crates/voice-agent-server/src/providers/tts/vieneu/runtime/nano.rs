@@ -109,13 +109,17 @@ fn extract_first_f32_tensor(
     if output.len() == 0 {
         return Err(TtsError::Failed);
     }
-    let (_, value) = output.iter().next().ok_or(TtsError::Failed)?;
-    let (_, data) = value.try_extract_tensor::<f32>().map_err(failure)?;
+    let (name, value) = output.iter().next().ok_or(TtsError::Failed)?;
+    let (shape, data) = value.try_extract_tensor::<f32>().map_err(failure)?;
     if data.is_empty()
         || expected_len.is_some_and(|len| data.len() != len)
         || data.iter().any(|v| !v.is_finite())
     {
-        return Err(failure("invalid Nano ONNX output tensor"));
+        return Err(failure(format!(
+            "invalid Nano ONNX output tensor `{name}` (shape={shape:?}, len={}, expected={expected_len:?}, non_finite={})",
+            data.len(),
+            data.iter().filter(|v| !v.is_finite()).count()
+        )));
     }
     Ok(data.to_vec())
 }
@@ -374,7 +378,7 @@ impl NanoWorker {
                 "style" => tensor(vec![1, config.n_style, config.style_dim], state.contract.null_style.clone())?,
             })
             .map_err(failure)?;
-        let null_ctx = extract_first_f32_tensor(&null_out, Some(2 * config.dim))?;
+        let null_ctx = extract_first_f32_tensor(&null_out, Some(2 * config.style_dim))?;
         drop(null_out);
 
         Ok(Self {
@@ -403,13 +407,13 @@ impl NanoWorker {
                 "style" => tensor(vec![1, config.n_style, config.style_dim], voice.style.clone())?,
             })
             .map_err(failure)?;
-        let ctx = extract_first_f32_tensor(&enc_out, Some(seq_len * config.dim))?;
+        let ctx = extract_first_f32_tensor(&enc_out, Some(seq_len * config.style_dim))?;
         drop(enc_out);
 
         let dur_out = self
             .duration_predictor
             .run(ort::inputs! {
-                "ctx" => tensor(vec![1, seq_len, config.dim], ctx.clone())?,
+                "ctx" => tensor(vec![1, seq_len, config.style_dim], ctx.clone())?,
                 "ctx_mask" => tensor(vec![1, seq_len], mask.clone())?,
                 "spk" => tensor(vec![1, NANO_SPEAKER_DIM], voice.speaker_embedding.clone())?,
             })
@@ -425,7 +429,7 @@ impl NanoWorker {
             .run(ort::inputs! {
                 "x" => tensor(vec![1, channels, warmup_frames], x)?,
                 "t" => tensor(vec![1], vec![0.0_f32])?,
-                "ctx" => tensor(vec![1, seq_len, config.dim], ctx)?,
+                "ctx" => tensor(vec![1, seq_len, config.style_dim], ctx)?,
                 "ctx_mask" => tensor(vec![1, seq_len], mask)?,
                 "spk" => tensor(vec![1, NANO_SPEAKER_DIM], voice.speaker_embedding.clone())?,
                 "style" => tensor(vec![1, config.n_style, config.style_dim], voice.style.clone())?,
@@ -499,14 +503,14 @@ impl NanoWorker {
                 "style" => tensor(vec![1, config.n_style, config.style_dim], voice.style.clone())?,
             })
             .map_err(failure)?;
-        let ctx = extract_first_f32_tensor(&enc_out, Some(seq_len * config.dim))?;
+        let ctx = extract_first_f32_tensor(&enc_out, Some(seq_len * config.style_dim))?;
         drop(enc_out);
 
         check_cancelled(cancelled)?;
         let dur_out = self
             .duration_predictor
             .run(ort::inputs! {
-                "ctx" => tensor(vec![1, seq_len, config.dim], ctx.clone())?,
+                "ctx" => tensor(vec![1, seq_len, config.style_dim], ctx.clone())?,
                 "ctx_mask" => tensor(vec![1, seq_len], mask.clone())?,
                 "spk" => tensor(vec![1, NANO_SPEAKER_DIM], voice.speaker_embedding.clone())?,
             })
@@ -536,7 +540,7 @@ impl NanoWorker {
                 .run(ort::inputs! {
                     "x" => tensor(vec![1, channels, latent_frames], x.clone())?,
                     "t" => tensor(vec![1], vec![t_val])?,
-                    "ctx" => tensor(vec![1, seq_len, config.dim], ctx.clone())?,
+                    "ctx" => tensor(vec![1, seq_len, config.style_dim], ctx.clone())?,
                     "ctx_mask" => tensor(vec![1, seq_len], mask.clone())?,
                     "spk" => tensor(vec![1, NANO_SPEAKER_DIM], voice.speaker_embedding.clone())?,
                     "style" => tensor(vec![1, config.n_style, config.style_dim], voice.style.clone())?,
@@ -552,7 +556,7 @@ impl NanoWorker {
                     .run(ort::inputs! {
                         "x" => tensor(vec![1, channels, latent_frames], x.clone())?,
                         "t" => tensor(vec![1], vec![t_val])?,
-                        "ctx" => tensor(vec![1, 2, config.dim], null_ctx.clone())?,
+                        "ctx" => tensor(vec![1, 2, config.style_dim], null_ctx.clone())?,
                         "ctx_mask" => tensor(vec![1, 2], null_mask.clone())?,
                         "spk" => tensor(vec![1, NANO_SPEAKER_DIM], null_spk.clone())?,
                         "style" => tensor(vec![1, config.n_style, config.style_dim], null_style.clone())?,
