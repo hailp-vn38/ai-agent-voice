@@ -17,8 +17,10 @@ import { RouterLink } from 'vue-router'
 import { formatApiError } from '@/api/errors'
 import { llmGatewayApi } from '@/api/llm-gateway'
 import type {
+  GatewayAccountQuota,
   GatewayAccountStatus,
   GatewayAccountView,
+  GatewayQuotaWindow,
   GatewayVendor,
   GatewayVendorInfo,
 } from '@/api/types/llm-gateway'
@@ -34,8 +36,11 @@ const { t } = useI18n()
 
 const vendors = ref<GatewayVendorInfo[]>([])
 const accounts = ref<GatewayAccountView[]>([])
+const quotasByAccount = ref<Record<string, GatewayAccountQuota>>({})
 const selectedVendorFilter = ref<GatewayVendor | 'all'>('all')
 const loading = ref(false)
+const loadingQuotas = ref(false)
+const quotaBusyKey = ref('')
 const busyKey = ref('')
 const errorMessage = ref('')
 
@@ -116,6 +121,80 @@ function hasDirectAccountBinding(acc: GatewayAccountView): boolean {
   return acc.bound_providers.some((b) => b.binding_mode === 'account')
 }
 
+function accountQuota(acc: GatewayAccountView): GatewayAccountQuota | null {
+  return quotasByAccount.value[acc.account_key] ?? acc.quota ?? null
+}
+
+function quotaBarColorClass(pct: number, unlimited: boolean): string {
+  if (unlimited || pct >= 70) return 'bg-emerald-500'
+  if (pct >= 30) return 'bg-amber-500'
+  return 'bg-rose-500'
+}
+
+function quotaTextColorClass(pct: number, unlimited: boolean): string {
+  if (unlimited || pct >= 70) return 'text-emerald-600 dark:text-emerald-400'
+  if (pct >= 30) return 'text-amber-600 dark:text-amber-400'
+  return 'text-rose-600 dark:text-rose-400'
+}
+
+function formatResetCountdown(resetAt?: number | null): string {
+  if (!resetAt) return ''
+  const nowSecs = Math.floor(Date.now() / 1000)
+  const diffSecs = resetAt - nowSecs
+  if (diffSecs <= 0) return ''
+  const days = Math.floor(diffSecs / 86400)
+  const hours = Math.floor((diffSecs % 86400) / 3600)
+  const mins = Math.max(1, Math.floor((diffSecs % 3600) / 60))
+  if (days > 0) return `${days}d ${hours}h`
+  if (hours > 0) return `${hours}h ${mins}m`
+  return `${mins}m`
+}
+
+function formatWindowUsage(w: GatewayQuotaWindow): string {
+  if (w.unlimited) return t('llmGateway.quota.unlimited')
+  const pct = Math.round(w.remaining_percentage)
+  if (w.unit === '%') return `${pct}%`
+  const remaining = Math.max(0, Math.round(w.total - w.used))
+  return `${remaining}/${Math.round(w.total)} (${pct}%)`
+}
+
+async function fetchAllQuotas(force = false) {
+  if (!accounts.value.length || loadingQuotas.value) return
+  loadingQuotas.value = true
+  try {
+    const vendorParam =
+      selectedVendorFilter.value === 'all' ? undefined : selectedVendorFilter.value
+    const res = await llmGatewayApi.listQuotas({ vendor: vendorParam, force })
+    const next = { ...quotasByAccount.value }
+    for (const q of res.quotas) {
+      next[q.account_key] = q
+    }
+    quotasByAccount.value = next
+  } catch (cause) {
+    if (force) {
+      errorMessage.value = formatApiError(cause)
+    }
+  } finally {
+    loadingQuotas.value = false
+  }
+}
+
+async function refreshSingleQuota(acc: GatewayAccountView) {
+  if (quotaBusyKey.value) return
+  quotaBusyKey.value = acc.account_key
+  try {
+    const res = await llmGatewayApi.getAccountQuota(acc.account_key, true)
+    quotasByAccount.value = {
+      ...quotasByAccount.value,
+      [acc.account_key]: res.quota,
+    }
+  } catch (cause) {
+    errorMessage.value = formatApiError(cause)
+  } finally {
+    quotaBusyKey.value = ''
+  }
+}
+
 async function load() {
   loadController?.abort()
   const controller = new AbortController()
@@ -130,6 +209,16 @@ async function load() {
     if (controller.signal.aborted) return
     vendors.value = vendorRes.vendors
     accounts.value = accountRes.accounts
+    const seeded: Record<string, GatewayAccountQuota> = { ...quotasByAccount.value }
+    for (const acc of accountRes.accounts) {
+      if (acc.quota) {
+        seeded[acc.account_key] = acc.quota
+      }
+    }
+    quotasByAccount.value = seeded
+    if (accountRes.accounts.length > 0) {
+      void fetchAllQuotas(false)
+    }
   } catch (cause) {
     if (!controller.signal.aborted) {
       errorMessage.value = formatApiError(cause)
@@ -297,6 +386,16 @@ void load()
       </div>
 
       <div class="flex flex-wrap items-center gap-2">
+        <Button
+          v-if="accounts.length"
+          variant="outline"
+          size="sm"
+          :disabled="loadingQuotas || loading"
+          @click="fetchAllQuotas(true)"
+        >
+          <RefreshCw class="size-4" :class="{ 'animate-spin': loadingQuotas }" aria-hidden="true" />
+          {{ t('llmGateway.refreshQuotas') }}
+        </Button>
         <Button variant="outline" size="sm" :disabled="loading" @click="load">
           <RefreshCw class="size-4" :class="{ 'animate-spin': loading }" aria-hidden="true" />
           {{ t('common.refresh') }}
@@ -438,6 +537,7 @@ void load()
               <th class="px-4 py-3 font-medium">{{ t('llmGateway.col.account') }}</th>
               <th class="px-4 py-3 font-medium">{{ t('llmGateway.col.vendor') }}</th>
               <th class="px-4 py-3 font-medium">{{ t('llmGateway.col.status') }}</th>
+              <th class="px-4 py-3 font-medium">{{ t('llmGateway.col.quota') }}</th>
               <th class="px-4 py-3 font-medium">{{ t('llmGateway.col.priority') }}</th>
               <th class="px-4 py-3 font-medium">{{ t('llmGateway.col.boundProviders') }}</th>
               <th class="px-4 py-3 text-right font-medium">{{ t('llmGateway.col.actions') }}</th>
@@ -499,6 +599,109 @@ void load()
                   <AlertTriangle class="mr-1 inline size-3" aria-hidden="true" />
                   {{ acc.last_error }}
                 </p>
+              </td>
+
+              <!-- Quota & Limits -->
+              <td class="min-w-[230px] max-w-[300px] px-4 py-3 align-top">
+                <div v-if="accountQuota(acc)" class="space-y-2">
+                  <div class="flex flex-wrap items-center justify-between gap-1.5">
+                    <div class="flex flex-wrap items-center gap-1">
+                      <Badge
+                        v-if="accountQuota(acc)?.plan"
+                        variant="outline"
+                        class="font-mono text-[10px] uppercase"
+                      >
+                        {{ accountQuota(acc)?.plan }}
+                      </Badge>
+                      <span
+                        v-if="accountQuota(acc)?.limit_reached"
+                        class="inline-flex items-center gap-1 rounded-full border border-danger/30 bg-danger/10 px-2 py-0.5 text-[10px] font-medium text-danger"
+                      >
+                        <AlertTriangle class="size-3" aria-hidden="true" />
+                        {{ t('llmGateway.quota.limitReached') }}
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      class="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] text-muted-foreground hover:bg-accent hover:text-foreground disabled:opacity-50"
+                      :disabled="quotaBusyKey === acc.account_key || loadingQuotas"
+                      :title="t('llmGateway.quota.checkBtn')"
+                      @click="refreshSingleQuota(acc)"
+                    >
+                      <RefreshCw
+                        class="size-3"
+                        :class="{ 'animate-spin': quotaBusyKey === acc.account_key }"
+                        aria-hidden="true"
+                      />
+                    </button>
+                  </div>
+
+                  <div
+                    v-if="accountQuota(acc)?.windows.length"
+                    class="space-y-1.5"
+                  >
+                    <div
+                      v-for="w in accountQuota(acc)?.windows"
+                      :key="w.name"
+                      class="space-y-0.5"
+                    >
+                      <div class="flex items-center justify-between gap-2 text-[11px]">
+                        <span class="truncate font-medium text-foreground" :title="w.name">
+                          {{ w.name }}
+                        </span>
+                        <span
+                          class="shrink-0 font-mono font-semibold tabular-nums"
+                          :class="quotaTextColorClass(w.remaining_percentage, w.unlimited)"
+                        >
+                          {{ formatWindowUsage(w) }}
+                        </span>
+                      </div>
+                      <div class="h-1.5 w-full overflow-hidden rounded-full bg-muted">
+                        <div
+                          class="h-full rounded-full transition-all duration-300"
+                          :class="quotaBarColorClass(w.remaining_percentage, w.unlimited)"
+                          :style="{
+                            width: `${w.unlimited ? 100 : Math.max(0, Math.min(100, w.remaining_percentage))}%`,
+                          }"
+                        />
+                      </div>
+                      <div
+                        v-if="formatResetCountdown(w.reset_at)"
+                        class="text-[10px] text-muted-foreground"
+                      >
+                        {{
+                          t('llmGateway.quota.resetsIn', {
+                            time: formatResetCountdown(w.reset_at),
+                          })
+                        }}
+                      </div>
+                    </div>
+                  </div>
+
+                  <p
+                    v-else-if="accountQuota(acc)?.message"
+                    class="text-xs text-muted-foreground"
+                  >
+                    {{ accountQuota(acc)?.message }}
+                  </p>
+                </div>
+
+                <div v-else class="flex items-center gap-2">
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    class="h-7 px-2 text-xs text-muted-foreground"
+                    :disabled="quotaBusyKey === acc.account_key || loadingQuotas"
+                    @click="refreshSingleQuota(acc)"
+                  >
+                    <RefreshCw
+                      class="size-3.5"
+                      :class="{ 'animate-spin': quotaBusyKey === acc.account_key || loadingQuotas }"
+                      aria-hidden="true"
+                    />
+                    {{ t('llmGateway.quota.checkBtn') }}
+                  </Button>
+                </div>
               </td>
 
               <!-- Priority -->

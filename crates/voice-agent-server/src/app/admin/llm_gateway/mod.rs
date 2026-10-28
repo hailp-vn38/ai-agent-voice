@@ -21,6 +21,20 @@ pub(super) struct ListAccountsQuery {
 }
 
 #[derive(Debug, Default, Deserialize)]
+pub(super) struct ListQuotasQuery {
+    #[serde(default)]
+    vendor: Option<String>,
+    #[serde(default)]
+    force: Option<bool>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+pub(super) struct GetQuotaQuery {
+    #[serde(default)]
+    force: Option<bool>,
+}
+
+#[derive(Debug, Default, Deserialize)]
 pub(super) struct OAuthCallbackQuery {
     #[serde(default)]
     code: Option<String>,
@@ -57,6 +71,67 @@ pub(super) async fn list_accounts(
 
     match state.llm_gateway_hub.list_accounts(vendor_filter).await {
         Ok(accounts) => Json(serde_json::json!({ "accounts": accounts })).into_response(),
+        Err(err) => gateway_error(&request, err),
+    }
+}
+
+pub(super) async fn list_quotas(
+    State(state): State<AppState>,
+    Query(query): Query<ListQuotasQuery>,
+    request: Request,
+) -> Response {
+    let vendor_filter = match query
+        .vendor
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        Some(raw) => match GatewayVendor::parse(raw) {
+            Some(vendor) => Some(vendor),
+            None => return error(&request, StatusCode::BAD_REQUEST, "invalid_vendor"),
+        },
+        None => None,
+    };
+    let force = query.force.unwrap_or(false);
+
+    match state
+        .llm_gateway_hub
+        .list_quotas(vendor_filter, force)
+        .await
+    {
+        Ok(quotas) => Json(serde_json::json!({ "quotas": quotas })).into_response(),
+        Err(err) => gateway_error(&request, err),
+    }
+}
+
+pub(super) async fn get_account_quota(
+    State(state): State<AppState>,
+    Path(account_key): Path<String>,
+    Query(query): Query<GetQuotaQuery>,
+    request: Request,
+) -> Response {
+    let force = query.force.unwrap_or(false);
+    match state
+        .llm_gateway_hub
+        .get_account_quota(&account_key, force)
+        .await
+    {
+        Ok(quota) => Json(serde_json::json!({ "quota": quota })).into_response(),
+        Err(err) => gateway_error(&request, err),
+    }
+}
+
+pub(super) async fn refresh_account_quota(
+    State(state): State<AppState>,
+    Path(account_key): Path<String>,
+    request: Request,
+) -> Response {
+    match state
+        .llm_gateway_hub
+        .get_account_quota(&account_key, true)
+        .await
+    {
+        Ok(quota) => Json(serde_json::json!({ "quota": quota })).into_response(),
         Err(err) => gateway_error(&request, err),
     }
 }

@@ -12,8 +12,54 @@ use std::{
 };
 
 use async_trait::async_trait;
+use serde_json::Value;
 
-use super::types::{GatewayError, GatewayVendor, OAuthTokenBundle};
+use super::types::{
+    GatewayError, GatewayQuotaWindow, GatewayVendor, OAuthTokenBundle, VendorQuotaSnapshot,
+};
+
+pub(crate) fn parse_reset_timestamp(val: Option<&Value>) -> Option<i64> {
+    let val = val?;
+    if let Some(num) = val.as_i64() {
+        if num <= 0 {
+            return None;
+        }
+        return Some(if num >= 1_000_000_000_000 {
+            num / 1000
+        } else {
+            num
+        });
+    }
+    if let Some(num) = val.as_f64()
+        && num.is_finite()
+        && num > 0.0
+    {
+        let i = num as i64;
+        return Some(if i >= 1_000_000_000_000 { i / 1000 } else { i });
+    }
+    let raw = val.as_str()?.trim();
+    if raw.is_empty() {
+        return None;
+    }
+    if let Ok(num) = raw.parse::<i64>()
+        && num > 0
+    {
+        return Some(if num >= 1_000_000_000_000 {
+            num / 1000
+        } else {
+            num
+        });
+    }
+    if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(raw) {
+        return Some(dt.timestamp());
+    }
+    if let Ok(date) = chrono::NaiveDate::parse_from_str(raw, "%Y-%m-%d")
+        && let Some(dt) = date.and_hms_opt(0, 0, 0)
+    {
+        return Some(dt.and_utc().timestamp());
+    }
+    None
+}
 
 #[derive(Debug, Clone)]
 pub struct ExchangedOAuthAccount {
@@ -102,6 +148,11 @@ pub trait OAuthVendorDriver: Send + Sync {
         current: &OAuthTokenBundle,
     ) -> Result<ExchangedOAuthAccount, GatewayError>;
 
+    async fn fetch_quota(
+        &self,
+        bundle: &OAuthTokenBundle,
+    ) -> Result<VendorQuotaSnapshot, GatewayError>;
+
     fn extra_headers_for(&self, bundle: &OAuthTokenBundle) -> Vec<(String, String)>;
 }
 
@@ -130,9 +181,11 @@ pub fn default_vendor_drivers() -> BTreeMap<GatewayVendor, Arc<dyn OAuthVendorDr
 pub struct FakeOAuthVendorDriver {
     vendor: GatewayVendor,
     refresh_calls: AtomicUsize,
+    quota_calls: AtomicUsize,
     device_ready: Mutex<bool>,
     next_email: Mutex<Option<String>>,
     next_expires_at: Mutex<Option<i64>>,
+    next_quota: Mutex<Option<VendorQuotaSnapshot>>,
 }
 
 impl FakeOAuthVendorDriver {
@@ -140,9 +193,11 @@ impl FakeOAuthVendorDriver {
         Self {
             vendor,
             refresh_calls: AtomicUsize::new(0),
+            quota_calls: AtomicUsize::new(0),
             device_ready: Mutex::new(false),
             next_email: Mutex::new(Some(format!("{}@example.com", vendor.as_str()))),
             next_expires_at: Mutex::new(Some(4_102_444_800)), // 2100-01-01
+            next_quota: Mutex::new(None),
         }
     }
 
@@ -154,8 +209,16 @@ impl FakeOAuthVendorDriver {
         *self.next_expires_at.lock().expect("next_expires_at mutex") = expires_at;
     }
 
+    pub fn set_next_quota(&self, quota: Option<VendorQuotaSnapshot>) {
+        *self.next_quota.lock().expect("next_quota mutex") = quota;
+    }
+
     pub fn refresh_call_count(&self) -> usize {
         self.refresh_calls.load(Ordering::SeqCst)
+    }
+
+    pub fn quota_call_count(&self) -> usize {
+        self.quota_calls.load(Ordering::SeqCst)
     }
 }
 
@@ -261,6 +324,43 @@ impl OAuthVendorDriver for FakeOAuthVendorDriver {
             },
             account_email: None,
             expires_at: Some(4_102_444_800),
+        })
+    }
+
+    async fn fetch_quota(
+        &self,
+        _bundle: &OAuthTokenBundle,
+    ) -> Result<VendorQuotaSnapshot, GatewayError> {
+        self.quota_calls.fetch_add(1, Ordering::SeqCst);
+        if let Some(custom) = self.next_quota.lock().expect("next_quota").clone() {
+            return Ok(custom);
+        }
+        let now = crate::database::unix_seconds().unwrap_or(1_760_000_000);
+        Ok(VendorQuotaSnapshot {
+            plan: Some(format!("{} Pro", self.vendor.display_name())),
+            limit_reached: false,
+            windows: vec![
+                GatewayQuotaWindow {
+                    name: "5h".to_owned(),
+                    used: 20.0,
+                    total: 100.0,
+                    remaining_percentage: 80.0,
+                    reset_at: Some(now + 14_400),
+                    unlimited: false,
+                    unit: Some("%".to_owned()),
+                },
+                GatewayQuotaWindow {
+                    name: "Weekly".to_owned(),
+                    used: 35.0,
+                    total: 100.0,
+                    remaining_percentage: 65.0,
+                    reset_at: Some(now + 432_000),
+                    unlimited: false,
+                    unit: Some("%".to_owned()),
+                },
+            ],
+            message: None,
+            discovered_account_context_id: None,
         })
     }
 

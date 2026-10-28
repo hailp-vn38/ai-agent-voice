@@ -199,6 +199,35 @@ async fn admin_llm_gateway_routes_and_provider_binding_lifecycle() {
         .unwrap();
     assert_eq!(clear_resp.status(), StatusCode::OK);
 
+    // 3c. GET & POST /llm-gateway/accounts/{account_key}/quota and GET /llm-gateway/quotas
+    let quota_resp = client
+        .get(format!("{base}/llm-gateway/accounts/{account_key}/quota"))
+        .bearer_auth("gateway-admin-token")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(quota_resp.status(), StatusCode::OK);
+    let quota_body: Value = quota_resp.json().await.unwrap();
+    assert_eq!(quota_body["quota"]["account_key"], account_key);
+    assert_eq!(quota_body["quota"]["limit_reached"], false);
+    assert_eq!(
+        quota_body["quota"]["windows"].as_array().unwrap().len(),
+        2
+    );
+
+    let list_quotas_resp = client
+        .get(format!("{base}/llm-gateway/quotas?vendor=openai_codex"))
+        .bearer_auth("gateway-admin-token")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(list_quotas_resp.status(), StatusCode::OK);
+    let list_quotas_body: Value = list_quotas_resp.json().await.unwrap();
+    assert_eq!(
+        list_quotas_body["quotas"].as_array().unwrap().len(),
+        1
+    );
+
     // 4. Create an `openai` provider with Static API Key, then switch to `gateway_binding`
     let create_prov = client
         .post(format!("{base}/providers"))

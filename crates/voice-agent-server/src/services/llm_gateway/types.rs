@@ -270,6 +270,48 @@ pub struct GatewayVendorInfo {
     pub cooling_down_accounts: usize,
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct GatewayQuotaWindow {
+    pub name: String,
+    pub used: f64,
+    pub total: f64,
+    pub remaining_percentage: f64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reset_at: Option<i64>,
+    #[serde(default)]
+    pub unlimited: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unit: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct VendorQuotaSnapshot {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub plan: Option<String>,
+    #[serde(default)]
+    pub limit_reached: bool,
+    #[serde(default)]
+    pub windows: Vec<GatewayQuotaWindow>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+    /// Optional discovered upstream account/project context ID (e.g. Gemini `cloudaicompanionProject`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub discovered_account_context_id: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct GatewayAccountQuota {
+    pub account_key: String,
+    pub vendor: GatewayVendor,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub plan: Option<String>,
+    pub limit_reached: bool,
+    pub windows: Vec<GatewayQuotaWindow>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+    pub fetched_at: i64,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GatewayBoundProviderRef {
     pub provider_key: String,
@@ -293,6 +335,8 @@ pub struct GatewayAccountView {
     pub last_used_at: Option<i64>,
     pub last_error: Option<String>,
     pub bound_providers: Vec<GatewayBoundProviderRef>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub quota: Option<GatewayAccountQuota>,
 }
 
 #[derive(Debug, Clone, Deserialize)]

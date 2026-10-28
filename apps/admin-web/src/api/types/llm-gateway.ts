@@ -27,6 +27,26 @@ export interface GatewayBoundProviderRef {
   binding_mode: string
 }
 
+export interface GatewayQuotaWindow {
+  name: string
+  used: number
+  total: number
+  remaining_percentage: number
+  reset_at?: number | null
+  unlimited: boolean
+  unit?: string | null
+}
+
+export interface GatewayAccountQuota {
+  account_key: string
+  vendor: GatewayVendor
+  plan?: string | null
+  limit_reached: boolean
+  windows: GatewayQuotaWindow[]
+  message?: string | null
+  fetched_at: number
+}
+
 export interface GatewayAccountView {
   account_key: string
   vendor: GatewayVendor
@@ -42,6 +62,7 @@ export interface GatewayAccountView {
   last_used_at: number | null
   last_error: string | null
   bound_providers: GatewayBoundProviderRef[]
+  quota?: GatewayAccountQuota | null
 }
 
 export interface StartOAuthLoginInput {

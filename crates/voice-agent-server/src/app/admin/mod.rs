@@ -349,6 +349,7 @@ pub(super) fn router(state: AppState) -> Router<AppState> {
         )
         .route("/llm-gateway/vendors", get(llm_gateway::list_vendors))
         .route("/llm-gateway/accounts", get(llm_gateway::list_accounts))
+        .route("/llm-gateway/quotas", get(llm_gateway::list_quotas))
         .route(
             "/llm-gateway/oauth/start",
             axum::routing::post(llm_gateway::start_oauth),
@@ -368,6 +369,10 @@ pub(super) fn router(state: AppState) -> Router<AppState> {
         .route(
             "/llm-gateway/accounts/{account_key}/refresh",
             axum::routing::post(llm_gateway::refresh_account),
+        )
+        .route(
+            "/llm-gateway/accounts/{account_key}/quota",
+            get(llm_gateway::get_account_quota).post(llm_gateway::refresh_account_quota),
         )
         .route(
             "/llm-gateway/accounts/{account_key}/clear-cooldown",

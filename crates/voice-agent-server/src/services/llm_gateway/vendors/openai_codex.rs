@@ -9,12 +9,15 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use url::Url;
 
-use super::{ExchangedOAuthAccount, OAuthVendorDriver};
-use crate::services::llm_gateway::types::{GatewayError, GatewayVendor, OAuthTokenBundle};
+use super::{ExchangedOAuthAccount, OAuthVendorDriver, parse_reset_timestamp};
+use crate::services::llm_gateway::types::{
+    GatewayError, GatewayQuotaWindow, GatewayVendor, OAuthTokenBundle, VendorQuotaSnapshot,
+};
 
 const CODEX_CLIENT_ID: &str = "app_EMoamEEZ73f0CkXaXp7hrann";
 const CODEX_AUTHORIZE_URL: &str = "https://auth.openai.com/oauth/authorize";
 const CODEX_TOKEN_URL: &str = "https://auth.openai.com/oauth/token";
+const CODEX_USAGE_URL: &str = "https://chatgpt.com/backend-api/wham/usage";
 pub const CODEX_REDIRECT_URI: &str = "http://localhost:1455/auth/callback";
 pub const CODEX_FIXED_PORT: u16 = 1455;
 const CODEX_SCOPES: &str = "openid profile email offline_access";
@@ -117,6 +120,136 @@ fn encode_uri_component(input: &str) -> String {
         }
     }
     out
+}
+
+fn parse_codex_window(name: &str, window: Option<&Value>) -> Option<GatewayQuotaWindow> {
+    let w = window?;
+    let used_raw = w
+        .get("used_percent")
+        .and_then(Value::as_f64)
+        .or_else(|| w.get("percent_used").and_then(Value::as_f64))?;
+    let used = used_raw.clamp(0.0, 100.0);
+    let remaining_percentage = (100.0 - used).clamp(0.0, 100.0);
+    let reset_at = parse_reset_timestamp(
+        w.get("reset_at")
+            .or_else(|| w.get("resets_at"))
+            .or_else(|| w.get("resetAt")),
+    );
+    Some(GatewayQuotaWindow {
+        name: name.to_owned(),
+        used,
+        total: 100.0,
+        remaining_percentage,
+        reset_at,
+        unlimited: false,
+        unit: Some("%".to_owned()),
+    })
+}
+
+fn unwrap_rate_limit_node(node: Option<&Value>) -> Option<&Value> {
+    let n = node?;
+    n.get("rate_limit").filter(|v| v.is_object()).or(Some(n))
+}
+
+pub(crate) fn parse_codex_usage_payload(data: &Value) -> VendorQuotaSnapshot {
+    let plan = data
+        .get("plan_type")
+        .and_then(Value::as_str)
+        .or_else(|| {
+            data.get("summary")
+                .and_then(|s| s.get("plan"))
+                .and_then(Value::as_str)
+        })
+        .filter(|s| !s.trim().is_empty())
+        .map(str::to_owned);
+
+    let by_limit_id = data.get("rate_limits_by_limit_id");
+    let normal_rl = unwrap_rate_limit_node(
+        data.get("rate_limit")
+            .or_else(|| data.get("rate_limits"))
+            .or_else(|| by_limit_id.and_then(|m| m.get("codex"))),
+    );
+
+    let mut windows = Vec::new();
+    let mut limit_reached = normal_rl
+        .and_then(|rl| rl.get("limit_reached"))
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+
+    if let Some(rl) = normal_rl {
+        if let Some(w) =
+            parse_codex_window("5h", rl.get("primary_window").or_else(|| rl.get("primary")))
+        {
+            if w.remaining_percentage <= 0.0 {
+                limit_reached = true;
+            }
+            windows.push(w);
+        }
+        if let Some(w) = parse_codex_window(
+            "Weekly",
+            rl.get("secondary_window").or_else(|| rl.get("secondary")),
+        ) {
+            if w.remaining_percentage <= 0.0 {
+                limit_reached = true;
+            }
+            windows.push(w);
+        }
+    }
+
+    let review_rl = unwrap_rate_limit_node(
+        data.get("code_review_rate_limit")
+            .or_else(|| data.get("review_rate_limit"))
+            .or_else(|| {
+                by_limit_id
+                    .and_then(|m| m.get("code_review").or_else(|| m.get("codex_code_review")))
+            }),
+    );
+    if let Some(rl) = review_rl {
+        if let Some(w) = parse_codex_window(
+            "Review (5h)",
+            rl.get("primary_window").or_else(|| rl.get("primary")),
+        ) {
+            windows.push(w);
+        }
+        if let Some(w) = parse_codex_window(
+            "Review (Weekly)",
+            rl.get("secondary_window").or_else(|| rl.get("secondary")),
+        ) {
+            windows.push(w);
+        }
+    }
+
+    let spark_rl = unwrap_rate_limit_node(data.get("spark_rate_limit").or_else(|| {
+        by_limit_id
+            .and_then(Value::as_object)
+            .and_then(|map| {
+                map.iter()
+                    .find(|(k, _)| k.to_ascii_lowercase().contains("spark"))
+                    .map(|(_, v)| v)
+            })
+    }));
+    if let Some(rl) = spark_rl {
+        if let Some(w) = parse_codex_window(
+            "Spark (5h)",
+            rl.get("primary_window").or_else(|| rl.get("primary")),
+        ) {
+            windows.push(w);
+        }
+        if let Some(w) = parse_codex_window(
+            "Spark (Weekly)",
+            rl.get("secondary_window").or_else(|| rl.get("secondary")),
+        ) {
+            windows.push(w);
+        }
+    }
+
+    VendorQuotaSnapshot {
+        plan,
+        limit_reached,
+        windows,
+        message: None,
+        discovered_account_context_id: None,
+    }
 }
 
 #[async_trait]
@@ -317,6 +450,44 @@ impl OAuthVendorDriver for OpenAiCodexOAuthDriver {
             account_email: email_from_id.or(email_from_acc),
             expires_at,
         })
+    }
+
+    async fn fetch_quota(
+        &self,
+        bundle: &OAuthTokenBundle,
+    ) -> Result<VendorQuotaSnapshot, GatewayError> {
+        let mut req = self
+            .http
+            .get(CODEX_USAGE_URL)
+            .bearer_auth(&bundle.access_token)
+            .header("Accept", "application/json")
+            .header("originator", CODEX_ORIGINATOR)
+            .header("User-Agent", format!("{CODEX_ORIGINATOR}/{CODEX_VERSION}"));
+        if let Some(acct_id) = bundle
+            .account_context_id
+            .as_deref()
+            .filter(|s| !s.trim().is_empty())
+        {
+            req = req.header("ChatGPT-Account-Id", acct_id);
+        }
+        let resp = req
+            .send()
+            .await
+            .map_err(|e| GatewayError::OAuthExchangeFailed(format!("codex_quota_error: {e}")))?;
+        if resp.status().as_u16() == 401 {
+            return Err(GatewayError::AccountReauthRequired);
+        }
+        if !resp.status().is_success() {
+            return Err(GatewayError::OAuthExchangeFailed(format!(
+                "codex_quota_http_{}",
+                resp.status().as_u16()
+            )));
+        }
+        let payload: Value = resp
+            .json()
+            .await
+            .map_err(|e| GatewayError::OAuthExchangeFailed(format!("codex_quota_json: {e}")))?;
+        Ok(parse_codex_usage_payload(&payload))
     }
 
     fn extra_headers_for(&self, bundle: &OAuthTokenBundle) -> Vec<(String, String)> {

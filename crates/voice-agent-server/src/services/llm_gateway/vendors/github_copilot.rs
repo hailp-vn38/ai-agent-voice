@@ -2,14 +2,21 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use serde::Deserialize;
+use serde_json::Value;
 
-use super::{DeviceCodeGrant, DevicePollOutcome, ExchangedOAuthAccount, OAuthVendorDriver};
-use crate::services::llm_gateway::types::{GatewayError, GatewayVendor, OAuthTokenBundle};
+use super::{
+    DeviceCodeGrant, DevicePollOutcome, ExchangedOAuthAccount, OAuthVendorDriver,
+    parse_reset_timestamp,
+};
+use crate::services::llm_gateway::types::{
+    GatewayError, GatewayQuotaWindow, GatewayVendor, OAuthTokenBundle, VendorQuotaSnapshot,
+};
 
 const COPILOT_CLIENT_ID: &str = "Iv1.b507a08c87ecfe98";
 const GITHUB_DEVICE_CODE_URL: &str = "https://github.com/login/device/code";
 const GITHUB_ACCESS_TOKEN_URL: &str = "https://github.com/login/oauth/access_token";
 const COPILOT_TOKEN_EXCHANGE_URL: &str = "https://api.github.com/copilot_internal/v2/token";
+const COPILOT_USAGE_URL: &str = "https://api.github.com/copilot_internal/user";
 const GITHUB_USERINFO_URL: &str = "https://api.github.com/user";
 const GITHUB_API_VERSION: &str = "2022-11-28";
 const COPILOT_USER_AGENT: &str = "GitHubCopilotChat/0.26.7";
@@ -100,6 +107,130 @@ struct GithubPollTokenResp {
     access_token: Option<String>,
     error: Option<String>,
     interval: Option<u64>,
+}
+
+pub(crate) fn parse_github_copilot_usage_payload(data: &Value) -> VendorQuotaSnapshot {
+    let mut windows = Vec::new();
+    let mut limit_reached = false;
+
+    if let Some(snapshots) = data.get("quota_snapshots").and_then(Value::as_object) {
+        let plan = data
+            .get("copilot_plan")
+            .and_then(Value::as_str)
+            .filter(|s| !s.trim().is_empty())
+            .map(str::to_owned);
+        let reset_at = parse_reset_timestamp(data.get("quota_reset_date"));
+
+        for (key, display_name) in [
+            ("chat", "Chat"),
+            ("completions", "Completions"),
+            ("premium_interactions", "Premium Requests"),
+        ] {
+            let Some(snap) = snapshots.get(key) else {
+                continue;
+            };
+            let unlimited = snap
+                .get("unlimited")
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
+            let total = snap
+                .get("entitlement")
+                .and_then(Value::as_f64)
+                .unwrap_or(0.0);
+            let remaining = snap
+                .get("remaining")
+                .and_then(Value::as_f64)
+                .unwrap_or(0.0);
+            let used = if unlimited {
+                0.0
+            } else {
+                (total - remaining).max(0.0)
+            };
+            let remaining_percentage = if unlimited {
+                100.0
+            } else if let Some(pct) = snap.get("percent_remaining").and_then(Value::as_f64) {
+                pct.clamp(0.0, 100.0)
+            } else if total > 0.0 {
+                (remaining / total * 100.0).clamp(0.0, 100.0)
+            } else {
+                0.0
+            };
+            if !unlimited && total > 0.0 && remaining <= 0.0 {
+                limit_reached = true;
+            }
+            windows.push(GatewayQuotaWindow {
+                name: display_name.to_owned(),
+                used,
+                total,
+                remaining_percentage,
+                reset_at,
+                unlimited,
+                unit: Some("req".to_owned()),
+            });
+        }
+        return VendorQuotaSnapshot {
+            plan,
+            limit_reached,
+            windows,
+            message: None,
+            discovered_account_context_id: None,
+        };
+    }
+
+    let plan = data
+        .get("copilot_plan")
+        .and_then(Value::as_str)
+        .or_else(|| data.get("access_type_sku").and_then(Value::as_str))
+        .filter(|s| !s.trim().is_empty())
+        .map(str::to_owned);
+    let reset_at = parse_reset_timestamp(
+        data.get("limited_user_reset_date")
+            .or_else(|| data.get("quota_reset_date")),
+    );
+    let monthly = data.get("monthly_quotas");
+    let limited = data.get("limited_user_quotas");
+
+    if monthly.is_some() || limited.is_some() {
+        for (key, display_name) in [("chat", "Chat"), ("completions", "Completions")] {
+            let total = monthly
+                .and_then(|m| m.get(key))
+                .and_then(Value::as_f64)
+                .unwrap_or(0.0);
+            let remaining = limited
+                .and_then(|l| l.get(key))
+                .and_then(Value::as_f64)
+                .unwrap_or(0.0);
+            if total <= 0.0 && remaining <= 0.0 {
+                continue;
+            }
+            let used = (total - remaining).max(0.0);
+            let remaining_percentage = if total > 0.0 {
+                (remaining / total * 100.0).clamp(0.0, 100.0)
+            } else {
+                0.0
+            };
+            if total > 0.0 && remaining <= 0.0 {
+                limit_reached = true;
+            }
+            windows.push(GatewayQuotaWindow {
+                name: display_name.to_owned(),
+                used,
+                total,
+                remaining_percentage,
+                reset_at,
+                unlimited: false,
+                unit: Some("req".to_owned()),
+            });
+        }
+    }
+
+    VendorQuotaSnapshot {
+        plan,
+        limit_reached,
+        windows,
+        message: None,
+        discovered_account_context_id: None,
+    }
 }
 
 #[async_trait]
@@ -214,6 +345,43 @@ impl OAuthVendorDriver for GithubCopilotOAuthDriver {
             account_email: None,
             expires_at,
         })
+    }
+
+    async fn fetch_quota(
+        &self,
+        bundle: &OAuthTokenBundle,
+    ) -> Result<VendorQuotaSnapshot, GatewayError> {
+        let github_token = bundle
+            .upstream_oauth_token
+            .as_deref()
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or(&bundle.access_token);
+        let resp = self
+            .http
+            .get(COPILOT_USAGE_URL)
+            .header("Authorization", format!("token {github_token}"))
+            .header("Accept", "application/json")
+            .header("X-GitHub-Api-Version", GITHUB_API_VERSION)
+            .header("Editor-Version", COPILOT_EDITOR_VERSION)
+            .header("Editor-Plugin-Version", COPILOT_PLUGIN_VERSION)
+            .header("User-Agent", COPILOT_USER_AGENT)
+            .send()
+            .await
+            .map_err(|e| GatewayError::OAuthExchangeFailed(format!("copilot_quota_error: {e}")))?;
+        if resp.status().as_u16() == 401 {
+            return Err(GatewayError::AccountReauthRequired);
+        }
+        if !resp.status().is_success() {
+            return Err(GatewayError::OAuthExchangeFailed(format!(
+                "copilot_quota_http_{}",
+                resp.status().as_u16()
+            )));
+        }
+        let payload: Value = resp
+            .json()
+            .await
+            .map_err(|e| GatewayError::OAuthExchangeFailed(format!("copilot_quota_json: {e}")))?;
+        Ok(parse_github_copilot_usage_payload(&payload))
     }
 
     fn extra_headers_for(&self, _bundle: &OAuthTokenBundle) -> Vec<(String, String)> {

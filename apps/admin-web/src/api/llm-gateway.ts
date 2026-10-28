@@ -1,5 +1,6 @@
 import { jsonRequest, requestJson, withQuery } from './client'
 import type {
+  GatewayAccountQuota,
   GatewayAccountView,
   GatewayVendor,
   GatewayVendorInfo,
@@ -28,6 +29,25 @@ export const llmGatewayApi = {
     return requestJson<{ accounts: GatewayAccountView[] }>(
       withQuery(`${basePath}/accounts`, { vendor }),
       {},
+      { signal },
+    )
+  },
+  listQuotas(params?: { vendor?: GatewayVendor; force?: boolean }, signal?: AbortSignal) {
+    return requestJson<{ quotas: GatewayAccountQuota[] }>(
+      withQuery(`${basePath}/quotas`, {
+        vendor: params?.vendor,
+        force: params?.force ? 'true' : undefined,
+      }),
+      {},
+      { signal },
+    )
+  },
+  getAccountQuota(accountKey: string, force = false, signal?: AbortSignal) {
+    return requestJson<{ quota: GatewayAccountQuota }>(
+      withQuery(`${accountPath(accountKey)}/quota`, {
+        force: force ? 'true' : undefined,
+      }),
+      force ? jsonRequest('POST', {}) : {},
       { signal },
     )
   },

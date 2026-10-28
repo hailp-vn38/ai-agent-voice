@@ -11,10 +11,11 @@ mod tests;
 
 pub use hub::{LlmGatewayHub, SharedGatewayHub};
 pub use types::{
-    GatewayAccountStatus, GatewayAccountView, GatewayBinding, GatewayBoundProviderRef,
-    GatewayCallOutcome, GatewayError, GatewayLease, GatewayVendor, GatewayVendorInfo,
-    OAuthCallbackSubmission, OAuthLoginChallenge, OAuthLoginMode, OAuthPollStatus,
-    OAuthTokenBundle, StartOAuthLoginRequest, UpdateGatewayAccountPatch, valid_account_key,
+    GatewayAccountQuota, GatewayAccountStatus, GatewayAccountView, GatewayBinding,
+    GatewayBoundProviderRef, GatewayCallOutcome, GatewayError, GatewayLease, GatewayQuotaWindow,
+    GatewayVendor, GatewayVendorInfo, OAuthCallbackSubmission, OAuthLoginChallenge, OAuthLoginMode,
+    OAuthPollStatus, OAuthTokenBundle, StartOAuthLoginRequest, UpdateGatewayAccountPatch,
+    VendorQuotaSnapshot, valid_account_key,
 };
 pub use vendors::{
     DeviceCodeGrant, DevicePollOutcome, ExchangedOAuthAccount, FakeOAuthVendorDriver,
