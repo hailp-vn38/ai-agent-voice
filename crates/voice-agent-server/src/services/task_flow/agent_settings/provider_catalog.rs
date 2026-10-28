@@ -96,10 +96,10 @@ impl ResolvedLlmProvider {
                 max_clip_duration_secs: 10,
                 max_clips_per_call: 6,
                 max_total_duration_secs: 60,
-                provider_guidance: "Each individual video clip from this provider is strictly capped at 10 seconds. \
-                    If duration_secs <= 10, it creates 1 primary clip (up to 10s). \
-                    If duration_secs > 10 (up to 60s), the provider splits the video into up to 6 sequential 10-second intermediate clips in a single call and returns all clip artifact_ids plus the scene breakdown in `provider_message`; \
-                    you MUST then call `video_concat` with those `artifact_ids` in order to produce the final continuous primary MP4 artifact."
+                provider_guidance: "Generates MP4 video with built-in voiceover/narration audio and burned-in subtitles directly from `prompt` (do NOT call `tts_synthesize` for video requests, and do NOT split `prompt` into 10-second sub-prompts). \
+                    Pass a single unified video `prompt` and the target `duration_secs` (up to 60s). \
+                    When `duration_secs` exceeds the 10-second single-clip generation limit, the provider concatenates the generated segments and returns the merged result video; \
+                    only call `video_concat` if `video_create` returns unmerged clips (`requires_concat: true`) or when the requested duration exceeds a single `video_create` call."
                     .to_owned(),
             }
         } else if self.adapter.eq_ignore_ascii_case("openai") {
@@ -108,8 +108,8 @@ impl ResolvedLlmProvider {
                 max_clip_duration_secs: 10,
                 max_clips_per_call: 1,
                 max_total_duration_secs: 10,
-                provider_guidance: "Generates 1 video clip (max 10 seconds) per `video_create` call. \
-                    For videos longer than 10 seconds, call `video_create` multiple times with `role: \"intermediate\"` for each sequential scene and merge them using `video_concat`."
+                provider_guidance: "Generates 1 video clip (max 10 seconds) per `video_create` call (with built-in audio and subtitles; do NOT call `tts_synthesize`). \
+                    Only when the requested video duration exceeds the 10-second single-call limit, call `video_create` with `role: \"intermediate\"` for each segment and merge them using `video_concat`."
                     .to_owned(),
             }
         } else {

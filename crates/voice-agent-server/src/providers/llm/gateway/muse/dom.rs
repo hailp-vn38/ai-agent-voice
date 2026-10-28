@@ -55,23 +55,48 @@ pub const CHAT_STATE_JS: &str = r#"(() => {
   const bubbles = [...document.querySelectorAll("div[class*=\"hatch-agent-bubble-bg\"]")];
   const bubbleTexts = bubbles.map(b => (b.innerText || '').trim());
   const last = bubbleTexts.length ? bubbleTexts[bubbleTexts.length - 1] : '';
-  const atts = [...document.querySelectorAll("[data-testid^=\"hatch-chat-attachment-presentation-\"]")].map(a => {
-    const v = a.querySelector('video'), i = a.querySelector('img');
-    const m = v || i;
-    return {
-      tid: a.getAttribute('data-testid') || '',
-      kind: v ? 'video' : (i ? 'image' : 'unknown'),
-      src: m ? (m.currentSrc || m.src || '') : '',
-      w: m ? (m.videoWidth || m.naturalWidth || 0) : 0,
-      h: m ? (m.videoHeight || m.naturalHeight || 0) : 0,
-    };
+  const atts = [...document.querySelectorAll("[data-testid^=\"hatch-chat-attachment-presentation-\"]")].flatMap((a, group) => {
+    const tid = a.getAttribute('data-testid') || '';
+    const skeletons = a.querySelectorAll('[data-slot="skeleton"], [data-visualcompletion="loading-state"]').length;
+    const vids = [...a.querySelectorAll('video')];
+    const isVideo = tid.includes('video') || vids.length > 0 || !!a.querySelector('[data-hatch-video-wrapper]');
+    const loadingKind = isVideo ? 'video' : (tid.includes('image') ? 'image' : 'unknown');
+    const items = isVideo
+      ? vids.map((v, idx) => {
+          const wrap = v.closest('[data-hatch-video-src]');
+          return {
+            tid: vids.length > 1 ? `${tid}-${idx}` : tid,
+            group,
+            kind: 'video',
+            src: v.currentSrc || v.src || (wrap ? wrap.getAttribute('data-hatch-video-src') || '' : ''),
+            w: v.videoWidth || 0,
+            h: v.videoHeight || 0,
+          };
+        })
+      : [...a.querySelectorAll('img:not([aria-hidden="true"])')].map((i, idx, arr) => ({
+          tid: arr.length > 1 ? `${tid}-${idx}` : tid,
+          group,
+          kind: 'image',
+          src: i.currentSrc || i.src || '',
+          w: i.naturalWidth || 0,
+          h: i.naturalHeight || 0,
+        }));
+    for (let k = 0; k < skeletons; k++) {
+      items.push({ tid: `${tid}-loading-${k}`, group, kind: loadingKind, src: '', w: 0, h: 0 });
+    }
+    if (items.length === 0) {
+      items.push({ tid, group, kind: 'unknown', src: '', w: 0, h: 0 });
+    }
+    return items;
   });
   const tail = document.body ? document.body.innerText.slice(-600) : '';
   return {
     agentCount: bubbles.length,
     lastText: last,
     bubbles: bubbleTexts,
-    generating: !!document.querySelector("button[aria-label*=\"Stop\" i]"),
+    generating: !!document.querySelector(
+      "button[aria-label*=\"Stop\" i], [data-testid=\"hatch-composer-stop-button\"], [data-testid=\"hatch-chat-typing-indicator\"]"
+    ),
     approval: !!document.querySelector("[data-testid=\"hatch-inline-approval-card\"]"),
     attachments: atts,
     tail
@@ -97,9 +122,10 @@ pub const LAST_BUBBLE_MEDIA_JS: &str = r#"(() => {
   if (!b) return { links: [], html: '' };
   const urls = [];
   const push = (u) => { if (u && !urls.includes(u)) urls.push(u); };
+  document.querySelectorAll("[data-testid^=\"hatch-chat-attachment-presentation-\"] video, [data-testid^=\"hatch-chat-attachment-presentation-\"] source").forEach(m => push(m.currentSrc || m.src || ''));
   b.querySelectorAll('video, source').forEach(m => push(m.currentSrc || m.src || ''));
   b.querySelectorAll('a[href]').forEach(a => push(a.href || ''));
-  b.querySelectorAll('img').forEach(m => push(m.currentSrc || m.src || ''));
+  b.querySelectorAll('img:not([aria-hidden="true"])').forEach(m => push(m.currentSrc || m.src || ''));
   const text = b.innerText || '';
   const re = /https?:\/\/[^\s)<>"']+/g;
   let mm; while ((mm = re.exec(text))) push(mm[0]);

@@ -463,7 +463,7 @@ async fn video_generation_denies_approval_card_and_prompts_for_missing_attachmen
     assert_eq!(
         prompts,
         vec![
-            "Generate a video (aspect ratio 16:9, 5 seconds long): Ocean waves at sunset"
+            "Generate a video (aspect ratio 16:9, 1 clip ~10 seconds): Ocean waves at sunset\n\nRequirements:\n- Generate 1 complete ~10-second video clip with synchronized audio/narration and subtitles matching the prompt.\n- Attach the final video file directly in the chat.\n- After the video file is attached in the chat, send a final confirmation message ending with [ALL_MEDIA_ATTACHED]."
                 .to_string(),
             "Please attach the final video file here in the chat instead of uploading it."
                 .to_string(),
@@ -492,7 +492,17 @@ async fn video_generation_waits_for_all_multi_clips_and_collects_all_agent_bubbl
             "attachments": [],
             "tail": ""
         }),
-        // Poll 1: clip 1 & 2 ready, but clip 3 placeholder is still loading (`kind: "unknown"`, `src: ""`) and `generating: true`
+        // Poll 1: planning bubble appears before any clip is attached (`generating: false` briefly between steps)
+        json!({
+            "agentCount": 1,
+            "lastText": "Planning your 30-second video and generating segments now.",
+            "bubbles": ["Planning your 30-second video and generating segments now."],
+            "generating": false,
+            "approval": false,
+            "attachments": [],
+            "tail": ""
+        }),
+        // Poll 2: clip 1 & 2 ready, but clip 3 skeleton placeholder is still loading (`src: ""`) and `generating: true`
         json!({
             "agentCount": 2,
             "lastText": "Scene 1 & 2",
@@ -505,36 +515,39 @@ async fn video_generation_waits_for_all_multi_clips_and_collects_all_agent_bubbl
                     "kind": "video",
                     "src": "blob:https://muse.ai/clip-1",
                     "w": 1280,
-                    "h": 720
+                    "h": 720,
+                    "group": 0
                 },
                 {
                     "tid": "hatch-chat-attachment-presentation-video-1",
                     "kind": "video",
                     "src": "blob:https://muse.ai/clip-2",
                     "w": 1280,
-                    "h": 720
+                    "h": 720,
+                    "group": 0
                 },
                 {
-                    "tid": "hatch-chat-attachment-presentation-video-2",
-                    "kind": "unknown",
+                    "tid": "hatch-chat-attachment-presentation-video-loading-0",
+                    "kind": "video",
                     "src": "",
                     "w": 0,
-                    "h": 0
+                    "h": 0,
+                    "group": 0
                 }
             ],
             "tail": ""
         }),
     ];
-    // Polls 2..7: all 3 clips ready, generating=false, 4 bubbles present -> stabilizes after STABLE_POLLS_DONE
+    // Polls 3..8: all 3 clips ready in a single group, generating=false, confirmation marker `[ALL_MEDIA_ATTACHED]` present -> stabilizes after STABLE_POLLS_DONE and strips marker
     for _ in 0..5 {
         states.push(json!({
             "agentCount": 4,
-            "lastText": "All 3 clips ready.",
+            "lastText": "Scene 3: Diplomatic summary (10s) [ALL_MEDIA_ATTACHED]",
             "bubbles": [
                 "Intro: 3 scenes (30s total)",
                 "Scene 1: Persian Gulf overview (10s)",
                 "Scene 2: Naval formation (10s)",
-                "Scene 3: Diplomatic summary (10s)"
+                "Scene 3: Diplomatic summary (10s) [ALL_MEDIA_ATTACHED]"
             ],
             "generating": false,
             "approval": false,
@@ -544,21 +557,24 @@ async fn video_generation_waits_for_all_multi_clips_and_collects_all_agent_bubbl
                     "kind": "video",
                     "src": "blob:https://muse.ai/clip-1",
                     "w": 1280,
-                    "h": 720
+                    "h": 720,
+                    "group": 0
                 },
                 {
                     "tid": "hatch-chat-attachment-presentation-video-1",
                     "kind": "video",
                     "src": "blob:https://muse.ai/clip-2",
                     "w": 1280,
-                    "h": 720
+                    "h": 720,
+                    "group": 0
                 },
                 {
                     "tid": "hatch-chat-attachment-presentation-video-2",
                     "kind": "video",
                     "src": "blob:https://muse.ai/clip-3",
                     "w": 1280,
-                    "h": 720
+                    "h": 720,
+                    "group": 0
                 }
             ],
             "tail": ""
@@ -598,10 +614,19 @@ async fn video_generation_waits_for_all_multi_clips_and_collects_all_agent_bubbl
         .await
         .expect("multi-clip video generation should succeed");
 
+    let sent = page.sent_prompts();
+    assert_eq!(
+        sent,
+        vec![
+            "Generate a video (aspect ratio 16:9, target duration ~30 seconds across 3 sequential ~10-second beats): 30s geopolitical breakdown\n\nMandatory workflow:\n1. Since each generated clip is fixed at ~10 seconds (up to 6 clips / 60 seconds per turn), plan and generate all 3 sequential ~10-second clips covering every beat from 1 to 3 without skipping or dropping any beat.\n2. Verify that all 3 clips have been generated (~30 seconds total), then concatenate/merge them in order into ONE single continuous video.\n3. Send ONLY the final merged video as the main file attachment in the chat — do NOT send or re-attach the individual unmerged clip parts.\n4. Only after the final merged video file has been attached in the chat, send a final confirmation message ending with [ALL_MEDIA_ATTACHED]."
+                .to_string()
+        ]
+    );
+
     let (parts, assistant_message) = output
         .into_media_parts()
         .expect("expected LlmOutput::Media");
-    assert_eq!(parts.len(), 3, "must download all 3 clips in forward order");
+    assert_eq!(parts.len(), 3, "must download all 3 clips in forward order when only one multi-clip container exists");
     assert_eq!(parts[0].bytes, clip1_bytes);
     assert_eq!(parts[1].bytes, clip2_bytes);
     assert_eq!(parts[2].bytes, clip3_bytes);
@@ -611,6 +636,135 @@ async fn video_generation_waits_for_all_multi_clips_and_collects_all_agent_bubbl
             "Intro: 3 scenes (30s total)\n\nScene 1: Persian Gulf overview (10s)\n\nScene 2: Naval formation (10s)\n\nScene 3: Diplomatic summary (10s)"
         )
     );
+}
+
+#[tokio::test(start_paused = true)]
+async fn video_generation_over_10s_returns_only_final_merged_video_when_concatenated_after_grid() {
+    let clip1_bytes = [VALID_MP4_BYTES, &[1u8; 4]].concat();
+    let clip2_bytes = [VALID_MP4_BYTES, &[2u8; 4]].concat();
+    let merged_bytes = [VALID_MP4_BYTES, &[9u8; 8]].concat();
+
+    let mut states = vec![
+        json!({
+            "agentCount": 0,
+            "lastText": "",
+            "bubbles": [],
+            "generating": false,
+            "approval": false,
+            "attachments": [],
+            "tail": ""
+        }),
+        // Intermediate state: 2 clips rendered in group 0 while Muse is still concatenating (no [ALL_MEDIA_ATTACHED] yet)
+        json!({
+            "agentCount": 1,
+            "lastText": "Generated segments, now concatenating into a single continuous video...",
+            "bubbles": ["Generated segments, now concatenating into a single continuous video..."],
+            "generating": false,
+            "approval": false,
+            "attachments": [
+                {
+                    "tid": "hatch-chat-attachment-presentation-video-0",
+                    "kind": "video",
+                    "src": "blob:https://muse.ai/clip-1",
+                    "w": 1280,
+                    "h": 720,
+                    "group": 0
+                },
+                {
+                    "tid": "hatch-chat-attachment-presentation-video-1",
+                    "kind": "video",
+                    "src": "blob:https://muse.ai/clip-2",
+                    "w": 1280,
+                    "h": 720,
+                    "group": 0
+                }
+            ],
+            "tail": ""
+        }),
+    ];
+    // Final state: Muse attaches the single merged video in group 1 and outputs [ALL_MEDIA_ATTACHED]
+    for _ in 0..5 {
+        states.push(json!({
+            "agentCount": 2,
+            "lastText": "Here is your final merged 20-second video. [ALL_MEDIA_ATTACHED]",
+            "bubbles": [
+                "Generated segments, now concatenating into a single continuous video...",
+                "Here is your final merged 20-second video. [ALL_MEDIA_ATTACHED]"
+            ],
+            "generating": false,
+            "approval": false,
+            "attachments": [
+                {
+                    "tid": "hatch-chat-attachment-presentation-video-0",
+                    "kind": "video",
+                    "src": "blob:https://muse.ai/clip-1",
+                    "w": 1280,
+                    "h": 720,
+                    "group": 0
+                },
+                {
+                    "tid": "hatch-chat-attachment-presentation-video-1",
+                    "kind": "video",
+                    "src": "blob:https://muse.ai/clip-2",
+                    "w": 1280,
+                    "h": 720,
+                    "group": 0
+                },
+                {
+                    "tid": "hatch-chat-attachment-presentation-video-2",
+                    "kind": "video",
+                    "src": "blob:https://muse.ai/merged-final",
+                    "w": 1280,
+                    "h": 720,
+                    "group": 1
+                }
+            ],
+            "tail": ""
+        }));
+    }
+
+    let page = FakeBrowserPage::new("ctx-merged-video".to_string(), states);
+    {
+        let mut guard = page.state.lock().unwrap();
+        guard.blob_payloads.push((
+            "blob:https://muse.ai/clip-1".to_string(),
+            "video/mp4".to_string(),
+            clip1_bytes,
+        ));
+        guard.blob_payloads.push((
+            "blob:https://muse.ai/clip-2".to_string(),
+            "video/mp4".to_string(),
+            clip2_bytes,
+        ));
+        guard.blob_payloads.push((
+            "blob:https://muse.ai/merged-final".to_string(),
+            "video/mp4".to_string(),
+            merged_bytes.clone(),
+        ));
+    }
+    let engine = FakeBrowserEngine::new(vec![Arc::clone(&page)]);
+    let provider = build_gateway_muse_provider(&[SINGLE_COOKIE], Some(engine)).await;
+
+    let output = provider
+        .invoke(LlmOperation::VideoGeneration {
+            prompt: "20s continuous documentary".to_string(),
+            width: 1280,
+            height: 720,
+            duration_secs: 20,
+            first_frame: None,
+        })
+        .await
+        .expect("merged video generation should succeed");
+
+    let (parts, _) = output
+        .into_media_parts()
+        .expect("expected LlmOutput::Media");
+    assert_eq!(
+        parts.len(),
+        1,
+        "must return ONLY the final concatenated video from group 1, ignoring intermediate parts in group 0"
+    );
+    assert_eq!(parts[0].bytes, merged_bytes);
 }
 
 #[tokio::test(start_paused = true)]
@@ -940,21 +1094,19 @@ fn config_toml_includes_muse_primary_and_validates_cleanly() {
     assert_eq!(parsed.len(), 1);
     assert_eq!(parsed[0].cookie_expires, Some(1_793_337_767));
 
-    let config_path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../config.toml");
-    if !config_path.exists() {
-        return;
-    }
-    let config = crate::config::AppConfig::parse_and_resolve(&config_path)
-        .expect("config.toml should parse and validate cleanly");
-
-    let muse_instance = config
-        .providers
-        .llm
-        .instances
-        .get("muse_primary")
-        .expect("muse_primary instance should exist in config.toml");
-    assert_eq!(muse_instance.adapter(), "llm_gateway");
-    if let crate::config::LlmInstanceConfig::LlmGateway(gw_cfg) = muse_instance {
+    let muse_toml: crate::config::LlmInstanceConfig = toml::from_str(
+        r#"
+        adapter = "llm_gateway"
+        gateway_binding = "pool:muse"
+        model = "muse-chat"
+        account_concurrency = 2
+        cdp_port = 19222
+        headless = true
+        "#,
+    )
+    .expect("muse_primary LlmInstanceConfig should deserialize");
+    assert_eq!(muse_toml.adapter(), "llm_gateway");
+    if let crate::config::LlmInstanceConfig::LlmGateway(gw_cfg) = &muse_toml {
         assert_eq!(gw_cfg.gateway_binding.to_string(), "pool:muse");
         assert_eq!(gw_cfg.model, "muse-chat");
         assert_eq!(gw_cfg.account_concurrency, Some(2));
@@ -964,11 +1116,21 @@ fn config_toml_includes_muse_primary_and_validates_cleanly() {
         panic!("expected LlmInstanceConfig::LlmGateway");
     }
 
-    let snapshot =
-        crate::providers::deployment_provider_snapshot(&config, "llm", "muse_primary")
-            .expect("deployment_provider_snapshot for muse_primary should succeed");
-    assert_eq!(snapshot.adapter, "llm_gateway");
-    assert_eq!(snapshot.kind, "llm");
+    let config_path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../config.toml");
+    if !config_path.exists() {
+        return;
+    }
+    let config = crate::config::AppConfig::parse_and_resolve(&config_path)
+        .expect("config.toml should parse and validate cleanly");
+
+    if let Some(muse_instance) = config.providers.llm.instances.get("muse_primary") {
+        assert_eq!(muse_instance.adapter(), "llm_gateway");
+        let snapshot =
+            crate::providers::deployment_provider_snapshot(&config, "llm", "muse_primary")
+                .expect("deployment_provider_snapshot for muse_primary should succeed");
+        assert_eq!(snapshot.adapter, "llm_gateway");
+        assert_eq!(snapshot.kind, "llm");
+    }
 
     let runtime_estimates = &config
         .provider_runtime
@@ -1055,6 +1217,47 @@ async fn real_chromium_cdp_launches_isolated_context_and_executes_dom_scripts() 
         state.get("lastText").and_then(Value::as_str),
         Some("Real CDP agent reply")
     );
+
+    // Verify a single `hatch-chat-attachment-presentation-video` container holding a grid of
+    // 5 loaded `<video>` cells (with poster `<img aria-hidden="true">`) + 1 `skeleton` loading cell
+    // expands into 6 video entries (5 ready + 1 loading).
+    page.evaluate_json(
+        r#"(() => {
+            const container = document.createElement('div');
+            container.setAttribute('data-testid', 'hatch-chat-attachment-presentation-video');
+            let gridHtml = '<div class="grid">';
+            for (let i = 1; i <= 5; i++) {
+                gridHtml += `<div data-hatch-video-wrapper="true" data-hatch-video-src="blob:https://muse.ai/v-${i}">
+                    <video src="blob:https://muse.ai/v-${i}"></video>
+                    <img aria-hidden="true" src="blob:https://muse.ai/poster-${i}" />
+                </div>`;
+            }
+            gridHtml += '<div data-slot="skeleton" data-visualcompletion="loading-state"></div></div>';
+            container.innerHTML = gridHtml;
+            document.body.appendChild(container);
+            return true;
+        })()"#,
+        false,
+        Duration::from_secs(5),
+    )
+    .await
+    .expect("injecting video grid should succeed");
+
+    let grid_state = page
+        .evaluate_json(dom::CHAT_STATE_JS, false, Duration::from_secs(5))
+        .await
+        .expect("CHAT_STATE_JS on video grid should succeed");
+    let atts = grid_state
+        .get("attachments")
+        .and_then(Value::as_array)
+        .expect("attachments array");
+    assert_eq!(atts.len(), 6, "must extract 5 loaded videos + 1 skeleton loading placeholder");
+    for i in 0..5 {
+        assert_eq!(atts[i]["kind"], "video");
+        assert_eq!(atts[i]["src"], format!("blob:https://muse.ai/v-{}", i + 1));
+    }
+    assert_eq!(atts[5]["kind"], "video");
+    assert_eq!(atts[5]["src"], "");
 
     page.close().await;
     engine.dispose_context("real-cdp-test-ctx").await;

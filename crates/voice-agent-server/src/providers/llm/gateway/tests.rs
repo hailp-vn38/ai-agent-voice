@@ -867,7 +867,7 @@ async fn llm_gateway_provider_executes_muse_chat_vision_image_video_and_rotates_
         json!({"agentCount": 2, "lastText": "Here is the image", "generating": false, "approval": false, "attachments": [{"tid": "image-attachment", "kind": "image", "src": "blob:https://muse.ai/img-1", "w": 512, "h": 512}], "tail": ""}),
         // VideoGeneration turn
         json!({"agentCount": 2, "lastText": "Here is the image", "generating": false, "approval": false, "attachments": [], "tail": ""}),
-        json!({"agentCount": 3, "lastText": "Here is the video", "generating": false, "approval": false, "attachments": [{"tid": "video-attachment", "kind": "video", "src": "blob:https://muse.ai/vid-1", "w": 1280, "h": 720}], "tail": ""}),
+        json!({"agentCount": 3, "lastText": "Here is the video [ALL_MEDIA_ATTACHED]", "generating": false, "approval": false, "attachments": [{"tid": "video-attachment", "kind": "video", "src": "blob:https://muse.ai/vid-1", "w": 1280, "h": 720}], "tail": ""}),
     ]);
 
     let engine: Arc<dyn BrowserEngine> = Arc::new(MockMuseEngine {

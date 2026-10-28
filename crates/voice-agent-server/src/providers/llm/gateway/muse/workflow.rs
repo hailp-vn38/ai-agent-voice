@@ -28,7 +28,11 @@ pub const POLL_INTERVAL: Duration = Duration::from_millis(150);
 pub const MEDIA_POLL_INTERVAL: Duration = Duration::from_millis(600);
 pub const STABLE_POLLS_DONE: usize = 4;
 pub const STABLE_POLLS_FORCE: usize = 12;
+pub const VIDEO_UNMARKED_STABLE_POLLS: usize = 100;
 pub const CUTOUT_HINT: &str = " Isolated subject on a plain, uncluttered studio background.";
+pub const MEDIA_DONE_MARKER: &str = "[ALL_MEDIA_ATTACHED]";
+pub const MUSE_SINGLE_CLIP_LIMIT_SECS: u32 = 10;
+pub const MUSE_MAX_CLIPS_PER_TURN: u32 = 6;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MediaKind {
@@ -44,10 +48,16 @@ impl MediaKind {
         }
     }
 
-    pub const fn grace_duration(self) -> Duration {
+    pub const fn grace_duration(self, denied_approval: bool, has_done_marker: bool) -> Duration {
         match self {
             Self::Image => Duration::from_secs(8),
-            Self::Video => Duration::from_secs(90),
+            Self::Video => {
+                if denied_approval || has_done_marker {
+                    Duration::from_secs(90)
+                } else {
+                    Duration::from_secs(180)
+                }
+            }
         }
     }
 
@@ -81,6 +91,8 @@ pub(super) struct AttachmentNode {
     pub w: u32,
     #[serde(default)]
     pub h: u32,
+    #[serde(default)]
+    pub group: usize,
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -175,10 +187,22 @@ pub fn format_image_prompt(
 pub fn format_video_prompt(prompt: &str, width: u32, height: u32, duration_secs: u32) -> String {
     let ratio = aspect_ratio_hint(width, height);
     let secs = duration_secs.max(1);
-    format!(
-        "Generate a video (aspect ratio {ratio}, {secs} seconds long): {}",
-        prompt.trim()
-    )
+    if secs > MUSE_SINGLE_CLIP_LIMIT_SECS {
+        let beats = secs
+            .div_ceil(MUSE_SINGLE_CLIP_LIMIT_SECS)
+            .clamp(2, MUSE_MAX_CLIPS_PER_TURN);
+        let target_secs = beats * MUSE_SINGLE_CLIP_LIMIT_SECS;
+        let max_turn_secs = MUSE_MAX_CLIPS_PER_TURN * MUSE_SINGLE_CLIP_LIMIT_SECS;
+        format!(
+            "Generate a video (aspect ratio {ratio}, target duration ~{target_secs} seconds across {beats} sequential ~{MUSE_SINGLE_CLIP_LIMIT_SECS}-second beats): {}\n\nMandatory workflow:\n1. Since each generated clip is fixed at ~{MUSE_SINGLE_CLIP_LIMIT_SECS} seconds (up to {MUSE_MAX_CLIPS_PER_TURN} clips / {max_turn_secs} seconds per turn), plan and generate all {beats} sequential ~{MUSE_SINGLE_CLIP_LIMIT_SECS}-second clips covering every beat from 1 to {beats} without skipping or dropping any beat.\n2. Verify that all {beats} clips have been generated (~{target_secs} seconds total), then concatenate/merge them in order into ONE single continuous video.\n3. Send ONLY the final merged video as the main file attachment in the chat — do NOT send or re-attach the individual unmerged clip parts.\n4. Only after the final merged video file has been attached in the chat, send a final confirmation message ending with {MEDIA_DONE_MARKER}.",
+            prompt.trim()
+        )
+    } else {
+        format!(
+            "Generate a video (aspect ratio {ratio}, 1 clip ~{MUSE_SINGLE_CLIP_LIMIT_SECS} seconds): {}\n\nRequirements:\n- Generate 1 complete ~{MUSE_SINGLE_CLIP_LIMIT_SECS}-second video clip with synchronized audio/narration and subtitles matching the prompt.\n- Attach the final video file directly in the chat.\n- After the video file is attached in the chat, send a final confirmation message ending with {MEDIA_DONE_MARKER}.",
+            prompt.trim()
+        )
+    }
 }
 
 pub fn is_thread_url(url: &str) -> bool {
@@ -666,6 +690,35 @@ pub(crate) async fn run_media_turn_once(
     .await
 }
 
+fn format_clean_assistant_bubbles(bubbles: &[&str]) -> Option<String> {
+    let cleaned: Vec<String> = bubbles
+        .iter()
+        .map(|b| b.replace(MEDIA_DONE_MARKER, "").trim().to_string())
+        .filter(|b| !b.is_empty())
+        .collect();
+    (!cleaned.is_empty()).then(|| cleaned.join("\n\n"))
+}
+
+fn select_effective_ready_attachments<'a>(
+    ready_atts: &[&'a AttachmentNode],
+) -> Vec<&'a AttachmentNode> {
+    if ready_atts.len() <= 1 {
+        return ready_atts.to_vec();
+    }
+    let last_group = ready_atts.last().map(|a| a.group).unwrap_or(0);
+    let last_group_atts: Vec<&'a AttachmentNode> = ready_atts
+        .iter()
+        .copied()
+        .filter(|a| a.group == last_group)
+        .collect();
+    let has_earlier_group = ready_atts.iter().any(|a| a.group < last_group);
+    if has_earlier_group && last_group_atts.len() == 1 {
+        last_group_atts
+    } else {
+        ready_atts.to_vec()
+    }
+}
+
 async fn wait_and_download_media(
     lease: &mut TabLease,
     page: &Arc<dyn BrowserPage>,
@@ -676,7 +729,6 @@ async fn wait_and_download_media(
 ) -> Result<LlmOutput, WorkflowFailure> {
     let base_attachments = base_state.attachments.len();
     let mut base_agent_count = base_state.agent_count;
-    let grace = kind.grace_duration();
     let stall_after = kind.stall_after();
     let overrun_limit = timeout.mul_f64(2.5);
 
@@ -719,9 +771,11 @@ async fn wait_and_download_media(
         // 2. Detect newly rendered media attachment(s) and agent text bubbles.
         let slice_start = base_attachments.min(state.attachments.len());
         let new_atts = &state.attachments[slice_start..];
+        let mut seen_srcs = std::collections::HashSet::new();
         let ready_atts: Vec<&AttachmentNode> = new_atts
             .iter()
             .filter(|a| a.kind == kind.as_str() && !a.src.is_empty())
+            .filter(|a| seen_srcs.insert(a.src.as_str()))
             .collect();
         let any_matching_loading = new_atts.iter().any(|a| {
             (a.kind == kind.as_str() || a.tid.contains(kind.as_str())) && a.src.is_empty()
@@ -734,6 +788,10 @@ async fn wait_and_download_media(
             .map(str::trim)
             .filter(|s| !s.is_empty())
             .collect();
+        let has_done_marker = new_bubbles
+            .iter()
+            .any(|b| b.contains(MEDIA_DONE_MARKER))
+            || state.last_text.contains(MEDIA_DONE_MARKER);
 
         let sig = (
             state.agent_count,
@@ -741,7 +799,7 @@ async fn wait_and_download_media(
             new_bubbles.iter().map(|s| s.len()).collect::<Vec<_>>(),
             new_atts
                 .iter()
-                .map(|a| format!("{}:{}:{}", a.tid, a.kind, a.src))
+                .map(|a| format!("{}:{}:{}:{}", a.group, a.tid, a.kind, a.src))
                 .collect::<Vec<_>>(),
             state.generating,
         );
@@ -754,23 +812,31 @@ async fn wait_and_download_media(
         }
 
         let required_stable_polls = match kind {
-            MediaKind::Video => STABLE_POLLS_DONE,
             MediaKind::Image => 0,
+            MediaKind::Video => {
+                if asked_to_attach {
+                    0
+                } else if has_done_marker {
+                    STABLE_POLLS_DONE
+                } else {
+                    VIDEO_UNMARKED_STABLE_POLLS
+                }
+            }
         };
         if !ready_atts.is_empty()
             && !state.generating
             && !any_matching_loading
             && stable_polls >= required_stable_polls
         {
-            let mut parts = Vec::with_capacity(ready_atts.len());
-            for att in &ready_atts {
+            let selected_atts = select_effective_ready_attachments(&ready_atts);
+            let mut parts = Vec::with_capacity(selected_atts.len());
+            for att in &selected_atts {
                 parts.push(
                     download_media_part_from_src(page, &att.src, kind, transparent_background)
                         .await?,
                 );
             }
-            let assistant_message =
-                (!new_bubbles.is_empty()).then(|| new_bubbles.join("\n\n"));
+            let assistant_message = format_clean_assistant_bubbles(&new_bubbles);
             let output = LlmOutput::from_media_parts(parts, assistant_message).ok_or_else(|| {
                 WorkflowFailure::Upstream(
                     UpstreamFailureKind::Transient,
@@ -803,8 +869,9 @@ async fn wait_and_download_media(
                 ));
             }
 
+            let effective_grace = kind.grace_duration(denied_approval, has_done_marker);
             let done_at = *text_done_at.get_or_insert_with(Instant::now);
-            if done_at.elapsed() >= grace {
+            if done_at.elapsed() >= effective_grace {
                 if GLITCH_HINTS.iter().any(|h| lower_text.contains(h)) {
                     lease.fail_account(UpstreamFailureKind::Transient);
                     return Err(WorkflowFailure::Upstream(
@@ -818,6 +885,10 @@ async fn wait_and_download_media(
                         format!(
                             "Please attach the final {} file here in the chat instead of uploading it.",
                             kind.as_str()
+                        )
+                    } else if kind == MediaKind::Video {
+                        format!(
+                            "Please attach only the final merged video file here in the chat as a single attachment and end your confirmation message with {MEDIA_DONE_MARKER}."
                         )
                     } else {
                         format!(
@@ -848,14 +919,18 @@ async fn wait_and_download_media(
                     })
                     .unwrap_or_default();
 
-                if let Some(url) = pick_media_url(&links, kind) {
-                    let part =
-                        download_media_part_from_src(page, &url, kind, transparent_background)
-                            .await?;
-                    let assistant_message =
-                        (!new_bubbles.is_empty()).then(|| new_bubbles.join("\n\n"));
+                let urls = pick_media_urls(&links, kind);
+                if !urls.is_empty() {
+                    let mut parts = Vec::with_capacity(urls.len());
+                    for url in &urls {
+                        parts.push(
+                            download_media_part_from_src(page, url, kind, transparent_background)
+                                .await?,
+                        );
+                    }
+                    let assistant_message = format_clean_assistant_bubbles(&new_bubbles);
                     lease.finish_clean(None);
-                    return LlmOutput::from_media_parts(vec![part], assistant_message).ok_or_else(
+                    return LlmOutput::from_media_parts(parts, assistant_message).ok_or_else(
                         || {
                             WorkflowFailure::Upstream(
                                 UpstreamFailureKind::Transient,
@@ -916,7 +991,7 @@ async fn download_media_part_from_src(
     Ok(crate::providers::llm::MediaPart { bytes, mime_type })
 }
 
-pub fn pick_media_url(links: &[String], kind: MediaKind) -> Option<String> {
+pub fn pick_media_urls(links: &[String], kind: MediaKind) -> Vec<String> {
     const VIDEO_EXT: &[&str] = &[".mp4", ".webm", ".mov", ".m4v"];
     const IMAGE_EXT: &[&str] = &[".png", ".jpg", ".jpeg", ".webp", ".gif", ".avif"];
     const MEDIA_HOSTS: &[&str] = &[
@@ -964,12 +1039,21 @@ pub fn pick_media_url(links: &[String], kind: MediaKind) -> Option<String> {
         }
     };
 
-    links
+    let valid: Vec<(&String, u8)> = links
         .iter()
         .filter(|u| !u.is_empty() && !u.starts_with("mailto:") && !u.starts_with("javascript:"))
-        .max_by_key(|u| score(u))
-        .filter(|u| score(u) > 0)
-        .cloned()
+        .map(|u| (u, score(u)))
+        .filter(|(_, s)| *s > 0)
+        .collect();
+    let Some(max_score) = valid.iter().map(|(_, s)| *s).max() else {
+        return Vec::new();
+    };
+    let mut seen = std::collections::HashSet::new();
+    valid
+        .into_iter()
+        .filter(|(u, s)| *s == max_score && seen.insert((*u).as_str()))
+        .map(|(u, _)| u.clone())
+        .collect()
 }
 
 pub fn sniff_media_mime_type(bytes: &[u8], declared: &str, kind: MediaKind) -> String {

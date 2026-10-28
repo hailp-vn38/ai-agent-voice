@@ -966,11 +966,16 @@ fn canonical_prompts_enforce_summarize_analyze_visualize_pipeline_and_flexible_d
     assert!(DAILY_ROOT_PROMPT.contains("Standard Multi-Step Pipeline: Summarize → Analyze → Visualize"));
     assert!(DAILY_ROOT_PROMPT.contains("STRICT SEQUENTIAL RULE"));
     assert!(DAILY_ROOT_PROMPT.contains("Visual Brief"));
+    assert!(DAILY_ROOT_PROMPT.contains("Video Built-in Audio & Subtitles vs. Standalone TTS"));
+    assert!(DAILY_ROOT_PROMPT.contains("duration_secs > max_clip_duration_secs"));
     assert!(SOURCE_COLLECTOR_PROMPT.contains("Phân tích chi tiết (Deep Analysis)"));
     assert!(SOURCE_COLLECTOR_PROMPT.contains("Điểm nhấn trực quan (Key Visual Concepts)"));
     assert!(WIKI_RESEARCHER_PROMPT.contains("Điểm nhấn trực quan (Key Visual Concepts)"));
     assert!(MEDIA_CREATOR_PROMPT.contains("Agent-Selectable or Smart Default"));
     assert!(MEDIA_CREATOR_PROMPT.contains("svg_content"));
+    assert!(MEDIA_CREATOR_PROMPT.contains("Built-in Audio & Subtitles (DO NOT call `tts_synthesize` for videos)"));
+    assert!(MEDIA_CREATOR_PROMPT.contains("do **NOT** split `prompt` into separate 10-second sub-prompts"));
+    assert!(MEDIA_CREATOR_PROMPT.contains("When to Use `video_concat` (ONLY When Exceeding Tool Generation Limit / `requires_concat: true`)"));
 }
 
 #[test]
