@@ -139,14 +139,8 @@ impl AppConfig {
             self.wiki.mcp.write_token = token;
         }
         for (id, instance) in &mut self.providers.llm.instances {
-            match instance {
-                crate::config::LlmInstanceConfig::Openai(openai) => {
-                    apply_provider_env_secret(id, "openai", &mut openai.api_key);
-                }
-                crate::config::LlmInstanceConfig::Muse(muse) => {
-                    apply_provider_env_secret(id, "muse", &mut muse.api_key);
-                }
-                _ => {}
+            if let crate::config::LlmInstanceConfig::Openai(openai) = instance {
+                apply_provider_env_secret(id, "openai", &mut openai.api_key);
             }
         }
         for (id, instance) in &mut self.providers.tts.instances {
@@ -712,12 +706,6 @@ fn validate_providers(config: &AppConfig) -> Result<(), ConfigError> {
                 )));
             }
             LlmInstanceConfig::OpenCodeFree(_) => {}
-            LlmInstanceConfig::Muse(options) if !options.valid() => {
-                return Err(ConfigError::Validation(format!(
-                    "LLM instance `{id}` has invalid Muse configuration"
-                )));
-            }
-            LlmInstanceConfig::Muse(_) => {}
             LlmInstanceConfig::LlmGateway(options) if !options.valid() => {
                 return Err(ConfigError::Validation(format!(
                     "LLM instance `{id}` has invalid llm_gateway configuration"

@@ -1096,39 +1096,42 @@ fn custom_subagents_enforce_flow_tool_boundaries_and_sync_active_subagents_promp
 }
 
 #[test]
-fn muse_provider_is_independent_in_catalog_and_never_mapped_to_openai_chat_backend() {
+fn muse_gateway_provider_in_catalog_supports_media_and_custom_executor() {
     use std::collections::BTreeMap;
 
-    // 1. Validate desired configuration for `muse` in `database/providers/config.rs`
-    let valid_json = r#"{"model":"muse-image","account_concurrency":2,"cdp_port":19222,"headless":true,"tags":["image","video"]}"#;
-    let canonical = crate::database::provider_config::validate_raw("muse", valid_json)
-        .expect("valid muse config_json");
+    // 1. Standalone `muse` adapter is removed; Muse is configured via `llm_gateway` (`pool:muse`)
+    let valid_json = r#"{"gateway_binding":"pool:muse","model":"muse-image","account_concurrency":2,"cdp_port":19222,"headless":true,"tags":["image","video"]}"#;
+    assert!(crate::database::provider_config::validate_raw("muse", valid_json).is_err());
+    let canonical = crate::database::provider_config::validate_raw("llm_gateway", valid_json)
+        .expect("valid llm_gateway muse config_json");
+    assert!(canonical.contains("pool:muse"));
     assert!(canonical.contains("muse-image"));
 
     // Rejects embedded credentials in `config_json`
-    let with_secret = r#"{"model":"muse-image","api_key":"secret_token"}"#;
-    assert!(crate::database::provider_config::validate_raw("muse", with_secret).is_err());
+    let with_secret = r#"{"gateway_binding":"pool:muse","model":"muse-image","api_key":"secret_token"}"#;
+    assert!(crate::database::provider_config::validate_raw("llm_gateway", with_secret).is_err());
 
-    // 2. Verify `muse` in Task Flow catalog only exposes `image` & `video` and is excluded from `LlmBackend::OpenAiCompatible`
+    // 2. Verify `llm_gateway` bound to `pool:muse` in Task Flow catalog exposes `image` & `video`
+    // and uses `ProviderAuth::CustomExecutor` (never `ProviderAuth::ApiKey` or plain OpenAI).
     let cfg = OrchestratorSectionConfig::default();
     let chat_prov = default_orchestrator_provider(&cfg);
     let muse_prov = ResolvedLlmProvider {
         provider_ref: "muse_media".into(),
         name: "Muse Media".into(),
         source: "database",
-        adapter: "muse".into(),
+        adapter: "llm_gateway".into(),
         model: "muse-image".into(),
         base_url: "https://muse.ai".into(),
-        api_key: Some(crate::config::SecretString::new(
-            "hatch_sess=s1; hatch_gw=g1; hatch_vml=v1; hatch_native_auth_device=d1",
+        api_key: None,
+        gateway_binding: Some(crate::services::llm_gateway::GatewayBinding::Pool(
+            crate::services::llm_gateway::GatewayVendor::Muse,
         )),
-        gateway_binding: None,
         timeout_ms: 300_000,
         max_tokens: 4_096,
         context_limit_tokens: 128_000,
         reasoning_effort: None,
         temperature_percent: None,
-        tags: vec!["chat".into(), "image".into(), "video".into()],
+        tags: vec!["image".into(), "video".into()],
         muse_options: Some(crate::services::task_flow::agent_settings::MuseCatalogOptions {
             account_concurrency: 2,
             cdp_port: 19222,
@@ -1138,10 +1141,7 @@ fn muse_provider_is_independent_in_catalog_and_never_mapped_to_openai_chat_backe
 
     assert!(muse_prov.supports_tag("image"));
     assert!(muse_prov.supports_tag("video"));
-    assert!(
-        !muse_prov.supports_tag("chat"),
-        "muse in Task Flow must not advertise chat so orchestrator-agent never routes chat turns to it"
-    );
+    assert!(!muse_prov.supports_tag("chat"));
 
     let catalog = vec![chat_prov, muse_prov];
     let mut agents = BTreeMap::new();
@@ -1174,10 +1174,14 @@ fn muse_provider_is_independent_in_catalog_and_never_mapped_to_openai_chat_backe
         ..Default::default()
     };
     let (orch_providers, defs) = build_agent_definitions(&cfg, &settings, &catalog);
-    assert!(
-        orch_providers.iter().all(|p| p.id != "muse_media"),
-        "muse must never be converted to LlmBackend::OpenAiCompatible"
-    );
+    let muse_orch = orch_providers
+        .iter()
+        .find(|p| p.id == "muse_media")
+        .expect("muse_media registered with CustomExecutor");
+    assert!(matches!(
+        muse_orch.auth,
+        orchestrator_agent_rs::ProviderAuth::CustomExecutor(_)
+    ));
     let media_def = defs.iter().find(|d| d.id == "media_creator").unwrap();
     assert_eq!(media_def.provider_id, DEFAULT_ORCHESTRATOR_PROVIDER_REF);
 }

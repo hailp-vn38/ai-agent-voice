@@ -1066,7 +1066,7 @@ impl ProviderRuntimeManager {
                                         >= Duration::from_millis(self.limits.idle_ttl_ms))
                         })
             })
-            .map(|(version, _)| {
+            .map(|(version, owner_entry)| {
                 let idle = registry
                     .entries
                     .values()
@@ -1074,15 +1074,19 @@ impl ProviderRuntimeManager {
                     .map(|entry| entry.idle_since)
                     .max()
                     .expect("owner exists");
-                (version.clone(), idle)
+                (
+                    version.clone(),
+                    owner_entry.state == RuntimeState::Quarantined,
+                    idle,
+                )
             })
             .collect();
-        candidates.sort_by_key(|(_, idle)| *idle);
+        candidates.sort_by_key(|(_, quarantined, idle)| (*quarantined, *idle));
         if let Some(limit) = max_drains {
             candidates.truncate(limit);
         }
         let mut drains = Vec::with_capacity(candidates.len());
-        for (version, _) in candidates {
+        for (version, _, _) in candidates {
             let entry = registry.entries.get(&version).expect("owner exists");
             let drain = IdleDrain {
                 version: version.clone(),
@@ -1117,12 +1121,14 @@ impl ProviderRuntimeManager {
             return;
         }
         if !acknowledged {
+            let now = Instant::now();
             for entry in registry
                 .entries
                 .values_mut()
                 .filter(|entry| entry.owner == *version)
             {
                 entry.unload_running = false;
+                entry.idle_since = now;
             }
             registry.quarantine(version);
             return;

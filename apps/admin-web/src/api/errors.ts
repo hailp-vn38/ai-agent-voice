@@ -7,6 +7,7 @@ export class ApiError extends Error {
     readonly code: string,
     readonly requestId?: string,
     readonly affectedLinks?: Array<{ source_id: string; source_path: string; source_line: number; raw_target: string }>,
+    readonly detail?: string,
   ) {
     super(message)
     this.name = 'ApiError'
@@ -25,7 +26,14 @@ export async function toApiError(response: Response): Promise<ApiError> {
     // Some proxy or transport failures do not have a JSON error envelope.
   }
   const code = body?.error?.code ?? `http_${response.status}`
-  return new ApiError(`API request failed: ${code}`, response.status, code, body?.error?.request_id, body?.error?.affected_links)
+  return new ApiError(
+    `API request failed: ${code}`,
+    response.status,
+    code,
+    body?.error?.request_id,
+    body?.error?.affected_links,
+    body?.error?.message,
+  )
 }
 
 export function formatApiError(error: unknown): string {
@@ -62,6 +70,17 @@ export function formatApiError(error: unknown): string {
     config_provider_readonly: 'Provider từ file cấu hình chỉ cho phép đọc.',
     credential_invalid: 'API key / token không hợp lệ.',
     credential_storage_unavailable: 'Chưa cấu hình khóa mã hóa credential trên server (credential_keys_file hoặc VOICE_CREDENTIAL_KEY_*).',
+    invalid_token_bundle: 'Gói token / cookie không hợp lệ hoặc vượt quá giới hạn mã hóa.',
+    oauth_exchange_failed: 'Xác thực OAuth / Cookie thất bại (thiếu cookie bắt buộc hoặc phiên không hợp lệ).',
+    oauth_callback_invalid: 'Dữ liệu callback hoặc Cookie dán vào không hợp lệ.',
+    oauth_session_not_found: 'Phiên đăng nhập OAuth không tồn tại hoặc đã đóng.',
+    oauth_session_expired: 'Phiên đăng nhập OAuth đã hết hạn. Hãy bấm thử lại.',
+    oauth_state_mismatch: 'State xác thực OAuth không khớp.',
+    account_in_use: 'Tài khoản Gateway đang được Provider sử dụng; hãy gỡ liên kết trước khi xóa.',
+    account_cooling_down: 'Tài khoản đang trong thời gian chờ (cooldown) do vượt hạn mức.',
+    account_disabled: 'Tài khoản Gateway đang bị tắt.',
+    account_reauth_required: 'Tài khoản Gateway cần đăng nhập lại.',
+    pool_exhausted: 'Tất cả tài khoản trong Pool hiện đang bận hoặc hết hạn mức.',
     mcp_server_in_use: 'MCP server vẫn còn liên kết Agent; cần unlink trước khi xóa.',
     invalid_mcp_server: 'MCP Server không tồn tại.',
     required_unsupported: 'Chế độ MCP binding Required chưa được hỗ trợ.',
@@ -82,9 +101,10 @@ export function formatApiError(error: unknown): string {
     503: 'Server đang tạm thời không khả dụng. Hãy thử lại sau ít phút.',
     504: 'Server phản hồi quá lâu. Hãy thử lại sau ít phút.',
   }
-  const message = messages[error.code]
+  const baseMessage = messages[error.code]
     ?? (error.code === `http_${error.status}`
       ? httpMessages[error.status] ?? `Server trả về lỗi HTTP ${error.status}. Hãy thử lại sau.`
       : error.code)
+  const message = error.detail ? `${baseMessage} (${error.detail})` : baseMessage
   return error.requestId ? `${message} (request_id: ${error.requestId})` : message
 }

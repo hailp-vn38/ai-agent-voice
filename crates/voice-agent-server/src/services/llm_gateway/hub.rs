@@ -801,7 +801,6 @@ impl LlmGatewayHub {
         session_id: &str,
         submission: OAuthCallbackSubmission,
     ) -> Result<GatewayAccountView, GatewayError> {
-        let (code, submitted_state) = parse_oauth_callback_submission(&submission)?;
         let (vendor, label, expected_state, code_verifier, redirect_uri) = {
             let mut guard = self.sessions.lock().unwrap_or_else(|p| p.into_inner());
             let session = guard
@@ -839,6 +838,19 @@ impl LlmGatewayHub {
                     return Err(GatewayError::OAuthCallbackInvalid);
                 }
             }
+        };
+
+        let raw_submission = submission.callback_url_or_code.trim();
+        let (code, submitted_state) = if vendor == GatewayVendor::Muse
+            && !raw_submission.starts_with("http://")
+            && !raw_submission.starts_with("https://")
+        {
+            if raw_submission.is_empty() || raw_submission.len() > 256 * 1024 {
+                return Err(GatewayError::OAuthCallbackInvalid);
+            }
+            (raw_submission.to_owned(), submission.state.clone())
+        } else {
+            parse_oauth_callback_submission(&submission)?
         };
 
         if let Some(given_state) = submitted_state.as_deref()
@@ -933,6 +945,11 @@ impl LlmGatewayHub {
     pub async fn poll_oauth_login(&self, session_id: &str) -> Result<OAuthPollStatus, GatewayError> {
         enum Action {
             Return(OAuthPollStatus),
+            PollPkce {
+                vendor: GatewayVendor,
+                label: String,
+                state: String,
+            },
             PollDevice {
                 vendor: GatewayVendor,
                 label: String,
@@ -967,9 +984,11 @@ impl LlmGatewayHub {
                 | OAuthSessionFlowState::DeviceCode {
                     failure: Some(err), ..
                 } => Action::Return(OAuthPollStatus::Failed { error: err.clone() }),
-                OAuthSessionFlowState::Pkce { .. } => Action::Return(OAuthPollStatus::Pending {
-                    poll_interval_secs: 2,
-                }),
+                OAuthSessionFlowState::Pkce { state, .. } => Action::PollPkce {
+                    vendor: session.vendor,
+                    label: session.label.clone(),
+                    state: state.clone(),
+                },
                 OAuthSessionFlowState::DeviceCode {
                     device_code,
                     poll_interval_secs,
@@ -985,6 +1004,28 @@ impl LlmGatewayHub {
 
         match action {
             Action::Return(status) => Ok(status),
+            Action::PollPkce {
+                vendor,
+                label,
+                state,
+            } => {
+                let driver = self.driver_for(vendor)?;
+                if let Ok(Some(exchanged)) = driver.poll_pkce_session(&state).await {
+                    let view = self.save_new_account(vendor, &label, exchanged).await?;
+                    let mut guard = self.sessions.lock().unwrap_or_else(|p| p.into_inner());
+                    if let Some(session) = guard.get_mut(session_id)
+                        && let OAuthSessionFlowState::Pkce {
+                            completed_account, ..
+                        } = &mut session.flow
+                    {
+                        *completed_account = Some(view.clone());
+                    }
+                    return Ok(OAuthPollStatus::Completed { account: view });
+                }
+                Ok(OAuthPollStatus::Pending {
+                    poll_interval_secs: 2,
+                })
+            }
             Action::PollDevice {
                 vendor,
                 label,

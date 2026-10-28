@@ -18,14 +18,16 @@ pub enum GatewayVendor {
     OpenaiCodex,
     Gemini,
     GithubCopilot,
+    Muse,
 }
 
 impl GatewayVendor {
-    pub const ALL: [Self; 4] = [
+    pub const ALL: [Self; 5] = [
         Self::Anthropic,
         Self::OpenaiCodex,
         Self::Gemini,
         Self::GithubCopilot,
+        Self::Muse,
     ];
 
     pub const fn as_str(self) -> &'static str {
@@ -34,6 +36,7 @@ impl GatewayVendor {
             Self::OpenaiCodex => "openai_codex",
             Self::Gemini => "gemini",
             Self::GithubCopilot => "github_copilot",
+            Self::Muse => "muse",
         }
     }
 
@@ -43,6 +46,7 @@ impl GatewayVendor {
             Self::OpenaiCodex => "OpenAI Codex (ChatGPT)",
             Self::Gemini => "Google Gemini",
             Self::GithubCopilot => "GitHub Copilot",
+            Self::Muse => "Muse AI (Browser CDP)",
         }
     }
 
@@ -52,12 +56,13 @@ impl GatewayVendor {
             Self::OpenaiCodex => "https://api.openai.com/v1",
             Self::Gemini => "https://generativelanguage.googleapis.com/v1beta/openai",
             Self::GithubCopilot => "https://api.githubcopilot.com",
+            Self::Muse => "https://muse.ai",
         }
     }
 
     pub const fn login_mode(self) -> OAuthLoginMode {
         match self {
-            Self::Anthropic | Self::OpenaiCodex | Self::Gemini => OAuthLoginMode::Pkce,
+            Self::Anthropic | Self::OpenaiCodex | Self::Gemini | Self::Muse => OAuthLoginMode::Pkce,
             Self::GithubCopilot => OAuthLoginMode::DeviceCode,
         }
     }
@@ -68,6 +73,7 @@ impl GatewayVendor {
             "openai_codex" => Some(Self::OpenaiCodex),
             "gemini" => Some(Self::Gemini),
             "github_copilot" => Some(Self::GithubCopilot),
+            "muse" => Some(Self::Muse),
             _ => None,
         }
     }

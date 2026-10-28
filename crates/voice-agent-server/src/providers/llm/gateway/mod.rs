@@ -1,5 +1,6 @@
 pub mod config;
 pub mod descriptor;
+pub(crate) mod muse;
 pub mod provider;
 mod wire_anthropic;
 mod wire_openai;

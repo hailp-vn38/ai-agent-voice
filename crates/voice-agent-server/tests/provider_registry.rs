@@ -24,7 +24,7 @@ fn registry_exposes_only_adapters_compiled_into_the_binary() {
         "gipformer_sherpa_offline"
     );
     assert_eq!(registry.llm_factory("openai").unwrap().adapter(), "openai");
-    assert_eq!(registry.llm_factory("muse").unwrap().adapter(), "muse");
+    assert!(registry.llm_factory("muse").is_err());
     assert_eq!(
         registry.llm_factory("llm_gateway").unwrap().adapter(),
         "llm_gateway"
@@ -266,7 +266,6 @@ fn asset_ownership_follows_whether_a_provider_loads_local_files() {
                 adapter,
                 "openai"
                     | "opencode_free"
-                    | "muse"
                     | "llm_gateway"
                     | "chillaudio_ws"
                     | "edge_tts"

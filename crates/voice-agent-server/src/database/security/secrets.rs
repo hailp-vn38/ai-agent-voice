@@ -9,7 +9,7 @@ impl SecretRef {
         if bytes.is_empty()
             || bytes.len()
                 > if value.starts_with("sealed:") {
-                    12288
+                    98_304
                 } else {
                     256
                 }
@@ -57,7 +57,7 @@ fn env_key(key: &str) -> Option<String> {
 
 /// Whether a provider adapter accepts a persisted or environment-backed credential.
 pub fn adapter_supports_credential(adapter: &str) -> bool {
-    matches!(adapter, "openai" | "muse" | "chillaudio_ws")
+    matches!(adapter, "openai" | "chillaudio_ws")
 }
 
 /// Fallback environment credential for remote provider adapters.

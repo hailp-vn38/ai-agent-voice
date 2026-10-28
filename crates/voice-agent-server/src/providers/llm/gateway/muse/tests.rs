@@ -8,18 +8,17 @@ use base64::Engine;
 use futures_util::StreamExt;
 use serde_json::{json, Value};
 
-use crate::config::SecretString;
 use crate::providers::llm::{
     ChatMessage, LlmEvent, LlmOperation, LlmOutput, LlmProvider, LlmRequest, ReferenceImage,
+    gateway::{LlmGatewayConfig, LlmGatewayProvider},
 };
 
 use super::cdp::{BrowserEngine, BrowserPage, CdpError, CookieParam};
-use super::config::{MuseConfig, NEW_THREAD_URL};
+use super::config::NEW_THREAD_URL;
 use super::dom::{
     CHAT_STATE_JS, CLICK_SEND_JS, DENY_APPROVALS_JS, INPUT_EMPTY_JS, LAST_BUBBLE_MEDIA_JS,
     PAGE_STATE_JS,
 };
-use super::provider::MuseLlmProvider;
 
 const VALID_PNG_BYTES: &[u8] = &[
     0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52,
@@ -266,12 +265,42 @@ impl BrowserEngine for FakeBrowserEngine {
     }
 }
 
-fn single_account_config() -> MuseConfig {
-    MuseConfig {
-        api_key: SecretString::new(
-            "hatch_sess=s1; hatch_gw=g1; hatch_vml=v1; hatch_native_auth_device=d1",
+const SINGLE_COOKIE: &str =
+    "hatch_sess=s1; hatch_gw=g1; hatch_vml=v1; hatch_native_auth_device=d1";
+
+async fn build_gateway_muse_provider(
+    cookie_headers: &[&str],
+    engine: Option<Arc<dyn BrowserEngine>>,
+) -> LlmGatewayProvider {
+    let cipher: Arc<dyn crate::database::secrets::SecretResolver> = Arc::new(
+        crate::database::credentials::CredentialCipher::new(1, &[0x42; 32]).expect("cipher"),
+    );
+    let hub = Arc::new(crate::services::llm_gateway::LlmGatewayHub::new(None, cipher));
+    for (idx, cookie) in cookie_headers.iter().enumerate() {
+        let ch = hub
+            .start_oauth_login(crate::services::llm_gateway::StartOAuthLoginRequest {
+                vendor: crate::services::llm_gateway::GatewayVendor::Muse,
+                label: format!("muse-acc-{idx}"),
+                redirect_uri: None,
+            })
+            .await
+            .expect("start login");
+        hub.complete_oauth_login(
+            &ch.session_id,
+            crate::services::llm_gateway::OAuthCallbackSubmission {
+                callback_url_or_code: (*cookie).to_string(),
+                state: None,
+            },
+        )
+        .await
+        .expect("complete login");
+    }
+    let cfg = LlmGatewayConfig {
+        gateway_binding: crate::services::llm_gateway::GatewayBinding::Pool(
+            crate::services::llm_gateway::GatewayVendor::Muse,
         ),
         model: "muse-chat".to_string(),
+        base_url: None,
         timeout_ms: 300_000,
         max_tokens: None,
         context_limit_tokens: None,
@@ -283,9 +312,14 @@ fn single_account_config() -> MuseConfig {
             "image".to_string(),
             "video".to_string(),
         ]),
-        account_concurrency: 1,
-        cdp_port: 19222,
-        headless: true,
+        account_concurrency: Some(1),
+        cdp_port: Some(19222),
+        headless: Some(true),
+    };
+    match engine {
+        Some(eng) => LlmGatewayProvider::with_hub_and_muse_engine(&cfg, hub, eng)
+            .expect("LlmGatewayProvider::with_hub_and_muse_engine"),
+        None => LlmGatewayProvider::with_hub(&cfg, hub).expect("LlmGatewayProvider::with_hub"),
     }
 }
 
@@ -321,7 +355,7 @@ async fn image_generation_with_reference_images_attaches_files_and_fetches_blob(
         ],
     );
     let engine = FakeBrowserEngine::new(vec![Arc::clone(&page)]);
-    let provider = MuseLlmProvider::new_with_engine(single_account_config(), engine).unwrap();
+    let provider = build_gateway_muse_provider(&[SINGLE_COOKIE], Some(engine)).await;
 
     let ref_img_1 = ReferenceImage {
         bytes: VALID_PNG_BYTES.to_vec(),
@@ -414,7 +448,7 @@ async fn video_generation_denies_approval_card_and_prompts_for_missing_attachmen
 
     let page = FakeBrowserPage::new("ctx-video".to_string(), states);
     let engine = FakeBrowserEngine::new(vec![Arc::clone(&page)]);
-    let provider = MuseLlmProvider::new_with_engine(single_account_config(), engine).unwrap();
+    let provider = build_gateway_muse_provider(&[SINGLE_COOKIE], Some(engine)).await;
 
     let output = provider
         .invoke(LlmOperation::VideoGeneration {
@@ -489,11 +523,11 @@ async fn chat_streaming_reuses_hot_tab_and_emits_incremental_deltas() {
 
     let page = FakeBrowserPage::new("ctx-chat".to_string(), turn1_states);
     let engine = FakeBrowserEngine::new(vec![Arc::clone(&page)]);
-    let provider = MuseLlmProvider::new_with_engine(
-        single_account_config(),
-        Arc::clone(&engine) as Arc<dyn BrowserEngine>,
+    let provider = build_gateway_muse_provider(
+        &[SINGLE_COOKIE],
+        Some(Arc::clone(&engine) as Arc<dyn BrowserEngine>),
     )
-    .unwrap();
+    .await;
 
     // Turn 1: stream and verify incremental deltas
     let mut stream1 = provider
@@ -641,24 +675,23 @@ async fn quota_exhaustion_cools_down_first_account_and_fails_over_to_second_acco
     let page_acc2 = FakeBrowserPage::new("ctx-acc2".to_string(), acc2_states);
 
     let engine = FakeBrowserEngine::new(vec![Arc::clone(&page_acc1), Arc::clone(&page_acc2)]);
-    let mut cfg = single_account_config();
-    cfg.api_key = SecretString::new(
-        r#"[
-            {"label":"acc-1","cookies":{"hatch_sess":"s1","hatch_gw":"g1","hatch_vml":"v1","hatch_native_auth_device":"d1"}},
-            {"label":"acc-2","cookies":{"hatch_sess":"s2","hatch_gw":"g2","hatch_vml":"v2","hatch_native_auth_device":"d2"}}
-        ]"#,
-    );
-    let provider =
-        MuseLlmProvider::new_with_engine(cfg, Arc::clone(&engine) as Arc<dyn BrowserEngine>)
-            .unwrap();
+    let provider = build_gateway_muse_provider(
+        &[
+            "hatch_sess=s1; hatch_gw=g1; hatch_vml=v1; hatch_native_auth_device=d1",
+            "hatch_sess=s2; hatch_gw=g2; hatch_vml=v2; hatch_native_auth_device=d2",
+        ],
+        Some(Arc::clone(&engine) as Arc<dyn BrowserEngine>),
+    )
+    .await;
 
+    // 1st call hits first account -> QuotaExceeded -> marks first account in cooldown AND automatically retries on second account within the same request
     let output = provider
         .invoke(LlmOperation::Chat {
             request: LlmRequest::text_turn("Test failover".to_string()),
             reasoning: false,
         })
         .await
-        .expect("should fail over to second account on quota error");
+        .expect("should automatically fail over to second account on quota error within the same call");
 
     assert_eq!(
         output,
@@ -720,11 +753,11 @@ async fn cancelled_future_disposes_dirty_tab_via_raii_lease() {
     );
 
     let engine = FakeBrowserEngine::new(vec![Arc::clone(&dirty_page), Arc::clone(&clean_page)]);
-    let provider = MuseLlmProvider::new_with_engine(
-        single_account_config(),
-        Arc::clone(&engine) as Arc<dyn BrowserEngine>,
+    let provider = build_gateway_muse_provider(
+        &[SINGLE_COOKIE],
+        Some(Arc::clone(&engine) as Arc<dyn BrowserEngine>),
     )
-    .unwrap();
+    .await;
 
     // Cancel the first request after 50ms
     let res = tokio::time::timeout(
@@ -788,21 +821,21 @@ fn config_toml_includes_muse_primary_and_validates_cleanly() {
         .instances
         .get("muse_primary")
         .expect("muse_primary instance should exist in config.toml");
-    assert_eq!(muse_instance.adapter(), "muse");
-    if let crate::config::LlmInstanceConfig::Muse(muse_cfg) = muse_instance {
-        let accounts = muse_cfg.parse_accounts();
-        assert_eq!(accounts.len(), 1, "should parse 1 account from browser cookie export JSON");
-        assert!(accounts[0].cookie_expires.is_some());
-        MuseLlmProvider::from_config(muse_cfg)
-            .expect("MuseLlmProvider::from_config should succeed with config.toml cookies");
+    assert_eq!(muse_instance.adapter(), "llm_gateway");
+    if let crate::config::LlmInstanceConfig::LlmGateway(gw_cfg) = muse_instance {
+        assert_eq!(gw_cfg.gateway_binding.to_string(), "pool:muse");
+        assert_eq!(gw_cfg.model, "muse-chat");
+        assert_eq!(gw_cfg.account_concurrency, Some(2));
+        assert_eq!(gw_cfg.cdp_port, Some(19222));
+        assert_eq!(gw_cfg.headless, Some(true));
     } else {
-        panic!("expected LlmInstanceConfig::Muse");
+        panic!("expected LlmInstanceConfig::LlmGateway");
     }
 
     let snapshot =
         crate::providers::deployment_provider_snapshot(&config, "llm", "muse_primary")
             .expect("deployment_provider_snapshot for muse_primary should succeed");
-    assert_eq!(snapshot.adapter, "muse");
+    assert_eq!(snapshot.adapter, "llm_gateway");
     assert_eq!(snapshot.kind, "llm");
 
     let runtime_estimates = &config
@@ -810,7 +843,7 @@ fn config_toml_includes_muse_primary_and_validates_cleanly() {
         .as_ref()
         .expect("provider_runtime enabled in config.toml")
         .estimated_peak_bytes;
-    assert_eq!(runtime_estimates.get("muse"), Some(&67_108_864));
+    assert_eq!(runtime_estimates.get("llm_gateway"), Some(&67_108_864));
 }
 
 #[tokio::test]
@@ -898,21 +931,9 @@ async fn real_chromium_cdp_launches_isolated_context_and_executes_dom_scripts() 
 #[tokio::test]
 #[ignore]
 async fn live_muse_primary_chat_smoke_test() {
-    let config_path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../config.toml");
-    let config = crate::config::AppConfig::parse_and_resolve(&config_path)
-        .expect("config.toml should parse and validate cleanly");
-    let crate::config::LlmInstanceConfig::Muse(muse_cfg) = config
-        .providers
-        .llm
-        .instances
-        .get("muse_primary")
-        .expect("muse_primary instance should exist")
-    else {
-        panic!("expected LlmInstanceConfig::Muse");
-    };
-
-    let provider = MuseLlmProvider::from_config(muse_cfg)
-        .expect("MuseLlmProvider::from_config should succeed");
+    let raw_cookie = std::env::var("VOICE_PROVIDER_MUSE_PRIMARY_API_KEY")
+        .expect("set VOICE_PROVIDER_MUSE_PRIMARY_API_KEY for live smoke test");
+    let provider = build_gateway_muse_provider(&[&raw_cookie], None).await;
     let request = LlmRequest::text_turn("Reply with the single word PONG.".to_string());
 
     let output = provider

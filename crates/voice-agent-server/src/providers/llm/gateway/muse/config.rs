@@ -2,10 +2,6 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
-use crate::config::SecretString;
-use crate::providers::llm::{valid_generation_bounds, valid_llm_tags};
-
-pub const ADAPTER_NAME: &str = "muse";
 pub const SITE_URL: &str = "https://muse.ai";
 pub const COOKIE_DOMAIN: &str = ".muse.ai";
 pub const NEW_THREAD_URL: &str = "https://muse.ai/thread/new";
@@ -18,8 +14,6 @@ pub const REQUIRED_COOKIES: &[&str] = &[
     "hatch_vml",
     "hatch_native_auth_device",
 ];
-
-pub const MUSE_MODELS: &[&str] = &["muse-chat", "muse-image", "muse-video"];
 
 /// Structured credential for each Muse account parsed from `api_key`.
 #[derive(Clone, PartialEq, Eq, Deserialize, Serialize)]
@@ -62,64 +56,6 @@ fn sanitize_account_label(raw: &str, idx: usize) -> String {
     }
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct MuseConfig {
-    /// muse.ai session cookie credential loaded via standard SecretRef.
-    /// Accepts JSON `MuseAccountCredential` (single object or array of accounts)
-    /// or a Cookie header string `"hatch_sess=...; hatch_gw=...; hatch_vml=...; hatch_native_auth_device=..."`.
-    #[serde(default, skip_serializing)]
-    pub api_key: SecretString,
-    #[serde(default = "default_model")]
-    pub model: String,
-    #[serde(default = "default_timeout_ms")]
-    pub timeout_ms: u64,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub max_tokens: Option<u32>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub context_limit_tokens: Option<u32>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub reasoning_effort: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub temperature_percent: Option<u16>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub tags: Option<Vec<String>>,
-    /// Maximum concurrent tabs per account (1..=8, default: 2).
-    #[serde(default = "default_account_concurrency")]
-    pub account_concurrency: usize,
-    /// Local Chromium CDP port (1024..=65535, default: 19222).
-    #[serde(default = "default_cdp_port")]
-    pub cdp_port: u16,
-    /// Run Chromium in headless mode (`--headless=new`, default: true).
-    #[serde(default = "default_headless")]
-    pub headless: bool,
-}
-
-impl MuseConfig {
-    pub fn valid(&self) -> bool {
-        let model = self.model.trim();
-        let raw_key = self.api_key.expose().trim();
-        let key_valid = raw_key.is_empty() || !parse_accounts(raw_key).is_empty();
-        !model.is_empty()
-            && model.len() <= 256
-            && (1_000..=600_000).contains(&self.timeout_ms)
-            && (1..=8).contains(&self.account_concurrency)
-            && self.cdp_port >= 1024
-            && valid_generation_bounds(
-                self.max_tokens,
-                self.context_limit_tokens,
-                self.reasoning_effort.as_deref(),
-                self.temperature_percent,
-            )
-            && valid_llm_tags(self.tags.as_deref())
-            && key_valid
-    }
-
-    pub fn parse_accounts(&self) -> Vec<MuseAccountCredential> {
-        parse_accounts(self.api_key.expose())
-    }
-}
-
 pub fn has_required_cookies(cookies: &BTreeMap<String, String>) -> bool {
     REQUIRED_COOKIES
         .iter()
@@ -130,16 +66,67 @@ pub fn has_required_cookies(cookies: &BTreeMap<String, String>) -> bool {
 struct BrowserCookieEntry {
     name: String,
     value: String,
+    #[serde(default)]
+    #[allow(dead_code)]
+    domain: Option<String>,
+    #[serde(default)]
+    #[allow(dead_code)]
+    path: Option<String>,
     #[serde(default, rename = "expirationDate")]
     expiration_date: Option<f64>,
+    #[serde(default, rename = "hostOnly")]
+    #[allow(dead_code)]
+    host_only: Option<bool>,
+    #[serde(default, rename = "httpOnly")]
+    #[allow(dead_code)]
+    http_only: Option<bool>,
+    #[serde(default, rename = "sameSite")]
+    #[allow(dead_code)]
+    same_site: Option<String>,
+    #[serde(default)]
+    #[allow(dead_code)]
+    secure: Option<bool>,
+    #[serde(default)]
+    #[allow(dead_code)]
+    session: Option<bool>,
+    #[serde(default, rename = "storeId")]
+    #[allow(dead_code)]
+    store_id: Option<String>,
 }
 
 #[derive(Deserialize)]
 struct BrowserCookieExport {
     #[serde(default)]
+    #[allow(dead_code)]
+    url: Option<String>,
+    #[serde(default)]
     label: Option<String>,
     cookies: Vec<BrowserCookieEntry>,
 }
+
+fn clean_pasted_cookie_payload(raw: &str) -> &str {
+    let mut s = raw.trim();
+    if let Some(rest) = s.strip_prefix("```") {
+        let rest = rest
+            .strip_prefix("json")
+            .or_else(|| rest.strip_prefix("JSON"))
+            .unwrap_or(rest);
+        s = rest.trim_start().strip_suffix("```").unwrap_or(rest).trim();
+    }
+    if let Some((lhs, rhs)) = s.split_once('=')
+        && lhs.trim().eq_ignore_ascii_case("api_key")
+    {
+        s = rhs.trim();
+    }
+    if (s.starts_with('\'') && s.ends_with('\'') && s.len() >= 2)
+        || (s.starts_with('"') && s.ends_with('"') && s.len() >= 2)
+    {
+        s = s[1..s.len() - 1].trim();
+    }
+    s
+}
+
+const IGNORED_UI_COOKIES: &[&str] = &["layout_state", "theme", "dpr", "wd"];
 
 fn account_from_browser_cookies(
     entries: Vec<BrowserCookieEntry>,
@@ -151,7 +138,7 @@ fn account_from_browser_cookies(
     for entry in entries {
         let name = entry.name.trim();
         let value = entry.value.trim();
-        if !name.is_empty() && !value.is_empty() {
+        if !name.is_empty() && !value.is_empty() && !IGNORED_UI_COOKIES.contains(&name) {
             if REQUIRED_COOKIES.contains(&name)
                 && let Some(exp) = entry.expiration_date
                 && exp.is_finite()
@@ -176,7 +163,7 @@ fn account_from_browser_cookies(
 }
 
 pub fn parse_accounts(raw: &str) -> Vec<MuseAccountCredential> {
-    let trimmed = raw.trim();
+    let trimmed = clean_pasted_cookie_payload(raw);
     if trimmed.is_empty() {
         return Vec::new();
     }
@@ -189,6 +176,18 @@ pub fn parse_accounts(raw: &str) -> Vec<MuseAccountCredential> {
                 .map(|(idx, mut acc)| {
                     acc.label = sanitize_account_label(&acc.label, idx);
                     acc
+                })
+                .collect();
+            if !valid.is_empty() {
+                return valid;
+            }
+        }
+        if let Ok(exports) = serde_json::from_str::<Vec<BrowserCookieExport>>(trimmed) {
+            let valid: Vec<MuseAccountCredential> = exports
+                .into_iter()
+                .enumerate()
+                .filter_map(|(idx, exp)| {
+                    account_from_browser_cookies(exp.cookies, exp.label.as_deref(), idx)
                 })
                 .collect();
             if !valid.is_empty() {
@@ -238,7 +237,13 @@ pub fn parse_accounts(raw: &str) -> Vec<MuseAccountCredential> {
 
 pub fn parse_cookie_header(raw: &str) -> BTreeMap<String, String> {
     let mut map = BTreeMap::new();
-    for pair in raw.split(';') {
+    let trimmed = raw.trim();
+    let stripped = if trimmed.len() >= 7 && trimmed[..7].eq_ignore_ascii_case("cookie:") {
+        trimmed[7..].trim()
+    } else {
+        trimmed
+    };
+    for pair in stripped.split(';') {
         let pair = pair.trim();
         if let Some((k, v)) = pair.split_once('=') {
             let k = k.trim();
@@ -249,24 +254,4 @@ pub fn parse_cookie_header(raw: &str) -> BTreeMap<String, String> {
         }
     }
     map
-}
-
-fn default_model() -> String {
-    "muse-chat".to_string()
-}
-
-const fn default_timeout_ms() -> u64 {
-    300_000
-}
-
-const fn default_account_concurrency() -> usize {
-    2
-}
-
-const fn default_cdp_port() -> u16 {
-    19222
-}
-
-const fn default_headless() -> bool {
-    true
 }

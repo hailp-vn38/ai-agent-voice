@@ -181,7 +181,7 @@ impl LlmRuntime {
     pub fn shutdown_acknowledged(&self) -> bool {
         let cancellations = self.cancellations.lock().expect("LLM cancellations lock");
         self.closed.store(true, Ordering::Release);
-        cancellations.is_empty() && self.admission.active_work() == 0
+        cancellations.is_empty() && self.admission.view_usage() == 0
     }
 
     pub fn unregister_session(&self, session: &str) {

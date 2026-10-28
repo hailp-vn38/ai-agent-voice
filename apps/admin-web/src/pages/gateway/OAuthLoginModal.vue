@@ -107,8 +107,9 @@ function startPolling(sessionId: string, intervalSecs: number) {
         stopPolling()
         errorMessage.value = status.error || 'OAuth session failed.'
       }
-    } catch {
-      /* Ignore transient poll errors while waiting for user completion. */
+    } catch (cause) {
+      errorMessage.value = formatApiError(cause)
+      stopPolling()
     }
   }, ms)
 }
@@ -137,9 +138,18 @@ async function handleStartOAuth() {
       label: trimmedLabel,
       redirect_uri: redirectUri,
     })
+    const directCookie = selectedVendor.value === 'muse' ? callbackInput.value.trim() : ''
+    if (directCookie) {
+      const res = await llmGatewayApi.completeOAuthSession(result.session_id, {
+        callback_url_or_code: directCookie,
+      })
+      completedAccount.value = res.account
+      emit('completed', res.account)
+      return
+    }
     challenge.value = result
     startPolling(result.session_id, result.poll_interval_secs)
-    if (result.mode === 'pkce' && result.authorize_url) {
+    if (result.mode === 'pkce' && result.authorize_url && selectedVendor.value !== 'muse') {
       window.open(result.authorize_url, 'oauth_popup', 'width=640,height=720')
     }
   } catch (cause) {
@@ -225,13 +235,13 @@ onBeforeUnmount(() => {
     width-class="max-w-xl"
   >
     <div class="space-y-4">
-      <p
+      <div
         v-if="errorMessage"
         role="alert"
-        class="rounded-lg border border-danger/30 bg-danger/5 px-3.5 py-2.5 text-sm text-danger"
+        class="sticky top-0 z-10 rounded-lg border border-red-500/40 bg-red-500/10 px-3.5 py-2.5 text-sm font-medium text-red-600 dark:text-red-400"
       >
         {{ errorMessage }}
-      </p>
+      </div>
 
       <!-- STEP 3: Completed -->
       <div v-if="completedAccount" class="space-y-4">
@@ -280,7 +290,7 @@ onBeforeUnmount(() => {
               <div class="flex w-full items-center justify-between gap-2">
                 <span class="font-semibold text-sm">{{ v.display_name }}</span>
                 <Badge variant="outline" class="font-mono text-[10px]">
-                  {{ v.login_mode === 'device_code' ? 'Device Code' : 'PKCE' }}
+                  {{ v.vendor === 'muse' ? 'CDP / Cookie' : v.login_mode === 'device_code' ? 'Device Code' : 'PKCE' }}
                 </Badge>
               </div>
               <span class="mt-1 font-mono text-xs text-muted-foreground">{{ v.pool_binding }}</span>
@@ -299,6 +309,19 @@ onBeforeUnmount(() => {
           />
           <small class="block text-xs text-muted-foreground">
             {{ t('llmGateway.oauthModal.labelHint') }}
+          </small>
+        </label>
+
+        <label v-if="selectedVendor === 'muse'" class="block space-y-1.5">
+          <span class="text-sm font-medium">{{ t('llmGateway.oauthModal.step2MuseManual') }}</span>
+          <textarea
+            v-model="callbackInput"
+            rows="5"
+            class="admin-input font-mono text-xs"
+            placeholder='{"url":"https://muse.ai","cookies":[{"domain":".muse.ai","name":"hatch_sess","value":"..."}, ...]}'
+          />
+          <small class="block text-xs text-muted-foreground">
+            {{ t('llmGateway.oauthModal.museHint') }}
           </small>
         </label>
 
@@ -393,16 +416,24 @@ onBeforeUnmount(() => {
               </div>
             </div>
             <p class="text-xs text-muted-foreground">
-              {{ t('llmGateway.oauthModal.pkceHint') }}
+              {{ challenge.vendor === 'muse' ? t('llmGateway.oauthModal.museHint') : t('llmGateway.oauthModal.pkceHint') }}
             </p>
           </div>
 
           <form class="space-y-3" @submit.prevent="handleManualComplete">
             <label class="block space-y-1.5">
               <span class="text-sm font-medium">
-                {{ t('llmGateway.oauthModal.step2Manual') }}
+                {{ challenge.vendor === 'muse' ? t('llmGateway.oauthModal.step2MuseManual') : t('llmGateway.oauthModal.step2Manual') }}
               </span>
+              <textarea
+                v-if="challenge.vendor === 'muse'"
+                v-model="callbackInput"
+                rows="5"
+                class="admin-input font-mono text-xs"
+                placeholder='{"url":"https://muse.ai","cookies":[{"domain":".muse.ai","name":"hatch_sess","value":"..."}, ...]}'
+              />
               <input
+                v-else
                 v-model="callbackInput"
                 class="admin-input font-mono text-xs"
                 placeholder="http://localhost:.../callback?code=...&state=..."

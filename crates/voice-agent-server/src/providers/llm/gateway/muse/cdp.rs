@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
@@ -11,7 +11,7 @@ use tokio::sync::{mpsc, oneshot, Mutex};
 use tokio_tungstenite::{connect_async, tungstenite::Message};
 
 #[derive(Debug, Clone, PartialEq)]
-pub(super) struct CookieParam {
+pub(crate) struct CookieParam {
     pub name: String,
     pub value: String,
     pub domain: String,
@@ -21,7 +21,7 @@ pub(super) struct CookieParam {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-pub(super) enum CdpError {
+pub(crate) enum CdpError {
     #[error("browser process unavailable: {0}")]
     BrowserUnavailable(String),
     #[error("cdp protocol error: {0}")]
@@ -33,7 +33,7 @@ pub(super) enum CdpError {
 }
 
 #[async_trait::async_trait]
-pub(super) trait BrowserPage: Send + Sync {
+pub(crate) trait BrowserPage: Send + Sync {
     async fn navigate(&self, url: &str) -> Result<(), CdpError>;
     async fn current_url(&self) -> Result<String, CdpError>;
     async fn evaluate_json(
@@ -43,11 +43,14 @@ pub(super) trait BrowserPage: Send + Sync {
         timeout: Duration,
     ) -> Result<Value, CdpError>;
     async fn press_enter(&self) -> Result<(), CdpError>;
+    async fn get_cookies(&self, _urls: &[&str]) -> Result<BTreeMap<String, String>, CdpError> {
+        Ok(BTreeMap::new())
+    }
     async fn close(&self);
 }
 
 #[async_trait::async_trait]
-pub(super) trait BrowserEngine: Send + Sync {
+pub(crate) trait BrowserEngine: Send + Sync {
     /// Open a new tab inside the isolated `BrowserContext` of `context_key` and load cookies.
     async fn open_page(
         &self,
@@ -180,7 +183,7 @@ struct CdpBrowserState {
     contexts: HashMap<String, String>,
 }
 
-pub(super) struct CdpBrowserEngine {
+pub(crate) struct CdpBrowserEngine {
     cdp_port: u16,
     headless: bool,
     profile_dir: PathBuf,
@@ -540,6 +543,33 @@ impl BrowserPage for CdpBrowserPage {
             )
             .await?;
         Ok(())
+    }
+
+    async fn get_cookies(&self, urls: &[&str]) -> Result<BTreeMap<String, String>, CdpError> {
+        let res = self
+            .page_ws
+            .send(
+                "Network.getCookies",
+                json!({ "urls": urls }),
+                Duration::from_secs(5),
+            )
+            .await?;
+        let mut map = BTreeMap::new();
+        if let Some(arr) = res.get("cookies").and_then(Value::as_array) {
+            for item in arr {
+                if let (Some(name), Some(value)) = (
+                    item.get("name").and_then(Value::as_str),
+                    item.get("value").and_then(Value::as_str),
+                ) {
+                    let name = name.trim();
+                    let value = value.trim();
+                    if !name.is_empty() && !value.is_empty() {
+                        map.insert(name.to_owned(), value.to_owned());
+                    }
+                }
+            }
+        }
+        Ok(map)
     }
 
     async fn close(&self) {

@@ -73,7 +73,7 @@ async fn admin_llm_gateway_routes_and_provider_binding_lifecycle() {
     let (base, _hub, temp_dir, handle) = spawn_gateway_admin_server().await;
     let client = reqwest::Client::new();
 
-    // 1. GET /llm-gateway/vendors returns all 4 supported vendors
+    // 1. GET /llm-gateway/vendors returns all 5 supported vendors
     let vendors_resp = client
         .get(format!("{base}/llm-gateway/vendors"))
         .bearer_auth("gateway-admin-token")
@@ -83,7 +83,7 @@ async fn admin_llm_gateway_routes_and_provider_binding_lifecycle() {
     assert_eq!(vendors_resp.status(), StatusCode::OK);
     let vendors_body: Value = vendors_resp.json().await.unwrap();
     let vendors = vendors_body["vendors"].as_array().unwrap();
-    assert_eq!(vendors.len(), 4);
+    assert_eq!(vendors.len(), 5);
 
     // 2. Start OAuth login via POST /llm-gateway/oauth/start and complete via GET /llm-gateway/oauth/callback (browser redirect without Bearer header)
     let start_resp = client

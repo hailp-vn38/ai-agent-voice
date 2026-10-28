@@ -26,7 +26,8 @@ async fn test_hub_with_fakes() -> (
     .await
     .expect("in-memory sqlite connect");
 
-    let cipher = Arc::new(CredentialCipher::new(1, &[0x42; 32]).expect("cipher"));
+    let cipher: Arc<dyn crate::database::secrets::SecretResolver> =
+        Arc::new(CredentialCipher::new(1, &[0x42; 32]).expect("cipher"));
     let mut fake_map = BTreeMap::new();
     let mut dyn_map: BTreeMap<GatewayVendor, Arc<dyn OAuthVendorDriver>> = BTreeMap::new();
     for vendor in GatewayVendor::ALL {
@@ -535,4 +536,286 @@ async fn hub_fetches_caches_and_routes_around_exhausted_account_quotas() {
         .unwrap();
     assert_eq!(lease_a.account_key, acc2.account_key);
     assert_eq!(lease_b.account_key, acc2.account_key);
+}
+
+#[tokio::test]
+async fn llm_gateway_muse_cookie_paste_interactive_cdp_capture_and_session_renewal() {
+    use std::sync::Mutex;
+    use std::time::Duration;
+    use axum::{Router, http::HeaderMap, response::IntoResponse, routing::{get, post}};
+    use serde_json::{Value, json};
+    use tokio::net::TcpListener;
+
+    use crate::providers::llm::gateway::muse::{
+        cdp::{BrowserEngine, BrowserPage, CdpError, CookieParam},
+        config::parse_accounts,
+    };
+    use super::vendors::muse::MuseOAuthDriver;
+
+    struct FakeMuseLoginPage {
+        cookies: Arc<Mutex<BTreeMap<String, String>>>,
+    }
+
+    #[async_trait::async_trait]
+    impl BrowserPage for FakeMuseLoginPage {
+        async fn navigate(&self, _url: &str) -> Result<(), CdpError> {
+            Ok(())
+        }
+        async fn current_url(&self) -> Result<String, CdpError> {
+            Ok("https://muse.ai/thread/new".to_owned())
+        }
+        async fn evaluate_json(
+            &self,
+            _expression: &str,
+            _await_promise: bool,
+            _timeout: Duration,
+        ) -> Result<Value, CdpError> {
+            Ok(Value::Null)
+        }
+        async fn press_enter(&self) -> Result<(), CdpError> {
+            Ok(())
+        }
+        async fn get_cookies(&self, _urls: &[&str]) -> Result<BTreeMap<String, String>, CdpError> {
+            Ok(self.cookies.lock().unwrap().clone())
+        }
+        async fn close(&self) {}
+    }
+
+    struct FakeMuseLoginEngine {
+        cookies: Arc<Mutex<BTreeMap<String, String>>>,
+    }
+
+    #[async_trait::async_trait]
+    impl BrowserEngine for FakeMuseLoginEngine {
+        async fn open_page(
+            &self,
+            _context_key: &str,
+            _cookies: &[CookieParam],
+        ) -> Result<Arc<dyn BrowserPage>, CdpError> {
+            Ok(Arc::new(FakeMuseLoginPage {
+                cookies: Arc::clone(&self.cookies),
+            }))
+        }
+        async fn dispose_context(&self, _context_key: &str) {}
+    }
+
+    // 1. Test interactive CDP login capture via `poll_oauth_login`
+    let db = Database::connect(&DatabaseConfig {
+        url: "sqlite::memory:".into(),
+        max_connections: 1,
+        ..Default::default()
+    })
+    .await
+    .expect("sqlite memory");
+    let cipher: Arc<dyn crate::database::secrets::SecretResolver> =
+        Arc::new(CredentialCipher::new(1, &[0x42; 32]).expect("cipher"));
+    let shared_cookies: Arc<Mutex<BTreeMap<String, String>>> = Arc::new(Mutex::new(BTreeMap::new()));
+    let fake_login_engine: Arc<dyn BrowserEngine> = Arc::new(FakeMuseLoginEngine {
+        cookies: Arc::clone(&shared_cookies),
+    });
+
+    let mut drivers: BTreeMap<GatewayVendor, Arc<dyn OAuthVendorDriver>> = BTreeMap::new();
+    for vendor in GatewayVendor::ALL {
+        if vendor == GatewayVendor::Muse {
+            drivers.insert(
+                vendor,
+                Arc::new(MuseOAuthDriver::with_browser_engine(Arc::clone(
+                    &fake_login_engine,
+                ))),
+            );
+        } else {
+            drivers.insert(vendor, Arc::new(FakeOAuthVendorDriver::new(vendor)));
+        }
+    }
+    let hub = Arc::new(LlmGatewayHub::with_drivers(
+        Some(db.pool().clone()),
+        Arc::clone(&cipher),
+        drivers,
+    ));
+
+    let ch_cdp = hub
+        .start_oauth_login(StartOAuthLoginRequest {
+            vendor: GatewayVendor::Muse,
+            label: "Muse Interactive CDP".to_owned(),
+            redirect_uri: None,
+        })
+        .await
+        .expect("start muse login");
+    assert_eq!(ch_cdp.mode, OAuthLoginMode::Pkce);
+    assert!(
+        ch_cdp
+            .authorize_url
+            .as_deref()
+            .unwrap_or("")
+            .starts_with("https://muse.ai/thread/new")
+    );
+
+    // Poll #1 before user logs into the Chromium window -> Pending
+    let poll1 = hub.poll_oauth_login(&ch_cdp.session_id).await.expect("poll 1");
+    assert!(matches!(poll1, OAuthPollStatus::Pending { .. }));
+
+    // Simulate user completing login in the Chromium window -> cookies appear in Network.getCookies
+    {
+        let mut guard = shared_cookies.lock().unwrap();
+        guard.insert("hatch_sess".to_owned(), "cdp_sess_1".to_owned());
+        guard.insert("hatch_gw".to_owned(), "cdp_gw_1".to_owned());
+        guard.insert("hatch_vml".to_owned(), "cdp_vml_1".to_owned());
+        guard.insert("hatch_native_auth_device".to_owned(), "cdp_dev_1".to_owned());
+    }
+
+    // Poll #2 automatically captures the 4 cookies, seals them into SQLite, and returns Completed!
+    let poll2 = hub.poll_oauth_login(&ch_cdp.session_id).await.expect("poll 2");
+    let OAuthPollStatus::Completed { account: cdp_acc } = poll2 else {
+        panic!("expected Completed from interactive CDP poll, got {poll2:?}");
+    };
+    assert_eq!(cdp_acc.vendor, GatewayVendor::Muse);
+    assert_eq!(cdp_acc.label, "Muse Interactive CDP");
+
+    // 2. Test manual Cookie header paste (with spaces & `Cookie:` prefix) + online session renewal
+    let app = Router::new()
+        .route(
+            "/api/session",
+            get(|headers: HeaderMap| async move {
+                let cookie = headers
+                    .get("cookie")
+                    .and_then(|v| v.to_str().ok())
+                    .unwrap_or("");
+                assert!(cookie.contains("hatch_sess="));
+                (
+                    [(
+                        axum::http::header::SET_COOKIE,
+                        "hatch_sess=sess_rotated_99; Path=/; HttpOnly; Secure",
+                    )],
+                    axum::Json(json!({
+                        "vm_id": "vm_muse_777",
+                        "user": { "email": "muse-creator@muse.ai" }
+                    })),
+                )
+                    .into_response()
+            }),
+        )
+        .route(
+            "/api/hatch/vm/wake",
+            post(|| async move { axum::Json(json!({"ok": true})) }),
+        );
+    let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+    let addr = listener.local_addr().expect("addr");
+    tokio::spawn(async move {
+        let _ = axum::serve(listener, app).await;
+    });
+
+    let mut online_drivers: BTreeMap<GatewayVendor, Arc<dyn OAuthVendorDriver>> = BTreeMap::new();
+    online_drivers.insert(
+        GatewayVendor::Muse,
+        Arc::new(MuseOAuthDriver::with_test_endpoints(
+            format!("http://{addr}/api/session"),
+            format!("http://{addr}/api/hatch/vm/wake"),
+        )),
+    );
+    let online_hub = Arc::new(LlmGatewayHub::with_drivers(
+        Some(db.pool().clone()),
+        cipher,
+        online_drivers,
+    ));
+
+    let ch_paste = online_hub
+        .start_oauth_login(StartOAuthLoginRequest {
+            vendor: GatewayVendor::Muse,
+            label: "Muse Manual Paste".to_owned(),
+            redirect_uri: None,
+        })
+        .await
+        .expect("start paste login");
+
+    let pasted_acc = online_hub
+        .complete_oauth_login(
+            &ch_paste.session_id,
+            OAuthCallbackSubmission {
+                callback_url_or_code: "Cookie: hatch_sess=sess_initial; hatch_gw=gw_initial; hatch_vml=vml_initial; hatch_native_auth_device=dev_initial".to_owned(),
+                state: None,
+            },
+        )
+        .await
+        .expect("complete_oauth_login with raw Cookie header containing spaces");
+
+    assert_eq!(pasted_acc.vendor, GatewayVendor::Muse);
+    assert_eq!(
+        pasted_acc.account_email.as_deref(),
+        Some("muse-creator@muse.ai")
+    );
+
+    // Reload from SQLite and verify rotated `hatch_sess=sess_rotated_99` and `vm_id=vm_muse_777` are sealed & restored
+    online_hub.reload_snapshot().await.expect("reload_snapshot");
+    let lease = online_hub
+        .acquire_lease(&GatewayBinding::Account(pasted_acc.account_key.clone()))
+        .expect("acquire muse lease");
+    let parsed_creds = parse_accounts(lease.access_token.expose());
+    assert_eq!(parsed_creds.len(), 1);
+    assert_eq!(
+        parsed_creds[0].cookies.get("hatch_sess").map(String::as_str),
+        Some("sess_rotated_99")
+    );
+    assert_eq!(parsed_creds[0].vm_id.as_deref(), Some("vm_muse_777"));
+
+    // 3. Test pasting full browser export JSON `{"url":"https://muse.ai","cookies":[...]}`
+    //    with realistic multi-kilobyte `hatch_gw` / `hatch_vml` values (> 5 KiB raw JSON)
+    let ch_json_export = online_hub
+        .start_oauth_login(StartOAuthLoginRequest {
+            vendor: GatewayVendor::Muse,
+            label: "Muse Browser Export JSON".to_owned(),
+            redirect_uri: None,
+        })
+        .await
+        .expect("start json export login");
+
+    let large_gw = format!("v1%3A{}", "y0hVepRAOkKYuBVg".repeat(140));
+    let large_vml = format!("v1%3A{}", "bJ1uZtpKsBWOgtjA".repeat(145));
+    let browser_export_payload = serde_json::json!({
+        "url": "https://muse.ai",
+        "cookies": [
+            {"domain":".muse.ai","expirationDate":1825998203.478414,"hostOnly":false,"httpOnly":true,"name":"datr","path":"/","sameSite":"lax","secure":true,"session":false,"storeId":"0","value":"ey3HajK5d-WCgOv2LIOezgTh"},
+            {"domain":"muse.ai","expirationDate":1794063196.58286,"hostOnly":true,"httpOnly":true,"name":"hatch_native_auth_device","path":"/","sameSite":"strict","secure":true,"session":false,"storeId":"0","value":"v1%3Adev_export"},
+            {"domain":".muse.ai","expirationDate":1823007257.749747,"hostOnly":false,"httpOnly":false,"name":"layout_state","path":"/","sameSite":"unspecified","secure":true,"session":false,"storeId":"0","value":"%7B%22version%22%3A2%7D"},
+            {"domain":".muse.ai","expirationDate":1823930037.417935,"hostOnly":false,"httpOnly":false,"name":"theme","path":"/","sameSite":"unspecified","secure":true,"session":false,"storeId":"0","value":"%7B%22chatThemeCache%22%3A%7B%7D%7D"},
+            {"domain":".muse.ai","expirationDate":1793726343.711382,"hostOnly":false,"httpOnly":false,"name":"dpr","path":"/","sameSite":"unspecified","secure":true,"session":false,"storeId":"0","value":"2"},
+            {"domain":".muse.ai","expirationDate":1793790884.855339,"hostOnly":false,"httpOnly":false,"name":"wd","path":"/","sameSite":"unspecified","secure":true,"session":false,"storeId":"0","value":"640x719"},
+            {"domain":".muse.ai","expirationDate":1795778194.858809,"hostOnly":false,"httpOnly":true,"name":"hatch_sess","path":"/","sameSite":"lax","secure":true,"session":false,"storeId":"0","value":"sess_export_initial"},
+            {"domain":".muse.ai","expirationDate":1824722194.859351,"hostOnly":false,"httpOnly":true,"name":"hatch_gw","path":"/","sameSite":"lax","secure":true,"session":false,"storeId":"0","value": large_gw},
+            {"domain":".muse.ai","expirationDate":1793359056.334252,"hostOnly":false,"httpOnly":true,"name":"hatch_vml","path":"/","sameSite":"lax","secure":true,"session":false,"storeId":"0","value": large_vml}
+        ]
+    })
+    .to_string();
+
+    let json_acc = online_hub
+        .complete_oauth_login(
+            &ch_json_export.session_id,
+            OAuthCallbackSubmission {
+                callback_url_or_code: browser_export_payload,
+                state: None,
+            },
+        )
+        .await
+        .expect("complete_oauth_login with browser export JSON");
+
+    assert_eq!(json_acc.vendor, GatewayVendor::Muse);
+    assert_eq!(json_acc.expires_at, Some(1_793_359_056));
+    let json_lease = online_hub
+        .acquire_lease(&GatewayBinding::Account(json_acc.account_key.clone()))
+        .expect("acquire json export lease");
+    let json_creds = parse_accounts(json_lease.access_token.expose());
+    assert_eq!(json_creds.len(), 1);
+    assert!(!json_creds[0].cookies.contains_key("layout_state"));
+    assert!(!json_creds[0].cookies.contains_key("theme"));
+    assert_eq!(
+        json_creds[0].cookies.get("datr").map(String::as_str),
+        Some("ey3HajK5d-WCgOv2LIOezgTh")
+    );
+    assert_eq!(
+        json_creds[0].cookies.get("hatch_gw").map(String::as_str),
+        Some(large_gw.as_str())
+    );
+    assert_eq!(
+        json_creds[0].cookies.get("hatch_vml").map(String::as_str),
+        Some(large_vml.as_str())
+    );
 }

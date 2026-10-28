@@ -100,7 +100,7 @@ pub(super) struct ChatState {
 }
 
 #[derive(Debug)]
-pub(super) enum WorkflowFailure {
+pub(crate) enum WorkflowFailure {
     Upstream(UpstreamFailureKind, String),
     Rejected(String),
     Timeout(String),
@@ -114,7 +114,7 @@ impl From<CdpError> for WorkflowFailure {
 }
 
 impl WorkflowFailure {
-    fn into_llm_error(self) -> LlmError {
+    pub(crate) fn into_llm_error(self) -> LlmError {
         match self {
             Self::Rejected(reason) => {
                 tracing::debug!(reason = %reason, "Muse request rejected");
@@ -456,59 +456,7 @@ async fn send_prompt_verified(
     Ok(())
 }
 
-pub(super) async fn execute_chat_streaming<F>(
-    pool: &Arc<SharedMusePool>,
-    request: &LlmRequest,
-    images: &[ReferenceImage],
-    timeout: Duration,
-    mut on_delta: F,
-) -> Result<String, LlmError>
-where
-    F: FnMut(String),
-{
-    let max_attempts = pool.num_accounts().max(1);
-    let mut last_err = None;
-
-    for _ in 0..max_attempts {
-        let mut emitted_any = false;
-        let res = run_chat_turn_once(
-            pool,
-            request,
-            images,
-            timeout,
-            |delta| {
-                emitted_any = true;
-                on_delta(delta);
-            },
-        )
-        .await;
-
-        match res {
-            Ok(text) => return Ok(text),
-            Err(failure) => {
-                let should_retry = !emitted_any
-                    && matches!(
-                        failure,
-                        WorkflowFailure::Upstream(
-                            UpstreamFailureKind::QuotaExceeded
-                                | UpstreamFailureKind::Transient
-                                | UpstreamFailureKind::AuthInvalid,
-                            _
-                        )
-                    );
-                let err = failure.into_llm_error();
-                last_err = Some(err);
-                if !should_retry {
-                    break;
-                }
-            }
-        }
-    }
-
-    Err(last_err.unwrap_or(LlmError::Failed))
-}
-
-async fn run_chat_turn_once<F>(
+pub(crate) async fn run_chat_turn_once<F>(
     pool: &Arc<SharedMusePool>,
     request: &LlmRequest,
     images: &[ReferenceImage],
@@ -672,75 +620,7 @@ where
     Ok(last_seen_text)
 }
 
-pub(super) async fn execute_vision(
-    pool: &Arc<SharedMusePool>,
-    prompt: &str,
-    image_bytes: Vec<u8>,
-    mime_type: String,
-    timeout: Duration,
-) -> Result<LlmOutput, LlmError> {
-    let ref_img = ReferenceImage {
-        bytes: image_bytes,
-        mime_type,
-    };
-    let req = LlmRequest::text_turn(prompt.to_owned());
-    let text = execute_chat_streaming(
-        pool,
-        &req,
-        std::slice::from_ref(&ref_img),
-        timeout,
-        |_| {},
-    )
-    .await?;
-    Ok(LlmOutput::Text(text))
-}
-
-pub(super) async fn execute_media_generation(
-    pool: &Arc<SharedMusePool>,
-    kind: MediaKind,
-    formatted_prompt: &str,
-    images: &[ReferenceImage],
-    transparent_background: bool,
-    timeout: Duration,
-) -> Result<LlmOutput, LlmError> {
-    let max_attempts = pool.num_accounts().max(1);
-    let mut last_err = None;
-
-    for _ in 0..max_attempts {
-        match run_media_turn_once(
-            pool,
-            kind,
-            formatted_prompt,
-            images,
-            transparent_background,
-            timeout,
-        )
-        .await
-        {
-            Ok(output) => return Ok(output),
-            Err(failure) => {
-                let should_retry = matches!(
-                    failure,
-                    WorkflowFailure::Upstream(
-                        UpstreamFailureKind::QuotaExceeded
-                            | UpstreamFailureKind::Transient
-                            | UpstreamFailureKind::AuthInvalid,
-                        _
-                    )
-                );
-                let err = failure.into_llm_error();
-                last_err = Some(err);
-                if !should_retry {
-                    break;
-                }
-            }
-        }
-    }
-
-    Err(last_err.unwrap_or(LlmError::Failed))
-}
-
-async fn run_media_turn_once(
+pub(crate) async fn run_media_turn_once(
     pool: &Arc<SharedMusePool>,
     kind: MediaKind,
     formatted_prompt: &str,

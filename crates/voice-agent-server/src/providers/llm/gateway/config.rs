@@ -33,6 +33,15 @@ pub struct LlmGatewayConfig {
     pub temperature_percent: Option<u16>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tags: Option<Vec<String>>,
+    /// Maximum concurrent browser tabs per Muse account (1..=8, default: 2).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub account_concurrency: Option<usize>,
+    /// Local Chromium CDP port for Muse (1024..=65535, default: 19222).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cdp_port: Option<u16>,
+    /// Run Chromium in headless mode for Muse (`--headless=new`, default: true).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub headless: Option<bool>,
 }
 
 impl LlmGatewayConfig {
@@ -46,6 +55,8 @@ impl LlmGatewayConfig {
             && !model_trimmed.is_empty()
             && model_trimmed.len() <= 256
             && (1_000..=600_000).contains(&self.timeout_ms)
+            && self.account_concurrency.is_none_or(|c| (1..=8).contains(&c))
+            && self.cdp_port.is_none_or(|p| p >= 1024)
             && valid_generation_bounds(
                 self.max_tokens,
                 self.context_limit_tokens,
@@ -53,5 +64,17 @@ impl LlmGatewayConfig {
                 self.temperature_percent,
             )
             && valid_llm_tags(self.tags.as_deref())
+    }
+
+    pub fn effective_account_concurrency(&self) -> usize {
+        self.account_concurrency.unwrap_or(2).clamp(1, 8)
+    }
+
+    pub fn effective_cdp_port(&self) -> u16 {
+        self.cdp_port.unwrap_or(19222).max(1024)
+    }
+
+    pub fn effective_headless(&self) -> bool {
+        self.headless.unwrap_or(true)
     }
 }

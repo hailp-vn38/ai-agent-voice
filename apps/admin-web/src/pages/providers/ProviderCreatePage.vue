@@ -94,18 +94,18 @@ const ADAPTER_CATALOG_META: Record<string, AdapterPresentation> = {
     },
   },
   llm_gateway: {
-    name: 'LLM Gateway (OAuth Account / Pool)',
-    detail: 'OAuth 2.0 PKCE / Device Code · Claude, Codex, Gemini, Copilot',
+    name: 'LLM Gateway (OAuth / Browser CDP Pool)',
+    detail: 'OAuth 2.0 & Browser CDP · Claude, Codex, Gemini, Copilot, Muse AI',
     mode: 'Cloud',
-    cap: ['Streaming', 'Tool calling'],
+    cap: ['Streaming', 'Tool calling', 'Vision', 'Image / Video (Muse)'],
     defaults: {
       gateway_binding: 'pool:anthropic',
       model: 'claude-sonnet-4-20250514',
       timeout_ms: 60000,
     },
     placeholders: {
-      model: 'claude-sonnet-4-20250514 / gpt-4.1-mini / gemini-2.5-pro',
-      gateway_binding: 'pool:anthropic',
+      model: 'claude-sonnet-4-20250514 / gpt-4.1-mini / gemini-2.5-pro / muse-chat / muse-image / muse-video',
+      gateway_binding: 'pool:anthropic / pool:muse',
       timeout_ms: '60000',
     },
   },

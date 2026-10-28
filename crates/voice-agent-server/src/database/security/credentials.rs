@@ -15,7 +15,7 @@ use crate::database::secrets::{
 };
 
 const PREFIX: &str = "sealed:";
-const MAX_RECORD_BYTES: usize = 8192;
+const MAX_RECORD_BYTES: usize = 65_536;
 
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -29,7 +29,7 @@ struct EncryptedCredential {
 
 pub fn valid_input(value: &SecretValue) -> bool {
     let bytes = value.expose().as_bytes();
-    !bytes.is_empty() && bytes.len() <= 4096 && bytes.iter().all(u8::is_ascii_graphic)
+    !bytes.is_empty() && bytes.len() <= 32_768 && bytes.iter().all(u8::is_ascii_graphic)
 }
 
 /// A missing stored record keeps the existing deployment credential source.

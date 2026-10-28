@@ -30,10 +30,6 @@ pub fn validate_raw(adapter: &str, raw: &str) -> Result<String, ProviderConfigEr
     match adapter {
         "openai" => canonical::<OpenAi, _>(&value, OpenAi::valid),
         "opencode_free" => canonical::<OpenCodeFree, _>(&value, OpenCodeFree::valid),
-        "muse" => canonical::<crate::config::MuseConfig, _>(
-            &value,
-            crate::config::MuseConfig::valid,
-        ),
         "llm_gateway" => canonical::<crate::config::LlmGatewayConfig, _>(
             &value,
             crate::config::LlmGatewayConfig::valid,

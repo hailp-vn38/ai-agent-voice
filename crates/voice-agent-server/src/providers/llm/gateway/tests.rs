@@ -154,34 +154,17 @@ async fn llm_gateway_provider_streams_anthropic_and_rotates_on_429_without_retry
         reasoning_effort: None,
         temperature_percent: None,
         tags: Some(vec!["chat".to_owned()]),
+        account_concurrency: None,
+        cdp_port: None,
+        headless: None,
     };
     let provider = LlmGatewayProvider::with_hub(&cfg, Arc::clone(&hub)).expect("provider");
 
-    // Call #1 hits acc1 -> 429 Too Many Requests -> returns Err(LlmError::Failed) immediately (0 retry per ADR-0023)
-    // and marks acc1 in Cooldown.
-    let err = match provider
+    // Call #1 hits acc1 -> 429 Too Many Requests -> marks acc1 in Cooldown AND automatically retries on acc2 within the same call
+    let mut stream = provider
         .stream(LlmRequest::text_turn("hi".to_owned()))
         .await
-    {
-        Ok(_) => panic!("expected first call on acc1 to fail with 429"),
-        Err(e) => e,
-    };
-    assert_eq!(err, LlmError::Failed);
-    let views = hub
-        .list_accounts(Some(GatewayVendor::Anthropic))
-        .await
-        .expect("list");
-    let view1 = views
-        .iter()
-        .find(|a| a.account_key == acc1.account_key)
-        .expect("view1");
-    assert!(view1.cooldown_remaining_secs > 0);
-
-    // Call #2 automatically skips cooled-down acc1 and streams from acc2
-    let mut stream = provider
-        .stream(LlmRequest::text_turn("hi again".to_owned()))
-        .await
-        .expect("second call succeeds via acc2");
+        .expect("first call automatically fails over from acc1 (429) to acc2");
     let mut collected = String::new();
     while let Some(ev) = stream.next().await {
         match ev.expect("event") {
@@ -191,6 +174,16 @@ async fn llm_gateway_provider_streams_anthropic_and_rotates_on_429_without_retry
         }
     }
     assert_eq!(collected, "Xin chào từ Claude!");
+
+    let views = hub
+        .list_accounts(Some(GatewayVendor::Anthropic))
+        .await
+        .expect("list");
+    let view1 = views
+        .iter()
+        .find(|a| a.account_key == acc1.account_key)
+        .expect("view1");
+    assert!(view1.cooldown_remaining_secs > 0);
 }
 
 #[tokio::test]
@@ -604,6 +597,313 @@ admin_token = "gw-draft-test-token"
         id: "toolu_01".to_owned(),
         name: "wiki_search".to_owned(),
     }));
+}
+
+#[tokio::test]
+async fn llm_gateway_provider_executes_muse_chat_vision_image_video_and_rotates_on_quota() {
+    use std::collections::VecDeque;
+    use std::sync::Mutex;
+    use std::time::Duration;
+    use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
+    use serde_json::{Value, json};
+
+    use crate::providers::llm::{
+        LlmCapabilityTag, LlmOperation, LlmOutput, ReferenceImage,
+        gateway::muse::{
+            cdp::{BrowserEngine, BrowserPage, CdpError, CookieParam},
+            config::NEW_THREAD_URL,
+            dom::{
+                CHAT_STATE_JS, CLICK_SEND_JS, DENY_APPROVALS_JS, INPUT_EMPTY_JS,
+                LAST_BUBBLE_MEDIA_JS, PAGE_STATE_JS,
+            },
+        },
+    };
+
+    const PNG_BYTES: &[u8] = &[
+        0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44,
+        0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00, 0x00, 0x1F,
+        0x15, 0xC4, 0x89, 0x00, 0x00, 0x00, 0x0A, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9C, 0x63, 0x00,
+        0x01, 0x00, 0x00, 0x05, 0x00, 0x01, 0x0D, 0x0A, 0x2D, 0xB4, 0x00, 0x00, 0x00, 0x00, 0x49,
+        0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82,
+    ];
+    const MP4_BYTES: &[u8] = &[
+        0x00, 0x00, 0x00, 0x18, b'f', b't', b'y', b'p', b'm', b'p', b'4', b'2', 0x00, 0x00, 0x00,
+        0x00, b'm', b'p', b'4', b'2', b'i', b's', b'o', b'm',
+    ];
+
+    struct MockMusePage {
+        url: Mutex<String>,
+        states: Mutex<VecDeque<Value>>,
+        last_state: Mutex<Value>,
+    }
+
+    impl MockMusePage {
+        fn new(states: Vec<Value>) -> Arc<Self> {
+            let last = states.last().cloned().unwrap_or_else(|| {
+                json!({
+                    "agentCount": 0,
+                    "lastText": "",
+                    "generating": false,
+                    "approval": false,
+                    "attachments": [],
+                    "tail": ""
+                })
+            });
+            Arc::new(Self {
+                url: Mutex::new(NEW_THREAD_URL.to_owned()),
+                states: Mutex::new(VecDeque::from(states)),
+                last_state: Mutex::new(last),
+            })
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl BrowserPage for MockMusePage {
+        async fn navigate(&self, url: &str) -> Result<(), CdpError> {
+            *self.url.lock().unwrap() = url.to_owned();
+            Ok(())
+        }
+        async fn current_url(&self) -> Result<String, CdpError> {
+            Ok(self.url.lock().unwrap().clone())
+        }
+        async fn evaluate_json(
+            &self,
+            expression: &str,
+            _await_promise: bool,
+            _timeout: Duration,
+        ) -> Result<Value, CdpError> {
+            if expression == PAGE_STATE_JS {
+                return Ok(json!({
+                    "ready": true,
+                    "hasInput": true,
+                    "path": "/thread/new",
+                    "head": "Muse Workspace"
+                }));
+            }
+            if expression == CHAT_STATE_JS {
+                let mut q = self.states.lock().unwrap();
+                let st = if let Some(next) = q.pop_front() {
+                    *self.last_state.lock().unwrap() = next.clone();
+                    next
+                } else {
+                    self.last_state.lock().unwrap().clone()
+                };
+                return Ok(st);
+            }
+            if expression == DENY_APPROVALS_JS {
+                return Ok(json!([]));
+            }
+            if expression == CLICK_SEND_JS {
+                return Ok(json!("clicked"));
+            }
+            if expression == INPUT_EMPTY_JS {
+                return Ok(json!(true));
+            }
+            if expression == LAST_BUBBLE_MEDIA_JS {
+                return Ok(json!({ "links": [], "html": "" }));
+            }
+            if expression.contains("new File([bytes],")
+                || expression.contains("HTMLTextAreaElement.prototype, 'value'")
+            {
+                return Ok(json!({ "ok": true, "len": 10 }));
+            }
+            if expression.contains("await fetch(") {
+                if expression.contains("blob:https://muse.ai/img-1") {
+                    return Ok(json!({
+                        "ok": true,
+                        "mime": "image/png",
+                        "b64": BASE64.encode(PNG_BYTES),
+                    }));
+                }
+                if expression.contains("blob:https://muse.ai/vid-1") {
+                    return Ok(json!({
+                        "ok": true,
+                        "mime": "video/mp4",
+                        "b64": BASE64.encode(MP4_BYTES),
+                    }));
+                }
+            }
+            Ok(Value::Null)
+        }
+        async fn press_enter(&self) -> Result<(), CdpError> {
+            Ok(())
+        }
+        async fn close(&self) {}
+    }
+
+    struct MockMuseEngine {
+        pages: Mutex<VecDeque<Arc<MockMusePage>>>,
+    }
+
+    #[async_trait::async_trait]
+    impl BrowserEngine for MockMuseEngine {
+        async fn open_page(
+            &self,
+            _context_key: &str,
+            _cookies: &[CookieParam],
+        ) -> Result<Arc<dyn BrowserPage>, CdpError> {
+            let page = self
+                .pages
+                .lock()
+                .unwrap()
+                .pop_front()
+                .expect("queued mock muse page");
+            Ok(page)
+        }
+        async fn dispose_context(&self, _context_key: &str) {}
+    }
+
+    let hub = create_test_hub().await;
+    // Register 2 Muse accounts in `pool:muse`
+    let ch1 = hub
+        .start_oauth_login(StartOAuthLoginRequest {
+            vendor: GatewayVendor::Muse,
+            label: "Muse #1".to_owned(),
+            redirect_uri: None,
+        })
+        .await
+        .expect("ch1");
+    let acc1 = hub
+        .complete_oauth_login(
+            &ch1.session_id,
+            OAuthCallbackSubmission {
+                callback_url_or_code: "hatch_sess=s1; hatch_gw=g1; hatch_vml=v1; hatch_native_auth_device=d1".to_owned(),
+                state: None,
+            },
+        )
+        .await
+        .expect("acc1");
+    hub.update_account(
+        &acc1.account_key,
+        crate::services::llm_gateway::UpdateGatewayAccountPatch {
+            label: None,
+            enabled: None,
+            priority: Some(10),
+        },
+    )
+    .await
+    .expect("priority 10");
+
+    let ch2 = hub
+        .start_oauth_login(StartOAuthLoginRequest {
+            vendor: GatewayVendor::Muse,
+            label: "Muse #2".to_owned(),
+            redirect_uri: None,
+        })
+        .await
+        .expect("ch2");
+    let _acc2 = hub
+        .complete_oauth_login(
+            &ch2.session_id,
+            OAuthCallbackSubmission {
+                callback_url_or_code: "hatch_sess=s2; hatch_gw=g2; hatch_vml=v2; hatch_native_auth_device=d2".to_owned(),
+                state: None,
+            },
+        )
+        .await
+        .expect("acc2");
+
+    // Page 1 (acc1): returns QuotaExceeded -> puts acc1 into cooldown in LlmGatewayHub
+    let page_quota = MockMusePage::new(vec![
+        json!({"agentCount": 0, "lastText": "", "generating": false, "approval": false, "attachments": [], "tail": ""}),
+        json!({"agentCount": 1, "lastText": "You've hit your usage limit for this billing period.", "generating": false, "approval": false, "attachments": [], "tail": ""}),
+    ]);
+    // Page 2 (acc2): chat + image + video turns
+    let page_acc2 = MockMusePage::new(vec![
+        // Chat turn
+        json!({"agentCount": 0, "lastText": "", "generating": false, "approval": false, "attachments": [], "tail": ""}),
+        json!({"agentCount": 1, "lastText": "Xin chào từ Muse Gateway!", "generating": false, "approval": false, "attachments": [], "tail": ""}),
+        json!({"agentCount": 1, "lastText": "Xin chào từ Muse Gateway!", "generating": false, "approval": false, "attachments": [], "tail": ""}),
+        json!({"agentCount": 1, "lastText": "Xin chào từ Muse Gateway!", "generating": false, "approval": false, "attachments": [], "tail": ""}),
+        json!({"agentCount": 1, "lastText": "Xin chào từ Muse Gateway!", "generating": false, "approval": false, "attachments": [], "tail": ""}),
+        json!({"agentCount": 1, "lastText": "Xin chào từ Muse Gateway!", "generating": false, "approval": false, "attachments": [], "tail": ""}),
+        // ImageGeneration turn
+        json!({"agentCount": 1, "lastText": "Xin chào từ Muse Gateway!", "generating": false, "approval": false, "attachments": [], "tail": ""}),
+        json!({"agentCount": 2, "lastText": "Here is the image", "generating": false, "approval": false, "attachments": [{"tid": "image-attachment", "kind": "image", "src": "blob:https://muse.ai/img-1", "w": 512, "h": 512}], "tail": ""}),
+        // VideoGeneration turn
+        json!({"agentCount": 2, "lastText": "Here is the image", "generating": false, "approval": false, "attachments": [], "tail": ""}),
+        json!({"agentCount": 3, "lastText": "Here is the video", "generating": false, "approval": false, "attachments": [{"tid": "video-attachment", "kind": "video", "src": "blob:https://muse.ai/vid-1", "w": 1280, "h": 720}], "tail": ""}),
+    ]);
+
+    let engine: Arc<dyn BrowserEngine> = Arc::new(MockMuseEngine {
+        pages: Mutex::new(VecDeque::from([page_quota, page_acc2])),
+    });
+
+    let cfg = LlmGatewayConfig {
+        gateway_binding: GatewayBinding::Pool(GatewayVendor::Muse),
+        model: "muse-chat".to_owned(),
+        base_url: None,
+        timeout_ms: 10_000,
+        max_tokens: None,
+        context_limit_tokens: None,
+        reasoning_effort: None,
+        temperature_percent: None,
+        tags: None, // defaults to [chat, vision, image, video] for pool:muse
+        account_concurrency: Some(2),
+        cdp_port: Some(19222),
+        headless: Some(true),
+    };
+    let provider =
+        LlmGatewayProvider::with_hub_and_muse_engine(&cfg, Arc::clone(&hub), engine).expect("provider");
+
+    assert!(provider.supports_tag(LlmCapabilityTag::Chat));
+    assert!(provider.supports_tag(LlmCapabilityTag::Vision));
+    assert!(provider.supports_tag(LlmCapabilityTag::Image));
+    assert!(provider.supports_tag(LlmCapabilityTag::Video));
+
+    // 1. First Chat call hits acc1 -> QuotaExceeded -> marks acc1 in Cooldown AND automatically retries on acc2 within the same call
+    let out_chat = provider
+        .execute_operation(LlmOperation::Chat {
+            request: LlmRequest::text_turn("hello".to_owned()),
+            reasoning: false,
+        })
+        .await
+        .expect("chat automatically fails over from acc1 (QuotaExceeded) to acc2");
+    assert_eq!(out_chat, LlmOutput::Text("Xin chào từ Muse Gateway!".to_owned()));
+    let views = hub.list_accounts(Some(GatewayVendor::Muse)).await.unwrap();
+    let v1 = views.iter().find(|a| a.account_key == acc1.account_key).unwrap();
+    assert!(v1.cooldown_remaining_secs > 0, "acc1 must be in cooldown after QuotaExceeded");
+
+    // 3. ImageGeneration via LlmGatewayProvider (`pool:muse`)
+    let out_img = provider
+        .execute_operation(LlmOperation::ImageGeneration {
+            prompt: "a futuristic robot".to_owned(),
+            width: 512,
+            height: 512,
+            reference_images: vec![ReferenceImage {
+                bytes: PNG_BYTES.to_vec(),
+                mime_type: "image/png".to_owned(),
+            }],
+            transparent_background: false,
+        })
+        .await
+        .expect("image generation via acc2");
+    assert_eq!(
+        out_img,
+        LlmOutput::Media {
+            bytes: PNG_BYTES.to_vec(),
+            mime_type: "image/png".to_owned(),
+        }
+    );
+
+    // 4. VideoGeneration via LlmGatewayProvider (`pool:muse`)
+    let out_vid = provider
+        .execute_operation(LlmOperation::VideoGeneration {
+            prompt: "a drone flight".to_owned(),
+            width: 1280,
+            height: 720,
+            duration_secs: 5,
+            first_frame: None,
+        })
+        .await
+        .expect("video generation via acc2");
+    assert_eq!(
+        out_vid,
+        LlmOutput::Media {
+            bytes: MP4_BYTES.to_vec(),
+            mime_type: "video/mp4".to_owned(),
+        }
+    );
 }
 
 

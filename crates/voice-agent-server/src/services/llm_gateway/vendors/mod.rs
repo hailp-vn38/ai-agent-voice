@@ -1,6 +1,7 @@
 pub mod anthropic;
 pub mod gemini;
 pub mod github_copilot;
+pub mod muse;
 pub mod openai_codex;
 
 use std::{
@@ -131,6 +132,13 @@ pub trait OAuthVendorDriver: Send + Sync {
         ))
     }
 
+    async fn poll_pkce_session(
+        &self,
+        _state: &str,
+    ) -> Result<Option<ExchangedOAuthAccount>, GatewayError> {
+        Ok(None)
+    }
+
     async fn start_device_flow(&self) -> Result<DeviceCodeGrant, GatewayError> {
         Err(GatewayError::OAuthExchangeFailed(
             "device_flow_not_supported_for_vendor".to_owned(),
@@ -173,6 +181,10 @@ pub fn default_vendor_drivers() -> BTreeMap<GatewayVendor, Arc<dyn OAuthVendorDr
     map.insert(
         GatewayVendor::GithubCopilot,
         Arc::new(github_copilot::GithubCopilotOAuthDriver::new()),
+    );
+    map.insert(
+        GatewayVendor::Muse,
+        Arc::new(muse::MuseOAuthDriver::new()),
     );
     map
 }
@@ -375,7 +387,7 @@ impl OAuthVendorDriver for FakeOAuthVendorDriver {
                 .as_ref()
                 .map(|id| vec![("ChatGPT-Account-Id".to_owned(), id.clone())])
                 .unwrap_or_default(),
-            GatewayVendor::Gemini => Vec::new(),
+            GatewayVendor::Gemini | GatewayVendor::Muse => Vec::new(),
             GatewayVendor::GithubCopilot => vec![
                 ("Editor-Version".to_owned(), "vscode/1.96.0".to_owned()),
                 ("Copilot-Integration-Id".to_owned(), "vscode-chat".to_owned()),

@@ -317,7 +317,6 @@ pub fn build_agent_definitions(
         .iter()
         .filter(|p| {
             !p.is_tts_adapter()
-                && p.adapter != "muse"
                 && (p.base_url.starts_with("http://") || p.base_url.starts_with("https://"))
         })
         .map(ResolvedLlmProvider::to_orchestrator_provider)

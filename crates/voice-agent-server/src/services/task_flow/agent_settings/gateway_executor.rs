@@ -65,6 +65,12 @@ impl GatewayOrchestratorExecutor {
             reasoning_effort: resolved.reasoning_effort.clone(),
             temperature_percent: resolved.temperature_percent,
             tags: Some(resolved.tags.clone()),
+            account_concurrency: resolved
+                .muse_options
+                .as_ref()
+                .map(|o| o.account_concurrency),
+            cdp_port: resolved.muse_options.as_ref().map(|o| o.cdp_port),
+            headless: resolved.muse_options.as_ref().map(|o| o.headless),
         };
         let provider = LlmGatewayProvider::with_hub(&base_config, hub)?;
         let fingerprint = format!(
@@ -173,7 +179,9 @@ impl CustomModelExecutor for GatewayOrchestratorExecutor {
             res = self.provider.open_chat_stream_with_config(&effective_cfg, &llm_request) => {
                 res.map_err(|err| match err {
                     WireError::Unauthorized => GatewayError::Auth,
-                    WireError::RateLimited { .. } | WireError::Other => GatewayError::Provider,
+                    WireError::NoLease | WireError::RateLimited { .. } | WireError::Other => {
+                        GatewayError::Provider
+                    }
                 })?
             }
         };

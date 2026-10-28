@@ -7,14 +7,12 @@ use serde_json::Value;
 use thiserror::Error;
 
 pub(crate) mod gateway;
-pub(crate) mod muse;
 pub(crate) mod openai;
 pub(crate) mod opencode_free;
 #[cfg(feature = "qualification-providers")]
 pub mod qualification;
 
 pub use gateway::{LlmGatewayConfig, LlmGatewayProvider};
-pub use muse::{MuseConfig, MuseLlmProvider};
 
 pub(crate) const REASONING_EFFORTS: &[&str] = &["low", "medium", "high"];
 pub const LLM_CAPABILITY_TAGS: &[&str] = &[
@@ -124,8 +122,25 @@ pub fn llm_config_tags(config_json: &str) -> Vec<String> {
     let Ok(parsed) = serde_json::from_str::<Value>(config_json) else {
         return vec!["chat".to_owned()];
     };
+    let is_muse_gateway = parsed
+        .get("gateway_binding")
+        .and_then(Value::as_str)
+        .is_some_and(|b| b.trim() == "pool:muse")
+        || parsed
+            .get("model")
+            .and_then(Value::as_str)
+            .is_some_and(|m| m.trim().starts_with("muse-"));
     let Some(arr) = parsed.get("tags").and_then(Value::as_array) else {
-        return vec!["chat".to_owned()];
+        return if is_muse_gateway {
+            vec![
+                "chat".to_owned(),
+                "vision".to_owned(),
+                "image".to_owned(),
+                "video".to_owned(),
+            ]
+        } else {
+            vec!["chat".to_owned()]
+        };
     };
     let tags: Vec<String> = arr
         .iter()
@@ -134,7 +149,16 @@ pub fn llm_config_tags(config_json: &str) -> Vec<String> {
         .map(str::to_owned)
         .collect();
     if tags.is_empty() {
-        vec!["chat".to_owned()]
+        if is_muse_gateway {
+            vec![
+                "chat".to_owned(),
+                "vision".to_owned(),
+                "image".to_owned(),
+                "video".to_owned(),
+            ]
+        } else {
+            vec!["chat".to_owned()]
+        }
     } else {
         tags
     }

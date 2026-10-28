@@ -18,7 +18,6 @@ use crate::{
         asr::{GipformerAsrProvider, ZipformerAsrProvider, gipformer, zipformer},
         llm::{
             gateway::{LlmGatewayFactory, LlmGatewayProvider},
-            muse::MuseFactory,
             openai::provider::ConfiguredOpenAiLlm,
             opencode_free::OpenCodeFreeProvider,
         },
@@ -806,7 +805,6 @@ static GIPFORMER_SHERPA_OFFLINE_FACTORY: GipformerSherpaOfflineFactory =
     GipformerSherpaOfflineFactory;
 static OPENAI_FACTORY: OpenAiFactory = OpenAiFactory;
 static OPENCODE_FREE_FACTORY: OpenCodeFreeFactory = OpenCodeFreeFactory;
-static MUSE_FACTORY: MuseFactory = MuseFactory;
 static LLM_GATEWAY_FACTORY: LlmGatewayFactory = LlmGatewayFactory;
 static ZEROTTS_ONNX_FACTORY: ZeroTtsOnnxFactory = ZeroTtsOnnxFactory;
 static VIENEU_NATIVE_FACTORY: VieneuNativeFactory = VieneuNativeFactory;
@@ -836,7 +834,6 @@ static ASR_FACTORIES: &[&dyn AsrFactory] = &[
 static LLM_FACTORIES: &[&dyn LlmFactory] = &[
     &OPENAI_FACTORY,
     &OPENCODE_FREE_FACTORY,
-    &MUSE_FACTORY,
     &LLM_GATEWAY_FACTORY,
     #[cfg(feature = "qualification-providers")]
     &QUALIFICATION_LLM_FACTORY,

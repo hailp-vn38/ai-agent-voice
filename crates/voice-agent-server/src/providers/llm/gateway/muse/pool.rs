@@ -1,5 +1,5 @@
 use std::collections::{BTreeMap, HashMap};
-use std::sync::{Arc, Mutex as StdMutex, OnceLock, Weak};
+use std::sync::{Arc, Mutex as StdMutex, OnceLock};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use sha2::{Digest, Sha256};
@@ -8,57 +8,57 @@ use uuid::Uuid;
 
 use super::cdp::{BrowserEngine, BrowserPage, CdpBrowserEngine, CdpError, CookieParam};
 use super::config::{
-    MuseAccountCredential, MuseConfig, COOKIE_DOMAIN, NEW_THREAD_URL, SESSION_API_URL, SITE_URL,
+    MuseAccountCredential, COOKIE_DOMAIN, NEW_THREAD_URL, SESSION_API_URL, SITE_URL,
     VM_WAKE_API_URL,
 };
 
 pub const HOT_BUBBLE_LIMIT: usize = 16;
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub(super) struct MusePoolKey {
+pub(crate) struct MusePoolKey {
     pub cdp_port: u16,
     pub headless: bool,
     pub account_concurrency: usize,
-    /// SHA-256 digest of `api_key.expose()` ensuring secret rotation creates isolated contexts.
+    /// SHA-256 digest of credential ensuring secret rotation creates isolated contexts.
     pub credential_fingerprint: [u8; 32],
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum AccountHealth {
+pub(crate) enum AccountHealth {
     Healthy,
     Cooldown(Instant),
     Invalid,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum UpstreamFailureKind {
+pub(crate) enum UpstreamFailureKind {
     AuthInvalid,
     QuotaExceeded,
     Transient,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) struct ConversationTurn {
+pub(crate) struct ConversationTurn {
     pub user: String,
     pub assistant: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) struct HotConversation {
+pub(crate) struct HotConversation {
     pub hint: String,
     pub turns: Vec<ConversationTurn>,
     pub image_count: usize,
     pub thread_url: String,
 }
 
-pub(super) struct PooledTab {
+pub(crate) struct PooledTab {
     pub page: Arc<dyn BrowserPage>,
     pub hot: Option<HotConversation>,
     pub stale: bool,
 }
 
 #[derive(Debug, Clone)]
-pub(super) enum CheckoutMode {
+pub(crate) enum CheckoutMode {
     Stateless,
     Continuation {
         prior_turns: Vec<ConversationTurn>,
@@ -156,7 +156,7 @@ struct PoolInner {
     rr_cursor: usize,
 }
 
-pub(super) struct SharedMusePool {
+pub(crate) struct SharedMusePool {
     key: MusePoolKey,
     engine: Arc<dyn BrowserEngine>,
     http_session_warmup: bool,
@@ -173,34 +173,87 @@ fn spawn_page_close(page: Arc<dyn BrowserPage>) {
     }
 }
 
-static GLOBAL_POOLS: OnceLock<StdMutex<HashMap<MusePoolKey, Weak<SharedMusePool>>>> =
+static GLOBAL_POOLS: OnceLock<StdMutex<HashMap<(MusePoolKey, usize), Arc<SharedMusePool>>>> =
+    OnceLock::new();
+static GLOBAL_CDP_ENGINES: OnceLock<StdMutex<HashMap<(u16, bool), Arc<dyn BrowserEngine>>>> =
     OnceLock::new();
 
+fn shared_cdp_engine(cdp_port: u16, headless: bool) -> Arc<dyn BrowserEngine> {
+    let map_mutex = GLOBAL_CDP_ENGINES.get_or_init(|| StdMutex::new(HashMap::new()));
+    let mut map = map_mutex.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(existing) = map.get(&(cdp_port, headless)) {
+        return Arc::clone(existing);
+    }
+    let engine: Arc<dyn BrowserEngine> = Arc::new(CdpBrowserEngine::new(cdp_port, headless));
+    map.insert((cdp_port, headless), Arc::clone(&engine));
+    engine
+}
+
 impl SharedMusePool {
-    pub fn get_or_create(config: &MuseConfig) -> Arc<Self> {
+    pub(crate) fn for_gateway_lease(
+        cdp_port: u16,
+        headless: bool,
+        account_concurrency: usize,
+        account_key: &str,
+        raw_credential: &str,
+        custom_engine: Option<Arc<dyn BrowserEngine>>,
+    ) -> Arc<Self> {
         let mut hasher = Sha256::new();
-        hasher.update(config.api_key.expose().as_bytes());
+        hasher.update(account_key.as_bytes());
+        hasher.update(b":");
+        hasher.update(raw_credential.as_bytes());
         let credential_fingerprint: [u8; 32] = hasher.finalize().into();
 
         let key = MusePoolKey {
-            cdp_port: config.cdp_port,
-            headless: config.headless,
-            account_concurrency: config.account_concurrency.clamp(1, 8),
+            cdp_port,
+            headless,
+            account_concurrency: account_concurrency.clamp(1, 8),
             credential_fingerprint,
         };
+        let engine_id = custom_engine
+            .as_ref()
+            .map(|e| Arc::as_ptr(e) as *const () as usize)
+            .unwrap_or(0);
 
         let map_mutex = GLOBAL_POOLS.get_or_init(|| StdMutex::new(HashMap::new()));
         let mut map = map_mutex.lock().unwrap_or_else(|e| e.into_inner());
-        map.retain(|_, weak| weak.strong_count() > 0);
-        if let Some(existing) = map.get(&key).and_then(Weak::upgrade) {
-            return existing;
+        if let Some(existing) = map.get(&(key.clone(), engine_id)) {
+            existing.reset_health_for_gateway_lease();
+            return Arc::clone(existing);
         }
 
-        let engine: Arc<dyn BrowserEngine> =
-            Arc::new(CdpBrowserEngine::new(config.cdp_port, config.headless));
-        let pool = Self::new_with_engine(key.clone(), config.parse_accounts(), engine, true);
-        map.insert(key, Arc::downgrade(&pool));
+        let mut accounts = super::config::parse_accounts(raw_credential);
+        if accounts.is_empty() && !raw_credential.trim().is_empty() {
+            let mut cookies = BTreeMap::new();
+            for &name in super::config::REQUIRED_COOKIES {
+                cookies.insert(name.to_owned(), raw_credential.trim().to_owned());
+            }
+            accounts.push(MuseAccountCredential {
+                label: account_key.to_owned(),
+                cookies,
+                cookie_expires: None,
+                vm_id: None,
+            });
+        } else {
+            for acc in &mut accounts {
+                acc.label = account_key.to_owned();
+            }
+        }
+
+        let (engine, warmup) = match custom_engine {
+            Some(eng) => (eng, false),
+            None => (shared_cdp_engine(cdp_port, headless), true),
+        };
+        let pool = Self::new_with_engine(key.clone(), accounts, engine, warmup);
+        map.insert((key, engine_id), Arc::clone(&pool));
         pool
+    }
+
+    fn reset_health_for_gateway_lease(&self) {
+        let mut guard = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        for acc in &mut guard.accounts {
+            acc.health = AccountHealth::Healthy;
+        }
     }
 
     pub fn new_with_engine(
@@ -232,14 +285,6 @@ impl SharedMusePool {
             inner,
             notify,
         })
-    }
-
-    pub fn num_accounts(&self) -> usize {
-        self.inner
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .accounts
-            .len()
     }
 
     fn apply_account_failure(&self, account_idx: usize, kind: UpstreamFailureKind) {
@@ -615,7 +660,7 @@ enum CheckoutPlan {
     },
 }
 
-pub(super) struct TabLease {
+pub(crate) struct TabLease {
     account_idx: usize,
     tab: Option<PooledTab>,
     matched_hot: Option<HotConversation>,

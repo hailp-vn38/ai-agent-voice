@@ -5,6 +5,7 @@ export type GatewayVendor =
   | 'openai_codex'
   | 'gemini'
   | 'github_copilot'
+  | 'muse'
 
 export type OAuthLoginMode = 'pkce' | 'device_code'
 
