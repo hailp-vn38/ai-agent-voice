@@ -77,7 +77,11 @@ pub(super) async fn create_pool_model(
         Ok(v) => v,
         Err(e) => return e,
     };
-    match state.llm_gateway_hub.create_pool_model(vendor, body).await {
+    match state
+        .llm_gateway_hub
+        .create_pool_model(vendor, body, id(&request))
+        .await
+    {
         Ok(model) => {
             let _ = crate::services::task_flow::sync_orchestrator_from_state(&state).await;
             (
@@ -104,14 +108,12 @@ pub(super) async fn patch_pool_model(
     };
     match state
         .llm_gateway_hub
-        .update_pool_model(vendor, &provider_key, body)
+        .update_pool_model(vendor, &provider_key, body, id(&request))
         .await
     {
         Ok(model) => {
-            if let (Some(prewarm), Some(db)) = (&state.provider_prewarm, &state.database)
-                && let Ok(p) = crate::database::providers::provider_by(db, &provider_key).await
-            {
-                prewarm.provider(p.id, p.revision).await;
+            if let Some(prewarm) = &state.provider_prewarm {
+                prewarm.provider(model.id, model.revision).await;
             }
             let _ = crate::services::task_flow::sync_orchestrator_from_state(&state).await;
             Json(serde_json::json!({ "model": model })).into_response()
@@ -130,12 +132,12 @@ pub(super) async fn delete_pool_model(
     };
     match state
         .llm_gateway_hub
-        .delete_pool_model(vendor, &provider_key)
+        .delete_pool_model(vendor, &provider_key, id(&request))
         .await
     {
-        Ok(()) => {
+        Ok(deleted) => {
             let _ = crate::services::task_flow::sync_orchestrator_from_state(&state).await;
-            Json(serde_json::json!({ "deleted": true })).into_response()
+            Json(serde_json::json!({ "deleted": deleted })).into_response()
         }
         Err(err) => gateway_error(&request, err),
     }

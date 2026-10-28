@@ -590,7 +590,7 @@ impl LlmGatewayHub {
                     display_name: vendor.display_name().to_owned(),
                     login_mode: vendor.login_mode(),
                     default_base_url: vendor.default_base_url().to_owned(),
-                    pool_binding: GatewayBinding::Pool(vendor).as_config_string(),
+                    pool_binding: GatewayBinding::Pool(vendor),
                     total_accounts,
                     active_accounts,
                     cooling_down_accounts,
@@ -649,7 +649,7 @@ impl LlmGatewayHub {
             display_name: vendor.display_name().to_owned(),
             login_mode: vendor.login_mode(),
             default_base_url: vendor.default_base_url().to_owned(),
-            pool_binding: GatewayBinding::Pool(vendor).as_config_string(),
+            pool_binding: GatewayBinding::Pool(vendor),
             total_accounts,
             active_accounts,
             cooling_down_accounts,
@@ -665,6 +665,7 @@ impl LlmGatewayHub {
         &self,
         vendor: GatewayVendor,
         req: CreatePoolModelRequest,
+        request_id: &str,
     ) -> Result<GatewayPoolModelView, GatewayError> {
         let Some(pool) = &self.pool else {
             return Err(GatewayError::DatabaseUnavailable);
@@ -677,14 +678,8 @@ impl LlmGatewayHub {
             return Err(GatewayError::ValidationFailed);
         }
 
-        let binding = match req
-            .gateway_binding
-            .as_deref()
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-        {
-            Some(raw) => {
-                let parsed = GatewayBinding::parse(raw)?;
+        let binding = match req.gateway_binding {
+            Some(parsed) => {
                 self.validate_binding_belongs_to_vendor(&parsed, vendor)?;
                 parsed
             }
@@ -693,7 +688,7 @@ impl LlmGatewayHub {
 
         let preset = vendor
             .preset_models()
-            .into_iter()
+            .iter()
             .find(|p| p.model == model_trimmed);
 
         let display_name = match req
@@ -708,8 +703,8 @@ impl LlmGatewayHub {
                 }
                 trimmed.to_owned()
             }
-            None => match &preset {
-                Some(p) => p.display_name.clone(),
+            None => match preset {
+                Some(p) => p.display_name.to_owned(),
                 None => {
                     let fallback = format!("{model_trimmed} ({})", vendor.display_name());
                     fallback.chars().take(128).collect()
@@ -724,12 +719,23 @@ impl LlmGatewayHub {
                 }
                 Some(t)
             }
-            None => match &preset {
-                Some(p) => Some(p.tags.clone()),
+            None => match preset {
+                Some(p) => Some(p.tags.iter().map(|t| (*t).to_owned()).collect()),
                 None => Some(vec!["chat".to_owned()]),
             },
         };
 
+        let base_url = match req
+            .base_url
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+        {
+            Some(raw_url) => {
+                Some(url::Url::parse(raw_url).map_err(|_| GatewayError::ValidationFailed)?)
+            }
+            None => None,
+        };
         let reasoning_effort = req
             .reasoning_effort
             .as_deref()
@@ -743,14 +749,14 @@ impl LlmGatewayHub {
         let gw_config = crate::providers::llm::LlmGatewayConfig {
             gateway_binding: binding,
             model: model_trimmed.to_owned(),
-            base_url: None,
+            base_url,
             timeout_ms,
             max_tokens: req
                 .max_tokens
-                .or_else(|| preset.as_ref().and_then(|p| p.default_max_tokens)),
+                .or_else(|| preset.and_then(|p| p.default_max_tokens)),
             context_limit_tokens: req
                 .context_limit_tokens
-                .or_else(|| preset.as_ref().and_then(|p| p.default_context_limit_tokens)),
+                .or_else(|| preset.and_then(|p| p.default_context_limit_tokens)),
             reasoning_effort,
             temperature_percent: req.temperature_percent,
             tags,
@@ -768,7 +774,11 @@ impl LlmGatewayHub {
         let enabled = i64::from(req.enabled.unwrap_or(true));
         let now_epoch = unix_seconds().unwrap_or(0);
 
-        sqlx::query(
+        let mut tx = pool
+            .begin()
+            .await
+            .map_err(|_| GatewayError::DatabaseUnavailable)?;
+        let insert_res = sqlx::query(
             "INSERT INTO providers (key, name, type, adapter, config_json, credential_json, enabled, revision, created_at, updated_at) \
              VALUES (?, ?, 'llm', 'llm_gateway', ?, NULL, ?, 1, ?, ?)",
         )
@@ -778,9 +788,27 @@ impl LlmGatewayHub {
         .bind(enabled)
         .bind(now_epoch)
         .bind(now_epoch)
-        .execute(pool)
+        .execute(&mut *tx)
         .await
         .map_err(|_| GatewayError::DatabaseUnavailable)?;
+        let provider_id = insert_res.last_insert_rowid();
+
+        crate::database::audit::audit(
+            &mut *tx,
+            request_id,
+            "provider",
+            Some(provider_id),
+            "create",
+            None,
+            Some(1),
+            crate::database::audit::AuditOutcome::Success,
+            1,
+        )
+        .await
+        .map_err(|_| GatewayError::DatabaseUnavailable)?;
+        tx.commit()
+            .await
+            .map_err(|_| GatewayError::DatabaseUnavailable)?;
 
         self.get_pool_model(vendor, &provider_key).await
     }
@@ -790,14 +818,15 @@ impl LlmGatewayHub {
         vendor: GatewayVendor,
         provider_key: &str,
         patch: UpdatePoolModelPatch,
+        request_id: &str,
     ) -> Result<GatewayPoolModelView, GatewayError> {
         let Some(pool) = &self.pool else {
             return Err(GatewayError::DatabaseUnavailable);
         };
-        type ExistingRow = (i64, String, String, String, i64);
-        let (provider_id, mut name, adapter, config_json, old_enabled): ExistingRow =
+        type ExistingRow = (i64, String, String, String, i64, i64);
+        let (provider_id, mut name, adapter, config_json, old_enabled, old_revision): ExistingRow =
             sqlx::query_as(
-                "SELECT id, name, adapter, config_json, enabled FROM providers WHERE key = ? AND type = 'llm'",
+                "SELECT id, name, adapter, config_json, enabled, revision FROM providers WHERE key = ? AND type = 'llm'",
             )
             .bind(provider_key)
             .fetch_optional(pool)
@@ -830,13 +859,27 @@ impl LlmGatewayHub {
             config_obj.insert("model".to_owned(), Value::String(trimmed.to_owned()));
         }
 
-        if let Some(raw_binding) = patch.gateway_binding {
-            let parsed = GatewayBinding::parse(&raw_binding)?;
+        if let Some(parsed) = patch.gateway_binding {
             self.validate_binding_belongs_to_vendor(&parsed, vendor)?;
             config_obj.insert(
                 "gateway_binding".to_owned(),
                 Value::String(parsed.as_config_string()),
             );
+        }
+
+        if let Some(base_url_opt) = patch.base_url {
+            match base_url_opt
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+            {
+                Some(url) => {
+                    config_obj.insert("base_url".to_owned(), Value::String(url.to_owned()));
+                }
+                None => {
+                    config_obj.remove("base_url");
+                }
+            }
         }
 
         if let Some(tags) = patch.tags {
@@ -909,6 +952,10 @@ impl LlmGatewayHub {
                 .map_err(|_| GatewayError::ValidationFailed)?;
         let now_epoch = unix_seconds().unwrap_or(0);
 
+        let mut tx = pool
+            .begin()
+            .await
+            .map_err(|_| GatewayError::DatabaseUnavailable)?;
         sqlx::query(
             "UPDATE providers \
              SET name = ?, config_json = ?, enabled = ?, revision = revision + 1, updated_at = ? \
@@ -919,9 +966,26 @@ impl LlmGatewayHub {
         .bind(next_enabled)
         .bind(now_epoch)
         .bind(provider_id)
-        .execute(pool)
+        .execute(&mut *tx)
         .await
         .map_err(|_| GatewayError::DatabaseUnavailable)?;
+
+        crate::database::audit::audit(
+            &mut *tx,
+            request_id,
+            "provider",
+            Some(provider_id),
+            "update",
+            Some(old_revision),
+            Some(old_revision + 1),
+            crate::database::audit::AuditOutcome::Success,
+            1,
+        )
+        .await
+        .map_err(|_| GatewayError::DatabaseUnavailable)?;
+        tx.commit()
+            .await
+            .map_err(|_| GatewayError::DatabaseUnavailable)?;
 
         self.get_pool_model(vendor, provider_key).await
     }
@@ -930,12 +994,13 @@ impl LlmGatewayHub {
         &self,
         vendor: GatewayVendor,
         provider_key: &str,
-    ) -> Result<(), GatewayError> {
+        request_id: &str,
+    ) -> Result<bool, GatewayError> {
         let Some(pool) = &self.pool else {
             return Err(GatewayError::DatabaseUnavailable);
         };
-        let (provider_id, config_json): (i64, String) = sqlx::query_as(
-            "SELECT id, config_json FROM providers WHERE key = ? AND type = 'llm'",
+        let (provider_id, config_json, old_revision): (i64, String, i64) = sqlx::query_as(
+            "SELECT id, config_json, revision FROM providers WHERE key = ? AND type = 'llm'",
         )
         .bind(provider_key)
         .fetch_optional(pool)
@@ -947,6 +1012,10 @@ impl LlmGatewayHub {
             serde_json::from_str(&config_json).map_err(|_| GatewayError::PoolModelNotFound)?;
         self.ensure_config_belongs_to_vendor(&config_val, vendor)?;
 
+        let mut tx = pool
+            .begin()
+            .await
+            .map_err(|_| GatewayError::DatabaseUnavailable)?;
         let bound_templates: Vec<String> = sqlx::query_scalar(
             "SELECT t.key \
              FROM template_provider_bindings b \
@@ -955,21 +1024,43 @@ impl LlmGatewayHub {
              ORDER BY t.key ASC",
         )
         .bind(provider_id)
-        .fetch_all(pool)
+        .fetch_all(&mut *tx)
         .await
         .map_err(|_| GatewayError::DatabaseUnavailable)?;
 
         if !bound_templates.is_empty() {
+            let _ = tx.rollback().await;
             return Err(GatewayError::PoolModelInUse(bound_templates));
         }
 
-        sqlx::query("DELETE FROM providers WHERE id = ?")
+        let deleted = sqlx::query("DELETE FROM providers WHERE id = ?")
             .bind(provider_id)
-            .execute(pool)
+            .execute(&mut *tx)
+            .await
+            .map_err(|_| GatewayError::DatabaseUnavailable)?
+            .rows_affected()
+            == 1;
+
+        if deleted {
+            crate::database::audit::audit(
+                &mut *tx,
+                request_id,
+                "provider",
+                Some(provider_id),
+                "delete",
+                Some(old_revision),
+                None,
+                crate::database::audit::AuditOutcome::Success,
+                1,
+            )
+            .await
+            .map_err(|_| GatewayError::DatabaseUnavailable)?;
+        }
+        tx.commit()
             .await
             .map_err(|_| GatewayError::DatabaseUnavailable)?;
 
-        Ok(())
+        Ok(deleted)
     }
 
     async fn get_pool_model(
@@ -992,6 +1083,7 @@ impl LlmGatewayHub {
             return Ok(Vec::new());
         };
         type PoolModelRow = (
+            i64,
             String,
             String,
             String,
@@ -1004,6 +1096,7 @@ impl LlmGatewayHub {
         );
         let rows: Vec<PoolModelRow> = sqlx::query_as(
             "SELECT \
+                p.id, \
                 p.key, \
                 p.name, \
                 p.adapter, \
@@ -1023,6 +1116,7 @@ impl LlmGatewayHub {
 
         let mut models = Vec::new();
         for (
+            id,
             provider_key,
             display_name,
             adapter,
@@ -1054,6 +1148,12 @@ impl LlmGatewayHub {
                 .and_then(Value::as_str)
                 .unwrap_or_default()
                 .to_owned();
+            let base_url = val
+                .get("base_url")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(str::to_owned);
             let tags = crate::providers::llm::llm_config_tags(&config_json);
             let reasoning_effort = val
                 .get("reasoning_effort")
@@ -1077,13 +1177,15 @@ impl LlmGatewayHub {
                 .unwrap_or_else(crate::config::defaults::default_llm_timeout_ms);
 
             models.push(GatewayPoolModelView {
+                id,
                 provider_key,
                 display_name,
                 vendor,
                 adapter,
-                gateway_binding: binding.as_config_string(),
+                gateway_binding: binding,
                 binding_mode: binding_mode.to_owned(),
                 model,
+                base_url,
                 enabled: enabled != 0,
                 revision,
                 tags,
@@ -1109,16 +1211,10 @@ impl LlmGatewayHub {
             GatewayBinding::Pool(vendor) => Some((*vendor, "pool")),
             GatewayBinding::Account(account_key) => {
                 let guard = self.snapshot.read().unwrap_or_else(|p| p.into_inner());
-                if let Some(acc) = guard.accounts.get(account_key) {
-                    return Some((acc.vendor, "account"));
-                }
-                for vendor in GatewayVendor::ALL {
-                    let prefix = format!("gw_{}_", vendor.as_str());
-                    if account_key.starts_with(&prefix) {
-                        return Some((vendor, "account"));
-                    }
-                }
-                None
+                guard
+                    .accounts
+                    .get(account_key)
+                    .map(|acc| (acc.vendor, "account"))
             }
         }
     }

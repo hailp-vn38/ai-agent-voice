@@ -28,6 +28,7 @@ export interface GatewayPoolModelView {
   gateway_binding: string
   binding_mode: string
   model: string
+  base_url?: string | null
   enabled: boolean
   revision: number
   tags: string[]
@@ -151,6 +152,7 @@ export interface CreatePoolModelInput {
   model: string
   display_name?: string
   gateway_binding?: string
+  base_url?: string | null
   tags?: string[]
   reasoning_effort?: string | null
   max_tokens?: number | null
@@ -164,6 +166,7 @@ export interface UpdatePoolModelInput {
   model?: string
   display_name?: string
   gateway_binding?: string
+  base_url?: string | null
   tags?: string[]
   reasoning_effort?: string | null
   max_tokens?: number | null

@@ -259,6 +259,9 @@ describe('LlmGatewayPage', () => {
     expect(wrapper.get('[data-testid="pool-detail-content"]').text()).toContain(
       'https://chatgpt.com/backend-api/codex',
     )
+    expect(wrapper.get('[data-testid="pool-detail-accounts"]').text()).toContain(
+      'lamphuchai98@gmail.com',
+    )
 
     // 3. Click a Preset Model in Pool Detail to open Add Model modal prefilled
     await wrapper.get('[data-preset-model="gpt-5.6-terra"]').trigger('click')
@@ -278,10 +281,13 @@ describe('LlmGatewayPage', () => {
       }),
     )
 
-    // 4. Edit existing model in the Pool (including temperature_percent)
+    // 4. Edit existing model in the Pool (including base_url and temperature_percent)
     await wrapper.get('[data-edit-pool-model="llm_codex_pool_1"]').trigger('click')
     await flushPromises()
     await wrapper.get('[data-testid="pool-model-name-input"]').setValue('GPT-5.3 Codex Updated')
+    await wrapper
+      .get('[data-testid="pool-model-base-url-input"]')
+      .setValue('https://proxy.example.com/v1')
     await wrapper.get('[data-testid="pool-model-temperature-input"]').setValue('75')
     await wrapper.get('[data-testid="pool-model-form"]').trigger('submit.prevent')
     await flushPromises()
@@ -291,6 +297,7 @@ describe('LlmGatewayPage', () => {
       expect.objectContaining({
         model: 'gpt-5.3-codex',
         display_name: 'GPT-5.3 Codex Updated',
+        base_url: 'https://proxy.example.com/v1',
         temperature_percent: 75,
       }),
     )

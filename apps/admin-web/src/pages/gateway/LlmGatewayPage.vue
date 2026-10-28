@@ -15,7 +15,7 @@ import {
   ShieldAlert,
   Trash2,
 } from '@lucide/vue'
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { RouterLink } from 'vue-router'
 
 import { formatApiError } from '@/api/errors'
@@ -95,16 +95,19 @@ const modelModalOpen = ref(false)
 const modelModalMode = ref<'create' | 'edit'>('create')
 const modelModalVendor = ref<GatewayVendor>('anthropic')
 const editingPoolModel = ref<GatewayPoolModelView | null>(null)
-const formModelId = ref('')
-const formDisplayName = ref('')
-const formGatewayBinding = ref('')
-const formTags = ref<string[]>(['chat'])
-const formReasoningEffort = ref('')
-const formMaxTokens = ref<string>('')
-const formContextLimitTokens = ref<string>('')
-const formTemperaturePercent = ref<string>('')
-const formTimeoutMs = ref<number>(60000)
-const formEnabled = ref(true)
+const modelForm = reactive({
+  modelId: '',
+  displayName: '',
+  gatewayBinding: '',
+  baseUrl: '',
+  tags: ['chat'] as string[],
+  reasoningEffort: '',
+  maxTokens: '',
+  contextLimitTokens: '',
+  temperaturePercent: '',
+  timeoutMs: 60000,
+  enabled: true,
+})
 
 const deletingPoolModel = ref<GatewayPoolModelView | null>(null)
 const deleteModelOpen = ref(false)
@@ -507,19 +510,19 @@ async function ensurePresetsLoaded(vendor: GatewayVendor) {
 }
 
 function applyPresetToForm(preset: GatewayVendorModelPreset) {
-  formModelId.value = preset.model
-  if (modelModalMode.value === 'create' || !formDisplayName.value.trim()) {
-    formDisplayName.value = preset.display_name
+  modelForm.modelId = preset.model
+  if (modelModalMode.value === 'create' || !modelForm.displayName.trim()) {
+    modelForm.displayName = preset.display_name
   }
-  formTags.value = [...preset.tags]
-  formMaxTokens.value =
+  modelForm.tags = [...preset.tags]
+  modelForm.maxTokens =
     preset.default_max_tokens != null ? String(preset.default_max_tokens) : ''
-  formContextLimitTokens.value =
+  modelForm.contextLimitTokens =
     preset.default_context_limit_tokens != null
       ? String(preset.default_context_limit_tokens)
       : ''
   if (!preset.supports_reasoning_effort) {
-    formReasoningEffort.value = ''
+    modelForm.reasoningEffort = ''
   }
 }
 
@@ -528,19 +531,20 @@ function openCreatePoolModelModal(vendor: GatewayVendor, preset?: GatewayVendorM
   modelModalMode.value = 'create'
   modelModalVendor.value = vendor
   editingPoolModel.value = null
-  formGatewayBinding.value = `pool:${vendor}`
-  formReasoningEffort.value = ''
-  formTemperaturePercent.value = ''
-  formTimeoutMs.value = 60000
-  formEnabled.value = true
+  modelForm.gatewayBinding = `pool:${vendor}`
+  modelForm.baseUrl = ''
+  modelForm.reasoningEffort = ''
+  modelForm.temperaturePercent = ''
+  modelForm.timeoutMs = 60000
+  modelForm.enabled = true
   if (preset) {
     applyPresetToForm(preset)
   } else {
-    formModelId.value = ''
-    formDisplayName.value = ''
-    formTags.value = ['chat']
-    formMaxTokens.value = ''
-    formContextLimitTokens.value = ''
+    modelForm.modelId = ''
+    modelForm.displayName = ''
+    modelForm.tags = ['chat']
+    modelForm.maxTokens = ''
+    modelForm.contextLimitTokens = ''
   }
   modelModalOpen.value = true
   void ensurePresetsLoaded(vendor)
@@ -551,29 +555,30 @@ function openEditPoolModelModal(model: GatewayPoolModelView) {
   modelModalMode.value = 'edit'
   modelModalVendor.value = model.vendor
   editingPoolModel.value = model
-  formModelId.value = model.model
-  formDisplayName.value = model.display_name
-  formGatewayBinding.value = model.gateway_binding
-  formTags.value = model.tags.length ? [...model.tags] : ['chat']
-  formReasoningEffort.value = model.reasoning_effort ?? ''
-  formMaxTokens.value = model.max_tokens != null ? String(model.max_tokens) : ''
-  formContextLimitTokens.value =
+  modelForm.modelId = model.model
+  modelForm.displayName = model.display_name
+  modelForm.gatewayBinding = model.gateway_binding
+  modelForm.baseUrl = model.base_url ?? ''
+  modelForm.tags = model.tags.length ? [...model.tags] : ['chat']
+  modelForm.reasoningEffort = model.reasoning_effort ?? ''
+  modelForm.maxTokens = model.max_tokens != null ? String(model.max_tokens) : ''
+  modelForm.contextLimitTokens =
     model.context_limit_tokens != null ? String(model.context_limit_tokens) : ''
-  formTemperaturePercent.value =
+  modelForm.temperaturePercent =
     model.temperature_percent != null ? String(model.temperature_percent) : ''
-  formTimeoutMs.value = model.timeout_ms || 60000
-  formEnabled.value = model.enabled
+  modelForm.timeoutMs = model.timeout_ms || 60000
+  modelForm.enabled = model.enabled
   modelModalOpen.value = true
   void ensurePresetsLoaded(model.vendor)
 }
 
 function toggleFormTag(tag: string) {
-  if (formTags.value.includes(tag)) {
-    if (formTags.value.length > 1) {
-      formTags.value = formTags.value.filter((tItem) => tItem !== tag)
+  if (modelForm.tags.includes(tag)) {
+    if (modelForm.tags.length > 1) {
+      modelForm.tags = modelForm.tags.filter((tItem) => tItem !== tag)
     }
   } else {
-    formTags.value = [...formTags.value, tag]
+    modelForm.tags = [...modelForm.tags, tag]
   }
 }
 
@@ -586,24 +591,25 @@ function parseOptionalPositiveInt(raw: string): number | null {
 
 async function savePoolModel() {
   if (busyKey.value) return
-  const trimmedModel = formModelId.value.trim()
+  const trimmedModel = modelForm.modelId.trim()
   if (!trimmedModel) {
     errorMessage.value = t('llmGateway.modelModal.modelRequired')
     return
   }
-  if (!formTags.value.length) {
+  if (!modelForm.tags.length) {
     errorMessage.value = t('llmGateway.modelModal.tagsRequired')
     return
   }
   const vendor = modelModalVendor.value
-  const trimmedName = formDisplayName.value.trim()
-  const maxTokens = parseOptionalPositiveInt(formMaxTokens.value)
-  const contextLimitTokens = parseOptionalPositiveInt(formContextLimitTokens.value)
-  const temperaturePercent = parseOptionalPositiveInt(formTemperaturePercent.value)
-  const timeoutMs = Number.isFinite(Number(formTimeoutMs.value))
-    ? Math.max(1000, Math.trunc(Number(formTimeoutMs.value)))
+  const trimmedName = modelForm.displayName.trim()
+  const trimmedBaseUrl = modelForm.baseUrl.trim()
+  const maxTokens = parseOptionalPositiveInt(modelForm.maxTokens)
+  const contextLimitTokens = parseOptionalPositiveInt(modelForm.contextLimitTokens)
+  const temperaturePercent = parseOptionalPositiveInt(modelForm.temperaturePercent)
+  const timeoutMs = Number.isFinite(Number(modelForm.timeoutMs))
+    ? Math.max(1000, Math.trunc(Number(modelForm.timeoutMs)))
     : 60000
-  const reasoningEffort = formReasoningEffort.value.trim() || null
+  const reasoningEffort = modelForm.reasoningEffort.trim() || null
 
   busyKey.value = editingPoolModel.value?.provider_key ?? `create:${vendor}`
   errorMessage.value = ''
@@ -612,27 +618,29 @@ async function savePoolModel() {
       await llmGatewayApi.createPoolModel(vendor, {
         model: trimmedModel,
         display_name: trimmedName || undefined,
-        gateway_binding: formGatewayBinding.value || `pool:${vendor}`,
-        tags: formTags.value,
+        gateway_binding: modelForm.gatewayBinding || `pool:${vendor}`,
+        base_url: trimmedBaseUrl || undefined,
+        tags: modelForm.tags,
         reasoning_effort: reasoningEffort,
         max_tokens: maxTokens,
         context_limit_tokens: contextLimitTokens,
         temperature_percent: temperaturePercent,
         timeout_ms: timeoutMs,
-        enabled: formEnabled.value,
+        enabled: modelForm.enabled,
       })
     } else if (editingPoolModel.value) {
       await llmGatewayApi.updatePoolModel(vendor, editingPoolModel.value.provider_key, {
         model: trimmedModel,
         display_name: trimmedName || editingPoolModel.value.display_name,
-        gateway_binding: formGatewayBinding.value || `pool:${vendor}`,
-        tags: formTags.value,
+        gateway_binding: modelForm.gatewayBinding || `pool:${vendor}`,
+        base_url: trimmedBaseUrl || null,
+        tags: modelForm.tags,
         reasoning_effort: reasoningEffort,
         max_tokens: maxTokens,
         context_limit_tokens: contextLimitTokens,
         temperature_percent: temperaturePercent,
         timeout_ms: timeoutMs,
-        enabled: formEnabled.value,
+        enabled: modelForm.enabled,
       })
     }
     modelModalOpen.value = false
@@ -1525,6 +1533,37 @@ void load()
           </div>
         </div>
 
+        <!-- OAuth Accounts in Pool -->
+        <div
+          v-if="activePoolDetail.accounts.length"
+          class="space-y-2"
+          data-testid="pool-detail-accounts"
+        >
+          <h3 class="text-xs font-semibold uppercase tracking-wide text-foreground">
+            {{ t('llmGateway.pool.accountsHeading') }} ({{ activePoolDetail.accounts.length }})
+          </h3>
+          <div class="grid grid-cols-1 gap-2 sm:grid-cols-2">
+            <div
+              v-for="acc in activePoolDetail.accounts"
+              :key="acc.account_key"
+              class="flex items-center justify-between gap-2 rounded-lg border border-border/70 bg-surface/30 px-3 py-2 text-xs"
+            >
+              <div class="min-w-0">
+                <div class="truncate font-semibold text-foreground">{{ acc.label }}</div>
+                <div class="truncate font-mono text-[11px] text-muted-foreground">
+                  {{ acc.account_email || acc.account_key }}
+                </div>
+              </div>
+              <span
+                class="shrink-0 rounded-full border px-2 py-0.5 text-[11px] font-medium"
+                :class="statusBadgeClass(acc.status)"
+              >
+                {{ statusLabel(acc) }}
+              </span>
+            </div>
+          </div>
+        </div>
+
         <!-- Configured Models in Pool -->
         <div class="space-y-2">
           <div class="flex items-center justify-between gap-2">
@@ -1678,7 +1717,7 @@ void load()
               type="button"
               class="rounded-md border px-2 py-1 font-mono text-xs transition-colors"
               :class="
-                formModelId === preset.model
+                modelForm.modelId === preset.model
                   ? 'border-studio-violet bg-studio-violet/10 text-studio-violet font-semibold'
                   : 'border-border/80 bg-surface text-muted-foreground hover:border-studio-violet/60 hover:text-foreground'
               "
@@ -1692,7 +1731,7 @@ void load()
         <label class="block space-y-1">
           <span class="text-sm font-medium">{{ t('llmGateway.modelModal.modelId') }}</span>
           <input
-            v-model="formModelId"
+            v-model="modelForm.modelId"
             data-testid="pool-model-id-input"
             class="admin-input font-mono text-sm"
             :placeholder="t('llmGateway.modelModal.modelPlaceholder')"
@@ -1704,7 +1743,7 @@ void load()
         <label class="block space-y-1">
           <span class="text-sm font-medium">{{ t('llmGateway.modelModal.displayName') }}</span>
           <input
-            v-model="formDisplayName"
+            v-model="modelForm.displayName"
             data-testid="pool-model-name-input"
             class="admin-input text-sm"
             :placeholder="t('llmGateway.modelModal.displayNamePlaceholder')"
@@ -1714,7 +1753,7 @@ void load()
 
         <label class="block space-y-1">
           <span class="text-sm font-medium">{{ t('llmGateway.modelModal.binding') }}</span>
-          <select v-model="formGatewayBinding" class="admin-input text-sm">
+          <select v-model="modelForm.gatewayBinding" class="admin-input text-sm">
             <option :value="`pool:${modelModalVendor}`">
               {{ t('llmGateway.modelModal.bindingPool', { binding: `pool:${modelModalVendor}` }) }}
             </option>
@@ -1733,6 +1772,17 @@ void load()
           </select>
         </label>
 
+        <label class="block space-y-1">
+          <span class="text-sm font-medium">{{ t('llmGateway.modelModal.baseUrl') }}</span>
+          <input
+            v-model="modelForm.baseUrl"
+            data-testid="pool-model-base-url-input"
+            class="admin-input font-mono text-sm"
+            :placeholder="t('llmGateway.modelModal.baseUrlPlaceholder')"
+            maxlength="512"
+          />
+        </label>
+
         <div class="space-y-1">
           <span class="block text-sm font-medium">{{ t('llmGateway.modelModal.tags') }}</span>
           <div class="flex flex-wrap gap-1.5">
@@ -1743,7 +1793,7 @@ void load()
               :data-tag-option="tag"
               class="rounded-md border px-2.5 py-1 font-mono text-xs transition-colors"
               :class="
-                formTags.includes(tag)
+                modelForm.tags.includes(tag)
                   ? 'border-studio-violet bg-studio-violet text-white'
                   : 'border-border bg-surface text-muted-foreground hover:text-foreground'
               "
@@ -1758,7 +1808,7 @@ void load()
           <label class="block space-y-1">
             <span class="text-xs font-medium">{{ t('llmGateway.modelModal.reasoningEffort') }}</span>
             <select
-              v-model="formReasoningEffort"
+              v-model="modelForm.reasoningEffort"
               data-testid="pool-model-reasoning-select"
               class="admin-input text-sm"
             >
@@ -1772,7 +1822,7 @@ void load()
           <label class="block space-y-1">
             <span class="text-xs font-medium">{{ t('llmGateway.modelModal.timeoutMs') }}</span>
             <input
-              v-model.number="formTimeoutMs"
+              v-model.number="modelForm.timeoutMs"
               type="number"
               min="1000"
               max="600000"
@@ -1783,7 +1833,7 @@ void load()
           <label class="block space-y-1">
             <span class="text-xs font-medium">{{ t('llmGateway.modelModal.maxTokens') }}</span>
             <input
-              v-model="formMaxTokens"
+              v-model="modelForm.maxTokens"
               data-testid="pool-model-max-tokens-input"
               type="number"
               min="1"
@@ -1796,7 +1846,7 @@ void load()
           <label class="block space-y-1">
             <span class="text-xs font-medium">{{ t('llmGateway.modelModal.contextLimit') }}</span>
             <input
-              v-model="formContextLimitTokens"
+              v-model="modelForm.contextLimitTokens"
               type="number"
               min="4096"
               max="2000000"
@@ -1808,7 +1858,7 @@ void load()
           <label class="block space-y-1">
             <span class="text-xs font-medium">{{ t('llmGateway.modelModal.temperature') }}</span>
             <input
-              v-model="formTemperaturePercent"
+              v-model="modelForm.temperaturePercent"
               data-testid="pool-model-temperature-input"
               type="number"
               min="0"
@@ -1820,7 +1870,7 @@ void load()
         </div>
 
         <label class="flex items-center gap-2 pt-1 text-sm">
-          <input v-model="formEnabled" type="checkbox" class="size-4 rounded border-border" />
+          <input v-model="modelForm.enabled" type="checkbox" class="size-4 rounded border-border" />
           <span>{{ t('llmGateway.modelModal.enabled') }}</span>
         </label>
 

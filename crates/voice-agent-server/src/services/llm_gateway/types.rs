@@ -78,192 +78,177 @@ impl GatewayVendor {
         }
     }
 
-    pub fn preset_models(self) -> Vec<GatewayVendorModelPreset> {
-        let preset = |model: &str,
-                      display_name: &str,
-                      tags: &[&str],
-                      supports_reasoning_effort: bool,
-                      default_max_tokens: Option<u32>,
-                      default_context_limit_tokens: Option<u32>| {
-            GatewayVendorModelPreset {
-                model: model.to_owned(),
-                display_name: display_name.to_owned(),
-                tags: tags.iter().map(|t| (*t).to_owned()).collect(),
-                supports_reasoning_effort,
-                default_max_tokens,
-                default_context_limit_tokens,
-            }
-        };
+    pub const fn preset_models(self) -> &'static [GatewayVendorModelPreset] {
         match self {
-            Self::Anthropic => vec![
-                preset(
-                    "claude-sonnet-4-20250514",
-                    "Claude Sonnet 4",
-                    &["chat", "reasoning", "vision"],
-                    false,
-                    Some(4096),
-                    Some(200_000),
-                ),
-                preset(
-                    "claude-opus-4-20250514",
-                    "Claude Opus 4",
-                    &["chat", "reasoning", "vision"],
-                    false,
-                    Some(4096),
-                    Some(200_000),
-                ),
-                preset(
-                    "claude-3-7-sonnet-20250219",
-                    "Claude 3.7 Sonnet",
-                    &["chat", "reasoning", "vision"],
-                    false,
-                    Some(4096),
-                    Some(200_000),
-                ),
-                preset(
-                    "claude-3-5-haiku-20241022",
-                    "Claude 3.5 Haiku",
-                    &["chat", "vision"],
-                    false,
-                    Some(4096),
-                    Some(200_000),
-                ),
+            Self::Anthropic => &[
+                GatewayVendorModelPreset {
+                    model: "claude-sonnet-4-20250514",
+                    display_name: "Claude Sonnet 4",
+                    tags: &["chat", "reasoning", "vision"],
+                    supports_reasoning_effort: false,
+                    default_max_tokens: Some(4096),
+                    default_context_limit_tokens: Some(200_000),
+                },
+                GatewayVendorModelPreset {
+                    model: "claude-opus-4-20250514",
+                    display_name: "Claude Opus 4",
+                    tags: &["chat", "reasoning", "vision"],
+                    supports_reasoning_effort: false,
+                    default_max_tokens: Some(4096),
+                    default_context_limit_tokens: Some(200_000),
+                },
+                GatewayVendorModelPreset {
+                    model: "claude-3-7-sonnet-20250219",
+                    display_name: "Claude 3.7 Sonnet",
+                    tags: &["chat", "reasoning", "vision"],
+                    supports_reasoning_effort: false,
+                    default_max_tokens: Some(4096),
+                    default_context_limit_tokens: Some(200_000),
+                },
+                GatewayVendorModelPreset {
+                    model: "claude-3-5-haiku-20241022",
+                    display_name: "Claude 3.5 Haiku",
+                    tags: &["chat", "vision"],
+                    supports_reasoning_effort: false,
+                    default_max_tokens: Some(4096),
+                    default_context_limit_tokens: Some(200_000),
+                },
             ],
-            Self::OpenaiCodex => vec![
-                preset(
-                    "gpt-5.6-terra",
-                    "GPT-5.6 Terra (Codex)",
-                    &["chat", "reasoning", "vision"],
-                    true,
-                    Some(4096),
-                    Some(200_000),
-                ),
-                preset(
-                    "gpt-5.3-codex",
-                    "GPT-5.3 Codex",
-                    &["chat", "reasoning", "vision"],
-                    true,
-                    Some(4096),
-                    Some(200_000),
-                ),
-                preset(
-                    "gpt-5.2-codex",
-                    "GPT-5.2 Codex",
-                    &["chat", "reasoning", "vision"],
-                    true,
-                    Some(4096),
-                    Some(200_000),
-                ),
-                preset(
-                    "o3",
-                    "OpenAI o3",
-                    &["chat", "reasoning", "vision"],
-                    true,
-                    Some(4096),
-                    Some(200_000),
-                ),
-                preset(
-                    "o4-mini",
-                    "OpenAI o4-mini",
-                    &["chat", "reasoning", "vision"],
-                    true,
-                    Some(4096),
-                    Some(200_000),
-                ),
-                preset(
-                    "gpt-4.1",
-                    "GPT-4.1",
-                    &["chat", "vision"],
-                    false,
-                    Some(4096),
-                    Some(128_000),
-                ),
+            Self::OpenaiCodex => &[
+                GatewayVendorModelPreset {
+                    model: "gpt-5.6-terra",
+                    display_name: "GPT-5.6 Terra (Codex)",
+                    tags: &["chat", "reasoning", "vision"],
+                    supports_reasoning_effort: true,
+                    default_max_tokens: Some(4096),
+                    default_context_limit_tokens: Some(200_000),
+                },
+                GatewayVendorModelPreset {
+                    model: "gpt-5.3-codex",
+                    display_name: "GPT-5.3 Codex",
+                    tags: &["chat", "reasoning", "vision"],
+                    supports_reasoning_effort: true,
+                    default_max_tokens: Some(4096),
+                    default_context_limit_tokens: Some(200_000),
+                },
+                GatewayVendorModelPreset {
+                    model: "gpt-5.2-codex",
+                    display_name: "GPT-5.2 Codex",
+                    tags: &["chat", "reasoning", "vision"],
+                    supports_reasoning_effort: true,
+                    default_max_tokens: Some(4096),
+                    default_context_limit_tokens: Some(200_000),
+                },
+                GatewayVendorModelPreset {
+                    model: "o3",
+                    display_name: "OpenAI o3",
+                    tags: &["chat", "reasoning", "vision"],
+                    supports_reasoning_effort: true,
+                    default_max_tokens: Some(4096),
+                    default_context_limit_tokens: Some(200_000),
+                },
+                GatewayVendorModelPreset {
+                    model: "o4-mini",
+                    display_name: "OpenAI o4-mini",
+                    tags: &["chat", "reasoning", "vision"],
+                    supports_reasoning_effort: true,
+                    default_max_tokens: Some(4096),
+                    default_context_limit_tokens: Some(200_000),
+                },
+                GatewayVendorModelPreset {
+                    model: "gpt-4.1",
+                    display_name: "GPT-4.1",
+                    tags: &["chat", "vision"],
+                    supports_reasoning_effort: false,
+                    default_max_tokens: Some(4096),
+                    default_context_limit_tokens: Some(128_000),
+                },
             ],
-            Self::Gemini => vec![
-                preset(
-                    "gemini-2.5-pro",
-                    "Gemini 2.5 Pro",
-                    &["chat", "reasoning", "vision"],
-                    true,
-                    Some(4096),
-                    Some(1_000_000),
-                ),
-                preset(
-                    "gemini-2.5-flash",
-                    "Gemini 2.5 Flash",
-                    &["chat", "reasoning", "vision"],
-                    true,
-                    Some(4096),
-                    Some(1_000_000),
-                ),
-                preset(
-                    "gemini-2.0-flash",
-                    "Gemini 2.0 Flash",
-                    &["chat", "vision"],
-                    false,
-                    Some(4096),
-                    Some(1_000_000),
-                ),
+            Self::Gemini => &[
+                GatewayVendorModelPreset {
+                    model: "gemini-2.5-pro",
+                    display_name: "Gemini 2.5 Pro",
+                    tags: &["chat", "reasoning", "vision"],
+                    supports_reasoning_effort: true,
+                    default_max_tokens: Some(4096),
+                    default_context_limit_tokens: Some(1_000_000),
+                },
+                GatewayVendorModelPreset {
+                    model: "gemini-2.5-flash",
+                    display_name: "Gemini 2.5 Flash",
+                    tags: &["chat", "reasoning", "vision"],
+                    supports_reasoning_effort: true,
+                    default_max_tokens: Some(4096),
+                    default_context_limit_tokens: Some(1_000_000),
+                },
+                GatewayVendorModelPreset {
+                    model: "gemini-2.0-flash",
+                    display_name: "Gemini 2.0 Flash",
+                    tags: &["chat", "vision"],
+                    supports_reasoning_effort: false,
+                    default_max_tokens: Some(4096),
+                    default_context_limit_tokens: Some(1_000_000),
+                },
             ],
-            Self::GithubCopilot => vec![
-                preset(
-                    "gpt-4o",
-                    "Copilot GPT-4o",
-                    &["chat", "vision"],
-                    false,
-                    Some(4096),
-                    Some(128_000),
-                ),
-                preset(
-                    "claude-3.5-sonnet",
-                    "Copilot Claude 3.5 Sonnet",
-                    &["chat", "vision"],
-                    false,
-                    Some(4096),
-                    Some(128_000),
-                ),
-                preset(
-                    "o3-mini",
-                    "Copilot o3-mini",
-                    &["chat", "reasoning"],
-                    true,
-                    Some(4096),
-                    Some(128_000),
-                ),
-                preset(
-                    "gemini-2.0-flash-001",
-                    "Copilot Gemini 2.0 Flash",
-                    &["chat", "vision"],
-                    false,
-                    Some(4096),
-                    Some(128_000),
-                ),
+            Self::GithubCopilot => &[
+                GatewayVendorModelPreset {
+                    model: "gpt-4o",
+                    display_name: "Copilot GPT-4o",
+                    tags: &["chat", "vision"],
+                    supports_reasoning_effort: false,
+                    default_max_tokens: Some(4096),
+                    default_context_limit_tokens: Some(128_000),
+                },
+                GatewayVendorModelPreset {
+                    model: "claude-3.5-sonnet",
+                    display_name: "Copilot Claude 3.5 Sonnet",
+                    tags: &["chat", "vision"],
+                    supports_reasoning_effort: false,
+                    default_max_tokens: Some(4096),
+                    default_context_limit_tokens: Some(128_000),
+                },
+                GatewayVendorModelPreset {
+                    model: "o3-mini",
+                    display_name: "Copilot o3-mini",
+                    tags: &["chat", "reasoning"],
+                    supports_reasoning_effort: true,
+                    default_max_tokens: Some(4096),
+                    default_context_limit_tokens: Some(128_000),
+                },
+                GatewayVendorModelPreset {
+                    model: "gemini-2.0-flash-001",
+                    display_name: "Copilot Gemini 2.0 Flash",
+                    tags: &["chat", "vision"],
+                    supports_reasoning_effort: false,
+                    default_max_tokens: Some(4096),
+                    default_context_limit_tokens: Some(128_000),
+                },
             ],
-            Self::Muse => vec![
-                preset(
-                    "muse-chat",
-                    "Muse Chat (Multimodal)",
-                    &["chat", "vision"],
-                    false,
-                    Some(4096),
-                    Some(128_000),
-                ),
-                preset(
-                    "muse-image",
-                    "Muse Image Generation",
-                    &["image"],
-                    false,
-                    None,
-                    None,
-                ),
-                preset(
-                    "muse-video",
-                    "Muse Video Generation",
-                    &["video"],
-                    false,
-                    None,
-                    None,
-                ),
+            Self::Muse => &[
+                GatewayVendorModelPreset {
+                    model: "muse-chat",
+                    display_name: "Muse Chat (Multimodal)",
+                    tags: &["chat", "vision"],
+                    supports_reasoning_effort: false,
+                    default_max_tokens: Some(4096),
+                    default_context_limit_tokens: Some(128_000),
+                },
+                GatewayVendorModelPreset {
+                    model: "muse-image",
+                    display_name: "Muse Image Generation",
+                    tags: &["image"],
+                    supports_reasoning_effort: false,
+                    default_max_tokens: None,
+                    default_context_limit_tokens: None,
+                },
+                GatewayVendorModelPreset {
+                    model: "muse-video",
+                    display_name: "Muse Video Generation",
+                    tags: &["video"],
+                    supports_reasoning_effort: false,
+                    default_max_tokens: None,
+                    default_context_limit_tokens: None,
+                },
             ],
         }
     }
@@ -454,11 +439,11 @@ pub enum OAuthLoginMode {
     DeviceCode,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub struct GatewayVendorModelPreset {
-    pub model: String,
-    pub display_name: String,
-    pub tags: Vec<String>,
+    pub model: &'static str,
+    pub display_name: &'static str,
+    pub tags: &'static [&'static str],
     pub supports_reasoning_effort: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default_max_tokens: Option<u32>,
@@ -468,13 +453,17 @@ pub struct GatewayVendorModelPreset {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GatewayPoolModelView {
+    #[serde(skip)]
+    pub id: i64,
     pub provider_key: String,
     pub display_name: String,
     pub vendor: GatewayVendor,
     pub adapter: String,
-    pub gateway_binding: String,
+    pub gateway_binding: GatewayBinding,
     pub binding_mode: String,
     pub model: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub base_url: Option<String>,
     pub enabled: bool,
     pub revision: i64,
     pub tags: Vec<String>,
@@ -498,7 +487,7 @@ pub struct GatewayVendorInfo {
     pub display_name: String,
     pub login_mode: OAuthLoginMode,
     pub default_base_url: String,
-    pub pool_binding: String,
+    pub pool_binding: GatewayBinding,
     pub total_accounts: usize,
     pub active_accounts: usize,
     pub cooling_down_accounts: usize,
@@ -508,13 +497,13 @@ pub struct GatewayVendorInfo {
     pub models: Vec<GatewayPoolModelView>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct GatewayPoolDetailView {
     pub vendor: GatewayVendor,
     pub display_name: String,
     pub login_mode: OAuthLoginMode,
     pub default_base_url: String,
-    pub pool_binding: String,
+    pub pool_binding: GatewayBinding,
     pub total_accounts: usize,
     pub active_accounts: usize,
     pub cooling_down_accounts: usize,
@@ -522,7 +511,7 @@ pub struct GatewayPoolDetailView {
     pub disabled_accounts: usize,
     pub accounts: Vec<GatewayAccountView>,
     pub models: Vec<GatewayPoolModelView>,
-    pub preset_models: Vec<GatewayVendorModelPreset>,
+    pub preset_models: &'static [GatewayVendorModelPreset],
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -644,7 +633,9 @@ pub struct CreatePoolModelRequest {
     #[serde(default, alias = "name")]
     pub display_name: Option<String>,
     #[serde(default)]
-    pub gateway_binding: Option<String>,
+    pub gateway_binding: Option<GatewayBinding>,
+    #[serde(default)]
+    pub base_url: Option<String>,
     #[serde(default)]
     pub tags: Option<Vec<String>>,
     #[serde(default)]
@@ -666,7 +657,9 @@ pub struct UpdatePoolModelPatch {
     pub model: Option<String>,
     #[serde(default, alias = "name")]
     pub display_name: Option<String>,
-    pub gateway_binding: Option<String>,
+    pub gateway_binding: Option<GatewayBinding>,
+    #[serde(default, deserialize_with = "deserialize_double_option")]
+    pub base_url: Option<Option<String>>,
     pub tags: Option<Vec<String>>,
     #[serde(default, deserialize_with = "deserialize_double_option")]
     pub reasoning_effort: Option<Option<String>>,

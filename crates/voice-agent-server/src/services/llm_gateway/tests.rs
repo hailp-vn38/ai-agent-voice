@@ -831,7 +831,10 @@ async fn llm_gateway_pool_detail_and_model_crud_lifecycle() {
         .await
         .expect("get_pool_detail");
     assert_eq!(detail_initial.vendor, GatewayVendor::OpenaiCodex);
-    assert_eq!(detail_initial.pool_binding, "pool:openai_codex");
+    assert_eq!(
+        detail_initial.pool_binding,
+        GatewayBinding::Pool(GatewayVendor::OpenaiCodex)
+    );
     assert!(detail_initial.models.is_empty());
     assert!(!detail_initial.preset_models.is_empty());
     assert!(
@@ -849,6 +852,7 @@ async fn llm_gateway_pool_detail_and_model_crud_lifecycle() {
                 model: "gpt-5.3-codex".to_owned(),
                 display_name: None,
                 gateway_binding: None,
+                base_url: Some("https://custom.openai.example/v1".to_owned()),
                 tags: None,
                 reasoning_effort: Some("high".to_owned()),
                 max_tokens: Some(8192),
@@ -857,6 +861,7 @@ async fn llm_gateway_pool_detail_and_model_crud_lifecycle() {
                 timeout_ms: Some(45_000),
                 enabled: Some(true),
             },
+            "req-create-pool-model",
         )
         .await
         .expect("create_pool_model");
@@ -864,9 +869,16 @@ async fn llm_gateway_pool_detail_and_model_crud_lifecycle() {
     assert!(created.provider_key.starts_with("llm_"));
     assert_eq!(created.display_name, "GPT-5.3 Codex");
     assert_eq!(created.vendor, GatewayVendor::OpenaiCodex);
-    assert_eq!(created.gateway_binding, "pool:openai_codex");
+    assert_eq!(
+        created.gateway_binding,
+        GatewayBinding::Pool(GatewayVendor::OpenaiCodex)
+    );
     assert_eq!(created.binding_mode, "pool");
     assert_eq!(created.model, "gpt-5.3-codex");
+    assert_eq!(
+        created.base_url.as_deref(),
+        Some("https://custom.openai.example/v1")
+    );
     assert_eq!(created.reasoning_effort.as_deref(), Some("high"));
     assert_eq!(created.max_tokens, Some(8192));
     assert_eq!(created.context_limit_tokens, Some(200_000));
@@ -898,18 +910,21 @@ async fn llm_gateway_pool_detail_and_model_crud_lifecycle() {
             UpdatePoolModelPatch {
                 model: Some("gpt-5.6-terra".to_owned()),
                 display_name: Some("Codex Terra Primary".to_owned()),
+                base_url: Some(None),
                 tags: Some(vec!["chat".to_owned(), "reasoning".to_owned()]),
                 reasoning_effort: Some(Some("medium".to_owned())),
                 max_tokens: Some(Some(16384)),
                 enabled: Some(false),
                 ..Default::default()
             },
+            "req-update-pool-model",
         )
         .await
         .expect("update_pool_model");
 
     assert_eq!(updated.model, "gpt-5.6-terra");
     assert_eq!(updated.display_name, "Codex Terra Primary");
+    assert_eq!(updated.base_url, None);
     assert_eq!(updated.tags, vec!["chat".to_owned(), "reasoning".to_owned()]);
     assert_eq!(updated.reasoning_effort.as_deref(), Some("medium"));
     assert_eq!(updated.max_tokens, Some(16384));
@@ -918,7 +933,11 @@ async fn llm_gateway_pool_detail_and_model_crud_lifecycle() {
 
     // Cross-vendor guard: cannot update/delete OpenAI Codex model via Anthropic pool endpoint
     let wrong_vendor = hub
-        .delete_pool_model(GatewayVendor::Anthropic, &created.provider_key)
+        .delete_pool_model(
+            GatewayVendor::Anthropic,
+            &created.provider_key,
+            "req-delete-wrong-vendor",
+        )
         .await
         .expect_err("wrong vendor must fail");
     assert_eq!(wrong_vendor, GatewayError::PoolModelNotFound);
@@ -957,7 +976,11 @@ async fn llm_gateway_pool_detail_and_model_crud_lifecycle() {
     assert_eq!(detail_bound.models[0].template_usage_count, 1);
 
     let in_use_err = hub
-        .delete_pool_model(GatewayVendor::OpenaiCodex, &created.provider_key)
+        .delete_pool_model(
+            GatewayVendor::OpenaiCodex,
+            &created.provider_key,
+            "req-delete-in-use",
+        )
         .await
         .expect_err("delete bound model should fail");
     assert_eq!(
@@ -972,9 +995,24 @@ async fn llm_gateway_pool_detail_and_model_crud_lifecycle() {
         .await
         .expect("delete binding");
 
-    hub.delete_pool_model(GatewayVendor::OpenaiCodex, &created.provider_key)
+    let deleted = hub
+        .delete_pool_model(
+            GatewayVendor::OpenaiCodex,
+            &created.provider_key,
+            "req-delete-pool-model",
+        )
         .await
         .expect("delete_pool_model after unbind");
+    assert!(deleted);
+
+    let audit_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM admin_audit_events WHERE resource_type = 'provider' AND resource_id = ?",
+    )
+    .bind(provider_id)
+    .fetch_one(db.pool())
+    .await
+    .expect("audit count");
+    assert_eq!(audit_count, 3);
 
     let detail_after = hub
         .get_pool_detail(GatewayVendor::OpenaiCodex)
