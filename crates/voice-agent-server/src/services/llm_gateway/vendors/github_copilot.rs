@@ -427,6 +427,9 @@ impl OAuthVendorDriver for GithubCopilotOAuthDriver {
         Ok(parse_github_copilot_usage_payload(&payload))
     }
 
+    /// Headers for the Copilot inference API (`api.githubcopilot.com`). The GitHub REST
+    /// `X-GitHub-Api-Version` (`2022-11-28`) belongs only to `api.github.com`; the Copilot
+    /// inference API rejects it with `400 bad request: error: invalid apiVersion`.
     fn extra_headers_for(&self, _bundle: &OAuthTokenBundle) -> Vec<(String, String)> {
         vec![
             ("Editor-Version".to_owned(), COPILOT_EDITOR_VERSION.to_owned()),
@@ -436,7 +439,6 @@ impl OAuthVendorDriver for GithubCopilotOAuthDriver {
             ),
             ("Copilot-Integration-Id".to_owned(), "vscode-chat".to_owned()),
             ("User-Agent".to_owned(), COPILOT_USER_AGENT.to_owned()),
-            ("X-GitHub-Api-Version".to_owned(), GITHUB_API_VERSION.to_owned()),
         ]
     }
 }

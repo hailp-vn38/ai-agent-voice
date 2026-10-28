@@ -161,6 +161,25 @@ async fn llm_gateway_device_code_flow_github_copilot() {
     );
 }
 
+#[test]
+fn github_copilot_inference_headers_omit_github_rest_api_version() {
+    use super::{types::OAuthTokenBundle, vendors::github_copilot::GithubCopilotOAuthDriver};
+    let bundle = OAuthTokenBundle {
+        access_token: "tid=copilot".to_owned(),
+        refresh_token: None,
+        upstream_oauth_token: Some("ghu_test".to_owned()),
+        account_context_id: None,
+    };
+    let headers = GithubCopilotOAuthDriver::new().extra_headers_for(&bundle);
+    // api.githubcopilot.com rejects the GitHub REST version with `400 invalid apiVersion`.
+    assert!(
+        headers
+            .iter()
+            .all(|(name, _)| !name.eq_ignore_ascii_case("x-github-api-version"))
+    );
+    assert!(headers.contains(&("Copilot-Integration-Id".to_owned(), "vscode-chat".to_owned())));
+}
+
 #[tokio::test]
 async fn github_copilot_device_flow_slow_down_throttle_and_post_exchange_fallback() {
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
