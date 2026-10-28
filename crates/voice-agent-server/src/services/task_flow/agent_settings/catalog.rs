@@ -34,9 +34,32 @@ pub struct ResolvedLlmProvider {
 }
 
 impl ResolvedLlmProvider {
+    pub fn is_tts_adapter(&self) -> bool {
+        matches!(
+            self.adapter.as_str(),
+            "zerotts_onnx"
+                | "chillaudio_ws"
+                | "edge_tts"
+                | "vieneu"
+                | "kokoro_vi_onnx"
+                | "vifasttts_onnx"
+                | "qualification_tts"
+        ) || self.provider_ref.starts_with("config:tts:")
+    }
+
+    pub fn requires_api_key(&self) -> bool {
+        !self.is_tts_adapter() || self.adapter == "chillaudio_ws"
+    }
+
     pub fn supports_tag(&self, tag: &str) -> bool {
-        self.tags.iter().any(|t| t == tag)
-            || (tag == "chat" && self.tags.iter().any(|t| t == "reasoning"))
+        let normalized = tag.trim().to_ascii_lowercase();
+        self.tags.iter().any(|t| {
+            let candidate = t.trim().to_ascii_lowercase();
+            candidate == normalized
+                || (normalized == "chat" && candidate == "reasoning")
+                || ((normalized == "tts" || normalized == "audio")
+                    && (candidate == "tts" || candidate == "audio"))
+        }) || ((normalized == "tts" || normalized == "audio") && self.is_tts_adapter())
     }
 
     fn clamped_max_tokens(&self) -> u32 {
@@ -319,7 +342,132 @@ pub async fn resolve_llm_provider_catalog(state: &AppState) -> Vec<ResolvedLlmPr
         }
     }
 
+    // 3. Deployment config TTS instances (`config:tts:<key>`)
+    let mut tts_config_keys: Vec<&String> = state.config.providers.tts.instances.keys().collect();
+    tts_config_keys.sort();
+    for key in tts_config_keys {
+        let Some(instance) = state.config.providers.tts.instances.get(key) else {
+            continue;
+        };
+        let adapter = instance.adapter().to_owned();
+        let serialized = serde_json::to_value(instance).unwrap_or(Value::Null);
+        let (model, base_url) = extract_tts_model_and_url(&adapter, &serialized);
+        out.push(ResolvedLlmProvider {
+            provider_ref: format!("config:tts:{key}"),
+            name: format!("{key} ({model})"),
+            source: "config",
+            adapter,
+            model,
+            base_url,
+            api_key: None,
+            timeout_ms: state.config.tts.timeout_ms,
+            max_tokens: orch_cfg.max_output_tokens,
+            context_limit_tokens: orch_cfg.context_limit_tokens,
+            reasoning_effort: None,
+            temperature_percent: None,
+            tags: vec!["tts".to_owned()],
+        });
+    }
+
+    // 4. Database TTS providers (`providers` table where `type='tts' AND enabled=1`)
+    if let Some(database) = &state.database
+        && let Ok(rows) = sqlx::query_as::<_, (String, String, String, String, Option<String>)>(
+            "SELECT key, name, adapter, config_json, credential_json FROM providers WHERE type='tts' AND enabled=1 ORDER BY id",
+        )
+        .fetch_all(database.pool())
+        .await
+    {
+        for (key, name, adapter, config_json, credential_json) in rows {
+            if out.iter().any(|p| p.provider_ref == key) {
+                continue;
+            }
+            let parsed = serde_json::from_str::<Value>(&config_json).unwrap_or(Value::Null);
+            let (model, base_url) = extract_tts_model_and_url(&adapter, &parsed);
+            let secret_ref = crate::database::credentials::reference(
+                &format!("provider:{key}"),
+                credential_json.as_deref(),
+                crate::database::secrets::provider_secret_env(&key, &adapter),
+            );
+            let api_key = secret_ref
+                .and_then(|r| crate::database::secrets::SecretRef::parse(r).ok())
+                .and_then(|s| state.secret_resolver.resolve(&s).ok())
+                .map(|v| v.expose().trim().to_owned())
+                .filter(|s| !s.is_empty())
+                .map(SecretString::new);
+
+            out.push(ResolvedLlmProvider {
+                provider_ref: key,
+                name,
+                source: "database",
+                adapter,
+                model,
+                base_url,
+                api_key,
+                timeout_ms: state.config.tts.timeout_ms,
+                max_tokens: orch_cfg.max_output_tokens,
+                context_limit_tokens: orch_cfg.context_limit_tokens,
+                reasoning_effort: None,
+                temperature_percent: None,
+                tags: vec!["tts".to_owned()],
+            });
+        }
+    }
+
+    // 5. Resident TTS runtimes (`state.runtimes.tts`) not already covered above
+    let mut runtime_tts_keys: Vec<&String> = state.runtimes.tts.keys().collect();
+    runtime_tts_keys.sort();
+    for key in runtime_tts_keys {
+        let Some(runtime) = state.runtimes.tts.get(key) else {
+            continue;
+        };
+        let adapter = runtime.provider().adapter().to_owned();
+        if adapter == "unavailable" {
+            continue;
+        }
+        let config_ref = format!("config:tts:{key}");
+        if out
+            .iter()
+            .any(|p| p.provider_ref == *key || p.provider_ref == config_ref)
+        {
+            continue;
+        }
+        out.push(ResolvedLlmProvider {
+            provider_ref: key.clone(),
+            name: format!("{key} ({adapter})"),
+            source: "runtime",
+            adapter: adapter.clone(),
+            model: adapter,
+            base_url: String::new(),
+            api_key: None,
+            timeout_ms: state.config.tts.timeout_ms,
+            max_tokens: orch_cfg.max_output_tokens,
+            context_limit_tokens: orch_cfg.context_limit_tokens,
+            reasoning_effort: None,
+            temperature_percent: None,
+            tags: vec!["tts".to_owned()],
+        });
+    }
+
     out
+}
+
+fn extract_tts_model_and_url(adapter: &str, parsed: &Value) -> (String, String) {
+    let model = parsed
+        .get("model")
+        .or_else(|| parsed.get("voice"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .unwrap_or(adapter)
+        .to_owned();
+    let base_url = parsed
+        .get("url")
+        .or_else(|| parsed.get("base_url"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .unwrap_or_default()
+        .to_owned();
+    (model, base_url)
 }
 
 struct ResolvedAgentSettings<'a> {
@@ -497,6 +645,10 @@ pub fn build_agent_definitions(
 ) -> (Vec<LlmProviderConfig>, Vec<AgentDefinition>) {
     let providers: Vec<LlmProviderConfig> = catalog
         .iter()
+        .filter(|p| {
+            !p.is_tts_adapter()
+                && (p.base_url.starts_with("http://") || p.base_url.starts_with("https://"))
+        })
         .map(ResolvedLlmProvider::to_orchestrator_provider)
         .collect();
 
@@ -537,6 +689,162 @@ pub fn build_agent_definitions(
     (providers, defs)
 }
 
+#[derive(Clone, Default)]
+pub(crate) struct ServerTtsRuntimeBridge {
+    config: Option<std::sync::Arc<crate::config::AppConfig>>,
+    database: Option<std::sync::Arc<crate::database::Database>>,
+    runtimes: std::sync::Arc<crate::providers::RuntimeCatalog>,
+    runtime_manager: Option<std::sync::Arc<crate::services::provider_runtime::ProviderRuntimeManager>>,
+}
+
+impl ServerTtsRuntimeBridge {
+    pub(crate) fn from_state(state: &AppState) -> Self {
+        Self {
+            config: Some(std::sync::Arc::clone(&state.config)),
+            database: state.database.clone(),
+            runtimes: std::sync::Arc::clone(&state.runtimes),
+            runtime_manager: state.provider_runtime_manager.clone(),
+        }
+    }
+
+    pub(crate) fn insert_runtime(
+        &mut self,
+        provider_ref: String,
+        runtime: std::sync::Arc<crate::workers::TtsWorkerRuntime>,
+    ) {
+        std::sync::Arc::make_mut(&mut self.runtimes)
+            .tts
+            .insert(provider_ref, runtime);
+    }
+
+    async fn synthesize(
+        &self,
+        provider_ref: &str,
+        text: &str,
+        voice: Option<&str>,
+    ) -> Result<Vec<u8>, String> {
+        let bare_key = provider_ref
+            .strip_prefix("config:tts:")
+            .unwrap_or(provider_ref);
+
+        // 1. Resident TTS runtime in `self.runtimes.tts`
+        if let Some(runtime) = self
+            .runtimes
+            .tts
+            .get(provider_ref)
+            .or_else(|| self.runtimes.tts.get(bare_key))
+            && runtime.provider().adapter() != "unavailable"
+        {
+            return runtime
+                .synthesize_background_wav(text, voice)
+                .await
+                .map_err(|e| e.to_string());
+        }
+
+        // 2. Managed runtime lease via `ProviderRuntimeManager` (ADR-0071)
+        let manager = self.runtime_manager.as_ref().ok_or_else(|| {
+            format!("TTS provider `{provider_ref}` runtime is not loaded and runtime manager is inactive")
+        })?;
+        let desired = self.resolve_desired_tts_provider(provider_ref).await?;
+        let deadline = manager.admission_deadline();
+        let lease = if desired.id == 0 {
+            manager
+                .acquire_deployment_until(desired.clone(), deadline)
+                .await
+                .map_err(|e| format!("TTS deployment runtime lease failed: {e}"))?
+        } else {
+            manager
+                .acquire_until(desired.clone(), deadline)
+                .await
+                .map_err(|e| format!("TTS database runtime lease failed: {e}"))?
+        };
+        let runtime = lease
+            .runtimes()
+            .and_then(|cat| cat.tts.get(&desired.key).cloned())
+            .ok_or_else(|| format!("TTS runtime `{provider_ref}` is unavailable in lease"))?;
+        runtime
+            .synthesize_background_wav(text, voice)
+            .await
+            .map_err(|e| e.to_string())
+    }
+
+    async fn resolve_desired_tts_provider(
+        &self,
+        provider_ref: &str,
+    ) -> Result<crate::database::DesiredProvider, String> {
+        let config_key = provider_ref
+            .strip_prefix("config:tts:")
+            .or_else(|| {
+                self.config
+                    .as_ref()
+                    .and_then(|c| c.providers.tts.instances.contains_key(provider_ref).then_some(provider_ref))
+            });
+        if let Some(key) = config_key {
+            let config = self
+                .config
+                .as_deref()
+                .ok_or_else(|| "deployment config unavailable for TTS lookup".to_owned())?;
+            return crate::providers::deployment_provider_snapshot(config, "tts", key)
+                .map_err(|_| format!("config TTS provider `{provider_ref}` not found"));
+        }
+        let database = self
+            .database
+            .as_ref()
+            .ok_or_else(|| "database is unavailable for TTS provider lookup".to_owned())?;
+        let (id, key, kind, adapter, config, revision, enabled, credential) = database
+            .diagnostic_provider_row(provider_ref)
+            .await
+            .map_err(|e| format!("TTS provider `{provider_ref}` lookup failed: {e}"))?;
+        if enabled == 0 {
+            return Err(format!("TTS provider `{provider_ref}` is disabled"));
+        }
+        if kind != "tts" {
+            return Err(format!("provider `{provider_ref}` is not a TTS provider"));
+        }
+        let secret_ref = crate::database::credentials::reference(
+            &format!("provider:{key}"),
+            credential.as_deref(),
+            crate::database::secrets::provider_secret_env(&key, &adapter),
+        );
+        Ok(crate::database::DesiredProvider {
+            id,
+            key,
+            kind,
+            adapter,
+            config_json: config.unwrap_or_else(|| "{}".to_owned()),
+            secret_ref,
+            revision,
+        })
+    }
+}
+
+fn inspect_wav_metadata(bytes: &[u8], fallback_text: &str, speed: f32) -> (u32, u64) {
+    if let Ok(reader) = hound::WavReader::new(std::io::Cursor::new(bytes)) {
+        let spec = reader.spec();
+        let sample_rate_hz = spec.sample_rate.max(1);
+        let frames = u64::from(reader.duration());
+        let duration_ms = ((frames * 1_000) / u64::from(sample_rate_hz)).max(1);
+        (sample_rate_hz, duration_ms)
+    } else {
+        let word_count = fallback_text.split_whitespace().count().max(1);
+        let duration_ms =
+            (((word_count as f32) * 120.0 / speed.clamp(0.5, 2.0)) as u64).clamp(250, 60_000);
+        (24_000, duration_ms)
+    }
+}
+
+static LIVE_SERVER_TTS_BRIDGE: std::sync::OnceLock<
+    std::sync::Arc<std::sync::RwLock<Option<ServerTtsRuntimeBridge>>>,
+> = std::sync::OnceLock::new();
+
+pub(crate) fn install_server_tts_runtime(state: &AppState) {
+    let bridge = ServerTtsRuntimeBridge::from_state(state);
+    let shared = LIVE_SERVER_TTS_BRIDGE
+        .get_or_init(|| std::sync::Arc::new(std::sync::RwLock::new(None)))
+        .clone();
+    *shared.write().unwrap_or_else(|e| e.into_inner()) = Some(bridge);
+}
+
 static LIVE_MEDIA_CATALOG: std::sync::OnceLock<
     std::sync::Arc<std::sync::RwLock<Vec<ResolvedLlmProvider>>>,
 > = std::sync::OnceLock::new();
@@ -568,6 +876,7 @@ pub struct CatalogMediaBackend {
     store_dir: Option<std::path::PathBuf>,
     catalog: std::sync::Arc<std::sync::RwLock<Vec<ResolvedLlmProvider>>>,
     settings: std::sync::Arc<std::sync::RwLock<Option<PersistedBackgroundSettings>>>,
+    tts_bridge: Option<ServerTtsRuntimeBridge>,
     default_image: orchestrator_flow_rs::DefaultImageGeneratorBackend,
     default_video: orchestrator_flow_rs::DefaultVideoGeneratorBackend,
     default_tts: orchestrator_flow_rs::DefaultTtsSynthesizerBackend,
@@ -592,6 +901,7 @@ impl CatalogMediaBackend {
             store_dir: Some(dir),
             catalog: shared,
             settings: shared_settings,
+            tts_bridge: None,
             default_image: orchestrator_flow_rs::DefaultImageGeneratorBackend,
             default_video: orchestrator_flow_rs::DefaultVideoGeneratorBackend,
             default_tts: orchestrator_flow_rs::DefaultTtsSynthesizerBackend,
@@ -603,6 +913,7 @@ impl CatalogMediaBackend {
             store_dir: None,
             catalog: std::sync::Arc::new(std::sync::RwLock::new(catalog)),
             settings: std::sync::Arc::new(std::sync::RwLock::new(None)),
+            tts_bridge: None,
             default_image: orchestrator_flow_rs::DefaultImageGeneratorBackend,
             default_video: orchestrator_flow_rs::DefaultVideoGeneratorBackend,
             default_tts: orchestrator_flow_rs::DefaultTtsSynthesizerBackend,
@@ -611,6 +922,18 @@ impl CatalogMediaBackend {
 
     pub fn with_settings(self, settings: PersistedBackgroundSettings) -> Self {
         *self.settings.write().unwrap_or_else(|e| e.into_inner()) = Some(settings);
+        self
+    }
+
+    pub fn with_tts_runtime(
+        mut self,
+        provider_ref: impl Into<String>,
+        runtime: std::sync::Arc<crate::workers::TtsWorkerRuntime>,
+    ) -> Self {
+        let bridge = self
+            .tts_bridge
+            .get_or_insert_with(ServerTtsRuntimeBridge::default);
+        bridge.insert_runtime(provider_ref.into(), runtime);
         self
     }
 
@@ -631,6 +954,24 @@ impl CatalogMediaBackend {
         let settings = self.effective_settings();
         resolve_media_tool_provider(&guard, settings.as_ref(), tool_name, required_tag, true)
     }
+
+    async fn synthesize_via_server_tts(
+        &self,
+        provider_ref: &str,
+        text: &str,
+        voice: Option<&str>,
+    ) -> Result<Vec<u8>, String> {
+        let bridge = self
+            .tts_bridge
+            .clone()
+            .or_else(|| {
+                LIVE_SERVER_TTS_BRIDGE
+                    .get()
+                    .and_then(|lock| lock.read().unwrap_or_else(|e| e.into_inner()).clone())
+            })
+            .ok_or_else(|| format!("server TTS runtime bridge is not initialized for `{provider_ref}`"))?;
+        bridge.synthesize(provider_ref, text, voice).await
+    }
 }
 
 fn resolve_media_tool_provider(
@@ -640,10 +981,12 @@ fn resolve_media_tool_provider(
     required_tag: &str,
     require_api_key: bool,
 ) -> Option<ResolvedLlmProvider> {
+    let is_usable = |p: &ResolvedLlmProvider| -> bool {
+        p.supports_tag(required_tag)
+            && (!require_api_key || !p.requires_api_key() || p.api_key.is_some())
+    };
     let matches_prov = |p: &ResolvedLlmProvider, pref: &str| -> bool {
-        p.provider_ref == pref
-            && p.supports_tag(required_tag)
-            && (!require_api_key || p.api_key.is_some())
+        p.provider_ref == pref && is_usable(p)
     };
     if let Some(settings) = settings {
         if let Some(tool_ref) = settings
@@ -658,7 +1001,7 @@ fn resolve_media_tool_provider(
         {
             return Some(found.clone());
         }
-        if matches!(required_tag, "image" | "video")
+        if matches!(required_tag, "image" | "video" | "tts" | "audio")
             && let Some(explicit_ref) = settings
                 .agents
                 .get("media_creator")
@@ -676,10 +1019,12 @@ fn resolve_media_tool_provider(
             return Some(found.clone());
         }
     }
-    catalog
-        .iter()
-        .find(|p| p.supports_tag(required_tag) && (!require_api_key || p.api_key.is_some()))
-        .cloned()
+    if required_tag.eq_ignore_ascii_case("tts")
+        && let Some(tts_prov) = catalog.iter().find(|p| p.is_tts_adapter() && is_usable(p))
+    {
+        return Some(tts_prov.clone());
+    }
+    catalog.iter().find(|p| is_usable(p)).cloned()
 }
 
 #[async_trait::async_trait]
@@ -775,9 +1120,37 @@ impl orchestrator_flow_rs::TtsSynthesizerBackend for CatalogMediaBackend {
         &self,
         req: &orchestrator_flow_rs::TtsSynthesisRequest,
     ) -> Result<orchestrator_flow_rs::SynthesizedAudioPayload, String> {
-        let Some(resolved) = self.select_provider("tts_synthesize", "audio") else {
+        let Some(resolved) = self.select_provider("tts_synthesize", "tts") else {
             return self.default_tts.synthesize_tts(req).await;
         };
+        let stem = llm_wiki::slugify(
+            req.filename
+                .trim_end_matches(".wav")
+                .trim_end_matches(".mp3"),
+            64,
+        );
+        let safe_name = format!("{}.wav", if stem.is_empty() { "tts-audio" } else { &stem });
+
+        if resolved.is_tts_adapter() {
+            let wav_bytes = self
+                .synthesize_via_server_tts(
+                    &resolved.provider_ref,
+                    &req.text,
+                    (!req.voice.trim().is_empty()).then_some(req.voice.as_str()),
+                )
+                .await?;
+            let (sample_rate_hz, duration_ms) =
+                inspect_wav_metadata(&wav_bytes, &req.text, req.speed);
+            return Ok(orchestrator_flow_rs::SynthesizedAudioPayload {
+                filename: safe_name,
+                mime_type: "audio/wav".to_owned(),
+                bytes: wav_bytes,
+                sample_rate_hz,
+                duration_ms,
+                provider: resolved.provider_ref.clone(),
+            });
+        }
+
         let provider = resolved.to_llm_provider().map_err(|e| e.to_string())?;
         let speed = req.speed.clamp(0.5, 2.0);
         let output = provider
@@ -793,13 +1166,6 @@ impl orchestrator_flow_rs::TtsSynthesizerBackend for CatalogMediaBackend {
         };
         let word_count = req.text.split_whitespace().count().max(1);
         let duration_ms = (((word_count as f32) * 120.0 / speed) as u64).clamp(250, 60_000);
-        let stem = llm_wiki::slugify(
-            req.filename
-                .trim_end_matches(".wav")
-                .trim_end_matches(".mp3"),
-            64,
-        );
-        let safe_name = format!("{}.wav", if stem.is_empty() { "tts-audio" } else { &stem });
         Ok(orchestrator_flow_rs::SynthesizedAudioPayload {
             filename: safe_name,
             mime_type,

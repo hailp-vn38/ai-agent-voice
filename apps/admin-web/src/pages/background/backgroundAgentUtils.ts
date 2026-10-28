@@ -8,8 +8,17 @@ export function providerSupportsAnyTag(
   option: BackgroundProviderOption,
   requiredTags: string[],
 ): boolean {
-  const tags = option.tags && option.tags.length > 0 ? option.tags : ['chat']
-  return requiredTags.some(tag => tags.includes(tag))
+  const tags = (option.tags && option.tags.length > 0 ? option.tags : ['chat']).map(t =>
+    t.trim().toLowerCase(),
+  )
+  return requiredTags.some(rawTag => {
+    const tag = rawTag.trim().toLowerCase()
+    if (tags.includes(tag)) return true
+    if ((tag === 'tts' || tag === 'audio') && (tags.includes('tts') || tags.includes('audio'))) {
+      return true
+    }
+    return false
+  })
 }
 
 export function chatProviderOptions(
@@ -48,7 +57,7 @@ export function toolCapabilityEntries(
     return [
       ['image_create', 'image'],
       ['video_create', 'video'],
-      ['tts_synthesize', 'audio'],
+      ['tts_synthesize', 'tts'],
     ]
   }
   return []

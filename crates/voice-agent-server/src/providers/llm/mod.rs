@@ -61,7 +61,7 @@ impl LlmCapabilityTag {
             "vision" => Some(Self::Vision),
             "image" => Some(Self::Image),
             "video" => Some(Self::Video),
-            "audio" => Some(Self::Audio),
+            "audio" | "tts" | "TTS" => Some(Self::Audio),
             "reasoning" => Some(Self::Reasoning),
             "embedding" => Some(Self::Embedding),
             _ => None,
@@ -95,10 +95,13 @@ pub fn valid_llm_tags(tags: Option<&[String]>) -> bool {
         return false;
     }
     for (idx, tag) in tags.iter().enumerate() {
-        if !LLM_CAPABILITY_TAGS.contains(&tag.as_str()) {
+        let Some(parsed) = LlmCapabilityTag::parse(tag) else {
             return false;
-        }
-        if tags[..idx].iter().any(|earlier| earlier == tag) {
+        };
+        if tags[..idx]
+            .iter()
+            .any(|earlier| earlier == tag || LlmCapabilityTag::parse(earlier) == Some(parsed))
+        {
             return false;
         }
     }
@@ -122,7 +125,7 @@ pub fn llm_config_tags(config_json: &str) -> Vec<String> {
     let tags: Vec<String> = arr
         .iter()
         .filter_map(Value::as_str)
-        .filter(|t| LLM_CAPABILITY_TAGS.contains(t))
+        .filter(|t| LlmCapabilityTag::parse(t).is_some())
         .map(str::to_owned)
         .collect();
     if tags.is_empty() {
@@ -133,9 +136,15 @@ pub fn llm_config_tags(config_json: &str) -> Vec<String> {
 }
 
 pub fn llm_config_supports_tag(config_json: &str, required_tag: &str) -> bool {
+    let Some(required) = LlmCapabilityTag::parse(required_tag) else {
+        return false;
+    };
     let tags = llm_config_tags(config_json);
-    tags.iter().any(|t| t == required_tag)
-        || (required_tag == "chat" && tags.iter().any(|t| t == "reasoning"))
+    let parsed: Vec<LlmCapabilityTag> = tags
+        .iter()
+        .filter_map(|t| LlmCapabilityTag::parse(t))
+        .collect();
+    capability_tags_support(&parsed, required)
 }
 
 pub fn validate_template_provider_capability(

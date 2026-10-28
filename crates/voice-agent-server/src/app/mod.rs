@@ -492,6 +492,7 @@ async fn prepare_background(state: &mut AppState) -> Result<(), BootstrapError> 
         guard.background_revision = persisted.revision.max(1);
         guard.background_settings = persisted;
     }
+    crate::services::task_flow::install_server_tts_runtime(state);
     let catalog = crate::services::task_flow::resolve_llm_provider_catalog(state).await;
     let runtime =
         crate::services::task_flow::init_from_app_config_with_catalog(&state.config, &catalog)

@@ -10,6 +10,7 @@ mod workspace_seed;
 #[cfg(test)]
 mod tests;
 
+pub(crate) use agent_settings::install_server_tts_runtime;
 pub use agent_settings::{
     AGENT_SPECS, AgentConfigOverride, AgentSpec, CatalogImageGeneratorBackend, CatalogMediaBackend,
     CatalogTtsSynthesizerBackend, CatalogVideoGeneratorBackend, DEFAULT_ORCHESTRATOR_PROVIDER_REF,

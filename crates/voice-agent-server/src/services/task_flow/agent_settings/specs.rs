@@ -43,13 +43,13 @@ impl AgentSpec {
     }
 
     /// Maps media/specialized tools on this agent to their required provider capability tag
-    /// (e.g. `"image_create"` -> `"image"`, `"video_create"` -> `"video"`, `"tts_synthesize"` -> `"audio"`).
+    /// (e.g. `"image_create"` -> `"image"`, `"video_create"` -> `"video"`, `"tts_synthesize"` -> `"tts"`).
     pub const fn tool_capability_tags(&self) -> &'static [(&'static str, &'static str)] {
         match self.id.as_bytes() {
             b"media_creator" => &[
                 ("image_create", "image"),
                 ("video_create", "video"),
-                ("tts_synthesize", "audio"),
+                ("tts_synthesize", "tts"),
             ],
             _ => &[],
         }

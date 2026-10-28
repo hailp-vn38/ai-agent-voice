@@ -18,6 +18,7 @@ pub use catalog::{
     default_orchestrator_provider, find_provider_by_tag, project_agents_json,
     resolve_llm_provider_catalog,
 };
+pub(crate) use catalog::install_server_tts_runtime;
 use catalog::{agent_supports_provider, update_live_media_catalog};
 pub use specs::{
     AGENT_SPECS, AgentSpec, DEFAULT_USER_ROOT_AGENT_ID, WIKI_AUTOFLOW_ROOT_AGENT_ID,
@@ -264,11 +265,12 @@ pub async fn sync_orchestrator_from_state(state: &AppState) -> Result<(), String
     {
         let _ = write_agent_prompts(&state.config.orchestrator.prompts_dir, &settings);
     }
+    install_server_tts_runtime(state);
+    let catalog = resolve_llm_provider_catalog(state).await;
+    update_live_media_catalog(&catalog, Some(&settings));
     let Some(orch) = state.orchestrator.as_ref() else {
         return Ok(());
     };
-    let catalog = resolve_llm_provider_catalog(state).await;
-    update_live_media_catalog(&catalog, Some(&settings));
     let (providers, defs) =
         build_agent_definitions(&state.config.orchestrator, &settings, &catalog);
     orch.reconfigure(providers, defs)

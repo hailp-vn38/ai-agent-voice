@@ -97,6 +97,72 @@ impl TtsWorkerRuntime {
             state.workers[worker].quarantined = true;
         }
     }
+
+    /// Synthesizes one background TTS clip into a WAV payload (`ProviderWorkloadClass::Background`),
+    /// honouring an optional voice override when supported by the provider and falling back to
+    /// the runtime's configured [`TtsBinding`].
+    pub async fn synthesize_background_wav(
+        &self,
+        text: &str,
+        voice: Option<&str>,
+    ) -> Result<Vec<u8>, TtsWorkerError> {
+        let trimmed_voice = voice
+            .map(str::trim)
+            .filter(|v| !v.is_empty() && !matches!(*v, "vi-default" | "default" | "alloy"));
+        let synth_req = trimmed_voice
+            .and_then(|v| {
+                self.effective_diagnostic_request(TtsDiagnosticRequest {
+                    text: text.to_owned(),
+                    voice: Some(v.to_owned()),
+                    language: None,
+                })
+                .ok()
+            })
+            .unwrap_or_else(|| TtsSynthesisRequest {
+                text: text.to_owned(),
+                selection: self.binding.clone(),
+            });
+
+        let workload_class = if self.admission.has_background_capacity() {
+            ProviderWorkloadClass::Background
+        } else {
+            ProviderWorkloadClass::Voice
+        };
+        let permit = self
+            .admission
+            .try_admit(workload_class)
+            .map_err(|_| TtsWorkerError::Capacity)?;
+        let lease =
+            self.start_with_permit(None, TtsWorkRequest::Voice(synth_req), Some(permit))?;
+        let mut sample_rate = None;
+        let mut samples = Vec::new();
+        loop {
+            match self.poll(lease)? {
+                Some(TtsWorkerEvent::Pcm(pcm)) => {
+                    if append_pcm(&mut sample_rate, &mut samples, pcm).is_err() {
+                        let _ = self.cancel(lease);
+                        return Err(TtsWorkerError::InvalidConfig);
+                    }
+                }
+                Some(TtsWorkerEvent::Finished) => {
+                    while self.reset_pending() {
+                        tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+                    }
+                    return wav(sample_rate, samples).map_err(|_| TtsWorkerError::InvalidConfig);
+                }
+                Some(TtsWorkerEvent::Failed)
+                | Some(TtsWorkerEvent::Cancelled)
+                | Some(TtsWorkerEvent::CleanupTimedOut) => {
+                    return Err(TtsWorkerError::Initialization);
+                }
+                Some(TtsWorkerEvent::TimedOut) => {
+                    let _ = self.cancel(lease);
+                    return Err(TtsWorkerError::Capacity);
+                }
+                None => tokio::time::sleep(std::time::Duration::from_millis(1)).await,
+            }
+        }
+    }
 }
 #[async_trait::async_trait]
 impl ProviderDiagnosticOperation for TtsDiagnosticOperation {

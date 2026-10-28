@@ -96,7 +96,7 @@ impl TtsWorkerRuntime {
             .map_err(|_| TtsWorkerError::Capacity)?;
         self.start_with_permit(stream, request, permit)
     }
-    fn start_with_permit(
+    pub(super) fn start_with_permit(
         &self,
         stream: Option<TtsStreamId>,
         request: TtsWorkRequest,

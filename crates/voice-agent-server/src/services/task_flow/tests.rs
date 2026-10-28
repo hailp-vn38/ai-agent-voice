@@ -624,7 +624,7 @@ fn resolved_llm_provider_exposes_capability_tags_and_enforces_agent_compatibilit
         serde_json::json!({
             "image_create": "image",
             "video_create": "video",
-            "tts_synthesize": "audio"
+            "tts_synthesize": "tts"
         })
     );
     assert_eq!(
@@ -661,6 +661,21 @@ fn resolved_llm_provider_exposes_capability_tags_and_enforces_agent_compatibilit
         validate_agent_overrides("llm_chat", "llm_chat", &bad_tool_overrides, &catalog),
         Err("provider_capability_mismatch")
     );
+
+    assert!(crate::providers::llm::valid_llm_tags(Some(&[
+        "tts".to_owned()
+    ])));
+    assert!(crate::providers::llm::valid_llm_tags(Some(&[
+        "TTS".to_owned()
+    ])));
+    assert_eq!(
+        crate::providers::llm::llm_config_tags(r#"{"tags":["tts"]}"#),
+        vec!["tts".to_owned()]
+    );
+    assert!(crate::providers::llm::llm_config_supports_tag(
+        r#"{"tags":["tts"]}"#,
+        "audio"
+    ));
 }
 
 #[tokio::test]
@@ -807,6 +822,63 @@ async fn catalog_media_backend_and_reasoning_tag_wire_provider_capabilities() {
     assert_eq!(audio.provider, "llm_media");
     assert_eq!(audio.bytes, b"RIFF_UPSTREAM_WAV");
 
+    // Server native TTS provider (`type = "tts"`, `tags: ["tts"]`, no API key required)
+    struct TestServerTts;
+    impl crate::providers::TtsProvider for TestServerTts {
+        fn adapter(&self) -> &'static str {
+            "vieneu"
+        }
+        fn synthesize_stream(
+            &self,
+            _text: &str,
+            on_pcm: &mut dyn FnMut(crate::audio::PcmF32Mono) -> Result<(), crate::providers::TtsError>,
+        ) -> Result<(), crate::providers::TtsError> {
+            on_pcm(crate::audio::PcmF32Mono::new(vec![0.15; 2_400], 24_000))
+        }
+    }
+
+    let tts_runtime = std::sync::Arc::new(crate::workers::TtsWorkerRuntime::new(
+        std::sync::Arc::new(TestServerTts),
+        crate::workers::WorkerRuntimeConfig {
+            max_workers: 1,
+            final_timeout: std::time::Duration::from_secs(10),
+            cleanup_grace: std::time::Duration::from_secs(5),
+            ..crate::workers::WorkerRuntimeConfig::default()
+        },
+    ));
+    let server_tts_provider = ResolvedLlmProvider {
+        provider_ref: "tts_vieneu_local".into(),
+        name: "VieNeu Local TTS".into(),
+        source: "database",
+        adapter: "vieneu".into(),
+        model: "Binh".into(),
+        base_url: String::new(),
+        api_key: None,
+        timeout_ms: 15_000,
+        max_tokens: 4_096,
+        context_limit_tokens: 64_000,
+        reasoning_effort: None,
+        temperature_percent: None,
+        tags: vec!["tts".into()],
+    };
+    let tts_backend = CatalogMediaBackend::from_catalog(vec![server_tts_provider])
+        .with_tts_runtime("tts_vieneu_local", tts_runtime.clone());
+    let server_audio = tts_backend
+        .synthesize_tts(&TtsSynthesisRequest {
+            text: "Xin chào từ server TTS".into(),
+            filename: "server-tts.wav".into(),
+            voice: "vi-default".into(),
+            language: "vi-VN".into(),
+            speed: 1.0,
+        })
+        .await
+        .unwrap();
+    assert_eq!(server_audio.provider, "tts_vieneu_local");
+    assert_eq!(server_audio.mime_type, "audio/wav");
+    assert_eq!(server_audio.sample_rate_hz, 24_000);
+    assert!(server_audio.bytes.starts_with(b"RIFF"));
+    let _ = tts_runtime.shutdown_acknowledged();
+
     // Fallback when catalog has no image/video/audio tagged provider
     let empty_backend = CatalogMediaBackend::from_catalog(Vec::new());
     let fallback_img = empty_backend
@@ -867,3 +939,4 @@ fn canonical_prompts_enforce_summarize_analyze_visualize_pipeline_and_flexible_d
     assert!(MEDIA_CREATOR_PROMPT.contains("Agent-Selectable or Smart Default"));
     assert!(MEDIA_CREATOR_PROMPT.contains("svg_content"));
 }
+

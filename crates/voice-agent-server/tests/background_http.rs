@@ -452,6 +452,23 @@ prompts_dir = "{}"
     let created_provider: Value = created_resp.json().await.unwrap();
     let db_provider_key = created_provider["key"].as_str().unwrap().to_owned();
 
+    // 1b. Create a database TTS provider (`type = "tts"`) and verify it is selectable for `tts_synthesize`
+    let created_tts_resp = client
+        .post(format!("{base}/providers"))
+        .bearer_auth("background-test-token")
+        .json(&json!({
+            "name": "VieNeu Server TTS",
+            "type": "tts",
+            "adapter": "vieneu",
+            "config_json": {}
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(created_tts_resp.status(), StatusCode::CREATED);
+    let created_tts_provider: Value = created_tts_resp.json().await.unwrap();
+    let db_tts_key = created_tts_provider["key"].as_str().unwrap().to_owned();
+
     // 2. Fetch GET /api/admin/background/settings and verify provider catalog + 9 agents
     let initial: Value = client
         .get(format!("{base}/background/settings"))
@@ -477,6 +494,13 @@ prompts_dir = "{}"
     assert_eq!(db_entry["context_limit_tokens"], 128_000);
     assert_eq!(db_entry["reasoning_effort"], "high");
     assert_eq!(db_entry["temperature_percent"], 60);
+
+    let db_tts_entry = llm_providers
+        .iter()
+        .find(|p| p["ref"] == db_tts_key)
+        .expect("newly created DB TTS provider must appear in background settings with tag `tts`");
+    assert_eq!(db_tts_entry["adapter"], "vieneu");
+    assert_eq!(db_tts_entry["tags"], json!(["tts"]));
 
     let agents = initial["agents"].as_array().unwrap();
     assert_eq!(agents.len(), 9);
@@ -512,7 +536,10 @@ prompts_dir = "{}"
                     "system_prompt": "Custom Vietnamese researcher prompt."
                 },
                 "media_creator": {
-                    "enabled": false
+                    "enabled": false,
+                    "tool_providers": {
+                        "tts_synthesize": db_tts_key
+                    }
                 }
             }
         }))
@@ -525,6 +552,22 @@ prompts_dir = "{}"
     assert_eq!(updated["worker_llm_provider"], db_provider_key);
 
     let updated_agents = updated["agents"].as_array().unwrap();
+    let media_creator = updated_agents
+        .iter()
+        .find(|a| a["id"] == "media_creator")
+        .unwrap();
+    assert_eq!(
+        media_creator["tool_capability_tags"]["tts_synthesize"],
+        "tts"
+    );
+    assert_eq!(
+        media_creator["tool_providers"]["tts_synthesize"],
+        db_tts_key
+    );
+    assert_eq!(
+        media_creator["effective_tool_providers"]["tts_synthesize"],
+        db_tts_key
+    );
     let researcher = updated_agents
         .iter()
         .find(|a| a["id"] == "wiki_researcher")

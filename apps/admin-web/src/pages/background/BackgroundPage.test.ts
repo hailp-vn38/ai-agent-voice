@@ -62,6 +62,14 @@ const fixtureSettings = () => ({
       model: 'flux-1-dev',
       tags: ['image'],
     },
+    {
+      ref: 'tts_vieneu',
+      name: 'VieNeu TTS',
+      source: 'database',
+      adapter: 'vieneu',
+      model: 'Binh',
+      tags: ['tts'],
+    },
   ],
   agents: [
     {
@@ -118,13 +126,13 @@ const fixtureSettings = () => ({
       tool_capability_tags: {
         image_create: 'image',
         video_create: 'video',
-        tts_synthesize: 'audio',
+        tts_synthesize: 'tts',
       },
       tool_providers: {},
       effective_tool_providers: {
         image_create: 'llm_flux_image',
         video_create: null,
-        tts_synthesize: null,
+        tts_synthesize: 'tts_vieneu',
       },
       steps: 12,
       default_steps: 12,
@@ -264,6 +272,11 @@ describe('BackgroundPage & BackgroundAgentDetailPage subagent configuration', ()
     expect(imageToolSelect.text()).toContain('Flux Image Gen')
     await imageToolSelect.setValue('llm_flux_image')
 
+    const ttsToolSelect = mediaWrapper.get('select[data-tool-provider="tts_synthesize"]')
+    expect(ttsToolSelect.text()).toContain('Auto-select by tag (tts)')
+    expect(ttsToolSelect.text()).toContain('VieNeu TTS')
+    await ttsToolSelect.setValue('tts_vieneu')
+
     requestMock.mockImplementationOnce(() =>
       Promise.resolve({
         ...fixtureSettings(),
@@ -280,6 +293,7 @@ describe('BackgroundPage & BackgroundAgentDetailPage subagent configuration', ()
     const mediaBody = JSON.parse(String(mediaPutCalls[1]![1].body))
     expect(mediaBody.agents.media_creator.tool_providers).toEqual({
       image_create: 'llm_flux_image',
+      tts_synthesize: 'tts_vieneu',
     })
   })
 
@@ -477,4 +491,5 @@ describe('BackgroundPage & BackgroundAgentDetailPage subagent configuration', ()
     const body = JSON.parse(String(putCall![1].body))
     expect(body.agents.wiki_researcher.allowed_skills).toContain('fact-check')
   })
+
 })
