@@ -1,6 +1,7 @@
 //! Persistent & live configuration for Flow 1 (`daily_root`) & Flow 2 (`wiki_root`) Root Orchestrators,
 //! Built-in Sub-Agents, and Custom Sub-Agents, integrated with the Server LLM/TTS Provider Catalog.
 
+mod gateway_executor;
 mod media_backend;
 mod persistence;
 mod provider_catalog;
@@ -9,6 +10,7 @@ mod specs;
 mod validation;
 
 pub(crate) use media_backend::install_server_tts_runtime;
+pub use gateway_executor::GatewayOrchestratorExecutor;
 pub use media_backend::{
     CatalogImageGeneratorBackend, CatalogMediaBackend, CatalogTtsSynthesizerBackend,
     CatalogVideoGeneratorBackend,

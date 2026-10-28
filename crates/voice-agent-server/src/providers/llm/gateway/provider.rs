@@ -76,6 +76,15 @@ pub struct LlmGatewayProvider {
     tags: Vec<LlmCapabilityTag>,
 }
 
+impl std::fmt::Debug for LlmGatewayProvider {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("LlmGatewayProvider")
+            .field("adapter_name", &self.adapter_name)
+            .field("config", &self.config)
+            .finish()
+    }
+}
+
 impl LlmGatewayProvider {
     pub fn from_config(config: &LlmGatewayConfig) -> Result<Self, LlmError> {
         Self::with_hub(config, SharedGatewayHub::global())
@@ -131,53 +140,50 @@ impl LlmGatewayProvider {
         Self::with_hub_and_adapter(&gw_cfg, SharedGatewayHub::global(), "openai")
     }
 
-    fn resolve_endpoint<'a>(&'a self, lease: &'a GatewayLease) -> &'a str {
-        self.config
-            .base_url
+    fn resolve_endpoint_for<'a>(cfg: &'a LlmGatewayConfig, lease: &'a GatewayLease) -> &'a str {
+        cfg.base_url
             .as_ref()
             .map(|u| u.as_str().trim_end_matches('/'))
             .unwrap_or(&lease.base_url)
     }
 
-    fn finalize_wire_result<T>(&self, account_key: &str, result: Result<T, WireError>) -> Result<T, LlmError> {
-        match result {
-            Ok(out) => {
-                self.hub
-                    .report_outcome(account_key, GatewayCallOutcome::Success);
-                Ok(out)
-            }
+    fn finalize_wire_result<T>(
+        &self,
+        account_key: &str,
+        result: Result<T, WireError>,
+    ) -> Result<T, WireError> {
+        match &result {
+            Ok(_) => self
+                .hub
+                .report_outcome(account_key, GatewayCallOutcome::Success),
             Err(WireError::RateLimited { retry_after_secs }) => {
                 self.hub.report_outcome(
                     account_key,
-                    GatewayCallOutcome::RateLimited { retry_after_secs },
+                    GatewayCallOutcome::RateLimited {
+                        retry_after_secs: *retry_after_secs,
+                    },
                 );
-                Err(LlmError::Failed)
             }
             Err(WireError::Unauthorized) => {
                 self.hub
                     .report_outcome(account_key, GatewayCallOutcome::Unauthorized);
-                Err(LlmError::Failed)
             }
-            Err(WireError::Other) => Err(LlmError::Failed),
+            Err(WireError::Other) => {}
         }
+        result
     }
 
-    async fn open_chat_stream(
+    pub(crate) async fn open_chat_stream_with_config(
         &self,
-        request: LlmRequest,
-        force_reasoning: bool,
-    ) -> Result<LlmEventStream, LlmError> {
+        effective_cfg: &LlmGatewayConfig,
+        request: &LlmRequest,
+    ) -> Result<LlmEventStream, WireError> {
         // 1. Synchronous 0ms lease acquisition from in-RAM GatewayRuntimeSnapshot (ADR-0083 / ADR-0130)
         let lease = self
             .hub
-            .acquire_lease(&self.config.gateway_binding)
-            .map_err(|_| LlmError::Failed)?;
-        let endpoint = self.resolve_endpoint(&lease);
-
-        let mut effective_cfg = self.config.clone();
-        if force_reasoning && effective_cfg.reasoning_effort.is_none() {
-            effective_cfg.reasoning_effort = Some("medium".to_owned());
-        }
+            .acquire_lease(&effective_cfg.gateway_binding)
+            .map_err(|_| WireError::Other)?;
+        let endpoint = Self::resolve_endpoint_for(effective_cfg, &lease);
 
         // 2. Single upstream attempt — zero automatic provider retries (ADR-0023)
         let response = match lease.vendor {
@@ -186,8 +192,8 @@ impl LlmGatewayProvider {
                     &self.http,
                     endpoint,
                     &lease,
-                    &effective_cfg,
-                    &request,
+                    effective_cfg,
+                    request,
                 )
                 .await
             }
@@ -196,14 +202,28 @@ impl LlmGatewayProvider {
                     &self.http,
                     endpoint,
                     &lease,
-                    &effective_cfg,
-                    &request,
+                    effective_cfg,
+                    request,
                 )
                 .await
             }
         };
 
         self.finalize_wire_result(&lease.account_key, response)
+    }
+
+    async fn open_chat_stream(
+        &self,
+        request: LlmRequest,
+        force_reasoning: bool,
+    ) -> Result<LlmEventStream, LlmError> {
+        let mut effective_cfg = self.config.clone();
+        if force_reasoning && effective_cfg.reasoning_effort.is_none() {
+            effective_cfg.reasoning_effort = Some("medium".to_owned());
+        }
+        self.open_chat_stream_with_config(&effective_cfg, &request)
+            .await
+            .map_err(|_| LlmError::Failed)
     }
 
     async fn run_vision(
@@ -216,7 +236,7 @@ impl LlmGatewayProvider {
             .hub
             .acquire_lease(&self.config.gateway_binding)
             .map_err(|_| LlmError::Failed)?;
-        let endpoint = self.resolve_endpoint(&lease);
+        let endpoint = Self::resolve_endpoint_for(&self.config, &lease);
 
         let result = match lease.vendor {
             GatewayVendor::Anthropic => {
@@ -246,6 +266,7 @@ impl LlmGatewayProvider {
         };
 
         self.finalize_wire_result(&lease.account_key, result)
+            .map_err(|_| LlmError::Failed)
     }
 }
 

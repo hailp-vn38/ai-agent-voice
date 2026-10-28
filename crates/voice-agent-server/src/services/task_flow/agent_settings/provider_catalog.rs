@@ -10,6 +10,7 @@ use crate::app::AppState;
 use crate::config::{LlmInstanceConfig, OrchestratorSectionConfig, SecretString};
 
 use super::DEFAULT_ORCHESTRATOR_PROVIDER_REF;
+use super::gateway_executor::GatewayOrchestratorExecutor;
 use super::specs::{AgentSpec, find_agent_spec};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -39,6 +40,7 @@ pub struct ResolvedLlmProvider {
     pub base_url: String,
     /// Wrapped in [`SecretString`] so `Debug` output is always redacted (`[REDACTED]`).
     pub api_key: Option<SecretString>,
+    pub gateway_binding: Option<crate::services::llm_gateway::GatewayBinding>,
     pub timeout_ms: u64,
     pub max_tokens: u32,
     pub context_limit_tokens: usize,
@@ -70,9 +72,7 @@ impl ResolvedLlmProvider {
     }
 
     pub fn gateway_binding(&self) -> Option<crate::services::llm_gateway::GatewayBinding> {
-        let raw = self.api_key.as_ref()?.expose();
-        let binding_str = raw.strip_prefix("gateway_binding:")?;
-        crate::services::llm_gateway::GatewayBinding::parse(binding_str).ok()
+        self.gateway_binding.clone()
     }
 
     pub fn supports_tag(&self, tag: &str) -> bool {
@@ -89,11 +89,11 @@ impl ResolvedLlmProvider {
         }) || ((normalized == "tts" || normalized == "audio") && self.is_tts_adapter())
     }
 
-    fn clamped_max_tokens(&self) -> u32 {
+    pub(super) fn clamped_max_tokens(&self) -> u32 {
         self.max_tokens.clamp(1, 65_536)
     }
 
-    fn clamped_context_limit_tokens(&self) -> u32 {
+    pub(super) fn clamped_context_limit_tokens(&self) -> u32 {
         u32::try_from(self.context_limit_tokens)
             .unwrap_or(128_000)
             .clamp(4_096, 2_000_000)
@@ -204,7 +204,7 @@ impl ResolvedLlmProvider {
     }
 
     pub fn to_json_summary(&self) -> Value {
-        json!({
+        let mut out = json!({
             "ref": self.provider_ref,
             "name": self.name,
             "source": self.source,
@@ -217,15 +217,26 @@ impl ResolvedLlmProvider {
             "reasoning_effort": self.reasoning_effort,
             "temperature_percent": self.temperature_percent,
             "tags": self.tags,
-        })
+        });
+        if let Some(binding) = self.gateway_binding() {
+            out["gateway_binding"] = json!(binding.as_config_string());
+        }
+        out
     }
 
     pub fn to_orchestrator_provider(&self) -> LlmProviderConfig {
-        let auth = if let Some(binding) = self.gateway_binding() {
-            match crate::services::llm_gateway::SharedGatewayHub::global().acquire_lease(&binding) {
-                Ok(lease) => ProviderAuth::ApiKey(orchestrator_agent_rs::SecretString::new(
-                    lease.access_token.expose().to_owned(),
-                )),
+        self.to_orchestrator_provider_with_hub(
+            crate::services::llm_gateway::SharedGatewayHub::global(),
+        )
+    }
+
+    pub fn to_orchestrator_provider_with_hub(
+        &self,
+        hub: std::sync::Arc<crate::services::llm_gateway::LlmGatewayHub>,
+    ) -> LlmProviderConfig {
+        let auth = if self.gateway_binding().is_some() {
+            match GatewayOrchestratorExecutor::with_hub(self, hub) {
+                Ok(exec) => ProviderAuth::CustomExecutor(std::sync::Arc::new(exec)),
                 Err(_) => ProviderAuth::None,
             }
         } else {
@@ -268,6 +279,7 @@ pub fn default_orchestrator_provider(cfg: &OrchestratorSectionConfig) -> Resolve
         model: cfg.model.clone(),
         base_url: cfg.endpoint.clone(),
         api_key: (!cfg.api_key.trim().is_empty()).then(|| SecretString::new(cfg.api_key.clone())),
+        gateway_binding: None,
         timeout_ms: cfg.request_timeout_ms,
         max_tokens: cfg.max_output_tokens,
         context_limit_tokens: cfg.context_limit_tokens,
@@ -292,11 +304,8 @@ pub async fn resolve_llm_provider_catalog(state: &AppState) -> Vec<ResolvedLlmPr
         let provider_ref = format!("config:llm:{key}");
         match instance {
             LlmInstanceConfig::Openai(openai) => {
-                let api_key = if let Some(ref binding) = openai.gateway_binding {
-                    Some(SecretString::new(format!(
-                        "gateway_binding:{}",
-                        binding.as_config_string()
-                    )))
+                let api_key = if openai.gateway_binding.is_some() {
+                    None
                 } else {
                     (!openai.api_key.expose().trim().is_empty())
                         .then(|| SecretString::new(openai.api_key.expose().to_owned()))
@@ -309,6 +318,7 @@ pub async fn resolve_llm_provider_catalog(state: &AppState) -> Vec<ResolvedLlmPr
                     model: openai.model.clone(),
                     base_url: openai.base_url.to_string(),
                     api_key,
+                    gateway_binding: openai.gateway_binding.clone(),
                     timeout_ms: openai.timeout_ms,
                     max_tokens: openai.max_tokens.unwrap_or(orch_cfg.max_output_tokens),
                     context_limit_tokens: openai
@@ -332,6 +342,7 @@ pub async fn resolve_llm_provider_catalog(state: &AppState) -> Vec<ResolvedLlmPr
                     api_key: Some(SecretString::new(
                         crate::providers::llm::opencode_free::PUBLIC_KEY,
                     )),
+                    gateway_binding: None,
                     timeout_ms: free.timeout_ms,
                     max_tokens: free.max_tokens.unwrap_or(orch_cfg.max_output_tokens),
                     context_limit_tokens: free
@@ -358,6 +369,7 @@ pub async fn resolve_llm_provider_catalog(state: &AppState) -> Vec<ResolvedLlmPr
                     base_url: crate::providers::llm::muse::SITE_URL.to_owned(),
                     api_key: (!muse.api_key.expose().trim().is_empty())
                         .then(|| SecretString::new(muse.api_key.expose().to_owned())),
+                    gateway_binding: None,
                     timeout_ms: muse.timeout_ms,
                     max_tokens: muse.max_tokens.unwrap_or(orch_cfg.max_output_tokens),
                     context_limit_tokens: muse
@@ -389,10 +401,8 @@ pub async fn resolve_llm_provider_catalog(state: &AppState) -> Vec<ResolvedLlmPr
                     adapter: "llm_gateway".to_owned(),
                     model: gw.model.clone(),
                     base_url,
-                    api_key: Some(SecretString::new(format!(
-                        "gateway_binding:{}",
-                        gw.gateway_binding.as_config_string()
-                    ))),
+                    api_key: None,
+                    gateway_binding: Some(gw.gateway_binding.clone()),
                     timeout_ms: gw.timeout_ms,
                     max_tokens: gw.max_tokens.unwrap_or(orch_cfg.max_output_tokens),
                     context_limit_tokens: gw
@@ -458,7 +468,7 @@ pub async fn resolve_llm_provider_catalog(state: &AppState) -> Vec<ResolvedLlmPr
                 .and_then(Value::as_u64)
                 .and_then(|v| u16::try_from(v).ok());
 
-            let (base_url, api_key, muse_options) = match adapter.as_str() {
+            let (base_url, api_key, gateway_binding, muse_options) = match adapter.as_str() {
                 "openai" => {
                     let parsed_binding = parsed
                         .get("gateway_binding")
@@ -480,11 +490,8 @@ pub async fn resolve_llm_provider_catalog(state: &AppState) -> Vec<ResolvedLlmPr
                     let Some(url) = url else {
                         continue;
                     };
-                    let resolved_key = if let Some(binding) = parsed_binding {
-                        Some(SecretString::new(format!(
-                            "gateway_binding:{}",
-                            binding.as_config_string()
-                        )))
+                    let resolved_key = if parsed_binding.is_some() {
+                        None
                     } else {
                         resolve_db_provider_secret(
                             state,
@@ -493,7 +500,7 @@ pub async fn resolve_llm_provider_catalog(state: &AppState) -> Vec<ResolvedLlmPr
                             credential_json.as_deref(),
                         )
                     };
-                    (url, resolved_key, None)
+                    (url, resolved_key, parsed_binding, None)
                 }
                 "llm_gateway" => {
                     let Some(binding) = parsed
@@ -514,17 +521,14 @@ pub async fn resolve_llm_provider_catalog(state: &AppState) -> Vec<ResolvedLlmPr
                                 .default_base_url_for_binding(&binding)
                                 .to_owned()
                         });
-                    let binding_token = SecretString::new(format!(
-                        "gateway_binding:{}",
-                        binding.as_config_string()
-                    ));
-                    (url, Some(binding_token), None)
+                    (url, None, Some(binding), None)
                 }
                 "opencode_free" => (
                     crate::providers::llm::opencode_free::BASE_URL.to_owned(),
                     Some(SecretString::new(
                         crate::providers::llm::opencode_free::PUBLIC_KEY,
                     )),
+                    None,
                     None,
                 ),
                 "muse" => {
@@ -552,6 +556,7 @@ pub async fn resolve_llm_provider_catalog(state: &AppState) -> Vec<ResolvedLlmPr
                     (
                         url,
                         resolved_key,
+                        None,
                         Some(MuseCatalogOptions {
                             account_concurrency,
                             cdp_port,
@@ -575,6 +580,7 @@ pub async fn resolve_llm_provider_catalog(state: &AppState) -> Vec<ResolvedLlmPr
                 model,
                 base_url,
                 api_key,
+                gateway_binding,
                 timeout_ms,
                 max_tokens,
                 context_limit_tokens,
@@ -604,6 +610,7 @@ pub async fn resolve_llm_provider_catalog(state: &AppState) -> Vec<ResolvedLlmPr
             model,
             base_url,
             api_key: None,
+            gateway_binding: None,
             timeout_ms: state.config.tts.timeout_ms,
             max_tokens: orch_cfg.max_output_tokens,
             context_limit_tokens: orch_cfg.context_limit_tokens,
@@ -643,6 +650,7 @@ pub async fn resolve_llm_provider_catalog(state: &AppState) -> Vec<ResolvedLlmPr
                 model,
                 base_url,
                 api_key,
+                gateway_binding: None,
                 timeout_ms: state.config.tts.timeout_ms,
                 max_tokens: orch_cfg.max_output_tokens,
                 context_limit_tokens: orch_cfg.context_limit_tokens,
@@ -680,6 +688,7 @@ pub async fn resolve_llm_provider_catalog(state: &AppState) -> Vec<ResolvedLlmPr
             model: adapter,
             base_url: String::new(),
             api_key: None,
+            gateway_binding: None,
             timeout_ms: state.config.tts.timeout_ms,
             max_tokens: orch_cfg.max_output_tokens,
             context_limit_tokens: orch_cfg.context_limit_tokens,

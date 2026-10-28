@@ -74,7 +74,7 @@ pub(crate) async fn open_sse_stream(
                 }));
             }
             ChatMessage::AssistantToolCalls { calls } => {
-                let blocks: Vec<Value> = calls
+                let mut blocks: Vec<Value> = calls
                     .iter()
                     .map(|c| {
                         json!({
@@ -85,6 +85,28 @@ pub(crate) async fn open_sse_stream(
                         })
                     })
                     .collect();
+                if let Some(last) = messages.last_mut()
+                    && last.get("role").and_then(Value::as_str) == Some("assistant")
+                {
+                    if let Some(existing_str) =
+                        last.get("content").and_then(Value::as_str).map(str::to_owned)
+                    {
+                        let mut merged = Vec::with_capacity(blocks.len() + 1);
+                        if !existing_str.trim().is_empty() {
+                            merged.push(json!({
+                                "type": "text",
+                                "text": existing_str,
+                            }));
+                        }
+                        merged.append(&mut blocks);
+                        last["content"] = Value::Array(merged);
+                        continue;
+                    }
+                    if let Some(arr) = last.get_mut("content").and_then(Value::as_array_mut) {
+                        arr.append(&mut blocks);
+                        continue;
+                    }
+                }
                 messages.push(json!({
                     "role": "assistant",
                     "content": blocks,
@@ -94,16 +116,22 @@ pub(crate) async fn open_sse_stream(
                 tool_call_id,
                 content,
             } => {
-                messages.push(json!({
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "tool_result",
-                            "tool_use_id": tool_call_id,
-                            "content": content,
-                        }
-                    ]
-                }));
+                let block = json!({
+                    "type": "tool_result",
+                    "tool_use_id": tool_call_id,
+                    "content": content,
+                });
+                if let Some(last) = messages.last_mut()
+                    && last.get("role").and_then(Value::as_str) == Some("user")
+                    && let Some(arr) = last.get_mut("content").and_then(Value::as_array_mut)
+                {
+                    arr.push(block);
+                } else {
+                    messages.push(json!({
+                        "role": "user",
+                        "content": [block],
+                    }));
+                }
             }
         }
     }
