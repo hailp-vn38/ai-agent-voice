@@ -470,14 +470,7 @@ pub(crate) fn build_generated_video_payload(
     if parts.is_empty() {
         return Err("video provider returned empty media parts".to_owned());
     }
-    let stem = llm_wiki::slugify(
-        req.filename
-            .trim_end_matches(".mp4")
-            .trim_end_matches(".webm")
-            .trim_end_matches(".mov"),
-        64,
-    );
-    let base_stem = if stem.is_empty() { "video" } else { &stem };
+    let base_stem = orchestrator_flow_rs::normalize_video_stem(&req.filename, "video");
     let safe_name = format!("{base_stem}.mp4");
     let total_clips = parts.len();
     let fallback_clip_duration = if total_clips > 1 {

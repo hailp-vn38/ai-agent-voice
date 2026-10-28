@@ -916,16 +916,6 @@ async fn download_media_part_from_src(
     Ok(crate::providers::llm::MediaPart { bytes, mime_type })
 }
 
-async fn download_media_from_src(
-    page: &Arc<dyn BrowserPage>,
-    src: &str,
-    kind: MediaKind,
-    transparent_background: bool,
-) -> Result<LlmOutput, WorkflowFailure> {
-    let part = download_media_part_from_src(page, src, kind, transparent_background).await?;
-    Ok(LlmOutput::single_media(part.bytes, part.mime_type))
-}
-
 pub fn pick_media_url(links: &[String], kind: MediaKind) -> Option<String> {
     const VIDEO_EXT: &[&str] = &[".mp4", ".webm", ".mov", ".m4v"];
     const IMAGE_EXT: &[&str] = &[".png", ".jpg", ".jpeg", ".webp", ".gif", ".avif"];

@@ -9,7 +9,9 @@ mod resolution;
 mod specs;
 mod validation;
 
-pub(crate) use media_backend::{build_generated_video_payload, install_server_tts_runtime};
+#[cfg(test)]
+pub(crate) use media_backend::build_generated_video_payload;
+pub(crate) use media_backend::install_server_tts_runtime;
 pub use gateway_executor::GatewayOrchestratorExecutor;
 pub use media_backend::{
     CatalogImageGeneratorBackend, CatalogMediaBackend, CatalogTtsSynthesizerBackend,

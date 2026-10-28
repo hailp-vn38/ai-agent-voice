@@ -333,7 +333,7 @@ pub fn build_agent_definitions(
                     Some(settings),
                     "video_create",
                     "video",
-                    false,
+                    true,
                 )
                 .map(|p| p.video_constraints())
                 .unwrap_or_default();
