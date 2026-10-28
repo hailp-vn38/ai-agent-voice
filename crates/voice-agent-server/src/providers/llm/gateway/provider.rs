@@ -37,7 +37,7 @@ use super::{
             run_chat_turn_once, run_media_turn_once,
         },
     },
-    wire_anthropic, wire_openai,
+    wire_anthropic, wire_codex, wire_openai,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -239,10 +239,21 @@ impl LlmGatewayProvider {
     }
 
     fn resolve_endpoint_for<'a>(cfg: &'a LlmGatewayConfig, lease: &'a GatewayLease) -> &'a str {
-        cfg.base_url
-            .as_ref()
-            .map(|u| u.as_str().trim_end_matches('/'))
-            .unwrap_or(&lease.base_url)
+        if let Some(ref custom) = cfg.base_url {
+            let trimmed = custom.as_str().trim_end_matches('/');
+            let is_legacy_codex_openai_url = lease.vendor == GatewayVendor::OpenaiCodex
+                && matches!(
+                    trimmed,
+                    "https://api.openai.com/v1" | "https://api.openai.com"
+                );
+            let is_other_vendor_default = GatewayVendor::ALL.iter().any(|v| {
+                *v != lease.vendor && v.default_base_url().trim_end_matches('/') == trimmed
+            });
+            if !is_legacy_codex_openai_url && !is_other_vendor_default {
+                return trimmed;
+            }
+        }
+        lease.base_url.trim_end_matches('/')
     }
 
     fn muse_pool_for_lease(
@@ -382,9 +393,17 @@ impl LlmGatewayProvider {
                     )
                     .await
                 }
-                GatewayVendor::OpenaiCodex
-                | GatewayVendor::Gemini
-                | GatewayVendor::GithubCopilot => {
+                GatewayVendor::OpenaiCodex => {
+                    wire_codex::open_sse_stream(
+                        &self.http,
+                        endpoint,
+                        &current_lease,
+                        effective_cfg,
+                        request,
+                    )
+                    .await
+                }
+                GatewayVendor::Gemini | GatewayVendor::GithubCopilot => {
                     wire_openai::open_sse_stream(
                         &self.http,
                         endpoint,
@@ -514,9 +533,19 @@ impl LlmGatewayProvider {
                     )
                     .await
                 }
-                GatewayVendor::OpenaiCodex
-                | GatewayVendor::Gemini
-                | GatewayVendor::GithubCopilot => {
+                GatewayVendor::OpenaiCodex => {
+                    wire_codex::execute_vision(
+                        &self.http,
+                        endpoint,
+                        &current_lease,
+                        &self.config,
+                        prompt,
+                        image_bytes,
+                        mime_type,
+                    )
+                    .await
+                }
+                GatewayVendor::Gemini | GatewayVendor::GithubCopilot => {
                     wire_openai::execute_vision(
                         &self.http,
                         endpoint,

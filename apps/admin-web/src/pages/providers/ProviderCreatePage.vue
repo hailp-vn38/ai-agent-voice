@@ -104,8 +104,8 @@ const ADAPTER_CATALOG_META: Record<string, AdapterPresentation> = {
       timeout_ms: 60000,
     },
     placeholders: {
-      model: 'claude-sonnet-4-20250514 / gpt-4.1-mini / gemini-2.5-pro / muse-chat / muse-image / muse-video',
-      gateway_binding: 'pool:anthropic / pool:muse',
+      model: 'claude-sonnet-4-20250514 / gpt-5.6-terra / gemini-2.5-pro / muse-chat / muse-image / muse-video',
+      gateway_binding: 'pool:anthropic / pool:openai_codex / pool:muse',
       timeout_ms: '60000',
     },
   },
@@ -296,17 +296,56 @@ async function loadGatewayOptions() {
   }
 }
 
-function applyDefaultBaseUrlForBinding(binding: string) {
-  if (!fields.value.some((f) => f.key === 'base_url')) return
-  const currentBaseUrl = typeof form.config.base_url === 'string' ? form.config.base_url.trim() : ''
-  if (currentBaseUrl) return
-  let vendorId = ''
+const VENDOR_DEFAULT_MODELS: Record<string, string> = {
+  anthropic: 'claude-sonnet-4-20250514',
+  openai_codex: 'gpt-5.6-terra',
+  gemini: 'gemini-2.5-pro',
+  github_copilot: 'gpt-4o',
+  muse: 'muse-chat',
+}
+
+function resolveVendorForBinding(binding: string): string {
   if (binding.startsWith('account:')) {
     const key = binding.slice('account:'.length)
-    vendorId = gatewayAccounts.value.find((a) => a.account_key === key)?.vendor ?? ''
-  } else if (binding.startsWith('pool:')) {
-    vendorId = binding.slice('pool:'.length)
+    const found = gatewayAccounts.value.find((a) => a.account_key === key)?.vendor
+    if (found) return found
+    for (const v of Object.keys(VENDOR_DEFAULT_MODELS)) {
+      if (key.startsWith(`gw_${v}_`)) return v
+    }
+    return ''
   }
+  if (binding.startsWith('pool:')) {
+    return binding.slice('pool:'.length)
+  }
+  return ''
+}
+
+function applyDefaultBaseUrlForBinding(binding: string) {
+  const vendorId = resolveVendorForBinding(binding)
+  const defaultModel = VENDOR_DEFAULT_MODELS[vendorId]
+  const currentModel = typeof form.config.model === 'string' ? form.config.model.trim() : ''
+  if (
+    defaultModel &&
+    (!currentModel || Object.values(VENDOR_DEFAULT_MODELS).includes(currentModel))
+  ) {
+    form.config.model = defaultModel
+  }
+
+  if (!fields.value.some((f) => f.key === 'base_url')) return
+  const currentBaseUrl = typeof form.config.base_url === 'string' ? form.config.base_url.trim() : ''
+  const knownVendorUrls = new Set([
+    ...gatewayVendors.value.map((v) => v.default_base_url),
+    'https://api.openai.com/v1',
+    'https://api.anthropic.com/v1',
+  ])
+  const adapterId = descriptor.value?.adapter || selectedAdapterId.value
+  if (adapterId === 'llm_gateway') {
+    if (currentBaseUrl && knownVendorUrls.has(currentBaseUrl)) {
+      delete form.config.base_url
+    }
+    return
+  }
+  if (currentBaseUrl && !knownVendorUrls.has(currentBaseUrl)) return
   const vendorInfo = gatewayVendors.value.find((v) => v.vendor === vendorId)
   if (vendorInfo?.default_base_url) {
     form.config.base_url = vendorInfo.default_base_url

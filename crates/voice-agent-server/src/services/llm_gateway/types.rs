@@ -53,7 +53,7 @@ impl GatewayVendor {
     pub const fn default_base_url(self) -> &'static str {
         match self {
             Self::Anthropic => "https://api.anthropic.com/v1",
-            Self::OpenaiCodex => "https://api.openai.com/v1",
+            Self::OpenaiCodex => "https://chatgpt.com/backend-api/codex",
             Self::Gemini => "https://generativelanguage.googleapis.com/v1beta/openai",
             Self::GithubCopilot => "https://api.githubcopilot.com",
             Self::Muse => "https://muse.ai",

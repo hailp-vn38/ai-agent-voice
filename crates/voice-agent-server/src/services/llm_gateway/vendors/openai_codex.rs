@@ -493,6 +493,10 @@ impl OAuthVendorDriver for OpenAiCodexOAuthDriver {
     fn extra_headers_for(&self, bundle: &OAuthTokenBundle) -> Vec<(String, String)> {
         let mut headers = vec![
             ("originator".to_owned(), CODEX_ORIGINATOR.to_owned()),
+            (
+                "User-Agent".to_owned(),
+                format!("{CODEX_ORIGINATOR}/{CODEX_VERSION}"),
+            ),
             ("Version".to_owned(), CODEX_VERSION.to_owned()),
         ];
         if let Some(id) = bundle.account_context_id.as_ref().filter(|s| !s.is_empty()) {

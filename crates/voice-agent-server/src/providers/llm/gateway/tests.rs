@@ -14,7 +14,7 @@ use url::Url;
 use crate::{
     config::DatabaseConfig,
     database::{Database, credentials::CredentialCipher},
-    providers::llm::{LlmError, LlmEvent, LlmProvider, LlmRequest},
+    providers::llm::{LlmEvent, LlmProvider, LlmRequest},
     services::llm_gateway::{
         FakeOAuthVendorDriver, GatewayBinding, GatewayVendor, LlmGatewayHub,
         OAuthCallbackSubmission, OAuthVendorDriver, StartOAuthLoginRequest,
@@ -309,8 +309,8 @@ async fn llm_gateway_provider_diagnostic_and_orchestrator_custom_executor() {
 
     let app = Router::new()
         .route(
-            "/v1/chat/completions",
-            post(|headers: HeaderMap| async move {
+            "/backend-api/codex/responses",
+            post(|headers: HeaderMap, body: axum::body::Bytes| async move {
                 let auth = headers
                     .get("authorization")
                     .and_then(|v| v.to_str().ok())
@@ -321,11 +321,55 @@ async fn llm_gateway_provider_diagnostic_and_orchestrator_custom_executor() {
                     .and_then(|v| v.to_str().ok())
                     .unwrap_or("");
                 assert_eq!(acct_id, "acct_codex_test");
+                let originator = headers
+                    .get("originator")
+                    .and_then(|v| v.to_str().ok())
+                    .unwrap_or("");
+                assert_eq!(originator, "codex_cli_rs");
+
+                let payload: serde_json::Value =
+                    serde_json::from_slice(&body).expect("codex responses json body");
+                assert_eq!(payload.get("store").and_then(|v| v.as_bool()), Some(false));
+                assert_eq!(payload.get("stream").and_then(|v| v.as_bool()), Some(true));
+                assert!(
+                    payload
+                        .get("instructions")
+                        .and_then(|v| v.as_str())
+                        .is_some_and(|s| !s.trim().is_empty()),
+                    "Codex Responses API requires non-empty instructions"
+                );
+                assert!(
+                    payload.get("input").and_then(|v| v.as_array()).is_some_and(|a| !a.is_empty()),
+                    "Codex Responses API requires non-empty input array"
+                );
+                assert!(
+                    payload.get("max_tokens").is_none()
+                        && payload.get("max_output_tokens").is_none()
+                        && payload.get("temperature").is_none(),
+                    "Codex Responses API rejects max_tokens / max_output_tokens / temperature"
+                );
+
+                // Simulate ChatGPT Codex rejecting retired `gpt-5-codex` model so fallback to `gpt-5.6-terra` is verified
+                let model = payload.get("model").and_then(|v| v.as_str()).unwrap_or("");
+                if model == "gpt-5-codex" {
+                    return (
+                        StatusCode::BAD_REQUEST,
+                        [("content-type", "application/json")],
+                        r#"{"detail":"The 'gpt-5-codex' model is not supported when using Codex with a ChatGPT account.","error":{"type":"invalid_request_error","code":"model_not_found","message":"The 'gpt-5-codex' model is not supported when using Codex with a ChatGPT account."}}"#,
+                    )
+                        .into_response();
+                }
+                assert_eq!(model, "gpt-5.6-terra");
 
                 let sse = concat!(
-                    "data: {\"choices\":[{\"delta\":{\"content\":\"Codex diagnostic \"}}]}\n\n",
-                    "data: {\"choices\":[{\"delta\":{\"content\":\"& orchestrator OK\"}}]}\n\n",
-                    "data: [DONE]\n\n"
+                    "event: response.created\n",
+                    "data: {\"type\":\"response.created\",\"sequence_number\":0}\n\n",
+                    "event: response.output_text.delta\n",
+                    "data: {\"type\":\"response.output_text.delta\",\"delta\":\"Codex diagnostic \"}\n\n",
+                    "event: response.output_text.delta\n",
+                    "data: {\"type\":\"response.output_text.delta\",\"delta\":\"& orchestrator OK\"}\n\n",
+                    "event: response.completed\n",
+                    "data: {\"type\":\"response.completed\",\"sequence_number\":3}\n\n"
                 );
                 (
                     StatusCode::OK,
@@ -375,7 +419,8 @@ async fn llm_gateway_provider_diagnostic_and_orchestrator_custom_executor() {
     tokio::spawn(async move {
         let _ = axum::serve(listener, app).await;
     });
-    let base_url = format!("http://{addr}/v1");
+    let codex_base_url = format!("http://{addr}/backend-api/codex");
+    let claude_base_url = format!("http://{addr}/v1");
 
     // 3. Verify `ProviderTestRunner::run` with `adapter = "llm_gateway"` and `gateway_binding = "pool:openai_codex"`
     let cfg_path =
@@ -451,7 +496,7 @@ admin_token = "gw-draft-test-token"
         config_json: serde_json::json!({
             "gateway_binding": "pool:openai_codex",
             "model": "gpt-5-codex",
-            "base_url": base_url,
+            "base_url": codex_base_url,
         }),
         api_key: None,
         saved_credential: None,
@@ -476,7 +521,7 @@ admin_token = "gw-draft-test-token"
         config_json: serde_json::json!({
             "gateway_binding": "pool:openai_codex",
             "model": "gpt-5-codex",
-            "base_url": base_url,
+            "base_url": codex_base_url,
         })
         .to_string(),
         secret_ref: None,
@@ -510,7 +555,7 @@ admin_token = "gw-draft-test-token"
         source: "database",
         adapter: "llm_gateway".to_owned(),
         model: "gpt-5-codex".to_owned(),
-        base_url: base_url.clone(),
+        base_url: codex_base_url.clone(),
         api_key: None,
         gateway_binding: Some(GatewayBinding::Pool(GatewayVendor::OpenaiCodex)),
         timeout_ms: 5_000,
@@ -532,7 +577,7 @@ admin_token = "gw-draft-test-token"
         source: "database",
         adapter: "llm_gateway".to_owned(),
         model: "claude-sonnet-4-20250514".to_owned(),
-        base_url,
+        base_url: claude_base_url,
         api_key: None,
         gateway_binding: Some(GatewayBinding::Pool(GatewayVendor::Anthropic)),
         timeout_ms: 5_000,
