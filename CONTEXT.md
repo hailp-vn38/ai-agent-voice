@@ -26,6 +26,7 @@ _Avoid_: Admin tool authority, separate assistant runtime
 
 - When a source file becomes long or takes on multiple responsibilities, split it into modules with clear responsibilities; keep public paths stable through the parent module and re-exports where needed.
 - A module's tests must live in a separate test file within that module, rather than further expanding the implementation file. Integration/public-boundary tests remain in the appropriate integration test area.
+- Admin Web pages and detail views render shimmer skeleton placeholders (`CardListSkeleton` or `.card-shimmer` blocks with `role="status"` and `aria-busy="true"`) while loading data.
 
 **Compatibility Profile**:
 The combination of voice wire protocol, audio/MCP contracts, and external reference provenance with which the server commits to being compatible.

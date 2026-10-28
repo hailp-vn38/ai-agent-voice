@@ -139,6 +139,94 @@ describe('LlmGatewayPage', () => {
     vi.spyOn(llmGatewayApi, 'listQuotas').mockResolvedValue({ quotas: [] })
   })
 
+  it('shows shimmer skeletons while page data and pool details are loading, then renders loaded state', async () => {
+    let finishVendors!: (value: { vendors: GatewayVendorInfo[] }) => void
+    let finishAccounts!: (value: { accounts: GatewayAccountView[] }) => void
+    let finishQuotas!: (value: { quotas: never[] }) => void
+    let finishPoolDetail!: (value: { pool: GatewayPoolDetailView }) => void
+
+    vi.spyOn(llmGatewayApi, 'listVendors').mockReturnValue(
+      new Promise((resolve) => {
+        finishVendors = resolve
+      }),
+    )
+    vi.spyOn(llmGatewayApi, 'listAccounts').mockReturnValue(
+      new Promise((resolve) => {
+        finishAccounts = resolve
+      }),
+    )
+    vi.spyOn(llmGatewayApi, 'listQuotas').mockReturnValue(
+      new Promise((resolve) => {
+        finishQuotas = resolve
+      }),
+    )
+    vi.spyOn(llmGatewayApi, 'getPoolDetail').mockReturnValue(
+      new Promise((resolve) => {
+        finishPoolDetail = resolve
+      }),
+    )
+
+    const router = makeRouter()
+    await router.push('/llm-gateway')
+    await router.isReady()
+
+    const wrapper = mount(LlmGatewayPage, {
+      global: {
+        plugins: [router],
+        stubs: { Teleport: true },
+      },
+    })
+    try {
+      await flushPromises()
+      expect(wrapper.find('[data-llm-gateway-skeleton]').exists()).toBe(true)
+      expect(wrapper.get('[data-llm-gateway-skeleton]').attributes('aria-busy')).toBe('true')
+      expect(wrapper.findAll('[data-llm-gateway-skeleton] .card-shimmer').length).toBeGreaterThan(0)
+      expect(wrapper.findAll('[data-pool-group]')).toHaveLength(0)
+
+      finishVendors({ vendors: sampleVendors })
+      finishAccounts({ accounts: sampleAccounts })
+      await flushPromises()
+
+      expect(wrapper.find('[data-llm-gateway-skeleton]').exists()).toBe(false)
+      expect(wrapper.findAll('[data-pool-group]')).toHaveLength(2)
+      expect(wrapper.findAll('[data-quota-skeleton]').length).toBeGreaterThan(0)
+
+      finishQuotas({ quotas: [] })
+      await flushPromises()
+      expect(wrapper.findAll('[data-quota-skeleton]')).toHaveLength(0)
+
+      // Open Pool Detail modal and verify modal shimmer while loading
+      await wrapper.get('[data-pool-detail="openai_codex"]').trigger('click')
+      await flushPromises()
+      expect(wrapper.find('[data-pool-detail-skeleton]').exists()).toBe(true)
+      expect(wrapper.get('[data-pool-detail-skeleton]').attributes('aria-busy')).toBe('true')
+      expect(wrapper.findAll('[data-pool-detail-skeleton] .card-shimmer').length).toBeGreaterThan(0)
+
+      finishPoolDetail({
+        pool: {
+          vendor: 'openai_codex',
+          display_name: 'OpenAI Codex (ChatGPT)',
+          login_mode: 'pkce',
+          default_base_url: 'https://chatgpt.com/backend-api/codex',
+          pool_binding: 'pool:openai_codex',
+          total_accounts: 1,
+          active_accounts: 1,
+          cooling_down_accounts: 0,
+          reauth_required_accounts: 0,
+          disabled_accounts: 0,
+          accounts: [sampleAccounts[0]!],
+          models: [sampleCodexModel],
+          preset_models: [],
+        },
+      })
+      await flushPromises()
+      expect(wrapper.find('[data-pool-detail-skeleton]').exists()).toBe(false)
+      expect(wrapper.find('[data-testid="pool-detail-content"]').exists()).toBe(true)
+    } finally {
+      wrapper.unmount()
+    }
+  })
+
   it('groups populated pools into collapsible sections and hides top pool cards', async () => {
     const router = makeRouter()
     await router.push('/llm-gateway')

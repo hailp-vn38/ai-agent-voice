@@ -492,6 +492,9 @@ async function fetchPoolDetailForVendor(vendor: GatewayVendor) {
 
 async function openPoolDetailModal(vendor: GatewayVendor) {
   errorMessage.value = ''
+  if (activePoolDetail.value?.vendor !== vendor) {
+    activePoolDetail.value = null
+  }
   poolDetailOpen.value = true
   await fetchPoolDetailForVendor(vendor)
 }
@@ -864,10 +867,116 @@ void load()
 
     <!-- Loading / Empty States -->
     <div
-      v-if="loading && !visiblePoolGroups.length"
-      class="studio-panel p-10 text-center text-sm text-muted-foreground"
+      v-if="loading"
+      data-llm-gateway-skeleton
+      role="status"
+      aria-busy="true"
+      :aria-label="t('common.loading')"
+      class="space-y-3"
     >
-      {{ t('llmGateway.loading') }}
+      <span class="sr-only">{{ t('llmGateway.loading') }}</span>
+      <div
+        v-if="populatedPoolGroups.length <= 1"
+        class="card-shimmer flex flex-wrap items-center gap-1.5 rounded-xl border border-border/70 bg-surface/40 px-3 py-2"
+        aria-hidden="true"
+      >
+        <div class="h-6 w-24 rounded-lg bg-muted/60" />
+        <div v-for="pill in 3" :key="pill" class="h-6 w-28 rounded-lg bg-muted/40" />
+      </div>
+
+      <div
+        v-for="poolSlot in 2"
+        :key="poolSlot"
+        class="studio-panel card-shimmer overflow-hidden"
+        aria-hidden="true"
+      >
+        <!-- Pool Group Header Skeleton -->
+        <div class="flex flex-wrap items-center justify-between gap-2 border-b border-border/70 bg-surface/40 px-4 py-2.5">
+          <div class="flex flex-wrap items-center gap-2">
+            <div class="size-4 rounded bg-muted/50" />
+            <div class="h-4 w-36 rounded bg-muted/60" />
+            <div class="h-5 w-24 rounded bg-muted/40" />
+            <div class="h-5 w-14 rounded-full bg-muted/40" />
+            <div class="h-5 w-20 rounded-full bg-muted/50" />
+            <div class="h-5 w-20 rounded-full bg-muted/40" />
+          </div>
+          <div class="flex items-center gap-1.5">
+            <div class="h-7 w-24 rounded-md bg-muted/50" />
+            <div class="h-7 w-24 rounded-md bg-muted/50" />
+            <div class="h-7 w-28 rounded-md bg-muted/40" />
+          </div>
+        </div>
+
+        <!-- Pool Accounts Rows Skeleton -->
+        <div class="divide-y divide-border/70">
+          <div
+            v-for="accSlot in 2"
+            :key="accSlot"
+            class="grid gap-3 px-4 py-3 sm:grid-cols-[1.4fr_1fr_1.3fr_1fr_auto] sm:items-center"
+          >
+            <div class="space-y-1.5">
+              <div class="flex items-center gap-2">
+                <div class="h-4 w-28 rounded bg-muted/60" />
+                <div class="h-4 w-12 rounded bg-muted/40" />
+              </div>
+              <div class="h-3 w-40 rounded bg-muted/40" />
+              <div class="h-3 w-48 max-w-full rounded bg-muted/35" />
+            </div>
+            <div class="space-y-1.5">
+              <div class="h-5 w-20 rounded-full bg-muted/50" />
+              <div class="h-3 w-32 rounded bg-muted/40" />
+            </div>
+            <div class="space-y-1.5">
+              <div class="flex items-center justify-between gap-2">
+                <div class="h-3.5 w-20 rounded bg-muted/50" />
+                <div class="h-3.5 w-12 rounded bg-muted/60" />
+              </div>
+              <div class="h-1.5 w-full rounded-full bg-muted/50" />
+            </div>
+            <div class="flex flex-wrap gap-1.5">
+              <div class="h-5 w-24 rounded-md bg-muted/40" />
+            </div>
+            <div class="flex items-center justify-end gap-1.5">
+              <div class="h-7 w-20 rounded-md bg-muted/50" />
+              <div class="h-7 w-16 rounded-md bg-muted/40" />
+              <div class="h-7 w-16 rounded-md bg-muted/40" />
+            </div>
+          </div>
+        </div>
+
+        <!-- Models in Pool Sub-section Skeleton -->
+        <div class="border-t border-border/60 bg-surface/20 px-4 py-3">
+          <div class="mb-2 flex items-center justify-between gap-2">
+            <div class="h-3.5 w-32 rounded bg-muted/50" />
+            <div class="h-7 w-24 rounded-md bg-muted/40" />
+          </div>
+          <div class="divide-y divide-border/60 rounded-lg border border-border/70 bg-background/60">
+            <div
+              v-for="modelSlot in 2"
+              :key="modelSlot"
+              class="flex flex-wrap items-center justify-between gap-3 px-3 py-2.5"
+            >
+              <div class="space-y-1">
+                <div class="flex items-center gap-2">
+                  <div class="h-3.5 w-32 rounded bg-muted/60" />
+                  <div class="h-4 w-24 rounded bg-muted/40" />
+                </div>
+                <div class="h-2.5 w-28 rounded bg-muted/35" />
+              </div>
+              <div class="h-4 w-24 rounded bg-muted/40" />
+              <div class="flex gap-1">
+                <div class="h-4 w-12 rounded bg-muted/50" />
+                <div class="h-4 w-16 rounded bg-muted/40" />
+              </div>
+              <div class="h-5 w-16 rounded-full bg-muted/50" />
+              <div class="flex gap-1">
+                <div class="h-7 w-14 rounded-md bg-muted/50" />
+                <div class="h-7 w-16 rounded-md bg-muted/40" />
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
 
     <div
@@ -1152,6 +1261,19 @@ void load()
                     </p>
                   </div>
 
+                  <div
+                    v-else-if="loadingQuotas || quotaBusyKey === acc.account_key"
+                    data-quota-skeleton
+                    class="card-shimmer space-y-1.5 rounded-md py-1"
+                    aria-hidden="true"
+                  >
+                    <div class="flex items-center justify-between gap-2">
+                      <div class="h-3 w-20 rounded bg-muted/50" />
+                      <div class="h-3 w-10 rounded bg-muted/60" />
+                    </div>
+                    <div class="h-1.5 w-full rounded-full bg-muted/50" />
+                  </div>
+
                   <div v-else class="flex items-center gap-2">
                     <Button
                       variant="ghost"
@@ -1421,7 +1543,7 @@ void load()
 
     <!-- Compact Empty Pools Bar -->
     <div
-      v-if="emptyVendorPools.length && selectedVendorFilter === 'all'"
+      v-if="!loading && emptyVendorPools.length && selectedVendorFilter === 'all'"
       class="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-dashed border-border/80 bg-surface/20 px-4 py-2.5 text-xs text-muted-foreground"
     >
       <span>{{ t('llmGateway.emptyPoolsLabel') }}</span>
@@ -1466,8 +1588,42 @@ void load()
       :description="t('llmGateway.pool.detailSubtitle')"
       width-class="max-w-4xl"
     >
-      <div v-if="poolDetailLoading && !activePoolDetail" class="py-8 text-center text-sm text-muted-foreground">
-        {{ t('common.loading') }}
+      <div
+        v-if="poolDetailLoading && !activePoolDetail"
+        data-pool-detail-skeleton
+        role="status"
+        aria-busy="true"
+        :aria-label="t('common.loading')"
+        class="space-y-4"
+      >
+        <span class="sr-only">{{ t('common.loading') }}</span>
+        <div class="grid grid-cols-2 gap-2.5 sm:grid-cols-4" aria-hidden="true">
+          <div
+            v-for="kpiSlot in 4"
+            :key="kpiSlot"
+            class="card-shimmer space-y-2 rounded-lg border border-border/70 bg-surface/40 p-3"
+          >
+            <div class="h-3 w-16 rounded bg-muted/50" />
+            <div class="h-5 w-24 rounded bg-muted/60" />
+            <div class="h-3 w-20 rounded bg-muted/40" />
+          </div>
+        </div>
+        <div
+          class="card-shimmer space-y-2.5 rounded-xl border border-border/70 bg-surface/30 p-3.5"
+          aria-hidden="true"
+        >
+          <div class="h-3.5 w-36 rounded bg-muted/60" />
+          <div class="flex flex-wrap gap-2">
+            <div v-for="presetSlot in 3" :key="presetSlot" class="h-8 w-40 rounded-lg bg-muted/50" />
+          </div>
+        </div>
+        <div
+          class="card-shimmer space-y-2 rounded-xl border border-border/70 bg-surface/20 p-3.5"
+          aria-hidden="true"
+        >
+          <div class="h-3.5 w-40 rounded bg-muted/60" />
+          <div v-for="rowSlot in 2" :key="rowSlot" class="h-10 w-full rounded-lg bg-muted/40" />
+        </div>
       </div>
 
       <div v-else-if="activePoolDetail" class="space-y-4" data-testid="pool-detail-content">
