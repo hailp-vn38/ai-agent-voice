@@ -1452,6 +1452,7 @@ impl LlmGatewayHub {
                         user_code: grant.user_code.clone(),
                         verification_uri: grant.verification_uri.clone(),
                         poll_interval_secs: grant.interval_secs.max(1),
+                        next_poll_at: None,
                         completed_account: None,
                         failure: None,
                     },
@@ -1633,6 +1634,7 @@ impl LlmGatewayHub {
                 label: String,
                 device_code: String,
                 poll_interval_secs: u64,
+                wait_before_poll: Option<Duration>,
             },
         }
 
@@ -1641,11 +1643,14 @@ impl LlmGatewayHub {
             let session = guard
                 .get_mut(session_id)
                 .ok_or(GatewayError::OAuthSessionNotFound)?;
-            if session.is_expired(Instant::now()) {
+            let now = Instant::now();
+            if session.is_expired(now) {
                 guard.remove(session_id);
                 return Err(GatewayError::OAuthSessionExpired);
             }
-            match &session.flow {
+            let vendor = session.vendor;
+            let label = session.label.clone();
+            match &mut session.flow {
                 OAuthSessionFlowState::Pkce {
                     completed_account: Some(acc),
                     ..
@@ -1663,20 +1668,47 @@ impl LlmGatewayHub {
                     failure: Some(err), ..
                 } => Action::Return(OAuthPollStatus::Failed { error: err.clone() }),
                 OAuthSessionFlowState::Pkce { state, .. } => Action::PollPkce {
-                    vendor: session.vendor,
-                    label: session.label.clone(),
+                    vendor,
+                    label,
                     state: state.clone(),
                 },
                 OAuthSessionFlowState::DeviceCode {
                     device_code,
                     poll_interval_secs,
+                    next_poll_at,
                     ..
-                } => Action::PollDevice {
-                    vendor: session.vendor,
-                    label: session.label.clone(),
-                    device_code: device_code.clone(),
-                    poll_interval_secs: *poll_interval_secs,
-                },
+                } => {
+                    let code = device_code.clone();
+                    let interval = *poll_interval_secs;
+                    if let Some(not_before) = *next_poll_at
+                        && now < not_before
+                    {
+                        let remaining = not_before.duration_since(now);
+                        if remaining > Duration::from_millis(1500) {
+                            Action::Return(OAuthPollStatus::Pending {
+                                poll_interval_secs: remaining.as_secs().max(1),
+                            })
+                        } else {
+                            *next_poll_at = Some(not_before + Duration::from_secs(interval));
+                            Action::PollDevice {
+                                vendor,
+                                label,
+                                device_code: code,
+                                poll_interval_secs: interval,
+                                wait_before_poll: Some(remaining),
+                            }
+                        }
+                    } else {
+                        *next_poll_at = Some(now + Duration::from_secs(interval));
+                        Action::PollDevice {
+                            vendor,
+                            label,
+                            device_code: code,
+                            poll_interval_secs: interval,
+                            wait_before_poll: None,
+                        }
+                    }
+                }
             }
         };
 
@@ -1709,19 +1741,41 @@ impl LlmGatewayHub {
                 label,
                 device_code,
                 poll_interval_secs,
+                wait_before_poll,
             } => {
+                if let Some(delay) = wait_before_poll {
+                    tokio::time::sleep(delay).await;
+                }
                 let driver = self.driver_for(vendor)?;
                 match driver.poll_device_flow(&device_code).await? {
                     DevicePollOutcome::Pending { next_interval_secs } => {
-                        let next_interval = next_interval_secs.unwrap_or(poll_interval_secs).max(1);
+                        let (next_interval, schedule_guard) = match next_interval_secs {
+                            Some(0) => (poll_interval_secs.max(1), false),
+                            Some(n) if n >= 10 => {
+                                let bumped = if n <= poll_interval_secs {
+                                    (poll_interval_secs + 5).min(30)
+                                } else {
+                                    n.min(30)
+                                };
+                                (bumped, true)
+                            }
+                            Some(n) => (n.max(poll_interval_secs).max(1), true),
+                            None => (poll_interval_secs.max(1), true),
+                        };
                         let mut guard = self.sessions.lock().unwrap_or_else(|p| p.into_inner());
                         if let Some(session) = guard.get_mut(session_id)
                             && let OAuthSessionFlowState::DeviceCode {
                                 poll_interval_secs: ref mut stored,
+                                next_poll_at: ref mut stored_next_poll_at,
                                 ..
                             } = session.flow
                         {
                             *stored = next_interval;
+                            *stored_next_poll_at = schedule_guard.then(|| {
+                                Instant::now()
+                                    + Duration::from_secs(next_interval)
+                                    + Duration::from_millis(200)
+                            });
                         }
                         Ok(OAuthPollStatus::Pending {
                             poll_interval_secs: next_interval,

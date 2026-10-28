@@ -25,6 +25,11 @@ const COPILOT_PLUGIN_VERSION: &str = "copilot-chat/0.26.7";
 
 pub struct GithubCopilotOAuthDriver {
     http: reqwest::Client,
+    device_code_url: String,
+    access_token_url: String,
+    copilot_token_exchange_url: String,
+    userinfo_url: String,
+    usage_url: String,
 }
 
 impl GithubCopilotOAuthDriver {
@@ -34,24 +39,39 @@ impl GithubCopilotOAuthDriver {
             .user_agent(COPILOT_USER_AGENT)
             .build()
             .unwrap_or_default();
-        Self { http }
+        Self {
+            http,
+            device_code_url: GITHUB_DEVICE_CODE_URL.to_owned(),
+            access_token_url: GITHUB_ACCESS_TOKEN_URL.to_owned(),
+            copilot_token_exchange_url: COPILOT_TOKEN_EXCHANGE_URL.to_owned(),
+            userinfo_url: GITHUB_USERINFO_URL.to_owned(),
+            usage_url: COPILOT_USAGE_URL.to_owned(),
+        }
+    }
+
+    #[cfg(test)]
+    pub fn with_test_endpoints(base_url: &str) -> Self {
+        let base = base_url.trim_end_matches('/');
+        let mut drv = Self::new();
+        drv.device_code_url = format!("{base}/login/device/code");
+        drv.access_token_url = format!("{base}/login/oauth/access_token");
+        drv.copilot_token_exchange_url = format!("{base}/copilot_internal/v2/token");
+        drv.userinfo_url = format!("{base}/user");
+        drv.usage_url = format!("{base}/copilot_internal/user");
+        drv
     }
 
     async fn exchange_for_copilot_bearer(
         &self,
         github_oauth_token: &str,
     ) -> Result<(String, Option<i64>), GatewayError> {
-        #[derive(Deserialize)]
-        struct CopilotTokenResp {
-            token: String,
-            expires_at: Option<i64>,
-        }
         let resp = self
             .http
-            .get(COPILOT_TOKEN_EXCHANGE_URL)
+            .get(&self.copilot_token_exchange_url)
             .header("Authorization", format!("token {github_oauth_token}"))
             .header("Accept", "application/json")
             .header("X-GitHub-Api-Version", GITHUB_API_VERSION)
+            .header("User-Agent", COPILOT_USER_AGENT)
             .header("Editor-Version", COPILOT_EDITOR_VERSION)
             .header("Editor-Plugin-Version", COPILOT_PLUGIN_VERSION)
             .header("Copilot-Integration-Id", "vscode-chat")
@@ -61,11 +81,21 @@ impl GithubCopilotOAuthDriver {
         if !resp.status().is_success() {
             return Err(GatewayError::AccountReauthRequired);
         }
-        let parsed: CopilotTokenResp = resp
+        let payload: Value = resp
             .json()
             .await
             .map_err(|e| GatewayError::OAuthExchangeFailed(e.to_string()))?;
-        Ok((parsed.token, parsed.expires_at))
+        let token = payload
+            .get("token")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .ok_or_else(|| {
+                GatewayError::OAuthExchangeFailed("missing_copilot_bearer_token".to_owned())
+            })?
+            .to_owned();
+        let expires_at = parse_reset_timestamp(payload.get("expires_at"));
+        Ok((token, expires_at))
     }
 
     async fn fetch_github_account_identity(&self, github_oauth_token: &str) -> Option<String> {
@@ -73,13 +103,15 @@ impl GithubCopilotOAuthDriver {
         struct GithubUserInfo {
             email: Option<String>,
             login: Option<String>,
+            name: Option<String>,
         }
         let resp = self
             .http
-            .get(GITHUB_USERINFO_URL)
+            .get(&self.userinfo_url)
             .header("Authorization", format!("Bearer {github_oauth_token}"))
             .header("Accept", "application/json")
             .header("X-GitHub-Api-Version", GITHUB_API_VERSION)
+            .header("User-Agent", COPILOT_USER_AGENT)
             .send()
             .await
             .ok()?;
@@ -90,6 +122,7 @@ impl GithubCopilotOAuthDriver {
         info.email
             .filter(|s| !s.trim().is_empty())
             .or_else(|| info.login.filter(|s| !s.trim().is_empty()))
+            .or_else(|| info.name.filter(|s| !s.trim().is_empty()))
     }
 }
 
@@ -246,7 +279,7 @@ impl OAuthVendorDriver for GithubCopilotOAuthDriver {
             .finish();
         let resp = self
             .http
-            .post(GITHUB_DEVICE_CODE_URL)
+            .post(&self.device_code_url)
             .header("Content-Type", "application/x-www-form-urlencoded")
             .header("Accept", "application/json")
             .body(form_body)
@@ -280,7 +313,7 @@ impl OAuthVendorDriver for GithubCopilotOAuthDriver {
             .finish();
         let resp = self
             .http
-            .post(GITHUB_ACCESS_TOKEN_URL)
+            .post(&self.access_token_url)
             .header("Content-Type", "application/x-www-form-urlencoded")
             .header("Accept", "application/json")
             .body(form_body)
@@ -298,9 +331,19 @@ impl OAuthVendorDriver for GithubCopilotOAuthDriver {
             .await
             .map_err(|e| GatewayError::OAuthExchangeFailed(e.to_string()))?;
         if let Some(github_oauth_token) = parsed.access_token.filter(|s: &String| !s.is_empty()) {
-            let (copilot_bearer, expires_at) = self
+            // Match 9router's `postExchange`: minting the short-lived Copilot bearer token is
+            // best-effort during initial device-code completion so a transient error on
+            // `copilot_internal/v2/token` never discards the one-shot GitHub OAuth token.
+            let (copilot_bearer, expires_at) = match self
                 .exchange_for_copilot_bearer(&github_oauth_token)
-                .await?;
+                .await
+            {
+                Ok(pair) => pair,
+                Err(_) => {
+                    let fallback_exp = crate::database::unix_seconds().map(|now| now + 60);
+                    (github_oauth_token.clone(), fallback_exp)
+                }
+            };
             let account_email = self.fetch_github_account_identity(&github_oauth_token).await;
             return Ok(DevicePollOutcome::Completed(ExchangedOAuthAccount {
                 bundle: OAuthTokenBundle {
@@ -358,7 +401,7 @@ impl OAuthVendorDriver for GithubCopilotOAuthDriver {
             .unwrap_or(&bundle.access_token);
         let resp = self
             .http
-            .get(COPILOT_USAGE_URL)
+            .get(&self.usage_url)
             .header("Authorization", format!("token {github_token}"))
             .header("Accept", "application/json")
             .header("X-GitHub-Api-Version", GITHUB_API_VERSION)

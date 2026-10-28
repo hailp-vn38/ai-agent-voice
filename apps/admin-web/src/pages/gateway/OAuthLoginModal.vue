@@ -44,15 +44,29 @@ const polling = ref(false)
 const copied = ref(false)
 const errorMessage = ref('')
 
-let pollTimer: ReturnType<typeof setInterval> | undefined
+let pollTimer: ReturnType<typeof setTimeout> | undefined
+let activePollSessionId: string | null = null
+let authPopup: Window | null = null
 
 const activeVendorInfo = computed(() =>
   props.vendors.find((item) => item.vendor === selectedVendor.value),
 )
 
+function closeAuthPopup() {
+  if (authPopup && !authPopup.closed) {
+    try {
+      authPopup.close()
+    } catch {
+      /* Ignore cross-origin window close errors. */
+    }
+  }
+  authPopup = null
+}
+
 function stopPolling() {
-  if (pollTimer) {
-    clearInterval(pollTimer)
+  activePollSessionId = null
+  if (pollTimer !== undefined) {
+    clearTimeout(pollTimer)
     pollTimer = undefined
   }
   polling.value = false
@@ -60,6 +74,7 @@ function stopPolling() {
 
 function resetState() {
   stopPolling()
+  closeAuthPopup()
   selectedVendor.value = props.initialVendor ?? props.vendors[0]?.vendor ?? 'openai_codex'
   label.value = ''
   challenge.value = null
@@ -76,6 +91,7 @@ watch(open, (isOpen) => {
     resetState()
   } else {
     stopPolling()
+    closeAuthPopup()
   }
 })
 
@@ -88,30 +104,78 @@ watch(
   },
 )
 
-function startPolling(sessionId: string, intervalSecs: number) {
-  stopPolling()
-  polling.value = true
-  const ms = Math.max(2, intervalSecs || 2) * 1000
-  pollTimer = setInterval(async () => {
-    if (!open.value || !challenge.value || completedAccount.value) {
+function scheduleNextPoll(sessionId: string, intervalSecs: number) {
+  if (
+    activePollSessionId !== sessionId ||
+    !open.value ||
+    !challenge.value ||
+    completedAccount.value
+  ) {
+    stopPolling()
+    return
+  }
+  const isDeviceFlow = challenge.value.mode === 'device_code'
+  const minSecs = isDeviceFlow ? 5 : 2
+  const baseSecs = Math.max(minSecs, intervalSecs || minSecs)
+  const delayMs = baseSecs * 1000 + (isDeviceFlow ? 300 : 0)
+
+  pollTimer = setTimeout(async () => {
+    if (
+      activePollSessionId !== sessionId ||
+      !open.value ||
+      !challenge.value ||
+      completedAccount.value
+    ) {
       stopPolling()
       return
     }
     try {
       const status = await llmGatewayApi.pollOAuthSession(sessionId)
+      if (activePollSessionId !== sessionId) return
       if (status.status === 'completed') {
         stopPolling()
+        closeAuthPopup()
+        try {
+          window.focus()
+        } catch {
+          /* Ignore window focus errors. */
+        }
         completedAccount.value = status.account
         emit('completed', status.account)
-      } else if (status.status === 'failed') {
-        stopPolling()
-        errorMessage.value = status.error || 'OAuth session failed.'
+        return
       }
+      if (status.status === 'failed') {
+        stopPolling()
+        closeAuthPopup()
+        errorMessage.value = status.error || 'OAuth session failed.'
+        return
+      }
+      const nextSecs = status.poll_interval_secs || baseSecs
+      scheduleNextPoll(sessionId, nextSecs)
     } catch (cause) {
-      errorMessage.value = formatApiError(cause)
-      stopPolling()
+      if (activePollSessionId !== sessionId) return
+      const message = formatApiError(cause)
+      const lower = message.toLowerCase()
+      if (
+        lower.includes('expired') ||
+        lower.includes('not found') ||
+        lower.includes('session_not_found') ||
+        lower.includes('session_expired')
+      ) {
+        errorMessage.value = message
+        stopPolling()
+        return
+      }
+      scheduleNextPoll(sessionId, baseSecs)
     }
-  }, ms)
+  }, delayMs)
+}
+
+function startPolling(sessionId: string, intervalSecs: number) {
+  stopPolling()
+  activePollSessionId = sessionId
+  polling.value = true
+  scheduleNextPoll(sessionId, intervalSecs)
 }
 
 function buildRedirectUri(vendor: GatewayVendor): string {
@@ -150,7 +214,7 @@ async function handleStartOAuth() {
     challenge.value = result
     startPolling(result.session_id, result.poll_interval_secs)
     if (result.mode === 'pkce' && result.authorize_url && selectedVendor.value !== 'muse') {
-      window.open(result.authorize_url, 'oauth_popup', 'width=640,height=720')
+      authPopup = window.open(result.authorize_url, 'oauth_popup', 'width=640,height=720')
     }
   } catch (cause) {
     errorMessage.value = formatApiError(cause)
@@ -160,12 +224,15 @@ async function handleStartOAuth() {
 }
 
 function openAuthWindow() {
+  if (challenge.value?.mode === 'device_code' && challenge.value.user_code && !copied.value) {
+    void copyText(challenge.value.user_code)
+  }
   const url =
     challenge.value?.mode === 'device_code'
       ? challenge.value.verification_uri
       : challenge.value?.authorize_url
   if (url) {
-    window.open(url, 'oauth_popup', 'width=640,height=720')
+    authPopup = window.open(url, 'oauth_popup', 'width=640,height=720')
   }
 }
 
@@ -193,6 +260,7 @@ async function handleManualComplete() {
       callback_url_or_code: raw,
     })
     stopPolling()
+    closeAuthPopup()
     completedAccount.value = res.account
     emit('completed', res.account)
   } catch (cause) {
@@ -209,6 +277,7 @@ function onWindowMessage(event: MessageEvent) {
   if (!data || data.type !== 'llm_gateway_oauth_complete') return
   if (data.status === 'completed' && data.account && typeof data.account === 'object') {
     stopPolling()
+    closeAuthPopup()
     const acc = data.account as GatewayAccountView
     completedAccount.value = acc
     emit('completed', acc)
@@ -223,6 +292,7 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   stopPolling()
+  closeAuthPopup()
   window.removeEventListener('message', onWindowMessage)
 })
 </script>

@@ -162,6 +162,181 @@ async fn llm_gateway_device_code_flow_github_copilot() {
 }
 
 #[tokio::test]
+async fn github_copilot_device_flow_slow_down_throttle_and_post_exchange_fallback() {
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+    use axum::{Router, http::StatusCode, response::IntoResponse, routing::{get, post}};
+    use serde_json::json;
+    use tokio::net::TcpListener;
+    use super::vendors::github_copilot::GithubCopilotOAuthDriver;
+
+    // 1. Verify hub rate-limit guard prevents hammering upstream when slow_down occurs
+    let (hub, fakes, _temp) = test_hub_with_fakes().await;
+    let copilot_fake = fakes.get(&GatewayVendor::GithubCopilot).expect("copilot");
+    copilot_fake.set_next_device_poll_interval(Some(10));
+
+    let ch = hub
+        .start_oauth_login(StartOAuthLoginRequest {
+            vendor: GatewayVendor::GithubCopilot,
+            label: "Copilot Slowdown Test".to_owned(),
+            redirect_uri: None,
+        })
+        .await
+        .expect("start device flow");
+
+    // Poll #1 hits driver and gets slow_down (10s)
+    let poll1 = hub.poll_oauth_login(&ch.session_id).await.expect("poll 1");
+    assert!(matches!(
+        poll1,
+        OAuthPollStatus::Pending {
+            poll_interval_secs: 10
+        }
+    ));
+    assert_eq!(copilot_fake.device_poll_call_count(), 1);
+
+    // Immediate Poll #2 (< 10s later) is intercepted by hub's `next_poll_at` guard without calling driver
+    let poll2 = hub.poll_oauth_login(&ch.session_id).await.expect("poll 2");
+    assert!(matches!(poll2, OAuthPollStatus::Pending { .. }));
+    assert_eq!(copilot_fake.device_poll_call_count(), 1);
+
+    // 2. End-to-end HTTP test for GithubCopilotOAuthDriver:
+    //    - Initial `copilot_internal/v2/token` fails (503) -> fallback saves `ghu_...` token (like 9router's postExchange)
+    //    - Subsequent `refresh_account_now` succeeds and upgrades `access_token` to `tid=copilot_minted_99`
+    let copilot_token_healthy = Arc::new(AtomicBool::new(false));
+    let token_poll_count = Arc::new(AtomicUsize::new(0));
+    let healthy_clone = Arc::clone(&copilot_token_healthy);
+    let poll_count_clone = Arc::clone(&token_poll_count);
+
+    let app = Router::new()
+        .route(
+            "/login/device/code",
+            post(|| async move {
+                axum::Json(json!({
+                    "device_code": "gh_dev_code_live_01",
+                    "user_code": "WXYZ-9876",
+                    "verification_uri": "https://github.com/login/device",
+                    "expires_in": 900,
+                    "interval": 5
+                }))
+            }),
+        )
+        .route(
+            "/login/oauth/access_token",
+            post(move || {
+                let poll_count = Arc::clone(&poll_count_clone);
+                async move {
+                    let n = poll_count.fetch_add(1, Ordering::SeqCst) + 1;
+                    if n == 1 {
+                        axum::Json(json!({
+                            " access_token": null,
+                            "access_token": "ghu_live_oauth_token_abc",
+                            "token_type": "bearer",
+                            "scope": "read:user"
+                        }))
+                    } else {
+                        axum::Json(json!({ "error": "authorization_pending" }))
+                    }
+                }
+            }),
+        )
+        .route(
+            "/copilot_internal/v2/token",
+            get(move || {
+                let is_healthy = Arc::clone(&healthy_clone);
+                async move {
+                    if !is_healthy.load(Ordering::SeqCst) {
+                        (StatusCode::SERVICE_UNAVAILABLE, "temporary error").into_response()
+                    } else {
+                        axum::Json(json!({
+                            "token": "tid=copilot_minted_99;exp=4102444800",
+                            "expires_at": "2100-01-01T00:00:00Z"
+                        }))
+                        .into_response()
+                    }
+                }
+            }),
+        )
+        .route(
+            "/user",
+            get(|| async move {
+                axum::Json(json!({
+                    "email": null,
+                    "login": "PhucHai38",
+                    "name": "Phuc Hai"
+                }))
+            }),
+        );
+
+    let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+    let addr = listener.local_addr().expect("addr");
+    tokio::spawn(async move {
+        let _ = axum::serve(listener, app).await;
+    });
+
+    let db = Database::connect(&DatabaseConfig {
+        url: "sqlite::memory:".into(),
+        max_connections: 1,
+        ..Default::default()
+    })
+    .await
+    .expect("sqlite");
+    let cipher: Arc<dyn crate::database::secrets::SecretResolver> =
+        Arc::new(CredentialCipher::new(1, &[0x42; 32]).expect("cipher"));
+    let mut drivers: BTreeMap<GatewayVendor, Arc<dyn OAuthVendorDriver>> = BTreeMap::new();
+    drivers.insert(
+        GatewayVendor::GithubCopilot,
+        Arc::new(GithubCopilotOAuthDriver::with_test_endpoints(&format!(
+            "http://{addr}"
+        ))),
+    );
+    let live_hub = Arc::new(LlmGatewayHub::with_drivers(
+        Some(db.pool().clone()),
+        cipher,
+        drivers,
+    ));
+
+    let live_ch = live_hub
+        .start_oauth_login(StartOAuthLoginRequest {
+            vendor: GatewayVendor::GithubCopilot,
+            label: "GitHub Primary".to_owned(),
+            redirect_uri: None,
+        })
+        .await
+        .expect("start live device flow");
+    assert_eq!(live_ch.user_code.as_deref(), Some("WXYZ-9876"));
+
+    // Poll completes even when `copilot_internal/v2/token` returns 503 during initial login!
+    let live_poll = live_hub
+        .poll_oauth_login(&live_ch.session_id)
+        .await
+        .expect("poll live");
+    let OAuthPollStatus::Completed { account } = live_poll else {
+        panic!("expected Completed with fallback token, got {live_poll:?}");
+    };
+    assert_eq!(account.account_email.as_deref(), Some("PhucHai38"));
+
+    let initial_lease = live_hub
+        .acquire_lease(&GatewayBinding::Account(account.account_key.clone()))
+        .expect("initial lease");
+    assert_eq!(initial_lease.access_token.expose(), "ghu_live_oauth_token_abc");
+
+    // Once `copilot_internal/v2/token` is reachable, refreshing upgrades `access_token` to `tid=...`
+    copilot_token_healthy.store(true, Ordering::SeqCst);
+    let refreshed_view = live_hub
+        .refresh_account_now(&account.account_key)
+        .await
+        .expect("refresh_account_now");
+    assert_eq!(refreshed_view.expires_at, Some(4_102_444_800));
+
+    let upgraded_lease = live_hub
+        .acquire_lease(&GatewayBinding::Account(account.account_key))
+        .expect("upgraded lease");
+    assert_eq!(
+        upgraded_lease.access_token.expose(),
+        "tid=copilot_minted_99;exp=4102444800"
+    );
+}
+
+#[tokio::test]
 async fn llm_gateway_proactive_refresh_and_zero_retry_cooldown_rotation() {
     let (hub, fakes, _temp) = test_hub_with_fakes().await;
     let anthropic_fake = fakes.get(&GatewayVendor::Anthropic).expect("anthropic");

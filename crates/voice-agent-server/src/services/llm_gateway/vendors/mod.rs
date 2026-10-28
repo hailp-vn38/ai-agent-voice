@@ -194,7 +194,9 @@ pub struct FakeOAuthVendorDriver {
     vendor: GatewayVendor,
     refresh_calls: AtomicUsize,
     quota_calls: AtomicUsize,
+    device_poll_calls: AtomicUsize,
     device_ready: Mutex<bool>,
+    next_device_poll_interval: Mutex<Option<u64>>,
     next_email: Mutex<Option<String>>,
     next_expires_at: Mutex<Option<i64>>,
     next_quota: Mutex<Option<VendorQuotaSnapshot>>,
@@ -206,7 +208,9 @@ impl FakeOAuthVendorDriver {
             vendor,
             refresh_calls: AtomicUsize::new(0),
             quota_calls: AtomicUsize::new(0),
+            device_poll_calls: AtomicUsize::new(0),
             device_ready: Mutex::new(false),
+            next_device_poll_interval: Mutex::new(Some(0)),
             next_email: Mutex::new(Some(format!("{}@example.com", vendor.as_str()))),
             next_expires_at: Mutex::new(Some(4_102_444_800)), // 2100-01-01
             next_quota: Mutex::new(None),
@@ -215,6 +219,17 @@ impl FakeOAuthVendorDriver {
 
     pub fn set_device_ready(&self, ready: bool) {
         *self.device_ready.lock().expect("device_ready mutex") = ready;
+    }
+
+    pub fn set_next_device_poll_interval(&self, interval: Option<u64>) {
+        *self
+            .next_device_poll_interval
+            .lock()
+            .expect("next_device_poll_interval mutex") = interval;
+    }
+
+    pub fn device_poll_call_count(&self) -> usize {
+        self.device_poll_calls.load(Ordering::SeqCst)
     }
 
     pub fn set_next_expires_at(&self, expires_at: Option<i64>) {
@@ -296,14 +311,17 @@ impl OAuthVendorDriver for FakeOAuthVendorDriver {
     }
 
     async fn poll_device_flow(&self, device_code: &str) -> Result<DevicePollOutcome, GatewayError> {
+        self.device_poll_calls.fetch_add(1, Ordering::SeqCst);
         if device_code != "dev_code_copilot_123" {
             return Ok(DevicePollOutcome::Failed("bad_device_code".to_owned()));
         }
         let ready = *self.device_ready.lock().expect("device_ready");
         if !ready {
-            return Ok(DevicePollOutcome::Pending {
-                next_interval_secs: Some(5),
-            });
+            let next_interval_secs = *self
+                .next_device_poll_interval
+                .lock()
+                .expect("next_device_poll_interval");
+            return Ok(DevicePollOutcome::Pending { next_interval_secs });
         }
         let expires_at = *self.next_expires_at.lock().expect("next_expires_at");
         Ok(DevicePollOutcome::Completed(ExchangedOAuthAccount {

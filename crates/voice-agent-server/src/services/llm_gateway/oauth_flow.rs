@@ -25,6 +25,7 @@ pub enum OAuthSessionFlowState {
         user_code: String,
         verification_uri: String,
         poll_interval_secs: u64,
+        next_poll_at: Option<Instant>,
         completed_account: Option<GatewayAccountView>,
         failure: Option<String>,
     },
