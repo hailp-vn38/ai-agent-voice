@@ -310,6 +310,167 @@ async fn admin_llm_gateway_routes_and_provider_binding_lifecycle() {
     let del_body: Value = del_ok.json().await.unwrap();
     assert_eq!(del_body["deleted"], true);
 
+    // 6. Pool Detail & Pool Model CRUD via HTTP routes
+    // (`GET /llm-gateway/pools/openai_codex` already contains the `prov_key` provider from step 5)
+    let pool_resp = client
+        .get(format!("{base}/llm-gateway/pools/openai_codex"))
+        .bearer_auth("gateway-admin-token")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(pool_resp.status(), StatusCode::OK);
+    let pool_body: Value = pool_resp.json().await.unwrap();
+    assert_eq!(pool_body["pool"]["vendor"], "openai_codex");
+    assert_eq!(pool_body["pool"]["models"].as_array().unwrap().len(), 1);
+    assert!(
+        !pool_body["pool"]["preset_models"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+
+    // Add a new model directly into the Anthropic pool
+    let create_model_resp = client
+        .post(format!("{base}/llm-gateway/pools/anthropic/models"))
+        .bearer_auth("gateway-admin-token")
+        .json(&json!({
+            "model": "claude-sonnet-4-20250514",
+            "display_name": "Claude Sonnet 4 Pool",
+            "tags": ["chat", "reasoning", "vision"],
+            "max_tokens": 8192,
+            "context_limit_tokens": 200000,
+            "timeout_ms": 60000,
+            "enabled": true
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(create_model_resp.status(), StatusCode::CREATED);
+    let created_model_body: Value = create_model_resp.json().await.unwrap();
+    let anthropic_model_key = created_model_body["model"]["provider_key"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    assert_eq!(
+        created_model_body["model"]["gateway_binding"],
+        "pool:anthropic"
+    );
+    assert_eq!(
+        created_model_body["model"]["model"],
+        "claude-sonnet-4-20250514"
+    );
+    assert_eq!(created_model_body["model"]["max_tokens"], 8192);
+
+    // Edit the model in the Anthropic pool
+    let patch_model_resp = client
+        .patch(format!(
+            "{base}/llm-gateway/pools/anthropic/models/{anthropic_model_key}"
+        ))
+        .bearer_auth("gateway-admin-token")
+        .json(&json!({
+            "model": "claude-opus-4-20250514",
+            "display_name": "Claude Opus 4 Pool",
+            "max_tokens": null,
+            "enabled": false
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(patch_model_resp.status(), StatusCode::OK);
+    let patched_model_body: Value = patch_model_resp.json().await.unwrap();
+    assert_eq!(
+        patched_model_body["model"]["model"],
+        "claude-opus-4-20250514"
+    );
+    assert_eq!(
+        patched_model_body["model"]["display_name"],
+        "Claude Opus 4 Pool"
+    );
+    assert!(patched_model_body["model"]["max_tokens"].is_null());
+    assert_eq!(patched_model_body["model"]["enabled"], false);
+
+    // Re-enable the Anthropic pool model so it can be bound to a template
+    let reenable_model_resp = client
+        .patch(format!(
+            "{base}/llm-gateway/pools/anthropic/models/{anthropic_model_key}"
+        ))
+        .bearer_auth("gateway-admin-token")
+        .json(&json!({
+            "enabled": true
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(reenable_model_resp.status(), StatusCode::OK);
+
+    // Bind a template to the Anthropic pool model and verify DELETE returns 409 Conflict (gateway_pool_model_in_use)
+    let create_tpl_resp = client
+        .post(format!("{base}/templates"))
+        .bearer_auth("gateway-admin-token")
+        .json(&json!({
+            "key": "tpl_gateway_test",
+            "name": "Gateway Test Template",
+            "language": "en",
+            "prompt": "You are a helpful assistant."
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(create_tpl_resp.status(), StatusCode::CREATED);
+
+    let bind_tpl_resp = client
+        .put(format!("{base}/templates/tpl_gateway_test/providers/llm"))
+        .bearer_auth("gateway-admin-token")
+        .header("if-match", "\"1\"")
+        .json(&json!({
+            "provider_key": anthropic_model_key
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(bind_tpl_resp.status(), StatusCode::OK);
+
+    let delete_in_use_resp = client
+        .delete(format!(
+            "{base}/llm-gateway/pools/anthropic/models/{anthropic_model_key}"
+        ))
+        .bearer_auth("gateway-admin-token")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(delete_in_use_resp.status(), StatusCode::CONFLICT);
+    let delete_in_use_body: Value = delete_in_use_resp.json().await.unwrap();
+    assert_eq!(
+        delete_in_use_body["error"]["code"],
+        "gateway_pool_model_in_use"
+    );
+    assert_eq!(
+        delete_in_use_body["error"]["templates"],
+        json!(["tpl_gateway_test"])
+    );
+
+    let unbind_tpl_resp = client
+        .delete(format!("{base}/templates/tpl_gateway_test/providers/llm"))
+        .bearer_auth("gateway-admin-token")
+        .header("if-match", "\"2\"")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(unbind_tpl_resp.status(), StatusCode::OK);
+
+    // Delete the model from the Anthropic pool after unbinding
+    let delete_model_resp = client
+        .delete(format!(
+            "{base}/llm-gateway/pools/anthropic/models/{anthropic_model_key}"
+        ))
+        .bearer_auth("gateway-admin-token")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(delete_model_resp.status(), StatusCode::OK);
+    let delete_model_body: Value = delete_model_resp.json().await.unwrap();
+    assert_eq!(delete_model_body["deleted"], true);
+
     handle.abort();
     let _ = std::fs::remove_dir_all(&temp_dir);
 }

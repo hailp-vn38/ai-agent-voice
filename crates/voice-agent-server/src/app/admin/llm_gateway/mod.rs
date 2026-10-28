@@ -10,8 +10,8 @@ use std::sync::{
 
 use super::*;
 use crate::services::llm_gateway::{
-    GatewayError, GatewayVendor, OAuthCallbackSubmission, OAuthPollStatus, StartOAuthLoginRequest,
-    UpdateGatewayAccountPatch,
+    CreatePoolModelRequest, GatewayError, GatewayVendor, OAuthCallbackSubmission, OAuthPollStatus,
+    StartOAuthLoginRequest, UpdateGatewayAccountPatch, UpdatePoolModelPatch,
 };
 
 #[derive(Debug, Default, Deserialize)]
@@ -47,8 +47,98 @@ pub(super) struct OAuthCallbackQuery {
 }
 
 pub(super) async fn list_vendors(State(state): State<AppState>) -> Response {
-    let vendors = state.llm_gateway_hub.list_vendors();
+    let vendors = state.llm_gateway_hub.list_vendors_detailed().await;
     Json(serde_json::json!({ "vendors": vendors })).into_response()
+}
+
+pub(super) async fn get_pool_detail(
+    State(state): State<AppState>,
+    Path(vendor_raw): Path<String>,
+    request: Request,
+) -> Response {
+    let Some(vendor) = GatewayVendor::parse(&vendor_raw) else {
+        return error(&request, StatusCode::BAD_REQUEST, "invalid_vendor");
+    };
+    match state.llm_gateway_hub.get_pool_detail(vendor).await {
+        Ok(pool) => Json(serde_json::json!({ "pool": pool })).into_response(),
+        Err(err) => gateway_error(&request, err),
+    }
+}
+
+pub(super) async fn create_pool_model(
+    State(state): State<AppState>,
+    Path(vendor_raw): Path<String>,
+    request: Request,
+) -> Response {
+    let Some(vendor) = GatewayVendor::parse(&vendor_raw) else {
+        return error(&request, StatusCode::BAD_REQUEST, "invalid_vendor");
+    };
+    let (request, body): (_, CreatePoolModelRequest) = match json(request).await {
+        Ok(v) => v,
+        Err(e) => return e,
+    };
+    match state.llm_gateway_hub.create_pool_model(vendor, body).await {
+        Ok(model) => {
+            let _ = crate::services::task_flow::sync_orchestrator_from_state(&state).await;
+            (
+                StatusCode::CREATED,
+                Json(serde_json::json!({ "model": model })),
+            )
+                .into_response()
+        }
+        Err(err) => gateway_error(&request, err),
+    }
+}
+
+pub(super) async fn patch_pool_model(
+    State(state): State<AppState>,
+    Path((vendor_raw, provider_key)): Path<(String, String)>,
+    request: Request,
+) -> Response {
+    let Some(vendor) = GatewayVendor::parse(&vendor_raw) else {
+        return error(&request, StatusCode::BAD_REQUEST, "invalid_vendor");
+    };
+    let (request, body): (_, UpdatePoolModelPatch) = match json(request).await {
+        Ok(v) => v,
+        Err(e) => return e,
+    };
+    match state
+        .llm_gateway_hub
+        .update_pool_model(vendor, &provider_key, body)
+        .await
+    {
+        Ok(model) => {
+            if let (Some(prewarm), Some(db)) = (&state.provider_prewarm, &state.database)
+                && let Ok(p) = crate::database::providers::provider_by(db, &provider_key).await
+            {
+                prewarm.provider(p.id, p.revision).await;
+            }
+            let _ = crate::services::task_flow::sync_orchestrator_from_state(&state).await;
+            Json(serde_json::json!({ "model": model })).into_response()
+        }
+        Err(err) => gateway_error(&request, err),
+    }
+}
+
+pub(super) async fn delete_pool_model(
+    State(state): State<AppState>,
+    Path((vendor_raw, provider_key)): Path<(String, String)>,
+    request: Request,
+) -> Response {
+    let Some(vendor) = GatewayVendor::parse(&vendor_raw) else {
+        return error(&request, StatusCode::BAD_REQUEST, "invalid_vendor");
+    };
+    match state
+        .llm_gateway_hub
+        .delete_pool_model(vendor, &provider_key)
+        .await
+    {
+        Ok(()) => {
+            let _ = crate::services::task_flow::sync_orchestrator_from_state(&state).await;
+            Json(serde_json::json!({ "deleted": true })).into_response()
+        }
+        Err(err) => gateway_error(&request, err),
+    }
 }
 
 pub(super) async fn list_accounts(
@@ -364,7 +454,9 @@ fn gateway_error(request: &Request, err: GatewayError) -> Response {
         | GatewayError::OAuthCallbackInvalid
         | GatewayError::CredentialInvalid
         | GatewayError::ValidationFailed => error(request, StatusCode::BAD_REQUEST, code),
-        GatewayError::OAuthSessionNotFound | GatewayError::AccountNotFound => {
+        GatewayError::OAuthSessionNotFound
+        | GatewayError::AccountNotFound
+        | GatewayError::PoolModelNotFound => {
             error(request, StatusCode::NOT_FOUND, code)
         }
         GatewayError::OAuthSessionExpired => error(request, StatusCode::GONE, code),
@@ -374,6 +466,17 @@ fn gateway_error(request: &Request, err: GatewayError) -> Response {
                 "error": {
                     "code": code,
                     "providers": providers,
+                    "request_id": id(request),
+                }
+            })),
+        )
+            .into_response(),
+        GatewayError::PoolModelInUse(templates) => (
+            StatusCode::CONFLICT,
+            Json(serde_json::json!({
+                "error": {
+                    "code": code,
+                    "templates": templates,
                     "request_id": id(request),
                 }
             })),

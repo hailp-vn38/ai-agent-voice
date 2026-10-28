@@ -8,9 +8,10 @@ use crate::{
 };
 
 use super::{
-    FakeOAuthVendorDriver, GatewayAccountStatus, GatewayBinding, GatewayCallOutcome, GatewayError,
-    GatewayVendor, LlmGatewayHub, OAuthCallbackSubmission, OAuthLoginMode, OAuthPollStatus,
-    OAuthVendorDriver, StartOAuthLoginRequest, UpdateGatewayAccountPatch,
+    CreatePoolModelRequest, FakeOAuthVendorDriver, GatewayAccountStatus, GatewayBinding,
+    GatewayCallOutcome, GatewayError, GatewayVendor, LlmGatewayHub, OAuthCallbackSubmission,
+    OAuthLoginMode, OAuthPollStatus, OAuthVendorDriver, StartOAuthLoginRequest,
+    UpdateGatewayAccountPatch, UpdatePoolModelPatch,
 };
 
 async fn test_hub_with_fakes() -> (
@@ -818,4 +819,166 @@ async fn llm_gateway_muse_cookie_paste_interactive_cdp_capture_and_session_renew
         json_creds[0].cookies.get("hatch_vml").map(String::as_str),
         Some(large_vml.as_str())
     );
+}
+
+#[tokio::test]
+async fn llm_gateway_pool_detail_and_model_crud_lifecycle() {
+    let (hub, _fakes, db) = test_hub_with_fakes().await;
+
+    // 1. Inspect empty pool detail for OpenAI Codex -> includes preset_models
+    let detail_initial = hub
+        .get_pool_detail(GatewayVendor::OpenaiCodex)
+        .await
+        .expect("get_pool_detail");
+    assert_eq!(detail_initial.vendor, GatewayVendor::OpenaiCodex);
+    assert_eq!(detail_initial.pool_binding, "pool:openai_codex");
+    assert!(detail_initial.models.is_empty());
+    assert!(!detail_initial.preset_models.is_empty());
+    assert!(
+        detail_initial
+            .preset_models
+            .iter()
+            .any(|p| p.model == "gpt-5.3-codex" && p.supports_reasoning_effort)
+    );
+
+    // 2. Add a model to the OpenAI Codex pool using preset defaults
+    let created = hub
+        .create_pool_model(
+            GatewayVendor::OpenaiCodex,
+            CreatePoolModelRequest {
+                model: "gpt-5.3-codex".to_owned(),
+                display_name: None,
+                gateway_binding: None,
+                tags: None,
+                reasoning_effort: Some("high".to_owned()),
+                max_tokens: Some(8192),
+                context_limit_tokens: Some(200_000),
+                temperature_percent: None,
+                timeout_ms: Some(45_000),
+                enabled: Some(true),
+            },
+        )
+        .await
+        .expect("create_pool_model");
+
+    assert!(created.provider_key.starts_with("llm_"));
+    assert_eq!(created.display_name, "GPT-5.3 Codex");
+    assert_eq!(created.vendor, GatewayVendor::OpenaiCodex);
+    assert_eq!(created.gateway_binding, "pool:openai_codex");
+    assert_eq!(created.binding_mode, "pool");
+    assert_eq!(created.model, "gpt-5.3-codex");
+    assert_eq!(created.reasoning_effort.as_deref(), Some("high"));
+    assert_eq!(created.max_tokens, Some(8192));
+    assert_eq!(created.context_limit_tokens, Some(200_000));
+    assert_eq!(created.timeout_ms, 45_000);
+    assert_eq!(
+        created.tags,
+        vec![
+            "chat".to_owned(),
+            "reasoning".to_owned(),
+            "vision".to_owned()
+        ]
+    );
+    assert!(created.enabled);
+
+    // 3. Verify list_vendors_detailed reflects model_count = 1
+    let vendors = hub.list_vendors_detailed().await;
+    let codex_info = vendors
+        .iter()
+        .find(|v| v.vendor == GatewayVendor::OpenaiCodex)
+        .expect("codex info");
+    assert_eq!(codex_info.model_count, 1);
+    assert_eq!(codex_info.models[0].provider_key, created.provider_key);
+
+    // 4. Edit model parameters in the pool
+    let updated = hub
+        .update_pool_model(
+            GatewayVendor::OpenaiCodex,
+            &created.provider_key,
+            UpdatePoolModelPatch {
+                model: Some("gpt-5.6-terra".to_owned()),
+                display_name: Some("Codex Terra Primary".to_owned()),
+                tags: Some(vec!["chat".to_owned(), "reasoning".to_owned()]),
+                reasoning_effort: Some(Some("medium".to_owned())),
+                max_tokens: Some(Some(16384)),
+                enabled: Some(false),
+                ..Default::default()
+            },
+        )
+        .await
+        .expect("update_pool_model");
+
+    assert_eq!(updated.model, "gpt-5.6-terra");
+    assert_eq!(updated.display_name, "Codex Terra Primary");
+    assert_eq!(updated.tags, vec!["chat".to_owned(), "reasoning".to_owned()]);
+    assert_eq!(updated.reasoning_effort.as_deref(), Some("medium"));
+    assert_eq!(updated.max_tokens, Some(16384));
+    assert!(!updated.enabled);
+    assert_eq!(updated.revision, 2);
+
+    // Cross-vendor guard: cannot update/delete OpenAI Codex model via Anthropic pool endpoint
+    let wrong_vendor = hub
+        .delete_pool_model(GatewayVendor::Anthropic, &created.provider_key)
+        .await
+        .expect_err("wrong vendor must fail");
+    assert_eq!(wrong_vendor, GatewayError::PoolModelNotFound);
+
+    // 5. Bind the provider to an agent_template and verify delete returns PoolModelInUse
+    let provider_id: i64 = sqlx::query_scalar("SELECT id FROM providers WHERE key = ?")
+        .bind(&created.provider_key)
+        .fetch_one(db.pool())
+        .await
+        .expect("provider id");
+    sqlx::query(
+        "INSERT INTO agent_templates (key, name, language, prompt, enabled, revision, created_at, updated_at) \
+         VALUES ('tpl_voice_1', 'Voice Template 1', 'en', 'You are helpful', 1, 1, 0, 0)",
+    )
+    .execute(db.pool())
+    .await
+    .expect("insert template");
+    let tpl_id: i64 = sqlx::query_scalar("SELECT id FROM agent_templates WHERE key = 'tpl_voice_1'")
+        .fetch_one(db.pool())
+        .await
+        .expect("template id");
+    sqlx::query(
+        "INSERT INTO template_provider_bindings (template_id, provider_type, provider_source, provider_id, created_at, updated_at) \
+         VALUES (?, 'llm', 'database', ?, 0, 0)",
+    )
+    .bind(tpl_id)
+    .bind(provider_id)
+    .execute(db.pool())
+    .await
+    .expect("insert template binding");
+
+    let detail_bound = hub
+        .get_pool_detail(GatewayVendor::OpenaiCodex)
+        .await
+        .expect("detail bound");
+    assert_eq!(detail_bound.models[0].template_usage_count, 1);
+
+    let in_use_err = hub
+        .delete_pool_model(GatewayVendor::OpenaiCodex, &created.provider_key)
+        .await
+        .expect_err("delete bound model should fail");
+    assert_eq!(
+        in_use_err,
+        GatewayError::PoolModelInUse(vec!["tpl_voice_1".to_owned()])
+    );
+
+    // Unbind and delete model
+    sqlx::query("DELETE FROM template_provider_bindings WHERE template_id = ?")
+        .bind(tpl_id)
+        .execute(db.pool())
+        .await
+        .expect("delete binding");
+
+    hub.delete_pool_model(GatewayVendor::OpenaiCodex, &created.provider_key)
+        .await
+        .expect("delete_pool_model after unbind");
+
+    let detail_after = hub
+        .get_pool_detail(GatewayVendor::OpenaiCodex)
+        .await
+        .expect("detail after delete");
+    assert!(detail_after.models.is_empty());
 }

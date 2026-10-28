@@ -11,6 +11,36 @@ export type OAuthLoginMode = 'pkce' | 'device_code'
 
 export type GatewayAccountStatus = 'active' | 'cooling_down' | 'reauth_required' | 'disabled'
 
+export interface GatewayVendorModelPreset {
+  model: string
+  display_name: string
+  tags: string[]
+  supports_reasoning_effort: boolean
+  default_max_tokens?: number | null
+  default_context_limit_tokens?: number | null
+}
+
+export interface GatewayPoolModelView {
+  provider_key: string
+  display_name: string
+  vendor: GatewayVendor
+  adapter: string
+  gateway_binding: string
+  binding_mode: string
+  model: string
+  enabled: boolean
+  revision: number
+  tags: string[]
+  reasoning_effort?: string | null
+  max_tokens?: number | null
+  context_limit_tokens?: number | null
+  temperature_percent?: number | null
+  timeout_ms: number
+  template_usage_count: number
+  created_at: number
+  updated_at: number
+}
+
 export interface GatewayVendorInfo {
   vendor: GatewayVendor
   display_name: string
@@ -20,6 +50,24 @@ export interface GatewayVendorInfo {
   total_accounts: number
   active_accounts: number
   cooling_down_accounts: number
+  model_count?: number
+  models?: GatewayPoolModelView[]
+}
+
+export interface GatewayPoolDetailView {
+  vendor: GatewayVendor
+  display_name: string
+  login_mode: OAuthLoginMode
+  default_base_url: string
+  pool_binding: string
+  total_accounts: number
+  active_accounts: number
+  cooling_down_accounts: number
+  reauth_required_accounts: number
+  disabled_accounts: number
+  accounts: GatewayAccountView[]
+  models: GatewayPoolModelView[]
+  preset_models: GatewayVendorModelPreset[]
 }
 
 export interface GatewayBoundProviderRef {
@@ -97,4 +145,30 @@ export interface UpdateGatewayAccountInput {
   label?: string
   enabled?: boolean
   priority?: number
+}
+
+export interface CreatePoolModelInput {
+  model: string
+  display_name?: string
+  gateway_binding?: string
+  tags?: string[]
+  reasoning_effort?: string | null
+  max_tokens?: number | null
+  context_limit_tokens?: number | null
+  temperature_percent?: number | null
+  timeout_ms?: number
+  enabled?: boolean
+}
+
+export interface UpdatePoolModelInput {
+  model?: string
+  display_name?: string
+  gateway_binding?: string
+  tags?: string[]
+  reasoning_effort?: string | null
+  max_tokens?: number | null
+  context_limit_tokens?: number | null
+  temperature_percent?: number | null
+  timeout_ms?: number
+  enabled?: boolean
 }

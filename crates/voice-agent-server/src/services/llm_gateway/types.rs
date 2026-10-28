@@ -77,6 +77,196 @@ impl GatewayVendor {
             _ => None,
         }
     }
+
+    pub fn preset_models(self) -> Vec<GatewayVendorModelPreset> {
+        let preset = |model: &str,
+                      display_name: &str,
+                      tags: &[&str],
+                      supports_reasoning_effort: bool,
+                      default_max_tokens: Option<u32>,
+                      default_context_limit_tokens: Option<u32>| {
+            GatewayVendorModelPreset {
+                model: model.to_owned(),
+                display_name: display_name.to_owned(),
+                tags: tags.iter().map(|t| (*t).to_owned()).collect(),
+                supports_reasoning_effort,
+                default_max_tokens,
+                default_context_limit_tokens,
+            }
+        };
+        match self {
+            Self::Anthropic => vec![
+                preset(
+                    "claude-sonnet-4-20250514",
+                    "Claude Sonnet 4",
+                    &["chat", "reasoning", "vision"],
+                    false,
+                    Some(4096),
+                    Some(200_000),
+                ),
+                preset(
+                    "claude-opus-4-20250514",
+                    "Claude Opus 4",
+                    &["chat", "reasoning", "vision"],
+                    false,
+                    Some(4096),
+                    Some(200_000),
+                ),
+                preset(
+                    "claude-3-7-sonnet-20250219",
+                    "Claude 3.7 Sonnet",
+                    &["chat", "reasoning", "vision"],
+                    false,
+                    Some(4096),
+                    Some(200_000),
+                ),
+                preset(
+                    "claude-3-5-haiku-20241022",
+                    "Claude 3.5 Haiku",
+                    &["chat", "vision"],
+                    false,
+                    Some(4096),
+                    Some(200_000),
+                ),
+            ],
+            Self::OpenaiCodex => vec![
+                preset(
+                    "gpt-5.6-terra",
+                    "GPT-5.6 Terra (Codex)",
+                    &["chat", "reasoning", "vision"],
+                    true,
+                    Some(4096),
+                    Some(200_000),
+                ),
+                preset(
+                    "gpt-5.3-codex",
+                    "GPT-5.3 Codex",
+                    &["chat", "reasoning", "vision"],
+                    true,
+                    Some(4096),
+                    Some(200_000),
+                ),
+                preset(
+                    "gpt-5.2-codex",
+                    "GPT-5.2 Codex",
+                    &["chat", "reasoning", "vision"],
+                    true,
+                    Some(4096),
+                    Some(200_000),
+                ),
+                preset(
+                    "o3",
+                    "OpenAI o3",
+                    &["chat", "reasoning", "vision"],
+                    true,
+                    Some(4096),
+                    Some(200_000),
+                ),
+                preset(
+                    "o4-mini",
+                    "OpenAI o4-mini",
+                    &["chat", "reasoning", "vision"],
+                    true,
+                    Some(4096),
+                    Some(200_000),
+                ),
+                preset(
+                    "gpt-4.1",
+                    "GPT-4.1",
+                    &["chat", "vision"],
+                    false,
+                    Some(4096),
+                    Some(128_000),
+                ),
+            ],
+            Self::Gemini => vec![
+                preset(
+                    "gemini-2.5-pro",
+                    "Gemini 2.5 Pro",
+                    &["chat", "reasoning", "vision"],
+                    true,
+                    Some(4096),
+                    Some(1_000_000),
+                ),
+                preset(
+                    "gemini-2.5-flash",
+                    "Gemini 2.5 Flash",
+                    &["chat", "reasoning", "vision"],
+                    true,
+                    Some(4096),
+                    Some(1_000_000),
+                ),
+                preset(
+                    "gemini-2.0-flash",
+                    "Gemini 2.0 Flash",
+                    &["chat", "vision"],
+                    false,
+                    Some(4096),
+                    Some(1_000_000),
+                ),
+            ],
+            Self::GithubCopilot => vec![
+                preset(
+                    "gpt-4o",
+                    "Copilot GPT-4o",
+                    &["chat", "vision"],
+                    false,
+                    Some(4096),
+                    Some(128_000),
+                ),
+                preset(
+                    "claude-3.5-sonnet",
+                    "Copilot Claude 3.5 Sonnet",
+                    &["chat", "vision"],
+                    false,
+                    Some(4096),
+                    Some(128_000),
+                ),
+                preset(
+                    "o3-mini",
+                    "Copilot o3-mini",
+                    &["chat", "reasoning"],
+                    true,
+                    Some(4096),
+                    Some(128_000),
+                ),
+                preset(
+                    "gemini-2.0-flash-001",
+                    "Copilot Gemini 2.0 Flash",
+                    &["chat", "vision"],
+                    false,
+                    Some(4096),
+                    Some(128_000),
+                ),
+            ],
+            Self::Muse => vec![
+                preset(
+                    "muse-chat",
+                    "Muse Chat (Multimodal)",
+                    &["chat", "vision"],
+                    false,
+                    Some(4096),
+                    Some(128_000),
+                ),
+                preset(
+                    "muse-image",
+                    "Muse Image Generation",
+                    &["image"],
+                    false,
+                    None,
+                    None,
+                ),
+                preset(
+                    "muse-video",
+                    "Muse Video Generation",
+                    &["video"],
+                    false,
+                    None,
+                    None,
+                ),
+            ],
+        }
+    }
 }
 
 impl fmt::Display for GatewayVendor {
@@ -264,6 +454,44 @@ pub enum OAuthLoginMode {
     DeviceCode,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GatewayVendorModelPreset {
+    pub model: String,
+    pub display_name: String,
+    pub tags: Vec<String>,
+    pub supports_reasoning_effort: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_max_tokens: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_context_limit_tokens: Option<u32>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GatewayPoolModelView {
+    pub provider_key: String,
+    pub display_name: String,
+    pub vendor: GatewayVendor,
+    pub adapter: String,
+    pub gateway_binding: String,
+    pub binding_mode: String,
+    pub model: String,
+    pub enabled: bool,
+    pub revision: i64,
+    pub tags: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning_effort: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_tokens: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_limit_tokens: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub temperature_percent: Option<u16>,
+    pub timeout_ms: u64,
+    pub template_usage_count: i64,
+    pub created_at: i64,
+    pub updated_at: i64,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GatewayVendorInfo {
     pub vendor: GatewayVendor,
@@ -274,6 +502,27 @@ pub struct GatewayVendorInfo {
     pub total_accounts: usize,
     pub active_accounts: usize,
     pub cooling_down_accounts: usize,
+    #[serde(default)]
+    pub model_count: usize,
+    #[serde(default)]
+    pub models: Vec<GatewayPoolModelView>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GatewayPoolDetailView {
+    pub vendor: GatewayVendor,
+    pub display_name: String,
+    pub login_mode: OAuthLoginMode,
+    pub default_base_url: String,
+    pub pool_binding: String,
+    pub total_accounts: usize,
+    pub active_accounts: usize,
+    pub cooling_down_accounts: usize,
+    pub reauth_required_accounts: usize,
+    pub disabled_accounts: usize,
+    pub accounts: Vec<GatewayAccountView>,
+    pub models: Vec<GatewayPoolModelView>,
+    pub preset_models: Vec<GatewayVendorModelPreset>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -381,6 +630,56 @@ pub enum OAuthPollStatus {
     Failed { error: String },
 }
 
+fn deserialize_double_option<'de, T, D>(deserializer: D) -> Result<Option<Option<T>>, D::Error>
+where
+    T: Deserialize<'de>,
+    D: serde::Deserializer<'de>,
+{
+    Option::<T>::deserialize(deserializer).map(Some)
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct CreatePoolModelRequest {
+    pub model: String,
+    #[serde(default, alias = "name")]
+    pub display_name: Option<String>,
+    #[serde(default)]
+    pub gateway_binding: Option<String>,
+    #[serde(default)]
+    pub tags: Option<Vec<String>>,
+    #[serde(default)]
+    pub reasoning_effort: Option<String>,
+    #[serde(default)]
+    pub max_tokens: Option<u32>,
+    #[serde(default)]
+    pub context_limit_tokens: Option<u32>,
+    #[serde(default)]
+    pub temperature_percent: Option<u16>,
+    #[serde(default)]
+    pub timeout_ms: Option<u64>,
+    #[serde(default)]
+    pub enabled: Option<bool>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct UpdatePoolModelPatch {
+    pub model: Option<String>,
+    #[serde(default, alias = "name")]
+    pub display_name: Option<String>,
+    pub gateway_binding: Option<String>,
+    pub tags: Option<Vec<String>>,
+    #[serde(default, deserialize_with = "deserialize_double_option")]
+    pub reasoning_effort: Option<Option<String>>,
+    #[serde(default, deserialize_with = "deserialize_double_option")]
+    pub max_tokens: Option<Option<u32>>,
+    #[serde(default, deserialize_with = "deserialize_double_option")]
+    pub context_limit_tokens: Option<Option<u32>>,
+    #[serde(default, deserialize_with = "deserialize_double_option")]
+    pub temperature_percent: Option<Option<u16>>,
+    pub timeout_ms: Option<u64>,
+    pub enabled: Option<bool>,
+}
+
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct UpdateGatewayAccountPatch {
     #[serde(alias = "display_name")]
@@ -421,6 +720,10 @@ pub enum GatewayError {
     OAuthExchangeFailed(String),
     #[error("gateway_account_in_use")]
     AccountInUse(Vec<String>),
+    #[error("gateway_pool_model_not_found")]
+    PoolModelNotFound,
+    #[error("gateway_pool_model_in_use")]
+    PoolModelInUse(Vec<String>),
     #[error("database_unavailable")]
     DatabaseUnavailable,
     #[error("validation_failed")]
@@ -445,6 +748,8 @@ impl GatewayError {
             Self::OAuthCallbackInvalid => "oauth_callback_invalid",
             Self::OAuthExchangeFailed(_) => "oauth_exchange_failed",
             Self::AccountInUse(_) => "gateway_account_in_use",
+            Self::PoolModelNotFound => "gateway_pool_model_not_found",
+            Self::PoolModelInUse(_) => "gateway_pool_model_in_use",
             Self::DatabaseUnavailable => "database_unavailable",
             Self::ValidationFailed => "validation_failed",
         }

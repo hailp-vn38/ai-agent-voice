@@ -352,6 +352,19 @@ pub(super) fn router(state: AppState) -> Router<AppState> {
             axum::routing::post(discover_provider_capabilities),
         )
         .route("/llm-gateway/vendors", get(llm_gateway::list_vendors))
+        .route(
+            "/llm-gateway/pools/{vendor}",
+            get(llm_gateway::get_pool_detail),
+        )
+        .route(
+            "/llm-gateway/pools/{vendor}/models",
+            axum::routing::post(llm_gateway::create_pool_model),
+        )
+        .route(
+            "/llm-gateway/pools/{vendor}/models/{provider_key}",
+            axum::routing::patch(llm_gateway::patch_pool_model)
+                .delete(llm_gateway::delete_pool_model),
+        )
         .route("/llm-gateway/accounts", get(llm_gateway::list_accounts))
         .route("/llm-gateway/quotas", get(llm_gateway::list_quotas))
         .route(

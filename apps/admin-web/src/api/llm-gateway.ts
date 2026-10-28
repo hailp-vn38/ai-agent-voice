@@ -1,7 +1,10 @@
 import { jsonRequest, requestJson, withQuery } from './client'
 import type {
+  CreatePoolModelInput,
   GatewayAccountQuota,
   GatewayAccountView,
+  GatewayPoolDetailView,
+  GatewayPoolModelView,
   GatewayVendor,
   GatewayVendorInfo,
   OAuthCallbackSubmission,
@@ -9,12 +12,21 @@ import type {
   OAuthPollStatus,
   StartOAuthLoginInput,
   UpdateGatewayAccountInput,
+  UpdatePoolModelInput,
 } from './types/llm-gateway'
 
 const basePath = '/api/admin/llm-gateway'
 
 function accountPath(accountKey: string): string {
   return `${basePath}/accounts/${encodeURIComponent(accountKey)}`
+}
+
+function poolPath(vendor: GatewayVendor): string {
+  return `${basePath}/pools/${encodeURIComponent(vendor)}`
+}
+
+function poolModelPath(vendor: GatewayVendor, providerKey: string): string {
+  return `${poolPath(vendor)}/models/${encodeURIComponent(providerKey)}`
 }
 
 function sessionPath(sessionId: string): string {
@@ -24,6 +36,35 @@ function sessionPath(sessionId: string): string {
 export const llmGatewayApi = {
   listVendors(signal?: AbortSignal) {
     return requestJson<{ vendors: GatewayVendorInfo[] }>(`${basePath}/vendors`, {}, { signal })
+  },
+  getPoolDetail(vendor: GatewayVendor, signal?: AbortSignal) {
+    return requestJson<{ pool: GatewayPoolDetailView }>(poolPath(vendor), {}, { signal })
+  },
+  createPoolModel(vendor: GatewayVendor, input: CreatePoolModelInput, signal?: AbortSignal) {
+    return requestJson<{ model: GatewayPoolModelView }>(
+      `${poolPath(vendor)}/models`,
+      jsonRequest('POST', input),
+      { signal },
+    )
+  },
+  updatePoolModel(
+    vendor: GatewayVendor,
+    providerKey: string,
+    input: UpdatePoolModelInput,
+    signal?: AbortSignal,
+  ) {
+    return requestJson<{ model: GatewayPoolModelView }>(
+      poolModelPath(vendor, providerKey),
+      jsonRequest('PATCH', input),
+      { signal },
+    )
+  },
+  deletePoolModel(vendor: GatewayVendor, providerKey: string, signal?: AbortSignal) {
+    return requestJson<{ deleted: boolean }>(
+      poolModelPath(vendor, providerKey),
+      { method: 'DELETE' },
+      { signal },
+    )
   },
   listAccounts(vendor?: GatewayVendor, signal?: AbortSignal) {
     return requestJson<{ accounts: GatewayAccountView[] }>(
