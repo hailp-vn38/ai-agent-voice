@@ -942,3 +942,101 @@ async fn shutdown_rejects_admin_direct_speech_on_an_existing_session() {
     );
     voice.task.abort();
 }
+
+#[tokio::test]
+async fn admin_sse_streams_do_not_hold_graceful_shutdown_past_controlled_close_settle() {
+    use voice_agent_server::lifecycle::CONTROLLED_CLOSE_SETTLE;
+
+    let temp_root =
+        std::env::temp_dir().join(format!("voice-agent-sse-shutdown-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&temp_root).unwrap();
+
+    let mut app_config = config(database_url());
+    app_config.api.enabled = true;
+    app_config.api.admin_token = "sse-shutdown-admin".into();
+    app_config.orchestrator.enabled = true;
+    app_config.orchestrator.store_dir = temp_root.join("orch-store");
+    app_config.orchestrator.tasks_store_dir = temp_root.join("tasks-store");
+    app_config.orchestrator.reports_dir = temp_root.join("reports");
+    app_config.orchestrator.work_dir = temp_root.join("work");
+    app_config.orchestrator.prompts_dir = temp_root.join("prompts");
+    app_config.orchestrator.skills_dir = Some(temp_root.join("skills"));
+    app_config.wiki.vault_dir = temp_root.join("wiki");
+
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let database = Database::connect(&app_config.database).await.unwrap();
+    let lifecycle = RuntimeLifecycle::new(Duration::from_secs(15));
+    let mut state = AppState::from_provider_set_with_database_and_shutdown(
+        app_config.clone(),
+        providers(),
+        Some(database),
+        Arc::clone(&lifecycle),
+    );
+    let runtime = voice_agent_server::services::task_flow::init_from_app_config(&app_config)
+        .await
+        .unwrap();
+    state.wiki_engine = runtime.wiki_engine;
+    state.orchestrator = runtime.orchestrator;
+    state.task_manager = runtime.task_manager;
+    state.autoflow_notify = Some(runtime.autoflow_notify);
+
+    let listening = lifecycle.listening().clone();
+    let mut server = tokio::spawn(async move {
+        axum::serve(listener, router_with_state(state))
+            .with_graceful_shutdown(listening.cancelled_owned())
+            .await
+    });
+
+    let base = format!("http://{address}");
+    let client = reqwest::Client::new();
+    let mut streams = Vec::new();
+    for path in [
+        "/api/admin/system/logs/stream",
+        "/api/admin/notifications/stream",
+        "/api/admin/jobs/stream",
+    ] {
+        let resp = client
+            .get(format!("{base}{path}"))
+            .bearer_auth("sse-shutdown-admin")
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK, "SSE stream {path} opened");
+        let mut body = resp.bytes_stream();
+        let ready = timeout(Duration::from_secs(2), body.next())
+            .await
+            .expect("ready chunk timeout")
+            .expect("ready chunk present")
+            .expect("ready chunk bytes");
+        assert!(
+            String::from_utf8_lossy(&ready).contains("event: ready"),
+            "SSE stream {path} emitted ready frame"
+        );
+        streams.push((path, body));
+    }
+
+    let report = lifecycle.shutdown().await;
+    assert_eq!(report.outcome, DrainOutcome::Drained);
+    assert_eq!(report.controlled_closes, 0);
+
+    let settle = timeout(CONTROLLED_CLOSE_SETTLE, &mut server).await;
+    if settle.is_err() {
+        server.abort();
+        let _ = server.await;
+    }
+    settle
+        .expect("axum::serve with_graceful_shutdown timed out after CONTROLLED_CLOSE_SETTLE while Admin SSE streams were open")
+        .expect("server task joined cleanly")
+        .expect("axum::serve exited without error");
+
+    for (path, mut body) in streams {
+        while let Some(chunk) = timeout(Duration::from_secs(1), body.next())
+            .await
+            .unwrap_or_else(|_| panic!("SSE stream {path} did not close after shutdown"))
+        {
+            assert!(chunk.is_ok(), "SSE stream {path} closed cleanly: {chunk:?}");
+        }
+    }
+}
+

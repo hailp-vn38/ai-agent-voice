@@ -63,41 +63,50 @@ pub(super) async fn stream_logs(State(state): State<AppState>, request: Request)
         Ok(sub) => sub,
         Err(code) => return error(&request, StatusCode::BAD_REQUEST, code),
     };
+    let stopping = state.lifecycle.stopping().clone();
 
-    let messages = futures_util::stream::unfold((sub, true), |(mut sub, first)| async move {
-        if first {
-            let ready_payload = serde_json::json!({
-                "latest_seq": sub.latest_seq_at_subscribe,
-                "capacity": sub.capacity,
-            })
-            .to_string();
-            return Some((
-                Ok::<Event, Infallible>(Event::default().event("ready").data(ready_payload)),
-                (sub, false),
-            ));
-        }
-        match sub.recv().await {
-            Some(LogStreamItem::Entry(entry)) => {
-                let data = serde_json::to_string(entry.as_ref()).unwrap_or_else(|_| "{}".into());
-                Some((
-                    Ok(Event::default().event("log_entry").data(data)),
-                    (sub, false),
-                ))
-            }
-            Some(LogStreamItem::Lagged { missed, latest_seq }) => {
-                let data = serde_json::json!({
-                    "missed": missed,
-                    "latest_seq": latest_seq,
+    let messages = futures_util::stream::unfold(
+        (sub, stopping, true),
+        |(mut sub, stopping, first)| async move {
+            if first {
+                let ready_payload = serde_json::json!({
+                    "latest_seq": sub.latest_seq_at_subscribe,
+                    "capacity": sub.capacity,
                 })
                 .to_string();
-                Some((
-                    Ok(Event::default().event("lagged").data(data)),
-                    (sub, false),
-                ))
+                return Some((
+                    Ok::<Event, Infallible>(Event::default().event("ready").data(ready_payload)),
+                    (sub, stopping, false),
+                ));
             }
-            None => None,
-        }
-    });
+            let item = tokio::select! {
+                biased;
+                _ = stopping.cancelled() => return None,
+                item = sub.recv() => item,
+            };
+            match item {
+                Some(LogStreamItem::Entry(entry)) => {
+                    let data = serde_json::to_string(entry.as_ref()).unwrap_or_else(|_| "{}".into());
+                    Some((
+                        Ok(Event::default().event("log_entry").data(data)),
+                        (sub, stopping, false),
+                    ))
+                }
+                Some(LogStreamItem::Lagged { missed, latest_seq }) => {
+                    let data = serde_json::json!({
+                        "missed": missed,
+                        "latest_seq": latest_seq,
+                    })
+                    .to_string();
+                    Some((
+                        Ok(Event::default().event("lagged").data(data)),
+                        (sub, stopping, false),
+                    ))
+                }
+                None => None,
+            }
+        },
+    );
 
     let mut response = Sse::new(messages)
         .keep_alive(

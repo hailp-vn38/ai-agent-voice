@@ -174,36 +174,45 @@ pub(super) async fn stream(State(state): State<AppState>, req: Request) -> Respo
         Err(resp) => return resp,
     };
     let rx = hub.subscribe_web();
+    let stopping = state.lifecycle.stopping().clone();
 
-    let messages = futures_util::stream::unfold((rx, true), |(mut rx, first)| async move {
-        if first {
-            return Some((
-                Ok::<Event, Infallible>(Event::default().event("ready").data("{}")),
-                (rx, false),
-            ));
-        }
-        match rx.recv().await {
-            Ok(NotificationSseEvent::NotificationCreated(item)) => {
-                let data = serde_json::to_string(&item).unwrap_or_else(|_| "{}".to_owned());
-                Some((
-                    Ok(Event::default().event("notification_created").data(data)),
-                    (rx, false),
-                ))
+    let messages = futures_util::stream::unfold(
+        (rx, stopping, true),
+        |(mut rx, stopping, first)| async move {
+            if first {
+                return Some((
+                    Ok::<Event, Infallible>(Event::default().event("ready").data("{}")),
+                    (rx, stopping, false),
+                ));
             }
-            Ok(NotificationSseEvent::UnreadCountChanged { unread_count }) => {
-                let data = serde_json::json!({ "unread_count": unread_count }).to_string();
-                Some((
-                    Ok(Event::default().event("unread_count_changed").data(data)),
-                    (rx, false),
-                ))
+            let recv = tokio::select! {
+                biased;
+                _ = stopping.cancelled() => return None,
+                recv = rx.recv() => recv,
+            };
+            match recv {
+                Ok(NotificationSseEvent::NotificationCreated(item)) => {
+                    let data = serde_json::to_string(&item).unwrap_or_else(|_| "{}".to_owned());
+                    Some((
+                        Ok(Event::default().event("notification_created").data(data)),
+                        (rx, stopping, false),
+                    ))
+                }
+                Ok(NotificationSseEvent::UnreadCountChanged { unread_count }) => {
+                    let data = serde_json::json!({ "unread_count": unread_count }).to_string();
+                    Some((
+                        Ok(Event::default().event("unread_count_changed").data(data)),
+                        (rx, stopping, false),
+                    ))
+                }
+                Err(RecvError::Lagged(_)) => Some((
+                    Ok(Event::default().event("resync_required").data("{}")),
+                    (rx, stopping, false),
+                )),
+                Err(RecvError::Closed) => None,
             }
-            Err(RecvError::Lagged(_)) => Some((
-                Ok(Event::default().event("resync_required").data("{}")),
-                (rx, false),
-            )),
-            Err(RecvError::Closed) => None,
-        }
-    });
+        },
+    );
 
     let mut response = Sse::new(messages)
         .keep_alive(

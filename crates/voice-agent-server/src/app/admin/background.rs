@@ -938,36 +938,44 @@ pub(super) async fn stream(State(state): State<AppState>, request: Request) -> R
         Ok(sub) => sub,
         Err(e) => return task_failure(&request, e),
     };
+    let stopping = state.lifecycle.stopping().clone();
 
-    let messages =
-        futures_util::stream::unfold((subscription, true), |(mut sub, first)| async move {
+    let messages = futures_util::stream::unfold(
+        (subscription, stopping, true),
+        |(mut sub, stopping, first)| async move {
             if first {
                 return Some((
                     Ok::<Event, Infallible>(Event::default().event("ready").data("{}")),
-                    (sub, false),
+                    (sub, stopping, false),
                 ));
             }
             loop {
-                match sub.recv().await? {
+                let item = tokio::select! {
+                    biased;
+                    _ = stopping.cancelled() => return None,
+                    item = sub.recv() => item?,
+                };
+                match item {
                     TaskFeedItem::Event(ev) => {
                         if let Some(job_id) = task_id_from_event(&ev) {
                             return Some((
                                 Ok(Event::default()
                                     .event("job_changed")
                                     .data(serde_json::json!({ "job_id": job_id }).to_string())),
-                                (sub, false),
+                                (sub, stopping, false),
                             ));
                         }
                     }
                     TaskFeedItem::ResyncRequired => {
                         return Some((
                             Ok(Event::default().event("resync_required").data("{}")),
-                            (sub, false),
+                            (sub, stopping, false),
                         ));
                     }
                 }
             }
-        });
+        },
+    );
 
     let mut response = Sse::new(messages)
         .keep_alive(
