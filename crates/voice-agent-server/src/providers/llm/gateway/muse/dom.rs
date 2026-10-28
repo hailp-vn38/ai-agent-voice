@@ -53,7 +53,8 @@ pub const CHAT_STATE_JS: &str = r#"(() => {
   });
   scrollers.forEach(e => { e.scrollTop = e.scrollHeight; });
   const bubbles = [...document.querySelectorAll("div[class*=\"hatch-agent-bubble-bg\"]")];
-  const last = bubbles.length ? (bubbles[bubbles.length - 1].innerText || '').trim() : '';
+  const bubbleTexts = bubbles.map(b => (b.innerText || '').trim());
+  const last = bubbleTexts.length ? bubbleTexts[bubbleTexts.length - 1] : '';
   const atts = [...document.querySelectorAll("[data-testid^=\"hatch-chat-attachment-presentation-\"]")].map(a => {
     const v = a.querySelector('video'), i = a.querySelector('img');
     const m = v || i;
@@ -69,6 +70,7 @@ pub const CHAT_STATE_JS: &str = r#"(() => {
   return {
     agentCount: bubbles.length,
     lastText: last,
+    bubbles: bubbleTexts,
     generating: !!document.querySelector("button[aria-label*=\"Stop\" i]"),
     approval: !!document.querySelector("[data-testid=\"hatch-inline-approval-card\"]"),
     attachments: atts,

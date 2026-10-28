@@ -326,9 +326,28 @@ pub fn build_agent_definitions(
         .into_iter()
         .map(|eff| {
             let resolved = &eff.execution_provider;
+            let mut description = eff.description;
+            if eff.allowed_tools.iter().any(|t| t == "video_create") {
+                let vc = super::media_backend::resolve_media_tool_provider(
+                    catalog,
+                    Some(settings),
+                    "video_create",
+                    "video",
+                    false,
+                )
+                .map(|p| p.video_constraints())
+                .unwrap_or_default();
+                description = format!(
+                    "{description} [Active video_create provider: {}; max {}s/clip, up to {} clip(s) = {}s per call; merge multi-clip outputs with video_concat]",
+                    vc.provider_label,
+                    vc.max_clip_duration_secs,
+                    vc.max_clips_per_call,
+                    vc.max_total_duration_secs
+                );
+            }
             let mut def = AgentDefinition::new(&eff.id, &resolved.provider_ref, &resolved.model)
                 .with_mode(eff.mode)
-                .with_description(eff.description)
+                .with_description(description)
                 .with_prompt_path(cfg.prompts_dir.join(format!("{}.md", eff.id)))
                 .with_context_limit_tokens(resolved.context_limit_tokens)
                 .with_max_output_tokens(resolved.max_tokens)

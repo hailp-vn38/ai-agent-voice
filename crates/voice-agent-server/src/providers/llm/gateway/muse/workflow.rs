@@ -90,6 +90,8 @@ pub(super) struct ChatState {
     #[serde(default, rename = "lastText")]
     pub last_text: String,
     #[serde(default)]
+    pub bubbles: Vec<String>,
+    #[serde(default)]
     pub generating: bool,
     #[serde(default)]
     pub approval: bool,
@@ -685,7 +687,8 @@ async fn wait_and_download_media(
     let mut asked_to_attach = false;
     let mut busy = false;
     let mut loading = false;
-    let mut last_sig: Option<(usize, String, Vec<String>)> = None;
+    let mut stable_polls = 0usize;
+    let mut last_sig: Option<(usize, String, Vec<usize>, Vec<String>, bool)> = None;
 
     loop {
         let now = Instant::now();
@@ -713,31 +716,74 @@ async fn wait_and_download_media(
             continue;
         }
 
-        // 2. Detect newly rendered media attachment.
+        // 2. Detect newly rendered media attachment(s) and agent text bubbles.
         let slice_start = base_attachments.min(state.attachments.len());
         let new_atts = &state.attachments[slice_start..];
-        if let Some(att) = new_atts
+        let ready_atts: Vec<&AttachmentNode> = new_atts
             .iter()
-            .rev()
-            .find(|a| a.kind == kind.as_str() && !a.src.is_empty())
-        {
-            let output =
-                download_media_from_src(page, &att.src, kind, transparent_background).await?;
-            lease.finish_clean(None);
-            return Ok(output);
-        }
+            .filter(|a| a.kind == kind.as_str() && !a.src.is_empty())
+            .collect();
+        let any_matching_loading = new_atts.iter().any(|a| {
+            (a.kind == kind.as_str() || a.tid.contains(kind.as_str())) && a.src.is_empty()
+        });
+        let new_bubbles: Vec<&str> = state
+            .bubbles
+            .iter()
+            .skip(base_agent_count)
+            .map(String::as_str)
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .collect();
 
         let sig = (
             state.agent_count,
             state.last_text.clone(),
-            new_atts.iter().map(|a| a.tid.clone()).collect::<Vec<_>>(),
+            new_bubbles.iter().map(|s| s.len()).collect::<Vec<_>>(),
+            new_atts
+                .iter()
+                .map(|a| format!("{}:{}:{}", a.tid, a.kind, a.src))
+                .collect::<Vec<_>>(),
+            state.generating,
         );
         if last_sig.as_ref() != Some(&sig) {
             last_sig = Some(sig);
+            stable_polls = 0;
             changed_at = Instant::now();
+        } else {
+            stable_polls += 1;
         }
 
-        loading = new_atts.iter().any(|a| a.tid.contains(kind.as_str()));
+        let required_stable_polls = match kind {
+            MediaKind::Video => STABLE_POLLS_DONE,
+            MediaKind::Image => 0,
+        };
+        if !ready_atts.is_empty()
+            && !state.generating
+            && !any_matching_loading
+            && stable_polls >= required_stable_polls
+        {
+            let mut parts = Vec::with_capacity(ready_atts.len());
+            for att in &ready_atts {
+                parts.push(
+                    download_media_part_from_src(page, &att.src, kind, transparent_background)
+                        .await?,
+                );
+            }
+            let assistant_message =
+                (!new_bubbles.is_empty()).then(|| new_bubbles.join("\n\n"));
+            let output = LlmOutput::from_media_parts(parts, assistant_message).ok_or_else(|| {
+                WorkflowFailure::Upstream(
+                    UpstreamFailureKind::Transient,
+                    format!("no {} parts downloaded", kind.as_str()),
+                )
+            })?;
+            lease.finish_clean(None);
+            return Ok(output);
+        }
+
+        loading = any_matching_loading
+            || !ready_atts.is_empty()
+            || new_atts.iter().any(|a| a.tid.contains(kind.as_str()));
         busy = state.generating || loading;
 
         if loading {
@@ -803,10 +849,20 @@ async fn wait_and_download_media(
                     .unwrap_or_default();
 
                 if let Some(url) = pick_media_url(&links, kind) {
-                    let output =
-                        download_media_from_src(page, &url, kind, transparent_background).await?;
+                    let part =
+                        download_media_part_from_src(page, &url, kind, transparent_background)
+                            .await?;
+                    let assistant_message =
+                        (!new_bubbles.is_empty()).then(|| new_bubbles.join("\n\n"));
                     lease.finish_clean(None);
-                    return Ok(output);
+                    return LlmOutput::from_media_parts(vec![part], assistant_message).ok_or_else(
+                        || {
+                            WorkflowFailure::Upstream(
+                                UpstreamFailureKind::Transient,
+                                "empty media parts returned by muse.ai".to_owned(),
+                            )
+                        },
+                    );
                 }
 
                 return Err(WorkflowFailure::Rejected(format!(
@@ -821,12 +877,12 @@ async fn wait_and_download_media(
     }
 }
 
-async fn download_media_from_src(
+async fn download_media_part_from_src(
     page: &Arc<dyn BrowserPage>,
     src: &str,
     kind: MediaKind,
     transparent_background: bool,
-) -> Result<LlmOutput, WorkflowFailure> {
+) -> Result<crate::providers::llm::MediaPart, WorkflowFailure> {
     let res = page
         .evaluate_json(&fetch_as_base64_js(src), true, Duration::from_secs(120))
         .await?;
@@ -857,7 +913,17 @@ async fn download_media_from_src(
         (raw_bytes, mime)
     };
 
-    Ok(LlmOutput::Media { bytes, mime_type })
+    Ok(crate::providers::llm::MediaPart { bytes, mime_type })
+}
+
+async fn download_media_from_src(
+    page: &Arc<dyn BrowserPage>,
+    src: &str,
+    kind: MediaKind,
+    transparent_background: bool,
+) -> Result<LlmOutput, WorkflowFailure> {
+    let part = download_media_part_from_src(page, src, kind, transparent_background).await?;
+    Ok(LlmOutput::single_media(part.bytes, part.mime_type))
 }
 
 pub fn pick_media_url(links: &[String], kind: MediaKind) -> Option<String> {

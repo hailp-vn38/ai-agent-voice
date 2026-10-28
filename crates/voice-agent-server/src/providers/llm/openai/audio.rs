@@ -53,10 +53,7 @@ impl ConfiguredOpenAiLlm {
         if bytes.is_empty() {
             return Err(LlmError::Rejected);
         }
-        Ok(LlmOutput::Media {
-            bytes: bytes.to_vec(),
-            mime_type: "audio/wav".to_owned(),
-        })
+        Ok(LlmOutput::single_media(bytes.to_vec(), "audio/wav"))
     }
 
     pub(super) async fn transcribe_audio(

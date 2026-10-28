@@ -245,10 +245,7 @@ async fn openai_provider_executes_all_seven_capabilities_against_upstream() {
         .unwrap();
     assert_eq!(
         image_out,
-        LlmOutput::Media {
-            bytes: b"FAKE_PNG_IMAGE".to_vec(),
-            mime_type: "image/png".into(),
-        }
+        LlmOutput::single_media(b"FAKE_PNG_IMAGE".to_vec(), "image/png")
     );
 
     // 4. Video Generation
@@ -264,10 +261,7 @@ async fn openai_provider_executes_all_seven_capabilities_against_upstream() {
         .unwrap();
     assert_eq!(
         video_out,
-        LlmOutput::Media {
-            bytes: b"FAKE_MP4_VIDEO".to_vec(),
-            mime_type: "video/mp4".into(),
-        }
+        LlmOutput::single_media(b"FAKE_MP4_VIDEO".to_vec(), "video/mp4")
     );
 
     // 5a. Audio Speech (TTS)
@@ -281,10 +275,7 @@ async fn openai_provider_executes_all_seven_capabilities_against_upstream() {
         .unwrap();
     assert_eq!(
         speech_out,
-        LlmOutput::Media {
-            bytes: b"RIFF_FAKE_WAV".to_vec(),
-            mime_type: "audio/wav".into(),
-        }
+        LlmOutput::single_media(b"RIFF_FAKE_WAV".to_vec(), "audio/wav")
     );
 
     // 5b. Audio Transcription (STT)
@@ -399,9 +390,6 @@ async fn video_generation_polls_async_job_status_until_completed_and_fetches_con
     assert_eq!(*poll_count.lock().unwrap(), 2);
     assert_eq!(
         video_out,
-        LlmOutput::Media {
-            bytes: b"ASYNC_SORA_MP4_BYTES".to_vec(),
-            mime_type: "video/mp4".into(),
-        }
+        LlmOutput::single_media(b"ASYNC_SORA_MP4_BYTES".to_vec(), "video/mp4")
     );
 }

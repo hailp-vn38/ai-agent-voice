@@ -925,10 +925,7 @@ async fn llm_gateway_provider_executes_muse_chat_vision_image_video_and_rotates_
         .expect("image generation via acc2");
     assert_eq!(
         out_img,
-        LlmOutput::Media {
-            bytes: PNG_BYTES.to_vec(),
-            mime_type: "image/png".to_owned(),
-        }
+        LlmOutput::single_media(PNG_BYTES.to_vec(), "image/png")
     );
 
     // 4. VideoGeneration via LlmGatewayProvider (`pool:muse`)
@@ -944,10 +941,7 @@ async fn llm_gateway_provider_executes_muse_chat_vision_image_video_and_rotates_
         .expect("video generation via acc2");
     assert_eq!(
         out_vid,
-        LlmOutput::Media {
-            bytes: MP4_BYTES.to_vec(),
-            mime_type: "video/mp4".to_owned(),
-        }
+        LlmOutput::single_media(MP4_BYTES.to_vec(), "video/mp4")
     );
 }
 

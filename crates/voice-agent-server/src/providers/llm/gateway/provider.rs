@@ -598,7 +598,11 @@ impl LlmGatewayProvider {
         } else {
             1
         };
-        let timeout = Duration::from_millis(self.config.timeout_ms.max(1_000));
+        let min_timeout_ms = match kind {
+            MediaKind::Video => 300_000,
+            MediaKind::Image => 1_000,
+        };
+        let timeout = Duration::from_millis(self.config.timeout_ms.max(min_timeout_ms));
         let mut current_lease = lease;
         for attempt in 0..max_attempts {
             let pool = self.muse_pool_for_lease(&self.config, &current_lease);

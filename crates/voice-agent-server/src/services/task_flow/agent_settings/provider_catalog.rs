@@ -75,6 +75,54 @@ impl ResolvedLlmProvider {
         self.gateway_binding.clone()
     }
 
+    pub fn is_muse_provider(&self) -> bool {
+        self.muse_options.is_some()
+            || self.provider_ref.eq_ignore_ascii_case("pool:muse")
+            || self.adapter.eq_ignore_ascii_case("muse")
+            || self.model.to_ascii_lowercase().starts_with("muse")
+            || matches!(
+                self.gateway_binding,
+                Some(crate::services::llm_gateway::GatewayBinding::Pool(
+                    crate::services::llm_gateway::GatewayVendor::Muse
+                ))
+            )
+    }
+
+    pub fn video_constraints(&self) -> orchestrator_flow_rs::VideoProviderConstraints {
+        let label = format!("{} (model: {})", self.name, self.model);
+        if self.is_muse_provider() {
+            orchestrator_flow_rs::VideoProviderConstraints {
+                provider_label: label,
+                max_clip_duration_secs: 10,
+                max_clips_per_call: 6,
+                max_total_duration_secs: 60,
+                provider_guidance: "Each individual video clip from this provider is strictly capped at 10 seconds. \
+                    If duration_secs <= 10, it creates 1 primary clip (up to 10s). \
+                    If duration_secs > 10 (up to 60s), the provider splits the video into up to 6 sequential 10-second intermediate clips in a single call and returns all clip artifact_ids plus the scene breakdown in `provider_message`; \
+                    you MUST then call `video_concat` with those `artifact_ids` in order to produce the final continuous primary MP4 artifact."
+                    .to_owned(),
+            }
+        } else if self.adapter.eq_ignore_ascii_case("openai") {
+            orchestrator_flow_rs::VideoProviderConstraints {
+                provider_label: label,
+                max_clip_duration_secs: 10,
+                max_clips_per_call: 1,
+                max_total_duration_secs: 10,
+                provider_guidance: "Generates 1 video clip (max 10 seconds) per `video_create` call. \
+                    For videos longer than 10 seconds, call `video_create` multiple times with `role: \"intermediate\"` for each sequential scene and merge them using `video_concat`."
+                    .to_owned(),
+            }
+        } else {
+            orchestrator_flow_rs::VideoProviderConstraints {
+                provider_label: label,
+                max_clip_duration_secs: 60,
+                max_clips_per_call: 1,
+                max_total_duration_secs: 60,
+                provider_guidance: "Generates a single MP4 clip up to 60 seconds per call.".to_owned(),
+            }
+        }
+    }
+
     pub fn supports_tag(&self, tag: &str) -> bool {
         let normalized = tag.trim().to_ascii_lowercase();
         self.tags.iter().any(|t| {

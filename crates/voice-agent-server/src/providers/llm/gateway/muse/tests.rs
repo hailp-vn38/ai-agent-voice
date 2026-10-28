@@ -390,10 +390,7 @@ async fn image_generation_with_reference_images_attaches_files_and_fetches_blob(
 
     assert_eq!(
         output,
-        LlmOutput::Media {
-            bytes: VALID_PNG_BYTES.to_vec(),
-            mime_type: "image/png".to_string(),
-        }
+        LlmOutput::single_media(VALID_PNG_BYTES.to_vec(), "image/png")
     );
 }
 
@@ -474,10 +471,145 @@ async fn video_generation_denies_approval_card_and_prompts_for_missing_attachmen
     );
     assert_eq!(
         output,
-        LlmOutput::Media {
-            bytes: VALID_MP4_BYTES.to_vec(),
-            mime_type: "video/mp4".to_string(),
-        }
+        LlmOutput::single_media(VALID_MP4_BYTES.to_vec(), "video/mp4")
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn video_generation_waits_for_all_multi_clips_and_collects_all_agent_bubbles() {
+    let clip1_bytes = [VALID_MP4_BYTES, &[1u8; 4]].concat();
+    let clip2_bytes = [VALID_MP4_BYTES, &[2u8; 4]].concat();
+    let clip3_bytes = [VALID_MP4_BYTES, &[3u8; 4]].concat();
+
+    let mut states = vec![
+        // base_state before sending prompt
+        json!({
+            "agentCount": 0,
+            "lastText": "",
+            "bubbles": [],
+            "generating": false,
+            "approval": false,
+            "attachments": [],
+            "tail": ""
+        }),
+        // Poll 1: clip 1 & 2 ready, but clip 3 placeholder is still loading (`kind: "unknown"`, `src: ""`) and `generating: true`
+        json!({
+            "agentCount": 2,
+            "lastText": "Scene 1 & 2",
+            "bubbles": ["Intro: 3 scenes", "Scene 1 & 2"],
+            "generating": true,
+            "approval": false,
+            "attachments": [
+                {
+                    "tid": "hatch-chat-attachment-presentation-video-0",
+                    "kind": "video",
+                    "src": "blob:https://muse.ai/clip-1",
+                    "w": 1280,
+                    "h": 720
+                },
+                {
+                    "tid": "hatch-chat-attachment-presentation-video-1",
+                    "kind": "video",
+                    "src": "blob:https://muse.ai/clip-2",
+                    "w": 1280,
+                    "h": 720
+                },
+                {
+                    "tid": "hatch-chat-attachment-presentation-video-2",
+                    "kind": "unknown",
+                    "src": "",
+                    "w": 0,
+                    "h": 0
+                }
+            ],
+            "tail": ""
+        }),
+    ];
+    // Polls 2..7: all 3 clips ready, generating=false, 4 bubbles present -> stabilizes after STABLE_POLLS_DONE
+    for _ in 0..5 {
+        states.push(json!({
+            "agentCount": 4,
+            "lastText": "All 3 clips ready.",
+            "bubbles": [
+                "Intro: 3 scenes (30s total)",
+                "Scene 1: Persian Gulf overview (10s)",
+                "Scene 2: Naval formation (10s)",
+                "Scene 3: Diplomatic summary (10s)"
+            ],
+            "generating": false,
+            "approval": false,
+            "attachments": [
+                {
+                    "tid": "hatch-chat-attachment-presentation-video-0",
+                    "kind": "video",
+                    "src": "blob:https://muse.ai/clip-1",
+                    "w": 1280,
+                    "h": 720
+                },
+                {
+                    "tid": "hatch-chat-attachment-presentation-video-1",
+                    "kind": "video",
+                    "src": "blob:https://muse.ai/clip-2",
+                    "w": 1280,
+                    "h": 720
+                },
+                {
+                    "tid": "hatch-chat-attachment-presentation-video-2",
+                    "kind": "video",
+                    "src": "blob:https://muse.ai/clip-3",
+                    "w": 1280,
+                    "h": 720
+                }
+            ],
+            "tail": ""
+        }));
+    }
+
+    let page = FakeBrowserPage::new("ctx-multi-video".to_string(), states);
+    {
+        let mut guard = page.state.lock().unwrap();
+        guard.blob_payloads.push((
+            "blob:https://muse.ai/clip-1".to_string(),
+            "video/mp4".to_string(),
+            clip1_bytes.clone(),
+        ));
+        guard.blob_payloads.push((
+            "blob:https://muse.ai/clip-2".to_string(),
+            "video/mp4".to_string(),
+            clip2_bytes.clone(),
+        ));
+        guard.blob_payloads.push((
+            "blob:https://muse.ai/clip-3".to_string(),
+            "video/mp4".to_string(),
+            clip3_bytes.clone(),
+        ));
+    }
+    let engine = FakeBrowserEngine::new(vec![Arc::clone(&page)]);
+    let provider = build_gateway_muse_provider(&[SINGLE_COOKIE], Some(engine)).await;
+
+    let output = provider
+        .invoke(LlmOperation::VideoGeneration {
+            prompt: "30s geopolitical breakdown".to_string(),
+            width: 1280,
+            height: 720,
+            duration_secs: 30,
+            first_frame: None,
+        })
+        .await
+        .expect("multi-clip video generation should succeed");
+
+    let (parts, assistant_message) = output
+        .into_media_parts()
+        .expect("expected LlmOutput::Media");
+    assert_eq!(parts.len(), 3, "must download all 3 clips in forward order");
+    assert_eq!(parts[0].bytes, clip1_bytes);
+    assert_eq!(parts[1].bytes, clip2_bytes);
+    assert_eq!(parts[2].bytes, clip3_bytes);
+    assert_eq!(
+        assistant_message.as_deref(),
+        Some(
+            "Intro: 3 scenes (30s total)\n\nScene 1: Persian Gulf overview (10s)\n\nScene 2: Naval formation (10s)\n\nScene 3: Diplomatic summary (10s)"
+        )
     );
 }
 
@@ -960,7 +1092,9 @@ async fn live_muse_primary_chat_smoke_test() {
         .await
         .expect("live muse.ai image generation should succeed");
     match img_output {
-        LlmOutput::Media { bytes, mime_type } => {
+        LlmOutput::Media {
+            bytes, mime_type, ..
+        } => {
             println!(
                 "Live muse.ai image generated: mime_type={mime_type}, bytes_len={}",
                 bytes.len()

@@ -1153,6 +1153,17 @@ fn muse_gateway_provider_in_catalog_supports_media_and_custom_executor() {
     assert!(muse_prov.supports_tag("image"));
     assert!(muse_prov.supports_tag("video"));
     assert!(!muse_prov.supports_tag("chat"));
+    assert!(muse_prov.is_muse_provider());
+    let muse_vc = muse_prov.video_constraints();
+    assert_eq!(muse_vc.max_clip_duration_secs, 10);
+    assert_eq!(muse_vc.max_clips_per_call, 6);
+    assert_eq!(muse_vc.max_total_duration_secs, 60);
+    assert!(muse_vc.provider_guidance.contains("video_concat"));
+
+    let openai_vc = chat_prov.video_constraints();
+    assert_eq!(openai_vc.max_clip_duration_secs, 10);
+    assert_eq!(openai_vc.max_clips_per_call, 1);
+    assert_eq!(openai_vc.max_total_duration_secs, 10);
 
     let catalog = vec![chat_prov, muse_prov];
     let mut agents = BTreeMap::new();
@@ -1195,4 +1206,78 @@ fn muse_gateway_provider_in_catalog_supports_media_and_custom_executor() {
     ));
     let media_def = defs.iter().find(|d| d.id == "media_creator").unwrap();
     assert_eq!(media_def.provider_id, DEFAULT_ORCHESTRATOR_PROVIDER_REF);
+    assert!(
+        media_def
+            .description
+            .contains("[Active video_create provider: Muse Media (model: muse-image); max 10s/clip, up to 6 clip(s) = 60s per call; merge multi-clip outputs with video_concat]")
+    );
+    let media_spec = crate::services::task_flow::find_agent_spec("media_creator").unwrap();
+    assert!(media_spec.default_allowed_tools.contains(&"video_concat"));
+    assert!(media_spec.available_tools.contains(&"video_concat"));
+
+    let backend = CatalogMediaBackend::from_catalog(catalog).with_settings(settings);
+    let backend_vc = orchestrator_flow_rs::VideoGeneratorBackend::video_constraints(&backend);
+    assert_eq!(backend_vc.max_clip_duration_secs, 10);
+    assert_eq!(backend_vc.max_clips_per_call, 6);
+    assert_eq!(backend_vc.max_total_duration_secs, 60);
+
+    // 3. Verify `build_generated_video_payload` converts multi-part `LlmOutput::Media` + `assistant_message`
+    // into `GeneratedVideoPayload` with accurate clip durations parsed via `inspect_mp4_duration_secs`.
+    let mut mvhd_10s = Vec::new();
+    let mvhd_body_len = 4 + 16 + 4; // version/flags + 4 u32s + duration
+    let mvhd_box_len = (8 + mvhd_body_len) as u32;
+    let moov_box_len = 8 + mvhd_box_len;
+    mvhd_10s.extend_from_slice(&20u32.to_be_bytes());
+    mvhd_10s.extend_from_slice(b"ftypisom\x00\x00\x02\x00isom");
+    mvhd_10s.extend_from_slice(&moov_box_len.to_be_bytes());
+    mvhd_10s.extend_from_slice(b"moov");
+    mvhd_10s.extend_from_slice(&mvhd_box_len.to_be_bytes());
+    mvhd_10s.extend_from_slice(b"mvhd");
+    mvhd_10s.extend_from_slice(&[0, 0, 0, 0]); // version 0
+    mvhd_10s.extend_from_slice(&[0u8; 8]); // creation + modification time
+    mvhd_10s.extend_from_slice(&1_000u32.to_be_bytes()); // timescale = 1000
+    mvhd_10s.extend_from_slice(&10_000u32.to_be_bytes()); // duration = 10_000 -> 10s
+    let multi_media = crate::providers::LlmOutput::from_media_parts(
+        vec![
+            crate::providers::MediaPart {
+                bytes: mvhd_10s.clone(),
+                mime_type: "video/mp4".into(),
+            },
+            crate::providers::MediaPart {
+                bytes: mvhd_10s,
+                mime_type: "video/mp4".into(),
+            },
+        ],
+        Some("Scene 1 (0-10s)\n\nScene 2 (10-20s)".into()),
+    )
+    .unwrap();
+    let multi_payload =
+        crate::services::task_flow::agent_settings::build_generated_video_payload(
+            &orchestrator_flow_rs::VideoGenerationRequest {
+                prompt: "Two scenes".into(),
+                title: None,
+                filename: "two-scenes.mp4".into(),
+                width: 1280,
+                height: 720,
+                duration_secs: 20,
+                first_frame: None,
+            },
+            "muse_media",
+            &backend_vc,
+            1280,
+            720,
+            20,
+            multi_media,
+        )
+        .unwrap();
+    assert_eq!(multi_payload.clips.len(), 2);
+    assert_eq!(multi_payload.clips[0].filename, "two-scenes-part-1.mp4");
+    assert_eq!(multi_payload.clips[1].filename, "two-scenes-part-2.mp4");
+    assert_eq!(multi_payload.clips[0].duration_secs, 10);
+    assert_eq!(multi_payload.clips[1].duration_secs, 10);
+    assert_eq!(multi_payload.duration_secs, 20);
+    assert_eq!(
+        multi_payload.provider_message.as_deref(),
+        Some("Scene 1 (0-10s)\n\nScene 2 (10-20s)")
+    );
 }

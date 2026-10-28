@@ -27,10 +27,7 @@ impl ConfiguredOpenAiLlm {
             if bytes.is_empty() {
                 return Err(LlmError::Rejected);
             }
-            return Ok(LlmOutput::Media {
-                bytes: bytes.to_vec(),
-                mime_type: default_mime_type.to_owned(),
-            });
+            return Ok(LlmOutput::single_media(bytes.to_vec(), default_mime_type));
         }
 
         let value: Value = response.json().await.map_err(|_| LlmError::Rejected)?;
@@ -61,10 +58,7 @@ impl ConfiguredOpenAiLlm {
             if bytes.is_empty() {
                 return Err(LlmError::Rejected);
             }
-            return Ok(Some(LlmOutput::Media {
-                bytes,
-                mime_type: default_mime_type.to_owned(),
-            }));
+            return Ok(Some(LlmOutput::single_media(bytes, default_mime_type)));
         }
 
         if let Some(url) = value
@@ -80,10 +74,7 @@ impl ConfiguredOpenAiLlm {
                 if bytes.is_empty() {
                     return Err(LlmError::Rejected);
                 }
-                return Ok(Some(LlmOutput::Media {
-                    bytes,
-                    mime_type: default_mime_type.to_owned(),
-                }));
+                return Ok(Some(LlmOutput::single_media(bytes, default_mime_type)));
             }
             let media_resp = self
                 .client
@@ -96,10 +87,10 @@ impl ConfiguredOpenAiLlm {
             if bytes.is_empty() {
                 return Err(LlmError::Rejected);
             }
-            return Ok(Some(LlmOutput::Media {
-                bytes: bytes.to_vec(),
-                mime_type: default_mime_type.to_owned(),
-            }));
+            return Ok(Some(LlmOutput::single_media(
+                bytes.to_vec(),
+                default_mime_type,
+            )));
         }
 
         Ok(None)
@@ -131,10 +122,7 @@ impl ConfiguredOpenAiLlm {
             if bytes.is_empty() {
                 return Err(LlmError::Rejected);
             }
-            return Ok(LlmOutput::Media {
-                bytes: bytes.to_vec(),
-                mime_type: default_mime_type.to_owned(),
-            });
+            return Ok(LlmOutput::single_media(bytes.to_vec(), default_mime_type));
         }
         let value: Value = response.json().await.map_err(|_| LlmError::Rejected)?;
         self.try_decode_direct_media(&value, default_mime_type)

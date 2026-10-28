@@ -425,6 +425,13 @@ pub(crate) fn sniff_media_mime_type<'a>(bytes: &[u8], fallback: &'a str) -> &'a 
     }
 }
 
+/// Individual binary media part returned by a multi-clip/multi-asset LLM media operation.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MediaPart {
+    pub bytes: Vec<u8>,
+    pub mime_type: String,
+}
+
 /// Normalized output across all non-streaming LLM capability operations.
 #[derive(Clone, Debug, PartialEq)]
 pub enum LlmOutput {
@@ -432,6 +439,8 @@ pub enum LlmOutput {
     Media {
         bytes: Vec<u8>,
         mime_type: String,
+        extra_parts: Vec<MediaPart>,
+        assistant_message: Option<String>,
     },
     Embeddings {
         vectors: Vec<Vec<f32>>,
@@ -440,11 +449,67 @@ pub enum LlmOutput {
 }
 
 impl LlmOutput {
+    pub fn single_media(bytes: Vec<u8>, mime_type: impl Into<String>) -> Self {
+        Self::Media {
+            bytes,
+            mime_type: mime_type.into(),
+            extra_parts: Vec::new(),
+            assistant_message: None,
+        }
+    }
+
+    pub fn from_media_parts(
+        mut parts: Vec<MediaPart>,
+        assistant_message: Option<String>,
+    ) -> Option<Self> {
+        if parts.is_empty() {
+            return None;
+        }
+        let first = parts.remove(0);
+        Some(Self::Media {
+            bytes: first.bytes,
+            mime_type: first.mime_type,
+            extra_parts: parts,
+            assistant_message,
+        })
+    }
+
+    pub fn into_media_parts(self) -> Option<(Vec<MediaPart>, Option<String>)> {
+        match self {
+            Self::Media {
+                bytes,
+                mime_type,
+                extra_parts,
+                assistant_message,
+            } => {
+                let mut all = Vec::with_capacity(1 + extra_parts.len());
+                all.push(MediaPart { bytes, mime_type });
+                all.extend(extra_parts);
+                Some((all, assistant_message))
+            }
+            _ => None,
+        }
+    }
+
     pub fn diagnostic_summary(&self) -> String {
         match self {
             Self::Text(text) => text.clone(),
-            Self::Media { bytes, mime_type } => {
-                format!("Generated {mime_type} ({} bytes)", bytes.len())
+            Self::Media {
+                bytes,
+                mime_type,
+                extra_parts,
+                ..
+            } => {
+                if extra_parts.is_empty() {
+                    format!("Generated {mime_type} ({} bytes)", bytes.len())
+                } else {
+                    let total_bytes: usize =
+                        bytes.len() + extra_parts.iter().map(|p| p.bytes.len()).sum::<usize>();
+                    format!(
+                        "Generated {} {mime_type} clip(s) ({total_bytes} bytes total)",
+                        1 + extra_parts.len()
+                    )
+                }
             }
             Self::Embeddings {
                 vectors,
@@ -461,7 +526,9 @@ impl LlmOutput {
     pub fn diagnostic_media(&self) -> Option<LlmDiagnosticMedia> {
         use base64::{Engine as _, engine::general_purpose::STANDARD};
         match self {
-            Self::Media { bytes, mime_type } if !bytes.is_empty() => {
+            Self::Media {
+                bytes, mime_type, ..
+            } if !bytes.is_empty() => {
                 let detected_mime = sniff_media_mime_type(bytes, mime_type);
                 let data_url = format!("data:{detected_mime};base64,{}", STANDARD.encode(bytes));
                 Some(LlmDiagnosticMedia {

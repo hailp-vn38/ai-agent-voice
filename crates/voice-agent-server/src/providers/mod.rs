@@ -39,7 +39,7 @@ pub fn admin_provider_adapter_matches_kind(kind: &str, adapter: &str) -> bool {
 pub use error::{AsrError, ProviderLoadError, VadError};
 pub use llm::{
     LlmCapabilityTag, LlmError, LlmEvent, LlmOperation, LlmOutput, LlmProvider,
-    MAX_REFERENCE_IMAGES, ReferenceImage,
+    MAX_REFERENCE_IMAGES, MediaPart, ReferenceImage,
 };
 pub(crate) use loader::{LoadedProviders, load_local, vad_timing};
 

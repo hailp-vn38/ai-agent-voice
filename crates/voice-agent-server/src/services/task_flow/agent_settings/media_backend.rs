@@ -383,7 +383,10 @@ impl orchestrator_flow_rs::ImageGeneratorBackend for CatalogMediaBackend {
             })
             .await
             .map_err(|e| e.to_string())?;
-        let crate::providers::LlmOutput::Media { bytes, mime_type } = output else {
+        let crate::providers::LlmOutput::Media {
+            bytes, mime_type, ..
+        } = output
+        else {
             return Err("image provider returned non-media output".to_owned());
         };
         let stem = llm_wiki::slugify(
@@ -406,6 +409,13 @@ impl orchestrator_flow_rs::ImageGeneratorBackend for CatalogMediaBackend {
 
 #[async_trait::async_trait]
 impl orchestrator_flow_rs::VideoGeneratorBackend for CatalogMediaBackend {
+    fn video_constraints(&self) -> orchestrator_flow_rs::VideoProviderConstraints {
+        match self.select_provider("video_create", "video") {
+            Some(resolved) => resolved.video_constraints(),
+            None => self.default_video.video_constraints(),
+        }
+    }
+
     async fn generate_video(
         &self,
         req: &orchestrator_flow_rs::VideoGenerationRequest,
@@ -413,8 +423,11 @@ impl orchestrator_flow_rs::VideoGeneratorBackend for CatalogMediaBackend {
         let Some(resolved) = self.select_provider("video_create", "video") else {
             return self.default_video.generate_video(req).await;
         };
+        let constraints = resolved.video_constraints();
         let (width, height) = req.effective_dimensions();
-        let duration_secs = req.duration_secs.clamp(1, 60);
+        let duration_secs = req
+            .duration_secs
+            .clamp(1, constraints.max_total_duration_secs.max(1));
         let provider = resolved.to_llm_provider().map_err(|e| e.to_string())?;
         let first_frame = req.first_frame.as_ref().map(|img| crate::providers::ReferenceImage {
             bytes: img.bytes.clone(),
@@ -430,27 +443,87 @@ impl orchestrator_flow_rs::VideoGeneratorBackend for CatalogMediaBackend {
             })
             .await
             .map_err(|e| e.to_string())?;
-        let crate::providers::LlmOutput::Media { bytes, mime_type } = output else {
-            return Err("video provider returned non-media output".to_owned());
-        };
-        let stem = llm_wiki::slugify(
-            req.filename
-                .trim_end_matches(".mp4")
-                .trim_end_matches(".webm")
-                .trim_end_matches(".mov"),
-            64,
-        );
-        let safe_name = format!("{}.mp4", if stem.is_empty() { "video" } else { &stem });
-        Ok(orchestrator_flow_rs::GeneratedVideoPayload {
-            filename: safe_name,
-            mime_type,
-            bytes,
+        build_generated_video_payload(
+            req,
+            &resolved.provider_ref,
+            &constraints,
             width,
             height,
             duration_secs,
-            provider: resolved.provider_ref.clone(),
-        })
+            output,
+        )
     }
+}
+
+pub(crate) fn build_generated_video_payload(
+    req: &orchestrator_flow_rs::VideoGenerationRequest,
+    provider_ref: &str,
+    constraints: &orchestrator_flow_rs::VideoProviderConstraints,
+    width: u32,
+    height: u32,
+    duration_secs: u32,
+    output: crate::providers::LlmOutput,
+) -> Result<orchestrator_flow_rs::GeneratedVideoPayload, String> {
+    let Some((parts, assistant_message)) = output.into_media_parts() else {
+        return Err("video provider returned non-media output".to_owned());
+    };
+    if parts.is_empty() {
+        return Err("video provider returned empty media parts".to_owned());
+    }
+    let stem = llm_wiki::slugify(
+        req.filename
+            .trim_end_matches(".mp4")
+            .trim_end_matches(".webm")
+            .trim_end_matches(".mov"),
+        64,
+    );
+    let base_stem = if stem.is_empty() { "video" } else { &stem };
+    let safe_name = format!("{base_stem}.mp4");
+    let total_clips = parts.len();
+    let fallback_clip_duration = if total_clips > 1 {
+        constraints.max_clip_duration_secs.max(1)
+    } else {
+        duration_secs.min(constraints.max_clip_duration_secs.max(1))
+    };
+    let clips: Vec<orchestrator_flow_rs::GeneratedVideoClip> = parts
+        .into_iter()
+        .enumerate()
+        .map(|(idx, part)| {
+            let clip_duration = orchestrator_flow_rs::inspect_mp4_duration_secs(&part.bytes)
+                .unwrap_or(fallback_clip_duration);
+            let clip_filename = if total_clips == 1 {
+                safe_name.clone()
+            } else {
+                format!("{base_stem}-part-{}.mp4", idx + 1)
+            };
+            orchestrator_flow_rs::GeneratedVideoClip {
+                filename: clip_filename,
+                mime_type: part.mime_type,
+                bytes: part.bytes,
+                width,
+                height,
+                duration_secs: clip_duration,
+            }
+        })
+        .collect();
+    let total_duration: u32 = clips.iter().map(|c| c.duration_secs).sum();
+    let first_mime = clips[0].mime_type.clone();
+    let first_bytes = if total_clips == 1 {
+        clips[0].bytes.clone()
+    } else {
+        Vec::new()
+    };
+    Ok(orchestrator_flow_rs::GeneratedVideoPayload {
+        filename: safe_name,
+        mime_type: first_mime,
+        bytes: first_bytes,
+        width,
+        height,
+        duration_secs: total_duration.max(1),
+        provider: provider_ref.to_owned(),
+        clips,
+        provider_message: assistant_message,
+    })
 }
 
 #[async_trait::async_trait]
@@ -500,7 +573,10 @@ impl orchestrator_flow_rs::TtsSynthesizerBackend for CatalogMediaBackend {
             })
             .await
             .map_err(|e| e.to_string())?;
-        let crate::providers::LlmOutput::Media { bytes, mime_type } = output else {
+        let crate::providers::LlmOutput::Media {
+            bytes, mime_type, ..
+        } = output
+        else {
             return Err("audio provider returned non-media output".to_owned());
         };
         let word_count = req.text.split_whitespace().count().max(1);
