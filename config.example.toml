@@ -181,6 +181,7 @@ token = "set-deployment-token-here"
 # adapter = "vieneu"
 # voice = "hai_dang"
 # language = "vi-VN"
+# speed_percent = 100  # Nano only: 50-200; Turbo must stay at 100
 # preload = false
 
 # Local Vietnamese Kokoro. Model Preparation acquires and converts all pinned

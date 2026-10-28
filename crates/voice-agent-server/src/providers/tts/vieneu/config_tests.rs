@@ -103,6 +103,54 @@ fn rejects_invalid_voice_language_threads_or_model() {
 }
 
 #[test]
+fn speed_percent_defaults_to_natural_rate() {
+    assert_eq!(VieneuNativeConfig::default().speed_percent, 100);
+    let config: VieneuNativeConfig =
+        serde_json::from_str(r#"{"model":"vieneu_v3_nano_fp32"}"#).unwrap();
+    assert_eq!(config.speed_percent, 100);
+    assert!((config.speed_factor() - 1.0).abs() < f32::EPSILON);
+}
+
+#[test]
+fn nano_accepts_bounded_speed_percent() {
+    for (speed, valid) in [(49, false), (50, true), (100, true), (150, true), (200, true), (201, false)] {
+        let config: VieneuNativeConfig = serde_json::from_value(serde_json::json!({
+            "model": NANO_MODEL_ID,
+            "speed_percent": speed,
+        }))
+        .unwrap();
+        assert_eq!(config.valid_selection(), valid, "nano speed_percent {speed}");
+    }
+}
+
+#[test]
+fn turbo_rejects_non_natural_speed_percent() {
+    for (speed, valid) in [(100, true), (90, false), (150, false)] {
+        let config: VieneuNativeConfig = serde_json::from_value(serde_json::json!({
+            "model": TURBO_MODEL_ID,
+            "speed_percent": speed,
+        }))
+        .unwrap();
+        assert_eq!(config.valid_selection(), valid, "turbo speed_percent {speed}");
+    }
+}
+
+#[test]
+fn speed_percent_round_trips_through_serialization() {
+    let config = VieneuNativeConfig {
+        model: NANO_MODEL_ID.into(),
+        voice: NANO_DEFAULT_VOICE.into(),
+        speed_percent: 125,
+        ..Default::default()
+    };
+    let value = serde_json::to_value(&config).unwrap();
+    assert_eq!(value["speed_percent"], 125);
+    let parsed: VieneuNativeConfig = serde_json::from_value(value).unwrap();
+    assert_eq!(parsed.speed_percent, 125);
+    assert!((parsed.speed_factor() - 1.25).abs() < 1e-6);
+}
+
+#[test]
 fn hides_deployment_owned_fields_when_serializing() {
     let value = serde_json::to_value(VieneuNativeConfig::default()).unwrap();
     assert_eq!(value["model"], TURBO_MODEL_ID);

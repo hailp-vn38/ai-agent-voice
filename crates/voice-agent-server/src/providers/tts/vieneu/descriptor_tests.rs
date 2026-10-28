@@ -56,3 +56,17 @@ fn refuses_other_model_identity_and_unknown_fields() {
             .is_err()
     );
 }
+
+#[test]
+fn exposes_bounded_optional_speed_percent_field() {
+    let field = DESCRIPTOR
+        .config_schema
+        .fields
+        .iter()
+        .find(|field| field.key == "speed_percent")
+        .expect("speed_percent field");
+    assert!(matches!(field.field_type, ConfigFieldType::Integer));
+    assert!(!field.required);
+    assert_eq!(field.minimum, Some(50));
+    assert_eq!(field.maximum, Some(200));
+}

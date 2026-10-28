@@ -84,3 +84,23 @@ fn sample_standard_normal_produces_finite_values_of_exact_length() {
     assert_eq!(samples.len(), 145);
     assert!(samples.iter().all(|v| v.is_finite()));
 }
+
+#[test]
+fn latent_frames_scale_inversely_with_speed() {
+    let fps = 15.625;
+    let log_s = 2.0_f32.ln(); // 2 s natural duration
+    assert_eq!(latent_frames_for(log_s, fps, 1.0), 31);
+    assert_eq!(latent_frames_for(log_s, fps, 2.0), 16);
+    assert_eq!(latent_frames_for(log_s, fps, 0.5), 63);
+    assert_eq!(latent_frames_for(log_s, fps, 1.25), 25);
+}
+
+#[test]
+fn latent_frames_keep_predictor_guards_and_minimum_length() {
+    let fps = 15.625;
+    // Natural duration is clamped to 15 s before the speed scale is applied.
+    assert_eq!(latent_frames_for(100.0, fps, 1.0), 234);
+    assert_eq!(latent_frames_for(100.0, fps, 0.5), 469);
+    // Very short predictions never produce fewer than two latent frames.
+    assert_eq!(latent_frames_for(-100.0, fps, 2.0), 2);
+}

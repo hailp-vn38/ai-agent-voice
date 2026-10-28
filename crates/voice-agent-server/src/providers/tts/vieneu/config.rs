@@ -56,8 +56,14 @@ pub struct VieneuNativeConfig {
     pub num_threads: i32,
     pub voice: String,
     pub language: String,
+    /// Speaking rate in percent of the natural rate. Only Nano supports values
+    /// other than 100 because it scales its predicted utterance duration natively.
+    pub speed_percent: u16,
     pub preload: bool,
 }
+
+pub const DEFAULT_SPEED_PERCENT: u16 = 100;
+pub const NANO_SPEED_PERCENT_RANGE: std::ops::RangeInclusive<u16> = 50..=200;
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -70,6 +76,8 @@ struct RawVieneuNativeConfig {
     voice: Option<String>,
     #[serde(default = "default_language")]
     language: String,
+    #[serde(default = "default_speed_percent")]
+    speed_percent: u16,
     #[serde(default)]
     preload: bool,
 }
@@ -87,9 +95,14 @@ impl From<RawVieneuNativeConfig> for VieneuNativeConfig {
             num_threads: raw.num_threads,
             voice,
             language: raw.language,
+            speed_percent: raw.speed_percent,
             preload: raw.preload,
         }
     }
+}
+
+fn default_speed_percent() -> u16 {
+    DEFAULT_SPEED_PERCENT
 }
 
 fn default_model() -> String {
@@ -112,6 +125,7 @@ impl Default for VieneuNativeConfig {
             num_threads: default_threads(),
             voice: default_voice(),
             language: default_language(),
+            speed_percent: DEFAULT_SPEED_PERCENT,
             preload: false,
         }
     }
@@ -122,12 +136,26 @@ impl VieneuNativeConfig {
         VieneuModel::parse(&self.model)
     }
 
+    /// Speaking-rate multiplier (1.0 = natural rate, 2.0 = twice as fast).
+    pub fn speed_factor(&self) -> f32 {
+        f32::from(self.speed_percent) / 100.0
+    }
+
+    fn valid_speed(&self, model: VieneuModel) -> bool {
+        match model {
+            VieneuModel::V3NanoFp32 => NANO_SPEED_PERCENT_RANGE.contains(&self.speed_percent),
+            // Turbo decodes autoregressively until EOS and has no duration control.
+            VieneuModel::V3TurboFp32 => self.speed_percent == DEFAULT_SPEED_PERCENT,
+        }
+    }
+
     pub fn valid_selection(&self) -> bool {
         let Some(model) = self.parsed_model() else {
             return false;
         };
         self.language == "vi-VN"
             && (1..=128).contains(&self.num_threads)
+            && self.valid_speed(model)
             && voices_for_model(model)
                 .iter()
                 .any(|voice| voice.id == self.voice)

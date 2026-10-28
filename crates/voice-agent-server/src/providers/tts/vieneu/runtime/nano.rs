@@ -248,6 +248,15 @@ pub(super) fn phonemes_to_ids(
     Ok((ids, mask))
 }
 
+/// Converts the predicted log utterance duration into latent frames at the
+/// requested speaking rate. The natural duration keeps its predictor guard
+/// (0.05–15 s); the flow model then spreads phonemes over the scaled length.
+pub(super) fn latent_frames_for(log_s: f32, flow_fps: f32, speed: f32) -> usize {
+    let natural_secs = log_s.exp().clamp(0.05, 15.0);
+    let secs = natural_secs / speed;
+    ((secs * flow_fps).round() as usize).max(2)
+}
+
 pub(super) fn trim_and_fade(samples: &[f32], sample_rate: u32) -> Vec<f32> {
     if samples.is_empty() {
         return Vec::new();
@@ -518,8 +527,8 @@ impl NanoWorker {
         let log_s = extract_first_f32_tensor(&dur_out, Some(1))?[0];
         drop(dur_out);
 
-        let secs = log_s.exp().clamp(0.05, 15.0);
-        let latent_frames = ((secs * config.flow_fps).round() as usize).max(2);
+        let latent_frames =
+            latent_frames_for(log_s, config.flow_fps, self.options.speed_factor());
         let channels = config.latent_channels();
         let latent_len = channels * latent_frames;
 

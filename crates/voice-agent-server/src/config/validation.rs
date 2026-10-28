@@ -736,7 +736,7 @@ fn validate_providers(config: &AppConfig) -> Result<(), ConfigError> {
             }
             TtsInstanceConfig::Vieneu(tts) if !tts.valid_selection() => {
                 return Err(ConfigError::Validation(format!(
-                    "Native VieNeu instance `{id}` has invalid voice, language, model, or threads"
+                    "Native VieNeu instance `{id}` has invalid voice, language, model, threads, or speed (Nano: 50-200%, Turbo: 100%)"
                 )));
             }
             TtsInstanceConfig::ChillAudioWs(tts)

@@ -141,6 +141,16 @@ const FIELDS: &[ProviderConfigField] = &[
         Some(32),
     ),
     field(
+        "speed_percent",
+        "Speed (%) — Nano only",
+        ConfigFieldType::Integer,
+        false,
+        None,
+        Some(50),
+        Some(200),
+        None,
+    ),
+    field(
         "preload",
         "Preload",
         ConfigFieldType::Boolean,
