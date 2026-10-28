@@ -99,13 +99,41 @@ pub fn ensure_asset(
         tracing::debug!(asset = asset.path, "reusing provider asset");
         return Ok(target);
     }
-    tracing::debug!(
+    let provider_dir = root
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("unknown");
+    tracing::info!(
+        subsystem = "system",
+        event = "provider_asset_download_started",
+        provider = provider_dir,
         asset = asset.path,
+        destination = %target.display(),
         url = asset.url,
-        "downloading provider asset"
+        "downloading missing provider model asset"
     );
-    install(acquirer, asset.url, &target)?;
-    tracing::debug!(asset = asset.path, "provider asset ready");
+    if let Err(error) = install(acquirer, asset.url, &target) {
+        tracing::error!(
+            subsystem = "system",
+            event = "provider_asset_download_failed",
+            outcome = "failure",
+            provider = provider_dir,
+            asset = asset.path,
+            destination = %target.display(),
+            reason = %error,
+            "provider model asset download failed"
+        );
+        return Err(error);
+    }
+    tracing::info!(
+        subsystem = "system",
+        event = "provider_asset_download_completed",
+        outcome = "success",
+        provider = provider_dir,
+        asset = asset.path,
+        destination = %target.display(),
+        "provider model asset downloaded"
+    );
     Ok(target)
 }
 

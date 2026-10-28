@@ -325,10 +325,27 @@ fn ensure_declared_assets(config: &AppConfig) -> Result<(), crate::providers::Pr
         let Some(assets) = registry.assets(adapter) else {
             continue;
         };
-        assets.ensure_assets()?;
+        tracing::info!(
+            subsystem = "system",
+            event = "provider_assets_ensuring",
+            provider = adapter,
+            "ensuring provider model files"
+        );
+        if let Err(error) = assets.ensure_assets() {
+            tracing::error!(
+                subsystem = "system",
+                event = "provider_assets_failed",
+                outcome = "failure",
+                provider = adapter,
+                reason = %error,
+                "provider model files preparation failed"
+            );
+            return Err(error.into());
+        }
         tracing::info!(
             subsystem = "system",
             event = "provider_assets_ready",
+            outcome = "success",
             provider = adapter,
             "provider model files ready"
         );

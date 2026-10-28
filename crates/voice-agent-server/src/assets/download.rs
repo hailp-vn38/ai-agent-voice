@@ -94,10 +94,17 @@ fn acquire_once(
         file.write_all(&buffer[..count]).map_err(file_error)?;
         downloaded_bytes += count as u64;
         if progress.elapsed() >= Duration::from_secs(5) {
-            tracing::debug!(
+            let progress_percent = expected_bytes
+                .filter(|expected| *expected > 0)
+                .map(|expected| (downloaded_bytes.saturating_mul(100)) / expected);
+            tracing::info!(
+                subsystem = "system",
+                event = "provider_asset_download_progress",
+                destination = %destination.display(),
                 downloaded_bytes,
                 expected_bytes,
-                "provider asset download progress"
+                progress_percent,
+                "downloading provider model asset"
             );
             progress = Instant::now();
         }

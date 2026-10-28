@@ -113,14 +113,38 @@ impl RuntimeMaterializer for FactoryMaterializer {
         else {
             return Err(RuntimeError::Configuration);
         };
+        tracing::info!(
+            subsystem = "system",
+            event = "provider_assets_ensuring",
+            provider = %snapshot.adapter,
+            provider_key = %snapshot.key,
+            "ensuring provider model files for runtime"
+        );
         let started = Instant::now();
-        assets
-            .ensure_assets()
-            .map_err(|_| RuntimeError::ArtifactsNotReady)?;
+        assets.ensure_assets().map_err(|error| {
+            tracing::error!(
+                subsystem = "system",
+                event = "provider_assets_failed",
+                outcome = "failure",
+                provider = %snapshot.adapter,
+                provider_key = %snapshot.key,
+                reason = %error,
+                "provider model files preparation failed"
+            );
+            RuntimeError::ArtifactsNotReady
+        })?;
+        let ensure = started.elapsed();
         self.asset_ensures.fetch_add(1, Ordering::Relaxed);
-        Ok(Some(PreparedRuntime::Local {
-            ensure: started.elapsed(),
-        }))
+        tracing::info!(
+            subsystem = "system",
+            event = "provider_assets_ready",
+            outcome = "success",
+            provider = %snapshot.adapter,
+            provider_key = %snapshot.key,
+            duration_ms = ensure.as_millis() as u64,
+            "provider model files ready"
+        );
+        Ok(Some(PreparedRuntime::Local { ensure }))
     }
 
     fn estimated_peak_bytes(&self, snapshot: &DesiredProvider) -> Result<u64, RuntimeError> {
