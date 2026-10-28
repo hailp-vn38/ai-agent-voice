@@ -102,6 +102,8 @@ const REPORT_STAGER_TOOLS: &[&str] = &[
     "add_to_sources",
     "markdown_create",
     "markdown_read",
+    "chart_write",
+    "chart_get",
 ];
 
 const REMINDER_PLANNER_TOOLS: &[&str] = &[
@@ -122,6 +124,8 @@ const WIKI_INGESTOR_TOOLS: &[&str] = &[
     "wiki_ingest_source",
     "wiki_write_file",
     "wiki_patch_file",
+    "chart_write",
+    "chart_get",
 ];
 
 const WIKI_CURATOR_TOOLS: &[&str] = &[
@@ -136,6 +140,8 @@ const WIKI_CURATOR_TOOLS: &[&str] = &[
     "wiki_delete_file",
     "wiki_lint",
     "wiki_schema",
+    "chart_write",
+    "chart_get",
 ];
 
 pub const AGENT_SPECS: &[AgentSpec] = &[
@@ -202,8 +208,13 @@ pub const AGENT_SPECS: &[AgentSpec] = &[
         default_steps: 12,
         default_allowed_tools: REPORT_STAGER_TOOLS,
         available_tools: REPORT_STAGER_TOOLS,
-        default_allowed_skills: &["wiki-taxonomy", "daily-synthesis-staging"],
-        suggested_skills: &["wiki-taxonomy", "daily-synthesis-staging", "wiki-query"],
+        default_allowed_skills: &["wiki-taxonomy", "daily-synthesis-staging", "trading-chart"],
+        suggested_skills: &[
+            "wiki-taxonomy",
+            "daily-synthesis-staging",
+            "trading-chart",
+            "wiki-query",
+        ],
         default_subagents: &[],
     },
     AgentSpec {
@@ -274,8 +285,8 @@ pub const AGENT_SPECS: &[AgentSpec] = &[
         default_steps: 35,
         default_allowed_tools: WIKI_INGESTOR_TOOLS,
         available_tools: WIKI_INGESTOR_TOOLS,
-        default_allowed_skills: &["wiki-taxonomy", "wiki-ingest"],
-        suggested_skills: &["wiki-taxonomy", "wiki-ingest", "wiki-query"],
+        default_allowed_skills: &["wiki-taxonomy", "wiki-ingest", "trading-chart"],
+        suggested_skills: &["wiki-taxonomy", "wiki-ingest", "trading-chart", "wiki-query"],
         default_subagents: &[],
     },
     AgentSpec {
@@ -289,8 +300,14 @@ pub const AGENT_SPECS: &[AgentSpec] = &[
         default_steps: 35,
         default_allowed_tools: WIKI_CURATOR_TOOLS,
         available_tools: WIKI_CURATOR_TOOLS,
-        default_allowed_skills: &["wiki-taxonomy", "wiki-query", "wiki-lint"],
-        suggested_skills: &["wiki-taxonomy", "wiki-query", "wiki-lint", "wiki-ingest"],
+        default_allowed_skills: &["wiki-taxonomy", "wiki-query", "wiki-lint", "trading-chart"],
+        suggested_skills: &[
+            "wiki-taxonomy",
+            "wiki-query",
+            "wiki-lint",
+            "trading-chart",
+            "wiki-ingest",
+        ],
         default_subagents: &[],
     },
 ];
@@ -321,6 +338,8 @@ pub const CUSTOM_DAILY_SUBAGENT_TOOLS: &[&str] = &[
     "wiki_graph_neighbors",
     "markdown_create",
     "markdown_read",
+    "chart_write",
+    "chart_get",
     "artifact_create",
     "reminder_create",
     "reminder_list",
@@ -346,6 +365,8 @@ pub const CUSTOM_WIKI_SUBAGENT_TOOLS: &[&str] = &[
     "wiki_delete_file",
     "wiki_lint",
     "wiki_schema",
+    "chart_write",
+    "chart_get",
 ];
 
 /// Returns `(parent_root_id, available_tools)` for a valid Custom Sub-Agent `flow_id`.

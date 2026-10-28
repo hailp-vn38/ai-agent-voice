@@ -24,6 +24,8 @@ pub const DAILY_SYNTHESIS_STAGING_SKILL: &str =
     include_str!("../../../builtin-skills/daily-synthesis-staging/SKILL.md");
 pub const DAILY_TASK_REMINDER_SKILL: &str =
     include_str!("../../../builtin-skills/daily-task-reminder/SKILL.md");
+pub const TRADING_CHART_SKILL: &str =
+    include_str!("../../../builtin-skills/trading-chart/SKILL.md");
 
 pub const BUILTIN_SKILLS: &[(&str, &str)] = &[
     ("wiki-taxonomy", WIKI_TAXONOMY_SKILL),
@@ -32,6 +34,7 @@ pub const BUILTIN_SKILLS: &[(&str, &str)] = &[
     ("wiki-lint", WIKI_LINT_SKILL),
     ("daily-synthesis-staging", DAILY_SYNTHESIS_STAGING_SKILL),
     ("daily-task-reminder", DAILY_TASK_REMINDER_SKILL),
+    ("trading-chart", TRADING_CHART_SKILL),
 ];
 
 pub(crate) fn ensure_builtin_skills(skills_root: &Path) -> Result<(), std::io::Error> {

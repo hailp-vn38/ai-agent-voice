@@ -119,7 +119,7 @@ Bộ 9 công cụ nội bộ (`task_create`, `task_followup`, `task_list`, `task
 _Avoid_: `server_create_job`, `task_delete`, MCP Tool
 
 **Workspace ToolKit**:
-Tập công cụ gắn sẵn theo vai trò Sub-Agent gồm truy vấn/biên soạn Wiki, lưu nguồn thô (`add_to_sources`), tạo báo cáo Markdown, sinh hình ảnh và âm thanh TTS, trích xuất trang Web, đọc PDF, thu thập phụ đề YouTube và quản lý lịch nhắc.
+Tập công cụ gắn sẵn theo vai trò Sub-Agent gồm truy vấn/biên soạn Wiki, lưu nguồn thô (`add_to_sources`), tạo báo cáo Markdown, dựng biểu đồ minh họa kiến thức trading (`chart_write`, `chart_get`), sinh hình ảnh và âm thanh TTS, trích xuất trang Web, đọc PDF, thu thập phụ đề YouTube và quản lý lịch nhắc.
 _Avoid_: Plugin Package, External Plugin Installation, subprocess plugin runner
 
 **Job Artifact**:

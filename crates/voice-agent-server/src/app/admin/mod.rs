@@ -57,6 +57,10 @@ pub(super) fn router(state: AppState) -> Router<AppState> {
         .route("/knowledge/tree", get(knowledge::knowledge_tree))
         .route("/knowledge/graph", get(knowledge::knowledge_graph))
         .route(
+            "/knowledge/charts/{*path}",
+            get(knowledge::knowledge_chart_read),
+        )
+        .route(
             "/knowledge/folders",
             axum::routing::post(knowledge::knowledge_folder_create),
         )

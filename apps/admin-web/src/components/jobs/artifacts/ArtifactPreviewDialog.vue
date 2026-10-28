@@ -49,16 +49,21 @@ import {
   ShieldCheck,
   X,
 } from '@lucide/vue'
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { agentJobsApi } from '@/api/agent-jobs'
 import { formatApiError } from '@/api/errors'
 import type { ArtifactKind, ArtifactRole, JobStatus } from '@/api/types/agent-jobs'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { useI18n } from '@/composables/useI18n'
+import { useTheme } from '@/composables/useTheme'
 import { renderMarkdown } from '@/lib/markdown'
+import { renderMermaidBlocks } from '@/pages/knowledge/mermaidRenderer'
+import { renderTradingChartBlocks } from '@/pages/knowledge/tradingChartRenderer'
+import '@/pages/knowledge/knowledge-reader.css'
 
 const { t } = useI18n()
+const { dark } = useTheme()
 const props = withDefaults(
   defineProps<{
     jobId: string
@@ -92,6 +97,20 @@ const preview = computed(() => artifactPreview(props.artifact))
 const kind = computed(() => preview.value.kind)
 const isMarkdown = computed(() => isMarkdownArtifact(props.artifact))
 const renderedHtml = computed(() => (isMarkdown.value && text.value ? renderMarkdown(text.value) : ''))
+const markdownBodyEl = ref<HTMLElement | null>(null)
+
+watch(
+  [renderedHtml, textViewMode, dark],
+  () => {
+    if (isMarkdown.value && textViewMode.value === 'rendered') {
+      void nextTick(() => {
+        void renderMermaidBlocks(markdownBodyEl.value, dark.value)
+        void renderTradingChartBlocks(markdownBodyEl.value, dark.value)
+      })
+    }
+  },
+  { flush: 'post', immediate: true },
+)
 
 const catalogArtifact = computed<Partial<AdminArtifactItem>>(() => props.artifact as Partial<AdminArtifactItem>)
 
@@ -352,6 +371,7 @@ onBeforeUnmount(() => {
 
           <article
             v-else-if="isMarkdown && textViewMode === 'rendered'"
+            ref="markdownBodyEl"
             data-preview-markdown-body
             class="job-report max-h-[65vh] overflow-auto rounded-lg border bg-muted/25 p-5 text-sm leading-6"
             v-html="renderedHtml"

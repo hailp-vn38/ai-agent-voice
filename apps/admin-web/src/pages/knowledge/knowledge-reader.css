@@ -1064,3 +1064,112 @@
   }
 }
 
+/* Trading Chart blocks and hydrated interactive OHLCV widgets */
+.knowledge-trading-chart {
+  white-space: pre-wrap;
+}
+.knowledge-trading-chart[data-trading-chart-source="error"] {
+  border-color: color-mix(in srgb, var(--danger) 45%, var(--border)) !important;
+  color: var(--danger) !important;
+}
+.knowledge-trading-chart-widget {
+  margin: 22px 0;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--card);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+.knowledge-trading-chart-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+  background: color-mix(in srgb, var(--surface) 75%, var(--card));
+}
+.knowledge-trading-chart-title-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  flex-wrap: wrap;
+}
+.knowledge-trading-chart-title {
+  font-size: 13px;
+  font-weight: 680;
+  color: var(--foreground);
+}
+.knowledge-trading-chart-badge {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: var(--muted);
+  color: var(--muted-foreground);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+.knowledge-trading-chart-fit-btn {
+  flex: none;
+  height: 26px;
+  padding: 0 10px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--background);
+  color: var(--muted-foreground);
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: color 120ms ease, border-color 120ms ease;
+}
+.knowledge-trading-chart-fit-btn:hover {
+  color: var(--studio-violet);
+  border-color: var(--studio-violet);
+}
+.knowledge-trading-chart-viewport {
+  position: relative;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  user-select: none;
+}
+.knowledge-trading-chart-statusbar {
+  padding: 5px 14px;
+  font-size: 11px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: var(--muted-foreground);
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 55%, transparent);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.knowledge-trading-chart-svg {
+  width: 100%;
+  flex: 1;
+  display: block;
+}
+.knowledge-trading-chart-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 14px;
+  padding: 8px 14px;
+  border-top: 1px solid var(--border);
+  background: color-mix(in srgb, var(--surface) 55%, var(--card));
+  font-size: 11.5px;
+  color: var(--muted-foreground);
+}
+.knowledge-trading-chart-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.knowledge-trading-chart-legend-swatch {
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  flex: none;
+}
+
+

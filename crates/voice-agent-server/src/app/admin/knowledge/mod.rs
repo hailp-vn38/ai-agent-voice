@@ -836,3 +836,23 @@ pub(super) async fn knowledge_read_source(
         Err(err) => wiki_error(&req, err),
     }
 }
+
+pub(super) async fn knowledge_chart_read(
+    State(state): State<AppState>,
+    Path(path): Path<String>,
+    req: Request,
+) -> Response {
+    let engine = match wiki(&state, &req) {
+        Ok(engine) => engine,
+        Err(resp) => return resp,
+    };
+    let vault_dir = &engine.config().data_root;
+    match crate::services::task_flow::read_chart_json_for_admin(vault_dir, &path) {
+        Ok(doc) => Json(doc).into_response(),
+        Err(err) => match err.code() {
+            "chart_not_found" => error(&req, StatusCode::NOT_FOUND, "not_found"),
+            "invalid_chart_path" => error(&req, StatusCode::BAD_REQUEST, "invalid_path"),
+            _ => error(&req, StatusCode::BAD_REQUEST, err.code()),
+        },
+    }
+}

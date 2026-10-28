@@ -2,8 +2,9 @@
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { Network, Link2, FileText, Folder, FolderOpen, FolderPlus, FilePlus2, Pencil, ChevronsUp, BookOpen, ArrowUpRight, ChevronDown, ChevronRight, Search, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen } from '@lucide/vue'
-import { renderMarkdown, markdownOutline, parseMarkdownProperties, stripMarkdownFrontmatter } from './markdown'
+import { renderMarkdown, markdownOutline, parseMarkdownProperties, stripMarkdownFrontmatter } from '@/lib/markdown'
 import { renderMermaidBlocks } from './mermaidRenderer'
+import { renderTradingChartBlocks } from './tradingChartRenderer'
 import { useTheme } from '@/composables/useTheme'
 import './knowledge-reader.css'
 import KnowledgeGraph from './KnowledgeGraph.vue'
@@ -932,8 +933,19 @@ const introduction = computed(() => {
 const readingText = computed(() => introduction.value.rest)
 const leadHtml = computed(() => introduction.value.lead ? renderMarkdown(introduction.value.lead) : '')
 const renderedBody = computed(() => renderMarkdown(readingText.value))
-watch([() => renderedBody.value, viewMode, dark], () => {
-  if (viewMode.value === 'read') void nextTick(() => renderMermaidBlocks(readerViewport.value, dark.value))
+const composePreviewViewport = ref<HTMLElement | null>(null)
+watch([() => renderedBody.value, () => body.value, viewMode, preview, dark], () => {
+  if (viewMode.value === 'read') {
+    void nextTick(() => {
+      void renderMermaidBlocks(readerViewport.value, dark.value)
+      void renderTradingChartBlocks(readerViewport.value, dark.value)
+    })
+  } else if (viewMode.value === 'compose' && preview.value) {
+    void nextTick(() => {
+      void renderMermaidBlocks(composePreviewViewport.value, dark.value)
+      void renderTradingChartBlocks(composePreviewViewport.value, dark.value)
+    })
+  }
 }, { flush: 'post' })
 
 const notePath = computed(() => selectedPath.value.replace(/^[^/]+\/?/, ''))
@@ -1269,7 +1281,7 @@ onMounted(() => {
                 aria-label="Markdown editor"
                 @keydown.ctrl.s.prevent="saveNote" @keydown.meta.s.prevent="saveNote"></textarea>
             </div>
-            <div v-if="preview" class="knowledge-edit-preview markdown-body"
+            <div v-if="preview" ref="composePreviewViewport" class="knowledge-edit-preview markdown-body"
               v-html="renderMarkdown(body)" @click="onMarkdownClick"></div>
           </div>
           <p v-if="activeSpace === 'wiki'" class="knowledge-edit-footnote">

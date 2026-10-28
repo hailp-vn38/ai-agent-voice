@@ -2,6 +2,7 @@
 //! powered by [`orchestrator_flow_rs`] (`orchestrator_task_rs`).
 
 pub mod agent_settings;
+pub mod charts;
 mod projections;
 pub mod skills;
 mod voice;
@@ -24,6 +25,7 @@ pub use agent_settings::{
     sync_orchestrator_from_state, valid_custom_subagent_id, validate_agent_overrides,
     validate_agent_overrides_with_skills, write_agent_prompts,
 };
+pub use charts::{ChartDocument, ChartError, chart_host_tools, read_chart_json_for_admin};
 pub use projections::{
     project_artifact_catalog_page, project_task_events, project_task_to_admin_job,
 };
@@ -31,8 +33,9 @@ pub use voice::{TASK_SUITE_TOOL_NAMES, VoiceTaskSubmit, is_task_suite_tool_name,
 pub use workspace_seed::{
     BUILTIN_SKILLS, DAILY_ROOT_PROMPT, DAILY_SYNTHESIS_STAGING_SKILL, DAILY_TASK_REMINDER_SKILL,
     MEDIA_CREATOR_PROMPT, REMINDER_PLANNER_PROMPT, REPORT_STAGER_PROMPT, SOURCE_COLLECTOR_PROMPT,
-    WIKI_CURATOR_PROMPT, WIKI_INGEST_SKILL, WIKI_INGESTOR_PROMPT, WIKI_LINT_SKILL,
-    WIKI_QUERY_SKILL, WIKI_RESEARCHER_PROMPT, WIKI_ROOT_PROMPT, WIKI_TAXONOMY_SKILL,
+    TRADING_CHART_SKILL, WIKI_CURATOR_PROMPT, WIKI_INGEST_SKILL, WIKI_INGESTOR_PROMPT,
+    WIKI_LINT_SKILL, WIKI_QUERY_SKILL, WIKI_RESEARCHER_PROMPT, WIKI_ROOT_PROMPT,
+    WIKI_TAXONOMY_SKILL,
 };
 
 use std::sync::Arc;
@@ -213,6 +216,9 @@ async fn init_orchestrator_and_task_manager(
 
     let mut builder = Orchestrator::builder(orch_cfg);
     for tool in toolkit.all_host_tools(&task_init) {
+        builder = builder.register_tool(tool);
+    }
+    for tool in chart_host_tools(&wiki_cfg.vault_dir) {
         builder = builder.register_tool(tool);
     }
     let orchestrator = Arc::new(builder.build().await?);

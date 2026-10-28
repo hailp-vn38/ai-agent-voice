@@ -181,11 +181,22 @@ fn dual_flow_agent_specs_assign_collectors_to_daily_flow_and_keep_wiki_flow_pure
     let report_stager = find_agent_spec("report_stager").expect("report_stager spec");
     assert!(report_stager.default_allowed_tools.contains(&"add_to_sources"));
     assert!(report_stager.default_allowed_tools.contains(&"markdown_create"));
+    assert!(report_stager.default_allowed_tools.contains(&"chart_write"));
+    assert!(report_stager.default_allowed_tools.contains(&"chart_get"));
+    assert!(report_stager.default_allowed_skills.contains(&"trading-chart"));
     assert!(
         !report_stager.default_allowed_tools.contains(&"image_create")
             && !report_stager.default_allowed_tools.contains(&"tts_synthesize"),
         "report_stager must not duplicate media_creator tools"
     );
+
+    for wiki_agent_id in ["wiki_ingestor", "wiki_curator"] {
+        let spec = find_agent_spec(wiki_agent_id).expect("wiki subagent spec");
+        assert!(spec.default_allowed_tools.contains(&"chart_write"));
+        assert!(spec.default_allowed_tools.contains(&"chart_get"));
+        assert!(spec.default_allowed_skills.contains(&"trading-chart"));
+    }
+    assert!(BUILTIN_SKILLS.iter().any(|(id, _)| *id == "trading-chart"));
 
     let media_creator = find_agent_spec("media_creator").expect("media_creator spec");
     assert!(media_creator.default_allowed_tools.contains(&"image_create"));

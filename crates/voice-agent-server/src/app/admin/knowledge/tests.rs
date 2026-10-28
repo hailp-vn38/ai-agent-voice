@@ -461,3 +461,54 @@ async fn knowledge_graph_filters_dangling_edges_aggregates_lines_and_bounds_loca
     handle.abort();
     let _ = std::fs::remove_dir_all(temp_root);
 }
+
+#[tokio::test]
+async fn knowledge_chart_read_serves_synthesized_chart_and_rejects_invalid_paths() {
+    let (base, temp_root, handle) = fixture_server().await;
+    let vault_dir = temp_root.join("vault");
+    crate::services::task_flow::charts::execute_chart_write(
+        &vault_dir,
+        serde_json::json!({
+            "chart_path": "charts/ob-retest.chart.json",
+            "title": "Bullish OB Retest",
+            "candles": [
+                {"open": 100.0, "high": 104.0, "low": 99.5, "close": 103.5, "tag": "c1"},
+                {"open": 103.5, "high": 105.0, "low": 101.0, "close": 101.5, "tag": "ob"},
+                {"open": 101.5, "high": 109.0, "low": 101.2, "close": 108.5, "tag": "bos"}
+            ]
+        }),
+    )
+    .expect("write chart to vault");
+
+    let client = reqwest::Client::new();
+    let ok_resp = client
+        .get(format!("{base}/knowledge/charts/ob-retest.chart.json"))
+        .bearer_auth("knowledge-test-token")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(ok_resp.status(), StatusCode::OK);
+    let chart_json: Value = ok_resp.json().await.unwrap();
+    assert_eq!(chart_json["id"], "ob-retest");
+    assert_eq!(chart_json["schemaVersion"], 1);
+    assert_eq!(chart_json["candles"].as_array().unwrap().len(), 3);
+
+    let missing_resp = client
+        .get(format!("{base}/knowledge/charts/missing.chart.json"))
+        .bearer_auth("knowledge-test-token")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(missing_resp.status(), StatusCode::NOT_FOUND);
+
+    let bad_ext_resp = client
+        .get(format!("{base}/knowledge/charts/not-a-chart.md"))
+        .bearer_auth("knowledge-test-token")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(bad_ext_resp.status(), StatusCode::BAD_REQUEST);
+
+    handle.abort();
+    let _ = std::fs::remove_dir_all(temp_root);
+}

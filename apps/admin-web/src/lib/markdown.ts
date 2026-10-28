@@ -283,9 +283,12 @@ export function renderMarkdown(markdown: string): string {
     if (code !== null) {
       if (delimiter && delimiter[1][0] === fence) {
         const text = escape(code.join('\n'))
-        output += language.toLowerCase() === 'mermaid'
+        const lang = language.toLowerCase()
+        output += lang === 'mermaid'
           ? '<pre class="knowledge-mermaid" data-mermaid-source="true">' + text + '</pre>'
-          : '<pre><code class="language-' + escape(language) + '">' + text + '</code></pre>'
+          : lang === 'trading-chart'
+            ? '<pre class="knowledge-trading-chart" data-trading-chart-source="true">' + text + '</pre>'
+            : '<pre><code class="language-' + escape(language) + '">' + text + '</code></pre>'
         code = null
         fence = null
       } else code.push(line)
