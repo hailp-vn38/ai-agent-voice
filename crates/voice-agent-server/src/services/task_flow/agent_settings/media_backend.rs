@@ -365,11 +365,21 @@ impl orchestrator_flow_rs::ImageGeneratorBackend for CatalogMediaBackend {
         };
         let (width, height) = req.effective_dimensions();
         let provider = resolved.to_llm_provider().map_err(|e| e.to_string())?;
+        let reference_images = req
+            .reference_images
+            .iter()
+            .map(|img| crate::providers::ReferenceImage {
+                bytes: img.bytes.clone(),
+                mime_type: img.mime_type.clone(),
+            })
+            .collect();
         let output = provider
             .invoke(crate::providers::LlmOperation::ImageGeneration {
                 prompt: req.prompt.clone(),
                 width,
                 height,
+                reference_images,
+                transparent_background: req.transparent_background,
             })
             .await
             .map_err(|e| e.to_string())?;
@@ -406,12 +416,17 @@ impl orchestrator_flow_rs::VideoGeneratorBackend for CatalogMediaBackend {
         let (width, height) = req.effective_dimensions();
         let duration_secs = req.duration_secs.clamp(1, 60);
         let provider = resolved.to_llm_provider().map_err(|e| e.to_string())?;
+        let first_frame = req.first_frame.as_ref().map(|img| crate::providers::ReferenceImage {
+            bytes: img.bytes.clone(),
+            mime_type: img.mime_type.clone(),
+        });
         let output = provider
             .invoke(crate::providers::LlmOperation::VideoGeneration {
                 prompt: req.prompt.clone(),
                 width,
                 height,
                 duration_secs,
+                first_frame,
             })
             .await
             .map_err(|e| e.to_string())?;

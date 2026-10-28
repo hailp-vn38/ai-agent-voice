@@ -427,6 +427,7 @@ fn resolved_llm_provider_exposes_capability_tags_and_enforces_agent_compatibilit
         reasoning_effort: None,
         temperature_percent: None,
         tags: vec!["chat".into(), "vision".into()],
+        muse_options: None,
     };
     let image_only_provider = ResolvedLlmProvider {
         provider_ref: "llm_image".into(),
@@ -442,6 +443,7 @@ fn resolved_llm_provider_exposes_capability_tags_and_enforces_agent_compatibilit
         reasoning_effort: None,
         temperature_percent: None,
         tags: vec!["image".into()],
+        muse_options: None,
     };
 
     let summary = chat_provider.to_json_summary();
@@ -479,6 +481,7 @@ fn resolved_llm_provider_exposes_capability_tags_and_enforces_agent_compatibilit
         reasoning_effort: None,
         temperature_percent: None,
         tags: vec!["video".into()],
+        muse_options: None,
     };
     let audio_only_provider = ResolvedLlmProvider {
         provider_ref: "llm_audio".into(),
@@ -494,6 +497,7 @@ fn resolved_llm_provider_exposes_capability_tags_and_enforces_agent_compatibilit
         reasoning_effort: None,
         temperature_percent: None,
         tags: vec!["audio".into()],
+        muse_options: None,
     };
     let mut catalog = catalog;
     catalog.push(video_only_provider);
@@ -743,6 +747,7 @@ async fn catalog_media_backend_and_reasoning_tag_wire_provider_capabilities() {
         reasoning_effort: None,
         temperature_percent: None,
         tags: vec!["reasoning".into()],
+        muse_options: None,
     };
     let media_provider = ResolvedLlmProvider {
         provider_ref: "llm_media".into(),
@@ -758,6 +763,7 @@ async fn catalog_media_backend_and_reasoning_tag_wire_provider_capabilities() {
         reasoning_effort: None,
         temperature_percent: None,
         tags: vec!["image".into(), "video".into(), "audio".into()],
+        muse_options: None,
     };
 
     let catalog = vec![reasoning_provider, media_provider];
@@ -788,6 +794,8 @@ async fn catalog_media_backend_and_reasoning_tag_wire_provider_capabilities() {
             width: 256,
             height: 256,
             svg_content: None,
+            reference_images: Vec::new(),
+            transparent_background: false,
         })
         .await
         .unwrap();
@@ -802,6 +810,7 @@ async fn catalog_media_backend_and_reasoning_tag_wire_provider_capabilities() {
             width: 640,
             height: 360,
             duration_secs: 4,
+            first_frame: None,
         })
         .await
         .unwrap();
@@ -860,6 +869,7 @@ async fn catalog_media_backend_and_reasoning_tag_wire_provider_capabilities() {
         reasoning_effort: None,
         temperature_percent: None,
         tags: vec!["tts".into()],
+        muse_options: None,
     };
     let tts_backend = CatalogMediaBackend::from_catalog(vec![server_tts_provider])
         .with_tts_runtime("tts_vieneu_local", tts_runtime.clone());
@@ -890,6 +900,8 @@ async fn catalog_media_backend_and_reasoning_tag_wire_provider_capabilities() {
             width: 64,
             height: 64,
             svg_content: None,
+            reference_images: Vec::new(),
+            transparent_background: false,
         })
         .await
         .unwrap();
@@ -903,6 +915,7 @@ async fn catalog_media_backend_and_reasoning_tag_wire_provider_capabilities() {
             width: 64,
             height: 64,
             duration_secs: 2,
+            first_frame: None,
         })
         .await
         .unwrap();
@@ -919,6 +932,8 @@ async fn catalog_media_backend_and_reasoning_tag_wire_provider_capabilities() {
             width: 0,
             height: 0,
             svg_content: None,
+            reference_images: Vec::new(),
+            transparent_background: false,
         })
         .await
         .unwrap();
@@ -1071,4 +1086,90 @@ fn custom_subagents_enforce_flow_tool_boundaries_and_sync_active_subagents_promp
     assert!(!prompts_dir.join("arxiv_digest.md").exists());
 
     let _ = std::fs::remove_dir_all(&temp_dir);
+}
+
+#[test]
+fn muse_provider_is_independent_in_catalog_and_never_mapped_to_openai_chat_backend() {
+    use std::collections::BTreeMap;
+
+    // 1. Validate desired configuration for `muse` in `database/providers/config.rs`
+    let valid_json = r#"{"model":"muse-image","account_concurrency":2,"cdp_port":19222,"headless":true,"tags":["image","video"]}"#;
+    let canonical = crate::database::provider_config::validate_raw("muse", valid_json)
+        .expect("valid muse config_json");
+    assert!(canonical.contains("muse-image"));
+
+    // Rejects embedded credentials in `config_json`
+    let with_secret = r#"{"model":"muse-image","api_key":"secret_token"}"#;
+    assert!(crate::database::provider_config::validate_raw("muse", with_secret).is_err());
+
+    // 2. Verify `muse` in Task Flow catalog only exposes `image` & `video` and is excluded from `LlmBackend::OpenAiCompatible`
+    let cfg = OrchestratorSectionConfig::default();
+    let chat_prov = default_orchestrator_provider(&cfg);
+    let muse_prov = ResolvedLlmProvider {
+        provider_ref: "muse_media".into(),
+        name: "Muse Media".into(),
+        source: "database",
+        adapter: "muse".into(),
+        model: "muse-image".into(),
+        base_url: "https://muse.ai".into(),
+        api_key: Some(crate::config::SecretString::new(
+            "hatch_sess=s1; hatch_gw=g1; hatch_vml=v1; hatch_native_auth_device=d1",
+        )),
+        timeout_ms: 300_000,
+        max_tokens: 4_096,
+        context_limit_tokens: 128_000,
+        reasoning_effort: None,
+        temperature_percent: None,
+        tags: vec!["chat".into(), "image".into(), "video".into()],
+        muse_options: Some(crate::services::task_flow::agent_settings::MuseCatalogOptions {
+            account_concurrency: 2,
+            cdp_port: 19222,
+            headless: true,
+        }),
+    };
+
+    assert!(muse_prov.supports_tag("image"));
+    assert!(muse_prov.supports_tag("video"));
+    assert!(
+        !muse_prov.supports_tag("chat"),
+        "muse in Task Flow must not advertise chat so orchestrator-agent never routes chat turns to it"
+    );
+
+    let catalog = vec![chat_prov, muse_prov];
+    let mut agents = BTreeMap::new();
+    agents.insert(
+        "media_creator".to_owned(),
+        AgentConfigOverride {
+            enabled: true,
+            provider_ref: Some("muse_media".to_owned()),
+            tool_providers: Some(BTreeMap::from([
+                ("image_create".to_owned(), "muse_media".to_owned()),
+                ("video_create".to_owned(), "muse_media".to_owned()),
+            ])),
+            ..Default::default()
+        },
+    );
+    assert!(
+        validate_agent_overrides(
+            DEFAULT_ORCHESTRATOR_PROVIDER_REF,
+            DEFAULT_ORCHESTRATOR_PROVIDER_REF,
+            &agents,
+            &catalog,
+        )
+        .is_ok()
+    );
+
+    let settings = PersistedBackgroundSettings {
+        orchestrator_llm_provider: DEFAULT_ORCHESTRATOR_PROVIDER_REF.into(),
+        worker_llm_provider: DEFAULT_ORCHESTRATOR_PROVIDER_REF.into(),
+        agents,
+        ..Default::default()
+    };
+    let (orch_providers, defs) = build_agent_definitions(&cfg, &settings, &catalog);
+    assert!(
+        orch_providers.iter().all(|p| p.id != "muse_media"),
+        "muse must never be converted to LlmBackend::OpenAiCompatible"
+    );
+    let media_def = defs.iter().find(|d| d.id == "media_creator").unwrap();
+    assert_eq!(media_def.provider_id, DEFAULT_ORCHESTRATOR_PROVIDER_REF);
 }

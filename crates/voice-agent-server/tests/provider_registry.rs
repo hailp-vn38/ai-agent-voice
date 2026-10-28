@@ -24,6 +24,7 @@ fn registry_exposes_only_adapters_compiled_into_the_binary() {
         "gipformer_sherpa_offline"
     );
     assert_eq!(registry.llm_factory("openai").unwrap().adapter(), "openai");
+    assert_eq!(registry.llm_factory("muse").unwrap().adapter(), "muse");
     assert_eq!(
         registry.tts_factory("zerotts_onnx").unwrap().adapter(),
         "zerotts_onnx"
@@ -259,7 +260,7 @@ fn asset_ownership_follows_whether_a_provider_loads_local_files() {
             owns_assets,
             !matches!(
                 adapter,
-                "openai" | "opencode_free" | "chillaudio_ws" | "edge_tts"
+                "openai" | "opencode_free" | "muse" | "chillaudio_ws" | "edge_tts"
             ) && !adapter.starts_with("qualification_"),
             "{adapter}"
         );

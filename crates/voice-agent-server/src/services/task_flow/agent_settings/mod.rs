@@ -18,7 +18,7 @@ pub use persistence::{
     load_persisted_settings, save_persisted_settings, write_agent_prompts,
 };
 pub use provider_catalog::{
-    ResolvedLlmProvider, default_orchestrator_provider, find_provider_by_tag,
+    MuseCatalogOptions, ResolvedLlmProvider, default_orchestrator_provider, find_provider_by_tag,
     resolve_llm_provider_catalog,
 };
 pub use resolution::{build_agent_definitions, project_agents_json};

@@ -161,12 +161,14 @@ impl LlmProvider for ConfiguredOpenAiLlm {
                 prompt,
                 width,
                 height,
+                ..
             } => self.generate_image(&prompt, width, height).await,
             LlmOperation::VideoGeneration {
                 prompt,
                 width,
                 height,
                 duration_secs,
+                ..
             } => {
                 self.generate_video(&prompt, width, height, duration_secs)
                     .await

@@ -6,10 +6,13 @@ use futures_util::Stream;
 use serde_json::Value;
 use thiserror::Error;
 
+pub(crate) mod muse;
 pub(crate) mod openai;
 pub(crate) mod opencode_free;
 #[cfg(feature = "qualification-providers")]
 pub mod qualification;
+
+pub use muse::{MuseConfig, MuseLlmProvider};
 
 pub(crate) const REASONING_EFFORTS: &[&str] = &["low", "medium", "high"];
 pub const LLM_CAPABILITY_TAGS: &[&str] = &[
@@ -239,6 +242,33 @@ impl From<&str> for LlmRequest {
     }
 }
 
+/// Số lượng ảnh tham chiếu tối đa được đính kèm trong một yêu cầu sinh ảnh.
+pub const MAX_REFERENCE_IMAGES: usize = 4;
+
+/// Ảnh đầu vào đã được xác thực MIME và giải mã thành byte nguyên bản.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct ReferenceImage {
+    pub bytes: Vec<u8>,
+    pub mime_type: String,
+}
+
+impl ReferenceImage {
+    /// Chuẩn hóa MIME từ magic bytes (`image/png`, `image/jpeg`, `image/webp`, `image/gif`).
+    pub fn from_bytes(bytes: Vec<u8>, fallback_mime: &str) -> Result<Self, LlmError> {
+        if bytes.is_empty() {
+            return Err(LlmError::Rejected);
+        }
+        let mime = sniff_media_mime_type(&bytes, fallback_mime);
+        if !mime.starts_with("image/") {
+            return Err(LlmError::Rejected);
+        }
+        Ok(Self {
+            bytes,
+            mime_type: mime.to_owned(),
+        })
+    }
+}
+
 /// Unified single-shot operation envelope across all non-streaming LLM capability tags.
 #[derive(Clone, Debug, PartialEq)]
 pub enum LlmOperation {
@@ -255,12 +285,18 @@ pub enum LlmOperation {
         prompt: String,
         width: u32,
         height: u32,
+        /// Từ 0 đến `MAX_REFERENCE_IMAGES` (4) ảnh tham chiếu.
+        reference_images: Vec<ReferenceImage>,
+        /// Yêu cầu nền trong suốt (`true` khi `background == "transparent"` hoặc format yêu cầu tách nền).
+        transparent_background: bool,
     },
     VideoGeneration {
         prompt: String,
         width: u32,
         height: u32,
         duration_secs: u32,
+        /// Ảnh khung hình đầu tiên (Image-to-Video) nếu có.
+        first_frame: Option<ReferenceImage>,
     },
     AudioSpeech {
         text: String,
@@ -317,12 +353,15 @@ impl LlmOperation {
                 prompt,
                 width: 1024,
                 height: 1024,
+                reference_images: Vec::new(),
+                transparent_background: false,
             },
             LlmCapabilityTag::Video => Self::VideoGeneration {
                 prompt,
                 width: 1280,
                 height: 720,
                 duration_secs: 5,
+                first_frame: None,
             },
             LlmCapabilityTag::Audio => Self::AudioSpeech {
                 text: prompt,
@@ -342,7 +381,7 @@ pub struct LlmDiagnosticMedia {
     pub data_url: String,
 }
 
-fn sniff_media_mime_type<'a>(bytes: &[u8], fallback: &'a str) -> &'a str {
+pub(crate) fn sniff_media_mime_type<'a>(bytes: &[u8], fallback: &'a str) -> &'a str {
     if bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
         "image/png"
     } else if bytes.starts_with(b"\xff\xd8\xff") {
@@ -626,52 +665,4 @@ fn to_llm_call(call: &ToolCall) -> llm::ToolCall {
 }
 
 #[cfg(test)]
-mod tests {
-    use futures_util::StreamExt;
-
-    use super::*;
-
-    #[tokio::test]
-    async fn tool_stream_intermediate_chunks_do_not_fail_the_round() {
-        let chunks = vec![
-            Ok(llm::chat::StreamChunk::ToolUseStart {
-                index: 0,
-                id: "call-1".into(),
-                name: "test_set_value".into(),
-            }),
-            Ok(llm::chat::StreamChunk::ToolUseInputDelta {
-                index: 0,
-                partial_json: r#"{"value":50}"#.into(),
-            }),
-            Ok(llm::chat::StreamChunk::ToolUseComplete {
-                index: 0,
-                tool_call: llm::ToolCall {
-                    id: "call-1".into(),
-                    call_type: "function".into(),
-                    function: llm::FunctionCall {
-                        name: "test_set_value".into(),
-                        arguments: r#"{"value":50}"#.into(),
-                    },
-                },
-            }),
-            Ok(llm::chat::StreamChunk::Done {
-                stop_reason: "tool_use".into(),
-            }),
-        ];
-
-        let events = futures_util::stream::iter(chunks)
-            .filter_map(|chunk| async move { adapt_stream_chunk(chunk) })
-            .collect::<Vec<_>>()
-            .await;
-
-        assert_eq!(events.len(), 2);
-        assert!(matches!(
-            &events[0],
-            Ok(LlmEvent::ToolCall(ToolCall { id, name, arguments }))
-                if id == "call-1"
-                    && name == "test_set_value"
-                    && *arguments == serde_json::json!({"value": 50})
-        ));
-        assert!(matches!(&events[1], Ok(LlmEvent::Finished)));
-    }
-}
+mod tests;

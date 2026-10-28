@@ -425,12 +425,7 @@ fn materialize_one_from_source(
                     secret.as_ref().map(|value| value.expose()),
                 )?
             };
-            let timeout = Duration::from_millis(match &instance {
-                LlmInstanceConfig::Openai(config) => config.timeout_ms,
-                LlmInstanceConfig::OpenCodeFree(config) => config.timeout_ms,
-                #[cfg(feature = "qualification-providers")]
-                LlmInstanceConfig::QualificationLlm(_) => 15_000,
-            });
+            let timeout = Duration::from_millis(instance.timeout_ms());
             let provider = registry
                 .llm_factory(instance.adapter())
                 .map_err(|_| ())?

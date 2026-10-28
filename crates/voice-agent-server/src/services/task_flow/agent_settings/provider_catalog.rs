@@ -12,6 +12,23 @@ use crate::config::{LlmInstanceConfig, OrchestratorSectionConfig, SecretString};
 use super::DEFAULT_ORCHESTRATOR_PROVIDER_REF;
 use super::specs::{AgentSpec, find_agent_spec};
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MuseCatalogOptions {
+    pub account_concurrency: usize,
+    pub cdp_port: u16,
+    pub headless: bool,
+}
+
+impl Default for MuseCatalogOptions {
+    fn default() -> Self {
+        Self {
+            account_concurrency: 2,
+            cdp_port: 19222,
+            headless: true,
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct ResolvedLlmProvider {
     pub provider_ref: String,
@@ -28,6 +45,7 @@ pub struct ResolvedLlmProvider {
     pub reasoning_effort: Option<String>,
     pub temperature_percent: Option<u16>,
     pub tags: Vec<String>,
+    pub muse_options: Option<MuseCatalogOptions>,
 }
 
 impl ResolvedLlmProvider {
@@ -50,6 +68,9 @@ impl ResolvedLlmProvider {
 
     pub fn supports_tag(&self, tag: &str) -> bool {
         let normalized = tag.trim().to_ascii_lowercase();
+        if self.adapter == "muse" && !matches!(normalized.as_str(), "image" | "video") {
+            return false;
+        }
         self.tags.iter().any(|t| {
             let candidate = t.trim().to_ascii_lowercase();
             candidate == normalized
@@ -110,6 +131,30 @@ impl ResolvedLlmProvider {
                 };
                 Ok(Box::new(
                     crate::providers::llm::opencode_free::OpenCodeFreeProvider::build(&cfg)?,
+                ))
+            }
+            "muse" => {
+                let api_key = self
+                    .api_key
+                    .as_ref()
+                    .map(|k| crate::config::SecretString::new(k.expose()))
+                    .unwrap_or_default();
+                let opts = self.muse_options.clone().unwrap_or_default();
+                let cfg = crate::config::MuseConfig {
+                    api_key,
+                    model: self.model.clone(),
+                    timeout_ms: self.timeout_ms.clamp(1_000, 600_000),
+                    max_tokens,
+                    context_limit_tokens,
+                    reasoning_effort: self.reasoning_effort.clone(),
+                    temperature_percent: self.temperature_percent,
+                    tags: Some(self.tags.clone()),
+                    account_concurrency: opts.account_concurrency.clamp(1, 8),
+                    cdp_port: opts.cdp_port.max(1024),
+                    headless: opts.headless,
+                };
+                Ok(Box::new(
+                    crate::providers::llm::MuseLlmProvider::from_config(&cfg)?,
                 ))
             }
             _ => Err(crate::providers::LlmError::Failed),
@@ -178,6 +223,7 @@ pub fn default_orchestrator_provider(cfg: &OrchestratorSectionConfig) -> Resolve
         reasoning_effort: None,
         temperature_percent: None,
         tags: vec!["chat".to_owned()],
+        muse_options: None,
     }
 }
 
@@ -213,6 +259,7 @@ pub async fn resolve_llm_provider_catalog(state: &AppState) -> Vec<ResolvedLlmPr
                     reasoning_effort: openai.reasoning_effort.clone(),
                     temperature_percent: openai.temperature_percent,
                     tags: crate::providers::llm::effective_llm_tags(openai.tags.as_deref()),
+                    muse_options: None,
                 });
             }
             LlmInstanceConfig::OpenCodeFree(free) => {
@@ -235,6 +282,37 @@ pub async fn resolve_llm_provider_catalog(state: &AppState) -> Vec<ResolvedLlmPr
                     reasoning_effort: free.reasoning_effort.clone(),
                     temperature_percent: free.temperature_percent,
                     tags: crate::providers::llm::effective_llm_tags(free.tags.as_deref()),
+                    muse_options: None,
+                });
+            }
+            LlmInstanceConfig::Muse(muse) => {
+                let tags = crate::providers::llm::effective_llm_tags(muse.tags.as_deref())
+                    .into_iter()
+                    .filter(|t| matches!(t.as_str(), "image" | "video"))
+                    .collect();
+                out.push(ResolvedLlmProvider {
+                    provider_ref,
+                    name: format!("{key} ({})", muse.model),
+                    source: "config",
+                    adapter: "muse".to_owned(),
+                    model: muse.model.clone(),
+                    base_url: crate::providers::llm::muse::SITE_URL.to_owned(),
+                    api_key: (!muse.api_key.expose().trim().is_empty())
+                        .then(|| SecretString::new(muse.api_key.expose().to_owned())),
+                    timeout_ms: muse.timeout_ms,
+                    max_tokens: muse.max_tokens.unwrap_or(orch_cfg.max_output_tokens),
+                    context_limit_tokens: muse
+                        .context_limit_tokens
+                        .map(|v| v as usize)
+                        .unwrap_or(orch_cfg.context_limit_tokens),
+                    reasoning_effort: muse.reasoning_effort.clone(),
+                    temperature_percent: muse.temperature_percent,
+                    tags,
+                    muse_options: Some(MuseCatalogOptions {
+                        account_concurrency: muse.account_concurrency,
+                        cdp_port: muse.cdp_port,
+                        headless: muse.headless,
+                    }),
                 });
             }
             #[cfg(feature = "qualification-providers")]
@@ -254,13 +332,17 @@ pub async fn resolve_llm_provider_catalog(state: &AppState) -> Vec<ResolvedLlmPr
             let Ok(parsed) = serde_json::from_str::<Value>(&config_json) else {
                 continue;
             };
-            let Some(model) = parsed
+            let model = parsed
                 .get("model")
                 .and_then(Value::as_str)
                 .map(str::trim)
                 .filter(|s| !s.is_empty())
                 .map(str::to_owned)
-            else {
+                .or_else(|| {
+                    (adapter == "muse")
+                        .then(|| crate::providers::llm::muse::MUSE_MODELS[0].to_owned())
+                });
+            let Some(model) = model else {
                 continue;
             };
             let timeout_ms = parsed
@@ -286,7 +368,7 @@ pub async fn resolve_llm_provider_catalog(state: &AppState) -> Vec<ResolvedLlmPr
                 .and_then(Value::as_u64)
                 .and_then(|v| u16::try_from(v).ok());
 
-            let (base_url, api_key) = match adapter.as_str() {
+            let (base_url, api_key, muse_options) = match adapter.as_str() {
                 "openai" => {
                     let Some(url) = parsed
                         .get("base_url")
@@ -308,18 +390,59 @@ pub async fn resolve_llm_provider_catalog(state: &AppState) -> Vec<ResolvedLlmPr
                         .map(|v| v.expose().trim().to_owned())
                         .filter(|s| !s.is_empty())
                         .map(SecretString::new);
-                    (url, resolved_key)
+                    (url, resolved_key, None)
                 }
                 "opencode_free" => (
                     crate::providers::llm::opencode_free::BASE_URL.to_owned(),
                     Some(SecretString::new(
                         crate::providers::llm::opencode_free::PUBLIC_KEY,
                     )),
+                    None,
                 ),
+                "muse" => {
+                    let url = crate::providers::llm::muse::SITE_URL.to_owned();
+                    let secret_ref = crate::database::credentials::reference(
+                        &format!("provider:{key}"),
+                        credential_json.as_deref(),
+                        crate::database::secrets::provider_secret_env(&key, &adapter),
+                    );
+                    let resolved_key = secret_ref
+                        .and_then(|r| crate::database::secrets::SecretRef::parse(r).ok())
+                        .and_then(|s| state.secret_resolver.resolve(&s).ok())
+                        .map(|v| v.expose().trim().to_owned())
+                        .filter(|s| !s.is_empty())
+                        .map(SecretString::new);
+                    let account_concurrency = parsed
+                        .get("account_concurrency")
+                        .and_then(Value::as_u64)
+                        .and_then(|v| usize::try_from(v).ok())
+                        .unwrap_or(2);
+                    let cdp_port = parsed
+                        .get("cdp_port")
+                        .and_then(Value::as_u64)
+                        .and_then(|v| u16::try_from(v).ok())
+                        .unwrap_or(19222);
+                    let headless = parsed
+                        .get("headless")
+                        .and_then(Value::as_bool)
+                        .unwrap_or(true);
+                    (
+                        url,
+                        resolved_key,
+                        Some(MuseCatalogOptions {
+                            account_concurrency,
+                            cdp_port,
+                            headless,
+                        }),
+                    )
+                }
                 _ => continue,
             };
 
-            let tags = crate::providers::llm::llm_config_tags(&config_json);
+            let mut tags = crate::providers::llm::llm_config_tags(&config_json);
+            if adapter == "muse" {
+                tags.retain(|t| matches!(t.as_str(), "image" | "video"));
+            }
 
             out.push(ResolvedLlmProvider {
                 provider_ref: key,
@@ -335,6 +458,7 @@ pub async fn resolve_llm_provider_catalog(state: &AppState) -> Vec<ResolvedLlmPr
                 reasoning_effort,
                 temperature_percent,
                 tags,
+                muse_options,
             });
         }
     }
@@ -363,6 +487,7 @@ pub async fn resolve_llm_provider_catalog(state: &AppState) -> Vec<ResolvedLlmPr
             reasoning_effort: None,
             temperature_percent: None,
             tags: vec!["tts".to_owned()],
+            muse_options: None,
         });
     }
 
@@ -406,6 +531,7 @@ pub async fn resolve_llm_provider_catalog(state: &AppState) -> Vec<ResolvedLlmPr
                 reasoning_effort: None,
                 temperature_percent: None,
                 tags: vec!["tts".to_owned()],
+                muse_options: None,
             });
         }
     }
@@ -442,6 +568,7 @@ pub async fn resolve_llm_provider_catalog(state: &AppState) -> Vec<ResolvedLlmPr
             reasoning_effort: None,
             temperature_percent: None,
             tags: vec!["tts".to_owned()],
+            muse_options: None,
         });
     }
 

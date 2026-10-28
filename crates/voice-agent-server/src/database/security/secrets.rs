@@ -57,7 +57,7 @@ fn env_key(key: &str) -> Option<String> {
 
 /// Fallback environment credential for remote provider adapters.
 pub fn provider_secret_env(key: &str, adapter: &str) -> Option<String> {
-    if !matches!(adapter, "openai" | "chillaudio_ws") {
+    if !matches!(adapter, "openai" | "muse" | "chillaudio_ws") {
         return None;
     }
     Some(format!("VOICE_PROVIDER_{}_API_KEY", env_key(key)?))

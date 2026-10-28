@@ -139,12 +139,26 @@ impl AppConfig {
             self.wiki.mcp.write_token = token;
         }
         for (id, instance) in &mut self.providers.llm.instances {
-            if let crate::config::LlmInstanceConfig::Openai(openai) = instance
-                && let Some(env_name) = crate::database::secrets::provider_secret_env(id, "openai")
-                && let Ok(val) = std::env::var(&env_name)
-                && !val.trim().is_empty()
-            {
-                openai.api_key = crate::config::SecretString::new(val);
+            match instance {
+                crate::config::LlmInstanceConfig::Openai(openai) => {
+                    if let Some(env_name) =
+                        crate::database::secrets::provider_secret_env(id, "openai")
+                        && let Ok(val) = std::env::var(&env_name)
+                        && !val.trim().is_empty()
+                    {
+                        openai.api_key = crate::config::SecretString::new(val);
+                    }
+                }
+                crate::config::LlmInstanceConfig::Muse(muse) => {
+                    if let Some(env_name) =
+                        crate::database::secrets::provider_secret_env(id, "muse")
+                        && let Ok(val) = std::env::var(&env_name)
+                        && !val.trim().is_empty()
+                    {
+                        muse.api_key = crate::config::SecretString::new(val);
+                    }
+                }
+                _ => {}
             }
         }
         for (id, instance) in &mut self.providers.tts.instances {
@@ -702,6 +716,12 @@ fn validate_providers(config: &AppConfig) -> Result<(), ConfigError> {
                 )));
             }
             LlmInstanceConfig::OpenCodeFree(_) => {}
+            LlmInstanceConfig::Muse(options) if !options.valid() => {
+                return Err(ConfigError::Validation(format!(
+                    "LLM instance `{id}` has invalid Muse configuration"
+                )));
+            }
+            LlmInstanceConfig::Muse(_) => {}
             #[cfg(feature = "qualification-providers")]
             LlmInstanceConfig::QualificationLlm(_) => {}
         }

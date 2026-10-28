@@ -6,7 +6,9 @@ pub use crate::providers::{
     asr::{
         gipformer::config::GipformerSherpaOfflineConfig, zipformer::config::ZipformerSherpaConfig,
     },
-    llm::{openai::config::OpenAiConfig, opencode_free::OpenCodeFreeConfig},
+    llm::{
+        muse::MuseConfig, openai::config::OpenAiConfig, opencode_free::OpenCodeFreeConfig,
+    },
     tts::{
         chillaudio::config::ChillAudioWsConfig,
         edge_tts::config::EdgeTtsConfig,
@@ -120,6 +122,7 @@ pub enum LlmInstanceConfig {
     Openai(OpenAiConfig),
     #[serde(rename = "opencode_free")]
     OpenCodeFree(OpenCodeFreeConfig),
+    Muse(MuseConfig),
     #[cfg(feature = "qualification-providers")]
     QualificationLlm(QualificationConfig),
 }
@@ -129,14 +132,25 @@ impl LlmInstanceConfig {
         match self {
             Self::Openai(_) => "openai",
             Self::OpenCodeFree(_) => "opencode_free",
+            Self::Muse(_) => "muse",
             #[cfg(feature = "qualification-providers")]
             Self::QualificationLlm(_) => "qualification_llm",
+        }
+    }
+    pub const fn timeout_ms(&self) -> u64 {
+        match self {
+            Self::Openai(config) => config.timeout_ms,
+            Self::OpenCodeFree(config) => config.timeout_ms,
+            Self::Muse(config) => config.timeout_ms,
+            #[cfg(feature = "qualification-providers")]
+            Self::QualificationLlm(_) => 15_000,
         }
     }
     pub fn openai(&self) -> &OpenAiConfig {
         match self {
             Self::Openai(config) => config,
             Self::OpenCodeFree(_) => unreachable!("OpenCode Free has no OpenAI config"),
+            Self::Muse(_) => unreachable!("Muse has no OpenAI config"),
             #[cfg(feature = "qualification-providers")]
             Self::QualificationLlm(_) => unreachable!("qualification LLM has no OpenAI config"),
         }
@@ -147,6 +161,9 @@ impl LlmInstanceConfig {
                 crate::providers::llm::effective_capability_tags(config.tags.as_deref())
             }
             Self::OpenCodeFree(config) => {
+                crate::providers::llm::effective_capability_tags(config.tags.as_deref())
+            }
+            Self::Muse(config) => {
                 crate::providers::llm::effective_capability_tags(config.tags.as_deref())
             }
             #[cfg(feature = "qualification-providers")]

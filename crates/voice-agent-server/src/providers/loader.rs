@@ -214,12 +214,7 @@ pub(crate) fn load_local(config: &AppConfig) -> Result<LoadedProviders, Provider
             Arc::new(LlmRuntime::new(
                 Arc::clone(&provider),
                 config.limits.llm_concurrency,
-                Duration::from_millis(match instance {
-                    crate::config::LlmInstanceConfig::Openai(config) => config.timeout_ms,
-                    crate::config::LlmInstanceConfig::OpenCodeFree(config) => config.timeout_ms,
-                    #[cfg(feature = "qualification-providers")]
-                    crate::config::LlmInstanceConfig::QualificationLlm(_) => 15_000,
-                }),
+                Duration::from_millis(instance.timeout_ms()),
             )),
         );
         tracing::info!(provider_kind = "llm", provider_instance = %id, adapter = instance.adapter(), "provider runtime loaded");

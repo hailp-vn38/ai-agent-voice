@@ -45,6 +45,8 @@ async fn capability_guard_rejects_untagged_operations_before_network() {
             prompt: "a cat".into(),
             width: 256,
             height: 256,
+            reference_images: Vec::new(),
+            transparent_background: false,
         })
         .await
         .unwrap_err();
@@ -235,6 +237,8 @@ async fn openai_provider_executes_all_seven_capabilities_against_upstream() {
             prompt: "A futuristic city".into(),
             width: 512,
             height: 512,
+            reference_images: Vec::new(),
+            transparent_background: false,
         })
         .await
         .unwrap();
@@ -253,6 +257,7 @@ async fn openai_provider_executes_all_seven_capabilities_against_upstream() {
             width: 1280,
             height: 720,
             duration_secs: 5,
+            first_frame: None,
         })
         .await
         .unwrap();
@@ -385,6 +390,7 @@ async fn video_generation_polls_async_job_status_until_completed_and_fetches_con
             width: 1280,
             height: 720,
             duration_secs: 8,
+            first_frame: None,
         })
         .await
         .unwrap();

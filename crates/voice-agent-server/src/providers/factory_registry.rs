@@ -16,7 +16,10 @@ use crate::{
         AsrProvider, AssetError, LlmProvider, ProviderLoadError, ProviderType, TtsProvider,
         VadProvider,
         asr::{GipformerAsrProvider, ZipformerAsrProvider, gipformer, zipformer},
-        llm::{openai::provider::ConfiguredOpenAiLlm, opencode_free::OpenCodeFreeProvider},
+        llm::{
+            muse::MuseFactory, openai::provider::ConfiguredOpenAiLlm,
+            opencode_free::OpenCodeFreeProvider,
+        },
         tts::{
             ChillAudioWsProvider, ConfiguredZeroTts, EdgeTtsProvider, ZeroTtsArtifacts,
             kokoro_vi::{ConfiguredKokoroVi, KokoroViArtifacts, assets as kokoro_assets},
@@ -791,6 +794,7 @@ static GIPFORMER_SHERPA_OFFLINE_FACTORY: GipformerSherpaOfflineFactory =
     GipformerSherpaOfflineFactory;
 static OPENAI_FACTORY: OpenAiFactory = OpenAiFactory;
 static OPENCODE_FREE_FACTORY: OpenCodeFreeFactory = OpenCodeFreeFactory;
+static MUSE_FACTORY: MuseFactory = MuseFactory;
 static ZEROTTS_ONNX_FACTORY: ZeroTtsOnnxFactory = ZeroTtsOnnxFactory;
 static VIENEU_NATIVE_FACTORY: VieneuNativeFactory = VieneuNativeFactory;
 static CHILLAUDIO_WS_FACTORY: ChillAudioWsFactory = ChillAudioWsFactory;
@@ -819,6 +823,7 @@ static ASR_FACTORIES: &[&dyn AsrFactory] = &[
 static LLM_FACTORIES: &[&dyn LlmFactory] = &[
     &OPENAI_FACTORY,
     &OPENCODE_FREE_FACTORY,
+    &MUSE_FACTORY,
     #[cfg(feature = "qualification-providers")]
     &QUALIFICATION_LLM_FACTORY,
 ];
