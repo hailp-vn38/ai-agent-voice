@@ -125,6 +125,14 @@ pub(super) fn router(state: AppState) -> Router<AppState> {
             get(background::settings).put(background::save_settings),
         )
         .route(
+            "/background/agents",
+            axum::routing::post(background::create_agent),
+        )
+        .route(
+            "/background/agents/{id}",
+            axum::routing::delete(background::delete_agent),
+        )
+        .route(
             "/background/skills/{id}",
             get(background::get_skill)
                 .put(background::save_skill)

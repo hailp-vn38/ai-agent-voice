@@ -94,6 +94,14 @@ _Avoid_: Worker, plugin runner, Sub-Agent
 Agent chuyên biệt cấp con được Root Orchestrator ủy quyền qua công cụ `subagent` để tự chủ thực hiện một phần nhiệm vụ bằng tập công cụ và kỹ năng trong phạm vi được cấp.
 _Avoid_: registered Voice Agent, Plugin Installation, Root Orchestrator
 
+**Built-in Sub-Agent**:
+Sub-Agent chuyên biệt chuẩn do hệ thống cung cấp sẵn kèm phạm vi công cụ, kỹ năng và chỉ dẫn mặc định; Admin có thể bật/tắt, tùy chỉnh cấu hình hoặc khôi phục về mặc định nhưng không thể xóa bỏ.
+_Avoid_: Custom Sub-Agent, Root Orchestrator, hardcoded worker
+
+**Custom Sub-Agent**:
+Sub-Agent chuyên biệt do Admin tự định nghĩa thêm cho một Flow, được cấp tập công cụ và kỹ năng con trong phạm vi của Flow đó và có thể bật/tắt, chỉnh sửa hoặc xóa bỏ hoàn toàn khỏi hệ thống.
+_Avoid_: Built-in Sub-Agent, Root Orchestrator, Custom Job Skill
+
 **Agent Session**:
 Phiên hội thoại bền vững có lịch sử thông điệp riêng của một Root Orchestrator hoặc một Sub-Agent trong một Background Task; các lượt Task Follow-up tiếp tục trên cùng Agent Session gốc nhưng tạo Agent Run mới.
 _Avoid_: Agent Run, LLM Run, Voice Session

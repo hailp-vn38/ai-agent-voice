@@ -940,3 +940,135 @@ fn canonical_prompts_enforce_summarize_analyze_visualize_pipeline_and_flexible_d
     assert!(MEDIA_CREATOR_PROMPT.contains("svg_content"));
 }
 
+#[test]
+fn custom_subagents_enforce_flow_tool_boundaries_and_sync_active_subagents_prompts() {
+    let temp_dir = std::env::temp_dir().join(format!("custom-subagent-unit-{}", uuid::Uuid::new_v4()));
+    let store_dir = temp_dir.join("store");
+    let prompts_dir = temp_dir.join("prompts");
+    std::fs::create_dir_all(&store_dir).unwrap();
+    std::fs::create_dir_all(&prompts_dir).unwrap();
+
+    // 1. Validate custom subagent ID rules
+    assert!(valid_custom_subagent_id("arxiv_digest"));
+    assert!(valid_custom_subagent_id("wiki-fact-checker-2"));
+    assert!(!valid_custom_subagent_id(""));
+    assert!(!valid_custom_subagent_id("-bad-start"));
+    assert!(!valid_custom_subagent_id("Upper_Case"));
+    assert!(!valid_custom_subagent_id("daily_root"));
+    assert!(!valid_custom_subagent_id("source_collector"));
+    assert!(!valid_custom_subagent_id("subagent"));
+    assert!(!valid_custom_subagent_id("skill"));
+
+    // 2. Flow 2 (`wiki`) custom subagent pool must never expose external collector tools
+    for &forbidden in orchestrator_flow_rs::COLLECTOR_TOOL_NAMES {
+        assert!(
+            !CUSTOM_WIKI_SUBAGENT_TOOLS.contains(&forbidden),
+            "CUSTOM_WIKI_SUBAGENT_TOOLS must not contain collector tool '{forbidden}'"
+        );
+    }
+    assert!(CUSTOM_DAILY_SUBAGENT_TOOLS.contains(&"yt_fetch_transcript"));
+    assert!(CUSTOM_WIKI_SUBAGENT_TOOLS.contains(&"wiki_lint"));
+
+    let cfg = OrchestratorSectionConfig {
+        store_dir: store_dir.clone(),
+        prompts_dir: prompts_dir.clone(),
+        ..OrchestratorSectionConfig::default()
+    };
+    let catalog = vec![default_orchestrator_provider(&cfg)];
+
+    // 3. Configure one Flow 1 custom subagent and one Flow 2 custom subagent
+    let mut settings = PersistedBackgroundSettings::default();
+    settings.agents.insert(
+        "arxiv_digest".to_owned(),
+        AgentConfigOverride {
+            enabled: true,
+            flow_id: Some("daily".to_owned()),
+            steps: Some(15),
+            allowed_tools: Some(vec!["fetch_html".to_owned(), "markdown_create".to_owned()]),
+            allowed_skills: Some(vec!["wiki-query".to_owned()]),
+            description: Some("Summarizes arXiv papers into Markdown briefs.".to_owned()),
+            system_prompt: Some("You are the arXiv digest specialist.".to_owned()),
+            ..Default::default()
+        },
+    );
+    settings.agents.insert(
+        "wiki_fact_auditor".to_owned(),
+        AgentConfigOverride {
+            enabled: true,
+            flow_id: Some("wiki".to_owned()),
+            steps: Some(25),
+            allowed_tools: Some(vec!["wiki_query".to_owned(), "wiki_lint".to_owned()]),
+            allowed_skills: Some(Vec::new()),
+            description: Some("Audits Wiki pages for citation consistency.".to_owned()),
+            system_prompt: Some("You are the Wiki fact auditor.".to_owned()),
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        validate_agent_overrides(
+            &settings.orchestrator_llm_provider,
+            &settings.worker_llm_provider,
+            &settings.agents,
+            &catalog,
+        )
+        .is_ok()
+    );
+
+    // Flow 2 custom subagent with collector tool must fail validation
+    let mut bad_agents = settings.agents.clone();
+    bad_agents.get_mut("wiki_fact_auditor").unwrap().allowed_tools =
+        Some(vec!["yt_fetch_transcript".to_owned()]);
+    assert_eq!(
+        validate_agent_overrides(
+            &settings.orchestrator_llm_provider,
+            &settings.worker_llm_provider,
+            &bad_agents,
+            &catalog,
+        ),
+        Err("invalid_arguments")
+    );
+
+    // 4. Persistence roundtrip & prompt file generation + cleanup
+    save_persisted_settings(&store_dir, &settings).unwrap();
+    let loaded = load_persisted_settings(&store_dir).expect("loaded settings");
+    assert_eq!(loaded.agents.len(), 2);
+
+    write_agent_prompts(&prompts_dir, &loaded).unwrap();
+    assert_eq!(
+        std::fs::read_to_string(prompts_dir.join("arxiv_digest.md")).unwrap(),
+        "You are the arXiv digest specialist."
+    );
+    let daily_root_disk_prompt =
+        std::fs::read_to_string(prompts_dir.join("daily_root.md")).unwrap();
+    assert!(daily_root_disk_prompt.contains("<active_subagents>"));
+    assert!(daily_root_disk_prompt.contains("`arxiv_digest` (custom): Summarizes arXiv papers into Markdown briefs."));
+
+    // Project JSON and verify `is_builtin`, auto-injected `skill` tool, and `allowed_subagents`
+    let projected = project_agents_json(&cfg, &loaded, &catalog);
+    assert_eq!(projected.len(), 11);
+    let daily_root_json = projected.iter().find(|a| a["id"] == "daily_root").unwrap();
+    assert_eq!(daily_root_json["is_builtin"], true);
+    assert!(
+        daily_root_json["allowed_subagents"]
+            .as_array()
+            .unwrap()
+            .contains(&serde_json::json!("arxiv_digest"))
+    );
+    let arxiv_json = projected.iter().find(|a| a["id"] == "arxiv_digest").unwrap();
+    assert_eq!(arxiv_json["is_builtin"], false);
+    assert_eq!(arxiv_json["flow_id"], "daily");
+    assert_eq!(arxiv_json["parent_id"], "daily_root");
+    assert_eq!(
+        arxiv_json["allowed_tools"],
+        serde_json::json!(["skill", "fetch_html", "markdown_create"])
+    );
+
+    // Remove `arxiv_digest` and verify its `.md` file is pruned on `write_agent_prompts`
+    let mut reduced = loaded;
+    reduced.agents.remove("arxiv_digest");
+    write_agent_prompts(&prompts_dir, &reduced).unwrap();
+    assert!(!prompts_dir.join("arxiv_digest.md").exists());
+
+    let _ = std::fs::remove_dir_all(&temp_dir);
+}

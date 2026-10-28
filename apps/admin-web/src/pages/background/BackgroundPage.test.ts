@@ -492,4 +492,144 @@ describe('BackgroundPage & BackgroundAgentDetailPage subagent configuration', ()
     expect(body.agents.wiki_researcher.allowed_skills).toContain('fact-check')
   })
 
+  it('creates and deletes a Custom Sub-Agent on BackgroundPage and BackgroundAgentDetailPage', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+
+    const customAgentEntry = {
+      id: 'arxiv_digest',
+      flow_id: 'daily',
+      parent_id: 'daily_root',
+      mode: 'subagent',
+      is_builtin: false,
+      enabled: true,
+      provider_ref: null,
+      effective_provider_ref: 'orchestrator:default',
+      effective_model: 'gpt-4o-mini',
+      steps: 18,
+      default_steps: 20,
+      allowed_tools: ['skill', 'fetch_html', 'markdown_create'],
+      default_allowed_tools: ['skill', 'fetch_html', 'markdown_create'],
+      available_tools: ['skill', 'fetch_html', 'markdown_create'],
+      allowed_skills: ['wiki-query'],
+      default_allowed_skills: ['wiki-query'],
+      available_skills: ['wiki-query', 'seo-audit'],
+      allowed_subagents: [],
+      description: 'Summarizes arXiv papers into Markdown briefs.',
+      default_description: 'Summarizes arXiv papers into Markdown briefs.',
+      system_prompt: '# arXiv Digest\n\nSummarize papers.',
+      default_system_prompt: '# arXiv Digest\n\nSummarize papers.',
+    }
+
+    requestMock.mockImplementation((path: string, init?: RequestInit) => {
+      if (path === '/api/admin/background/settings' && (!init || !init.method)) {
+        return Promise.resolve(fixtureSettings())
+      }
+      if (path === '/api/admin/background/agents' && init?.method === 'POST') {
+        const next = fixtureSettings()
+        return Promise.resolve({
+          ...next,
+          revision: 2,
+          agents: [
+            {
+              ...next.agents[0]!,
+              allowed_subagents: ['wiki_researcher', 'media_creator', 'arxiv_digest'],
+            },
+            ...next.agents.slice(1),
+            customAgentEntry,
+          ],
+        })
+      }
+      if (path === '/api/admin/background/agents/arxiv_digest' && init?.method === 'DELETE') {
+        const next = fixtureSettings()
+        next.revision = 3
+        return Promise.resolve(next)
+      }
+      return Promise.resolve(fixtureSettings())
+    })
+
+    const wrapper = mount(BackgroundPage)
+    await flushPromises()
+
+    // Built-in subagents must NOT show a delete button
+    expect(wrapper.find('[data-subagent-delete-card="wiki_researcher"]').exists()).toBe(false)
+
+    // Open Create Custom Sub-Agent modal for Flow 1 (`daily`)
+    await wrapper.get('[data-subagent-create-btn="daily"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('[data-subagent-create-modal]').exists()).toBe(true)
+
+    // Verify Flow 1 tool pool has collector tools and Flow 2 tool pool strips collector tools
+    expect(wrapper.find('[data-subagent-tool="yt_fetch_transcript"]').exists()).toBe(true)
+    await wrapper.get('[data-subagent-tool="yt_fetch_transcript"]').setValue(true)
+    await wrapper.get('[data-subagent-flow-select]').setValue('wiki')
+    await flushPromises()
+    expect(wrapper.find('[data-subagent-tool="yt_fetch_transcript"]').exists()).toBe(false)
+    expect(wrapper.find('[data-subagent-tool="wiki_lint"]').exists()).toBe(true)
+    await wrapper.get('[data-subagent-flow-select]').setValue('daily')
+    await flushPromises()
+    expect(
+      (wrapper.get('[data-subagent-tool="yt_fetch_transcript"]').element as HTMLInputElement)
+        .checked,
+    ).toBe(false)
+
+    await wrapper.get('[data-subagent-id-input]').setValue('arxiv_digest')
+    await wrapper.get('[data-subagent-steps-input]').setValue(18)
+    await wrapper
+      .get('[data-subagent-description-input]')
+      .setValue('Summarizes arXiv papers into Markdown briefs.')
+    await wrapper.get('[data-subagent-tool="fetch_html"]').setValue(true)
+    await wrapper.get('[data-subagent-tool="markdown_create"]').setValue(true)
+    await wrapper.get('[data-subagent-skill="wiki-query"]').setValue(true)
+    await wrapper
+      .get('[data-subagent-prompt-textarea]')
+      .setValue('# arXiv Digest\n\nSummarize papers.')
+
+    await wrapper.get('[data-subagent-create-submit]').trigger('click')
+    await flushPromises()
+
+    const createCall = requestMock.mock.calls.find(
+      c => c[0] === '/api/admin/background/agents' && c[1]?.method === 'POST',
+    )
+    expect(createCall).toBeDefined()
+    expect(createCall![2]?.revision).toBe(1)
+    const createBody = JSON.parse(String(createCall![1].body))
+    expect(createBody.id).toBe('arxiv_digest')
+    expect(createBody.flow_id).toBe('daily')
+    expect(createBody.allowed_tools).toEqual(['skill', 'fetch_html', 'markdown_create'])
+
+    // Custom subagent card now renders with a delete button
+    expect(wrapper.text()).toContain('arxiv_digest')
+    expect(wrapper.find('[data-subagent-delete-card="arxiv_digest"]').exists()).toBe(true)
+
+    // Make an unsaved draft edit on another agent (toggle global runtime off), then delete custom subagent from card
+    const globalSwitch = wrapper.get('input[role="switch"]')
+    await globalSwitch.setValue(false)
+    expect((globalSwitch.element as HTMLInputElement).checked).toBe(false)
+
+    await wrapper.get('[data-subagent-delete-card="arxiv_digest"]').trigger('click')
+    await flushPromises()
+
+    const deleteCall = requestMock.mock.calls.find(
+      c => c[0] === '/api/admin/background/agents/arxiv_digest' && c[1]?.method === 'DELETE',
+    )
+    expect(deleteCall).toBeDefined()
+    expect(deleteCall![2]?.revision).toBe(2)
+    // Unsaved draft edit on BackgroundPage is preserved after deleting custom subagent card
+    expect((wrapper.get('input[role="switch"]').element as HTMLInputElement).checked).toBe(false)
+
+    // Also verify BackgroundAgentDetailPage renders delete button (and hides reset default) for custom subagent
+    reactiveAgentId.value = 'arxiv_digest'
+    requestMock.mockImplementationOnce(() => {
+      const withCustom = fixtureSettings()
+      return Promise.resolve({
+        ...withCustom,
+        agents: [...withCustom.agents, customAgentEntry],
+      })
+    })
+    const detailWrapper = mount(BackgroundAgentDetailPage)
+    await flushPromises()
+    expect(detailWrapper.find('[data-reset-agent-default]').exists()).toBe(false)
+    expect(detailWrapper.find('[data-delete-subagent]').exists()).toBe(true)
+    expect(detailWrapper.find('[data-delete-custom-subagent]').exists()).toBe(true)
+  })
 })

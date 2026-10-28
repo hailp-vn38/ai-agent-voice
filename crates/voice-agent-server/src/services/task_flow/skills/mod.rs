@@ -14,7 +14,7 @@ use sha2::{Digest, Sha256};
 use crate::app::AppState;
 
 use super::agent_settings::{
-    AGENT_SPECS, PersistedBackgroundSettings, save_persisted_settings,
+    AGENT_SPECS, PersistedBackgroundSettings, find_agent_spec, save_persisted_settings,
     sync_orchestrator_from_state,
 };
 use super::workspace_seed::{BUILTIN_SKILLS, ensure_builtin_skills};
@@ -131,6 +131,18 @@ fn compute_agent_links(
         };
         if is_used {
             used_by.push(spec.id.to_owned());
+        }
+    }
+    for (custom_id, ovr) in &settings.agents {
+        if find_agent_spec(custom_id).is_some() {
+            continue;
+        }
+        if ovr
+            .allowed_skills
+            .as_ref()
+            .is_some_and(|list| list.iter().any(|s| s == skill_id))
+        {
+            used_by.push(custom_id.clone());
         }
     }
     (used_by, suggested_for)

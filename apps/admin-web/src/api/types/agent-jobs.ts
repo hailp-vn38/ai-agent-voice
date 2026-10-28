@@ -19,6 +19,7 @@ export interface BackgroundAgentConfig {
   flow_id: 'daily' | 'wiki' | (string & {})
   parent_id?: string | null
   mode: 'primary' | 'subagent' | 'all'
+  is_builtin?: boolean
   enabled: boolean
   provider_ref: string | null
   effective_provider_ref: string
@@ -43,6 +44,7 @@ export interface BackgroundAgentConfig {
 }
 export interface BackgroundAgentConfigUpdate {
   enabled: boolean
+  flow_id?: string
   provider_ref?: string | null
   tool_providers?: Record<string, string>
   steps?: number
@@ -50,6 +52,18 @@ export interface BackgroundAgentConfigUpdate {
   allowed_skills?: string[]
   description?: string
   system_prompt?: string
+}
+
+export interface CreateSubagentInput {
+  id: string
+  flow_id: 'daily' | 'wiki'
+  enabled?: boolean
+  provider_ref?: string | null
+  steps?: number
+  allowed_tools?: string[]
+  allowed_skills?: string[]
+  description: string
+  system_prompt: string
 }
 export interface JobSkillSummary {
   id: string

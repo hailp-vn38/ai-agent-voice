@@ -950,3 +950,239 @@ skills_dir = "{}"
     server.abort();
 }
 
+#[tokio::test]
+async fn background_custom_subagents_crud_flow_isolation_and_concurrency() {
+    let temp_root =
+        std::env::temp_dir().join(format!("background-subagents-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&temp_root).unwrap();
+    let prompts_dir = temp_root.join("prompts");
+    let config: AppConfig = toml::from_str(&format!(
+        r#"
+[server]
+bind = "127.0.0.1:0"
+public_ws_url = "ws://127.0.0.1:0/voice/v1/"
+[provider_defaults]
+vad = "test"
+asr = "test"
+llm = "test"
+tts = "test"
+[database]
+url = "sqlite://{}"
+[api]
+enabled = true
+admin_token = "background-test-token"
+[orchestrator]
+store_dir = "{}"
+prompts_dir = "{}"
+skills_dir = "{}"
+"#,
+        temp_root.join("voice-agent.db").display(),
+        temp_root.join("orch-store").display(),
+        prompts_dir.display(),
+        temp_root.join("skills").display(),
+    ))
+    .unwrap();
+    let router = bootstrap_with_providers(config, Arc::new(ProviderSet::unavailable()))
+        .await
+        .unwrap();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base = format!("http://{}/api/admin", listener.local_addr().unwrap());
+    let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    let client = Client::new();
+
+    // 1. Initial settings has 9 built-in agents with `is_builtin: true`
+    let initial: Value = client
+        .get(format!("{base}/background/settings"))
+        .bearer_auth("background-test-token")
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(initial["revision"], 1);
+    let initial_agents = initial["agents"].as_array().unwrap();
+    assert_eq!(initial_agents.len(), 9);
+    assert!(initial_agents.iter().all(|a| a["is_builtin"] == true));
+
+    // 2. Create a Custom Sub-Agent in Flow 1 (`daily`) via POST /api/admin/background/agents
+    let create_resp = client
+        .post(format!("{base}/background/agents"))
+        .bearer_auth("background-test-token")
+        .header("If-Match", "\"1\"")
+        .json(&json!({
+            "id": "custom_arxiv_digest",
+            "flow_id": "daily",
+            "enabled": true,
+            "steps": 18,
+            "allowed_tools": ["fetch_html", "markdown_create"],
+            "allowed_skills": ["wiki-query"],
+            "description": "Summarizes arXiv papers into Markdown briefs.",
+            "system_prompt": "You are the custom arXiv digest subagent."
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(create_resp.status(), StatusCode::CREATED);
+    let after_create: Value = create_resp.json().await.unwrap();
+    assert_eq!(after_create["revision"], 2);
+    let agents = after_create["agents"].as_array().unwrap();
+    assert_eq!(agents.len(), 10);
+    let custom = agents
+        .iter()
+        .find(|a| a["id"] == "custom_arxiv_digest")
+        .expect("custom subagent present");
+    assert_eq!(custom["is_builtin"], false);
+    assert_eq!(custom["flow_id"], "daily");
+    assert_eq!(custom["parent_id"], "daily_root");
+    assert_eq!(custom["enabled"], true);
+    assert_eq!(custom["steps"], 18);
+    assert_eq!(custom["default_steps"], 18);
+    assert_eq!(
+        custom["allowed_tools"],
+        json!(["skill", "fetch_html", "markdown_create"])
+    );
+    assert_eq!(custom["allowed_skills"], json!(["wiki-query"]));
+    assert_eq!(custom["default_allowed_skills"], json!(["wiki-query"]));
+
+    let daily_root = agents.iter().find(|a| a["id"] == "daily_root").unwrap();
+    assert!(
+        daily_root["allowed_subagents"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("custom_arxiv_digest"))
+    );
+    assert!(prompts_dir.join("custom_arxiv_digest.md").exists());
+    let daily_root_md = std::fs::read_to_string(prompts_dir.join("daily_root.md")).unwrap();
+    assert!(daily_root_md.contains("`custom_arxiv_digest` (custom)"));
+
+    // 3. Reject duplicate ID, built-in ID collision, invalid flow, or Flow 2 tool violation
+    let dup_resp = client
+        .post(format!("{base}/background/agents"))
+        .bearer_auth("background-test-token")
+        .header("If-Match", "\"2\"")
+        .json(&json!({
+            "id": "custom_arxiv_digest",
+            "flow_id": "daily",
+            "description": "Dup",
+            "system_prompt": "Dup"
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(dup_resp.status(), StatusCode::CONFLICT);
+    assert_eq!(
+        dup_resp.json::<Value>().await.unwrap()["error"]["code"],
+        "agent_already_exists"
+    );
+
+    let builtin_dup = client
+        .post(format!("{base}/background/agents"))
+        .bearer_auth("background-test-token")
+        .header("If-Match", "\"2\"")
+        .json(&json!({
+            "id": "source_collector",
+            "flow_id": "daily",
+            "description": "Dup builtin",
+            "system_prompt": "Dup"
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(builtin_dup.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(
+        builtin_dup.json::<Value>().await.unwrap()["error"]["code"],
+        "invalid_agent_id"
+    );
+
+    let bad_wiki_tool = client
+        .post(format!("{base}/background/agents"))
+        .bearer_auth("background-test-token")
+        .header("If-Match", "\"2\"")
+        .json(&json!({
+            "id": "wiki_bad_collector",
+            "flow_id": "wiki",
+            "allowed_tools": ["yt_fetch_transcript"],
+            "description": "Tries to use YouTube tool in Flow 2",
+            "system_prompt": "Invalid tool for Flow 2"
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(bad_wiki_tool.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(
+        bad_wiki_tool.json::<Value>().await.unwrap()["error"]["code"],
+        "invalid_arguments"
+    );
+
+    // 4. Partial toggle via PUT /api/admin/background/settings preserves flow_id & prompt
+    let toggle_resp = client
+        .put(format!("{base}/background/settings"))
+        .bearer_auth("background-test-token")
+        .header("If-Match", "\"2\"")
+        .json(&json!({
+            "enabled": true,
+            "agents": {
+                "custom_arxiv_digest": {
+                    "enabled": false
+                }
+            }
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(toggle_resp.status(), StatusCode::OK);
+    let toggled: Value = toggle_resp.json().await.unwrap();
+    assert_eq!(toggled["revision"], 3);
+    let toggled_agents = toggled["agents"].as_array().unwrap();
+    let toggled_custom = toggled_agents
+        .iter()
+        .find(|a| a["id"] == "custom_arxiv_digest")
+        .unwrap();
+    assert_eq!(toggled_custom["enabled"], false);
+    assert_eq!(
+        toggled_custom["description"],
+        "Summarizes arXiv papers into Markdown briefs."
+    );
+    let toggled_daily_root = toggled_agents
+        .iter()
+        .find(|a| a["id"] == "daily_root")
+        .unwrap();
+    assert!(
+        !toggled_daily_root["allowed_subagents"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("custom_arxiv_digest"))
+    );
+
+    // 5. Deleting a Built-in Sub-Agent is rejected with 400 builtin_agent_cannot_be_deleted
+    let del_builtin = client
+        .delete(format!("{base}/background/agents/source_collector"))
+        .bearer_auth("background-test-token")
+        .header("If-Match", "\"3\"")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(del_builtin.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(
+        del_builtin.json::<Value>().await.unwrap()["error"]["code"],
+        "builtin_agent_cannot_be_deleted"
+    );
+
+    // 6. Delete Custom Sub-Agent with If-Match -> 200 OK, removes agent & prompt file
+    let del_custom = client
+        .delete(format!("{base}/background/agents/custom_arxiv_digest"))
+        .bearer_auth("background-test-token")
+        .header("If-Match", "\"3\"")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(del_custom.status(), StatusCode::OK);
+    let after_del: Value = del_custom.json().await.unwrap();
+    assert_eq!(after_del["revision"], 4);
+    assert_eq!(after_del["agents"].as_array().unwrap().len(), 9);
+    assert!(!prompts_dir.join("custom_arxiv_digest.md").exists());
+
+    server.abort();
+}
+

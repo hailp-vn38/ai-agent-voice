@@ -2,7 +2,7 @@
 import {
   Activity, ArrowLeft, ArrowRight, BookOpen, Bot, Columns2, Cpu, Eye,
   ExternalLink, FileText, Pencil, Plus, RefreshCw, RotateCcw, Save,
-  Settings2, Sliders, Wrench, Workflow,
+  Settings2, Sliders, Trash2, Wrench, Workflow,
 } from '@lucide/vue'
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
@@ -48,6 +48,7 @@ const agentId = computed(() => String(route.params.agentId ?? ''))
 const settings = ref<BackgroundSettings | null>(null)
 const loading = ref(true)
 const saving = ref(false)
+const deleting = ref(false)
 const error = ref('')
 const notice = ref('')
 const unavailable = ref(false)
@@ -132,6 +133,7 @@ const agentSpec = computed<BackgroundAgentConfig | null>(
   () => agentsCatalog.value.find(a => a.id === agentId.value) ?? null,
 )
 const isPrimary = computed(() => agentSpec.value?.mode === 'primary')
+const isCustomSubagent = computed(() => agentSpec.value?.is_builtin === false)
 const domainTools = computed(() => (agentSpec.value ? domainToolsForAgent(agentSpec.value) : []))
 const defaultDomainTools = computed(() =>
   agentSpec.value ? defaultDomainToolsForAgent(agentSpec.value) : [],
@@ -343,6 +345,29 @@ function switchAgent(targetId: string) {
   void router.push({ name: 'jobs-settings-agent', params: { agentId: targetId } })
 }
 
+async function deleteCustomSubagent() {
+  const spec = agentSpec.value
+  if (!spec || spec.is_builtin !== false || !settings.value || deleting.value) return
+  if (typeof window !== 'undefined' && typeof window.confirm === 'function') {
+    const confirmed = window.confirm(t('jobUi.subagentDeleteConfirm', { id: spec.id }))
+    if (!confirmed) return
+  }
+  deleting.value = true
+  error.value = ''
+  notice.value = ''
+  try {
+    await agentJobsApi.deleteSubagent(spec.id, settings.value.revision)
+    await router.push({ name: 'jobs-settings' })
+  } catch (cause) {
+    error.value = formatApiError(cause)
+    if (isApiError(cause) && cause.status === 409) {
+      await load()
+    }
+  } finally {
+    deleting.value = false
+  }
+}
+
 watch(
   agentId,
   () => {
@@ -388,7 +413,10 @@ onBeforeUnmount(() => controller?.abort())
           <Badge :variant="form.enabled ? 'success' : 'outline'">
             {{ form.enabled ? t('jobUi.on') : t('jobUi.off') }}
           </Badge>
-          <Badge :variant="isCustomized ? 'secondary' : 'outline'">
+          <Badge variant="outline">
+            {{ isCustomSubagent ? t('jobUi.subagentCustomBadge') : t('jobUi.subagentBuiltinBadge') }}
+          </Badge>
+          <Badge v-if="!isCustomSubagent" :variant="isCustomized ? 'secondary' : 'outline'">
             {{ isCustomized ? t('jobUi.customizedBadge') : t('jobUi.defaultBadge') }}
           </Badge>
           <Badge v-if="dirty" variant="outline" class="border-studio-violet/40 text-studio-violet">
@@ -400,16 +428,16 @@ onBeforeUnmount(() => controller?.abort())
         <Button
           variant="outline"
           size="sm"
-          :disabled="loading || saving"
+          :disabled="loading || saving || deleting"
           @click="router.push({ name: 'providers', query: { type: 'llm' } })"
         >
           <ExternalLink class="size-4" aria-hidden="true" />{{ t('jobUi.manageProviders') }}
         </Button>
-        <Button variant="outline" size="sm" :disabled="loading || saving" @click="load">
+        <Button variant="outline" size="sm" :disabled="loading || saving || deleting" @click="load">
           <RefreshCw class="size-4" :class="{ 'animate-spin': loading }" aria-hidden="true" />{{ t('jobUi.refresh') }}
         </Button>
         <Button
-          v-if="agentSpec"
+          v-if="agentSpec && !isCustomSubagent"
           variant="outline"
           size="sm"
           :disabled="loading || saving || !isCustomized"
@@ -419,9 +447,21 @@ onBeforeUnmount(() => controller?.abort())
           <RotateCcw class="size-4" aria-hidden="true" />{{ t('jobUi.resetAgentDefault') }}
         </Button>
         <Button
+          v-if="agentSpec && isCustomSubagent"
+          variant="outline"
+          size="sm"
+          class="border-danger/40 text-danger hover:bg-danger/10"
+          :disabled="loading || saving || deleting"
+          data-delete-subagent
+          data-delete-custom-subagent
+          @click="deleteCustomSubagent"
+        >
+          <Trash2 class="size-4" aria-hidden="true" />{{ t('jobUi.subagentDelete') }}
+        </Button>
+        <Button
           v-if="agentSpec"
           size="sm"
-          :disabled="!dirty || saving"
+          :disabled="!dirty || saving || deleting"
           data-save-agent-config
           @click="save"
         >
@@ -623,7 +663,7 @@ onBeforeUnmount(() => controller?.abort())
                   {{ form.description.length }} / 1024
                 </span>
                 <Button
-                  v-if="isDescriptionModified"
+                  v-if="!isCustomSubagent && isDescriptionModified"
                   size="sm"
                   variant="ghost"
                   type="button"
@@ -658,7 +698,7 @@ onBeforeUnmount(() => controller?.abort())
                     <h2 id="agent-system-prompt-heading" class="font-semibold">
                       {{ t('jobUi.systemPromptLabel') }}
                     </h2>
-                    <Badge :variant="isPromptModified ? 'secondary' : 'outline'">
+                    <Badge v-if="!isCustomSubagent" :variant="isPromptModified ? 'secondary' : 'outline'">
                       {{ isPromptModified ? t('jobUi.customizedBadge') : t('jobUi.defaultBadge') }}
                     </Badge>
                   </div>
@@ -709,7 +749,7 @@ onBeforeUnmount(() => controller?.abort())
                 </div>
 
                 <Button
-                  v-if="isPromptModified"
+                  v-if="!isCustomSubagent && isPromptModified"
                   size="sm"
                   variant="ghost"
                   type="button"
@@ -896,11 +936,11 @@ onBeforeUnmount(() => controller?.abort())
                   {{ t('jobUi.stepsLimit') }} (1 - 100)
                 </label>
                 <div class="flex items-center gap-2">
-                  <Badge variant="outline">
+                  <Badge v-if="!isCustomSubagent" variant="outline">
                     {{ t('jobUi.defaultValue') }}: {{ agentSpec.default_steps }}
                   </Badge>
                   <Button
-                    v-if="form.steps !== agentSpec.default_steps"
+                    v-if="!isCustomSubagent && form.steps !== agentSpec.default_steps"
                     size="sm"
                     variant="ghost"
                     type="button"
@@ -1032,7 +1072,7 @@ onBeforeUnmount(() => controller?.abort())
                   {{ t('jobUi.selectAll') }}
                 </Button>
                 <Button
-                  v-if="!sameStringArray(form.allowed_tools, defaultDomainTools)"
+                  v-if="!isCustomSubagent && !sameStringArray(form.allowed_tools, defaultDomainTools)"
                   size="sm"
                   variant="ghost"
                   type="button"
@@ -1169,7 +1209,7 @@ onBeforeUnmount(() => controller?.abort())
                   {{ t('jobUi.selectAll') }}
                 </Button>
                 <Button
-                  v-if="!sameStringArray(form.allowed_skills, agentSpec.default_allowed_skills ?? [])"
+                  v-if="!isCustomSubagent && !sameStringArray(form.allowed_skills, agentSpec.default_allowed_skills ?? [])"
                   size="sm"
                   variant="ghost"
                   type="button"

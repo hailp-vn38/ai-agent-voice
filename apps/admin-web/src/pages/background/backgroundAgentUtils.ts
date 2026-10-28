@@ -162,10 +162,59 @@ export function isAgentDirty(
   )
 }
 
+export const CUSTOM_DAILY_DOMAIN_TOOLS: string[] = [
+  'anydoc_inspect_pdf',
+  'yt_list_playlist',
+  'yt_fetch_transcript',
+  'fetch_html',
+  'html_extract_metadata',
+  'html_extract_article',
+  'html_extract_feed',
+  'html_extract_links',
+  'html_select_elements',
+  'add_to_sources',
+  'wiki_tree',
+  'wiki_query',
+  'wiki_get',
+  'wiki_multi_get',
+  'wiki_metadata',
+  'wiki_status',
+  'wiki_graph_neighbors',
+  'markdown_create',
+  'markdown_read',
+  'artifact_create',
+  'reminder_create',
+  'reminder_list',
+  'reminder_complete',
+  'reminder_delete',
+]
+
+export const CUSTOM_WIKI_DOMAIN_TOOLS: string[] = [
+  'wiki_tree',
+  'wiki_get',
+  'wiki_multi_get',
+  'wiki_query',
+  'wiki_metadata',
+  'wiki_status',
+  'wiki_graph_neighbors',
+  'wiki_ingest_source',
+  'wiki_file_synthesis',
+  'wiki_write_file',
+  'wiki_patch_file',
+  'wiki_delete_file',
+  'wiki_lint',
+  'wiki_schema',
+]
+
+export function domainToolsForCustomFlow(flowId: 'daily' | 'wiki'): string[] {
+  return flowId === 'wiki' ? CUSTOM_WIKI_DOMAIN_TOOLS : CUSTOM_DAILY_DOMAIN_TOOLS
+}
+
 export function isAgentCustomizedFromDefault(
   agent: BackgroundAgentConfig,
   current?: BackgroundAgentConfigUpdate,
 ): boolean {
+  if (agent.is_builtin === false) return false
   const enabled = current ? current.enabled : agent.enabled
   const providerRef = current ? (current.provider_ref ?? null) : (agent.provider_ref ?? null)
   const toolProviders = normalizeToolProviders(current ? current.tool_providers : agent.tool_providers)

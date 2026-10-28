@@ -1,8 +1,10 @@
 use super::*;
 use crate::services::task_flow::{
-    AgentConfigOverride, DEFAULT_ORCHESTRATOR_PROVIDER_REF, PersistedBackgroundSettings,
-    project_agents_json, project_artifact_catalog_page, project_task_events,
-    project_task_to_admin_job, resolve_llm_provider_catalog, save_persisted_settings,
+    AgentConfigOverride, CreateCustomSubagentInput, DEFAULT_ORCHESTRATOR_PROVIDER_REF,
+    PersistedBackgroundSettings, SubagentMutationError, create_custom_subagent,
+    delete_custom_subagent, find_agent_spec, project_agents_json, project_artifact_catalog_page,
+    project_task_events, project_task_to_admin_job, resolve_llm_provider_catalog,
+    save_persisted_settings,
     skills::{self, Precondition, SaveJobSkill, SkillCatalogError},
     sync_orchestrator_from_state, validate_agent_overrides_with_skills,
 };
@@ -165,7 +167,12 @@ pub(super) async fn save_settings(State(state): State<AppState>, request: Reques
     let next_agents = match input.agents {
         Some(incoming) => {
             let mut merged = pruned_current_agents;
-            for (k, v) in incoming {
+            for (k, mut v) in incoming {
+                if find_agent_spec(&k).is_none()
+                    && let Some(prev) = merged.get(&k)
+                {
+                    v.merge_from_existing_custom(prev);
+                }
                 merged.insert(k, v);
             }
             merged
@@ -212,6 +219,97 @@ pub(super) async fn save_settings(State(state): State<AppState>, request: Reques
     }
 
     Json(build_settings_json(&state, &next_settings, new_rev).await).into_response()
+}
+
+fn subagent_error_response(request: &Request, err: SubagentMutationError) -> Response {
+    match err {
+        SubagentMutationError::InvalidId => {
+            error(request, StatusCode::BAD_REQUEST, "invalid_agent_id")
+        }
+        SubagentMutationError::InvalidFlowId => {
+            error(request, StatusCode::BAD_REQUEST, "invalid_arguments")
+        }
+        SubagentMutationError::InvalidProvider => {
+            error(request, StatusCode::BAD_REQUEST, "invalid_provider")
+        }
+        SubagentMutationError::ProviderCapabilityMismatch => error(
+            request,
+            StatusCode::BAD_REQUEST,
+            "provider_capability_mismatch",
+        ),
+        SubagentMutationError::InvalidArguments(code) => {
+            error(request, StatusCode::BAD_REQUEST, code)
+        }
+        SubagentMutationError::AlreadyExists => {
+            error(request, StatusCode::CONFLICT, "agent_already_exists")
+        }
+        SubagentMutationError::NotFound => error(request, StatusCode::NOT_FOUND, "not_found"),
+        SubagentMutationError::BuiltinCannotBeDeleted => error(
+            request,
+            StatusCode::BAD_REQUEST,
+            "builtin_agent_cannot_be_deleted",
+        ),
+        SubagentMutationError::RevisionConflict => {
+            error(request, StatusCode::CONFLICT, "revision_conflict")
+        }
+        SubagentMutationError::Io => error(
+            request,
+            StatusCode::SERVICE_UNAVAILABLE,
+            "storage_unavailable",
+        ),
+    }
+}
+
+pub(super) async fn create_agent(State(state): State<AppState>, request: Request) -> Response {
+    let expected_rev = match expected(request.headers()) {
+        Ok(v) => v,
+        Err(e) => return error(&request, StatusCode::BAD_REQUEST, e),
+    };
+    let (request, input): (_, CreateCustomSubagentInput) = match json(request).await {
+        Ok(v) => v,
+        Err(e) => return e,
+    };
+    match create_custom_subagent(&state, expected_rev, input).await {
+        Ok(new_rev) => {
+            let current = {
+                let guard = state
+                    .admin_task_control
+                    .lock()
+                    .expect("admin_task_control mutex poisoned");
+                guard.background_settings.clone()
+            };
+            (
+                StatusCode::CREATED,
+                Json(build_settings_json(&state, &current, new_rev).await),
+            )
+                .into_response()
+        }
+        Err(err) => subagent_error_response(&request, err),
+    }
+}
+
+pub(super) async fn delete_agent(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    request: Request,
+) -> Response {
+    let expected_rev = match expected(request.headers()) {
+        Ok(v) => v,
+        Err(e) => return error(&request, StatusCode::BAD_REQUEST, e),
+    };
+    match delete_custom_subagent(&state, expected_rev, &id).await {
+        Ok(new_rev) => {
+            let current = {
+                let guard = state
+                    .admin_task_control
+                    .lock()
+                    .expect("admin_task_control mutex poisoned");
+                guard.background_settings.clone()
+            };
+            Json(build_settings_json(&state, &current, new_rev).await).into_response()
+        }
+        Err(err) => subagent_error_response(&request, err),
+    }
 }
 
 fn skill_error_response(request: &Request, err: SkillCatalogError) -> Response {

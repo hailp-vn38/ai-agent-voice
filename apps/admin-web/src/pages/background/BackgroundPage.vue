@@ -26,6 +26,7 @@ import {
   toAgentUpdate,
 } from './backgroundAgentUtils'
 import JobSkillEditorModal from './JobSkillEditorModal.vue'
+import SubagentCreateModal from './SubagentCreateModal.vue'
 
 const router = useRouter()
 const { t } = useI18n()
@@ -65,6 +66,63 @@ const wikiFlowAgents = computed(() => agentsCatalog.value.filter(a => a.flow_id 
 const skillModalOpen = ref(false)
 const skillModalMode = ref<'create' | 'edit'>('create')
 const activeSkillId = ref<string | null>(null)
+const subagentModalOpen = ref(false)
+const subagentModalFlow = ref<'daily' | 'wiki'>('daily')
+
+function openCreateSubagentModal(flowId: 'daily' | 'wiki') {
+  subagentModalFlow.value = flowId
+  subagentModalOpen.value = true
+}
+
+function onSubagentCreated(updated: BackgroundSettings, createdId: string) {
+  const wasDirty = dirty.value
+  subagentModalOpen.value = false
+  settings.value = {
+    ...updated,
+    llm_providers: updated.llm_providers ?? settings.value?.llm_providers ?? [],
+    agents: updated.agents ?? settings.value?.agents ?? [],
+  }
+  if (!wasDirty) {
+    restore(settings.value)
+  } else {
+    if (!draft.value.agents) draft.value.agents = {}
+    const createdAgent = (settings.value.agents ?? []).find(a => a.id === createdId)
+    if (createdAgent) {
+      draft.value.agents[createdId] = toAgentUpdate(createdAgent)
+    }
+  }
+  notice.value = t('jobUi.subagentCreated')
+}
+
+async function deleteCustomSubagentFromCard(agent: BackgroundAgentConfig) {
+  if (agent.is_builtin !== false || !settings.value) return
+  if (typeof window !== 'undefined' && typeof window.confirm === 'function') {
+    const confirmed = window.confirm(t('jobUi.subagentDeleteConfirm', { id: agent.id }))
+    if (!confirmed) return
+  }
+  const wasDirty = dirty.value
+  error.value = ''
+  notice.value = ''
+  try {
+    const updated = await agentJobsApi.deleteSubagent(agent.id, settings.value.revision)
+    settings.value = {
+      ...updated,
+      llm_providers: updated.llm_providers ?? settings.value.llm_providers,
+      agents: updated.agents ?? settings.value.agents,
+    }
+    if (!wasDirty) {
+      restore(settings.value)
+    } else if (draft.value.agents) {
+      delete draft.value.agents[agent.id]
+    }
+    notice.value = t('jobUi.subagentDeleted')
+  } catch (cause) {
+    error.value = formatApiError(cause)
+    if (isApiError(cause) && cause.status === 409) {
+      await load()
+    }
+  }
+}
 
 function scrollToSkillCatalog() {
   if (typeof document !== 'undefined') {
@@ -409,8 +467,8 @@ onBeforeUnmount(() => controller?.abort())
 
       <!-- Per-Flow Root Agent & Sub-Agent Configuration -->
       <section v-for="group in [
-        { key: 'daily', title: t('jobUi.flowDailyTitle'), hint: t('jobUi.flowDailyHint'), items: dailyFlowAgents },
-        { key: 'wiki', title: t('jobUi.flowWikiTitle'), hint: t('jobUi.flowWikiHint'), items: wikiFlowAgents },
+        { key: 'daily' as const, title: t('jobUi.flowDailyTitle'), hint: t('jobUi.flowDailyHint'), items: dailyFlowAgents },
+        { key: 'wiki' as const, title: t('jobUi.flowWikiTitle'), hint: t('jobUi.flowWikiHint'), items: wikiFlowAgents },
       ]" :key="group.key" v-show="group.items.length > 0" class="studio-panel space-y-4 p-5">
         <div class="flex flex-wrap items-start justify-between gap-3">
           <div>
@@ -419,7 +477,19 @@ onBeforeUnmount(() => controller?.abort())
             </h2>
             <p class="mt-1 text-xs text-muted-foreground">{{ group.hint }}</p>
           </div>
-          <Badge variant="outline">{{ group.items.length }} agents</Badge>
+          <div class="flex items-center gap-2">
+            <Badge variant="outline">{{ group.items.length }} agents</Badge>
+            <Button
+              size="sm"
+              variant="outline"
+              type="button"
+              :disabled="saving"
+              :data-subagent-create-btn="group.key"
+              @click="openCreateSubagentModal(group.key)"
+            >
+              <Plus class="size-3.5" />{{ t('jobUi.subagentAdd') }}
+            </Button>
+          </div>
         </div>
 
         <div class="space-y-4">
@@ -500,7 +570,10 @@ onBeforeUnmount(() => controller?.abort())
                       {{ agent.id }}
                     </button>
                     <Badge variant="secondary">{{ t('jobUi.subagentRole') }}</Badge>
-                    <Badge v-if="isAgentCustomizedFromDefault(agent, draftAgent(agent))" variant="outline">
+                    <Badge variant="outline">
+                      {{ agent.is_builtin === false ? t('jobUi.subagentCustomBadge') : t('jobUi.subagentBuiltinBadge') }}
+                    </Badge>
+                    <Badge v-if="agent.is_builtin !== false && isAgentCustomizedFromDefault(agent, draftAgent(agent))" variant="outline">
                       {{ t('jobUi.customizedBadge') }}
                     </Badge>
                   </div>
@@ -516,6 +589,18 @@ onBeforeUnmount(() => controller?.abort())
                     </label>
                     <Button size="sm" variant="outline" :disabled="saving" @click="openConfigurePage(agent)">
                       <Wrench class="size-3.5" />{{ t('jobUi.configureAgent') }}<ArrowRight class="size-3.5" />
+                    </Button>
+                    <Button
+                      v-if="agent.is_builtin === false"
+                      size="sm"
+                      variant="outline"
+                      type="button"
+                      class="border-danger/40 text-danger hover:bg-danger/10"
+                      :disabled="saving"
+                      :data-subagent-delete-card="agent.id"
+                      @click="deleteCustomSubagentFromCard(agent)"
+                    >
+                      <Trash2 class="size-3.5" />{{ t('common.delete') }}
                     </Button>
                   </div>
                 </div>
@@ -704,6 +789,16 @@ onBeforeUnmount(() => controller?.abort())
       @close="skillModalOpen = false"
       @saved="onSkillSaved"
       @deleted="onSkillDeleted"
+    />
+
+    <SubagentCreateModal
+      :open="subagentModalOpen"
+      :initial-flow-id="subagentModalFlow"
+      :revision="settings?.revision ?? 1"
+      :providers="providerOptions"
+      :skills="skillsCatalog"
+      @close="subagentModalOpen = false"
+      @created="onSubagentCreated"
     />
   </section>
 </template>

@@ -299,6 +299,88 @@ pub fn find_agent_spec(id: &str) -> Option<&'static AgentSpec> {
     AGENT_SPECS.iter().find(|s| s.id == id)
 }
 
+/// Tool pool available to Custom Sub-Agents assigned to Flow 1 (`daily_root`).
+pub const CUSTOM_DAILY_SUBAGENT_TOOLS: &[&str] = &[
+    "skill",
+    "anydoc_inspect_pdf",
+    "yt_list_playlist",
+    "yt_fetch_transcript",
+    "fetch_html",
+    "html_extract_metadata",
+    "html_extract_article",
+    "html_extract_feed",
+    "html_extract_links",
+    "html_select_elements",
+    "add_to_sources",
+    "wiki_tree",
+    "wiki_query",
+    "wiki_get",
+    "wiki_multi_get",
+    "wiki_metadata",
+    "wiki_status",
+    "wiki_graph_neighbors",
+    "markdown_create",
+    "markdown_read",
+    "artifact_create",
+    "reminder_create",
+    "reminder_list",
+    "reminder_complete",
+    "reminder_delete",
+];
+
+/// Tool pool available to Custom Sub-Agents assigned to Flow 2 (`wiki_root`).
+/// Strictly limited to Wiki compilation, curation, and lint tools (no external collectors).
+pub const CUSTOM_WIKI_SUBAGENT_TOOLS: &[&str] = &[
+    "skill",
+    "wiki_tree",
+    "wiki_get",
+    "wiki_multi_get",
+    "wiki_query",
+    "wiki_metadata",
+    "wiki_status",
+    "wiki_graph_neighbors",
+    "wiki_ingest_source",
+    "wiki_file_synthesis",
+    "wiki_write_file",
+    "wiki_patch_file",
+    "wiki_delete_file",
+    "wiki_lint",
+    "wiki_schema",
+];
+
+/// Returns `(parent_root_id, available_tools)` for a valid Custom Sub-Agent `flow_id`.
+pub fn custom_subagent_flow_policy(
+    flow_id: &str,
+) -> Option<(&'static str, &'static [&'static str])> {
+    match flow_id {
+        "daily" => Some(("daily_root", CUSTOM_DAILY_SUBAGENT_TOOLS)),
+        "wiki" => Some(("wiki_root", CUSTOM_WIKI_SUBAGENT_TOOLS)),
+        _ => None,
+    }
+}
+
+/// Validates that `id` is a legal Custom Sub-Agent identifier (`^[a-z0-9][a-z0-9_-]{0,63}$`)
+/// and does not collide with any Built-in Agent or reserved identifier.
+pub fn valid_custom_subagent_id(id: &str) -> bool {
+    let bytes = id.as_bytes();
+    if bytes.is_empty() || bytes.len() > 64 {
+        return false;
+    }
+    if !matches!(bytes[0], b'a'..=b'z' | b'0'..=b'9') {
+        return false;
+    }
+    if !bytes
+        .iter()
+        .all(|b| matches!(b, b'a'..=b'z' | b'0'..=b'9' | b'_' | b'-'))
+    {
+        return false;
+    }
+    if find_agent_spec(id).is_some() {
+        return false;
+    }
+    !matches!(id, "subagent" | "skill" | "default" | "all")
+}
+
 /// Returns whether a root agent is user/Voice-routable (`spec.user_routable`).
 /// Unknown custom test agent IDs default to `true`.
 pub fn is_user_routable_root_agent(agent_id: &str) -> bool {

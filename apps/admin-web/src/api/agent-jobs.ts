@@ -4,6 +4,7 @@ import type {
   ArtifactCatalogPage,
   BackgroundSettings,
   BackgroundSettingsUpdate,
+  CreateSubagentInput,
   JobEventPage,
   JobPage,
   JobSkillDetail,
@@ -11,12 +12,17 @@ import type {
 } from './types/agent-jobs'
 
 const backgroundPath = '/api/admin/background/settings'
+const agentsPath = '/api/admin/background/agents'
 const skillsPath = '/api/admin/background/skills'
 const jobsPath = '/api/admin/jobs'
 const artifactsPath = '/api/admin/artifacts'
 
 function jobPath(id: string) {
   return jobsPath + '/' + encodeURIComponent(id)
+}
+
+function agentPath(id: string) {
+  return agentsPath + '/' + encodeURIComponent(id)
 }
 
 function skillPath(id: string) {
@@ -35,6 +41,12 @@ export const agentJobsApi = {
   },
   updateSettings(input: BackgroundSettingsUpdate, revision: number) {
     return requestJson<BackgroundSettings>(backgroundPath, jsonRequest('PUT', input), { revision })
+  },
+  createSubagent(input: CreateSubagentInput, revision: number) {
+    return requestJson<BackgroundSettings>(agentsPath, jsonRequest('POST', input), { revision })
+  },
+  deleteSubagent(id: string, revision: number) {
+    return requestJson<BackgroundSettings>(agentPath(id), { method: 'DELETE' }, { revision })
   },
   skill(id: string, signal?: AbortSignal) {
     return requestJson<JobSkillDetail>(skillPath(id), {}, { signal })
