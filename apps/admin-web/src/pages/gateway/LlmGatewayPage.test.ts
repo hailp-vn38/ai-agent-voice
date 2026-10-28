@@ -203,8 +203,10 @@ describe('LlmGatewayPage', () => {
           display_name: 'GPT-5.6 Terra (Codex)',
           tags: ['chat', 'reasoning', 'vision'],
           supports_reasoning_effort: true,
-          default_max_tokens: 4096,
+          default_max_tokens: 16384,
           default_context_limit_tokens: 200000,
+          default_reasoning_effort: 'high',
+          default_timeout_ms: 90000,
         },
       ],
     }
@@ -278,6 +280,10 @@ describe('LlmGatewayPage', () => {
         display_name: 'GPT-5.6 Terra (Codex)',
         gateway_binding: 'pool:openai_codex',
         tags: ['chat', 'reasoning', 'vision'],
+        reasoning_effort: 'high',
+        max_tokens: 16384,
+        context_limit_tokens: 200000,
+        timeout_ms: 90000,
       }),
     )
 

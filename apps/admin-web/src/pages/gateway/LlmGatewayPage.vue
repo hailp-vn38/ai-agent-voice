@@ -510,8 +510,15 @@ async function ensurePresetsLoaded(vendor: GatewayVendor) {
 }
 
 function applyPresetToForm(preset: GatewayVendorModelPreset) {
+  const prevModelWasPreset = currentModalPresets.value.some(
+    (p) => p.display_name === modelForm.displayName.trim(),
+  )
   modelForm.modelId = preset.model
-  if (modelModalMode.value === 'create' || !modelForm.displayName.trim()) {
+  if (
+    modelModalMode.value === 'create' ||
+    !modelForm.displayName.trim() ||
+    prevModelWasPreset
+  ) {
     modelForm.displayName = preset.display_name
   }
   modelForm.tags = [...preset.tags]
@@ -521,9 +528,14 @@ function applyPresetToForm(preset: GatewayVendorModelPreset) {
     preset.default_context_limit_tokens != null
       ? String(preset.default_context_limit_tokens)
       : ''
-  if (!preset.supports_reasoning_effort) {
-    modelForm.reasoningEffort = ''
-  }
+  modelForm.reasoningEffort = preset.supports_reasoning_effort
+    ? (preset.default_reasoning_effort ?? '')
+    : ''
+  modelForm.temperaturePercent =
+    preset.default_temperature_percent != null
+      ? String(preset.default_temperature_percent)
+      : ''
+  modelForm.timeoutMs = preset.default_timeout_ms ?? 60000
 }
 
 function openCreatePoolModelModal(vendor: GatewayVendor, preset?: GatewayVendorModelPreset) {
@@ -1523,12 +1535,24 @@ void load()
               :key="preset.model"
               type="button"
               :data-preset-model="preset.model"
-              class="inline-flex items-center gap-1.5 rounded-lg border border-border/80 bg-background px-2.5 py-1.5 text-left text-xs transition-colors hover:border-studio-violet hover:bg-studio-violet/5"
+              class="inline-flex flex-wrap items-center gap-1.5 rounded-lg border border-border/80 bg-background px-2.5 py-1.5 text-left text-xs transition-colors hover:border-studio-violet hover:bg-studio-violet/5"
               @click="openCreatePoolModelModal(activePoolDetail.vendor, preset)"
             >
               <Plus class="size-3.5 text-studio-violet" aria-hidden="true" />
               <span class="font-medium text-foreground">{{ preset.display_name }}</span>
               <code class="font-mono text-[11px] text-muted-foreground">({{ preset.model }})</code>
+              <span
+                v-if="preset.default_reasoning_effort"
+                class="rounded bg-studio-violet/10 px-1.5 py-0.5 font-mono text-[10px] text-studio-violet"
+              >
+                effort:{{ preset.default_reasoning_effort }}
+              </span>
+              <span
+                v-if="preset.default_max_tokens"
+                class="rounded bg-surface px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground"
+              >
+                max:{{ preset.default_max_tokens }}
+              </span>
             </button>
           </div>
         </div>
@@ -1710,12 +1734,13 @@ void load()
           <span class="block text-xs font-medium text-muted-foreground">
             {{ t('llmGateway.modelModal.presetLabel') }}
           </span>
-          <div class="flex flex-wrap gap-1.5">
+          <div class="flex max-h-40 flex-wrap gap-1.5 overflow-y-auto pr-1">
             <button
               v-for="preset in currentModalPresets"
               :key="preset.model"
               type="button"
-              class="rounded-md border px-2 py-1 font-mono text-xs transition-colors"
+              :title="`${preset.display_name} (${preset.tags.join(', ')})`"
+              class="inline-flex items-center gap-1.5 rounded-md border px-2 py-1 text-xs transition-colors"
               :class="
                 modelForm.modelId === preset.model
                   ? 'border-studio-violet bg-studio-violet/10 text-studio-violet font-semibold'
@@ -1723,7 +1748,8 @@ void load()
               "
               @click="applyPresetToForm(preset)"
             >
-              {{ preset.model }}
+              <span class="font-sans font-medium text-foreground">{{ preset.display_name }}</span>
+              <code class="font-mono text-[11px] opacity-80">{{ preset.model }}</code>
             </button>
           </div>
         </div>

@@ -18,6 +18,9 @@ export interface GatewayVendorModelPreset {
   supports_reasoning_effort: boolean
   default_max_tokens?: number | null
   default_context_limit_tokens?: number | null
+  default_reasoning_effort?: string | null
+  default_temperature_percent?: number | null
+  default_timeout_ms?: number | null
 }
 
 export interface GatewayPoolModelView {

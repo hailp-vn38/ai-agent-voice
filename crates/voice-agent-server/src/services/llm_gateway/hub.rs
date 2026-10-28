@@ -741,9 +741,15 @@ impl LlmGatewayHub {
             .as_deref()
             .map(str::trim)
             .filter(|s| !s.is_empty())
-            .map(str::to_owned);
+            .map(str::to_owned)
+            .or_else(|| {
+                preset
+                    .and_then(|p| p.default_reasoning_effort)
+                    .map(str::to_owned)
+            });
         let timeout_ms = req
             .timeout_ms
+            .or_else(|| preset.and_then(|p| p.default_timeout_ms))
             .unwrap_or_else(crate::config::defaults::default_llm_timeout_ms);
 
         let gw_config = crate::providers::llm::LlmGatewayConfig {
@@ -758,7 +764,9 @@ impl LlmGatewayHub {
                 .context_limit_tokens
                 .or_else(|| preset.and_then(|p| p.default_context_limit_tokens)),
             reasoning_effort,
-            temperature_percent: req.temperature_percent,
+            temperature_percent: req
+                .temperature_percent
+                .or_else(|| preset.and_then(|p| p.default_temperature_percent)),
             tags,
             account_concurrency: None,
             cdp_port: None,
