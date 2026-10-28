@@ -158,3 +158,38 @@ it('renders image and video previews when LLM diagnostics return media and clear
   expect(video.attributes('src')).toBe('data:video/mp4;base64,TVA0X0RBVEE=')
   wrapper.unmount()
 })
+
+it('filters and deduplicates voices by draft model selection', () => {
+  const capabilities = {
+    voices: [
+      { id: 'hai_dang', name: 'Hải Đăng', model: 'vieneu_v3_turbo_fp32' },
+      { id: 'adam', name: 'Adam', model: 'vieneu_v3_turbo_fp32' },
+      { id: 'minh_quan', name: 'Minh Quân', model: 'vieneu_v3_nano_fp32' },
+      { id: 'adam', name: 'Adam', model: 'vieneu_v3_nano_fp32' },
+    ],
+  }
+  const nanoDraft = mount(ProviderTestPanel, {
+    props: {
+      type: 'tts',
+      capabilities,
+      draft: { type: 'tts', adapter: 'vieneu', config_json: { model: 'vieneu_v3_nano_fp32' } },
+    },
+  })
+  expect(nanoDraft.findAll('select')[0]!.findAll('option').map((o) => o.attributes('value'))).toEqual([
+    '',
+    'minh_quan',
+    'adam',
+  ])
+  nanoDraft.unmount()
+
+  const savedWithoutDraft = mount(ProviderTestPanel, {
+    props: { type: 'tts', savedKey: 'vieneu-saved', capabilities },
+  })
+  expect(savedWithoutDraft.findAll('select')[0]!.findAll('option').map((o) => o.attributes('value'))).toEqual([
+    '',
+    'hai_dang',
+    'adam',
+    'minh_quan',
+  ])
+  savedWithoutDraft.unmount()
+})

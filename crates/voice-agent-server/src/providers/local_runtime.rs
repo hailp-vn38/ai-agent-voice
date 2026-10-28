@@ -226,6 +226,11 @@ impl LocalRuntimeAdapter for VifastttsOnnxPlanner {
     }
 }
 
+#[derive(serde::Serialize)]
+struct VieneuPhysicalSpec<'a> {
+    model: &'a str,
+}
+
 impl LocalRuntimeAdapter for VieneuNativePlanner {
     fn adapter_id(&self) -> &'static str {
         "vieneu"
@@ -242,11 +247,16 @@ impl LocalRuntimeAdapter for VieneuNativePlanner {
                 "invalid native VieNeu selection".into(),
             ));
         }
-        // Voices share the configured pool; a second worker leaves capacity beyond Voice.
+        // Voices within the same model share the configured pool; a second worker leaves capacity
+        // beyond Voice. Distinct models map to distinct physical runtime plans.
+        let spec = serde_json::to_value(VieneuPhysicalSpec {
+            model: &config.model,
+        })
+        .map_err(|_| ProviderLoadError::Configuration("invalid native VieNeu spec".into()))?;
         Ok(LocalRuntimePlan::onnx(
             self.adapter_id(),
             config.model,
-            serde_json::json!({}),
+            spec,
         ))
     }
 }

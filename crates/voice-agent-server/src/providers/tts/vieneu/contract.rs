@@ -3,16 +3,28 @@
 //! This module intentionally does not instantiate ONNX sessions. It validates
 //! immutable artifacts before a retained worker is allowed to use them.
 
-use std::{collections::BTreeMap, fs, path::Path};
+use std::{
+    collections::BTreeMap,
+    fs::{self, File},
+    path::Path,
+};
 
+use ndarray::ArrayD;
+use ndarray_npy::NpzReader;
 use serde::Deserialize;
 use tokenizers::Tokenizer;
 
-use super::assets::{VOICES, VieneuNativeAssets};
+use super::assets::{NANO_VOICES, VOICES, VieneuNanoAssets, VieneuNativeAssets};
 use crate::providers::tts::TtsError;
+
+pub const NANO_SPEAKER_DIM: usize = 192;
 
 fn invalid(reason: &str) -> TtsError {
     TtsError::IncompatibleContract(format!("VieNeu v3 Turbo: {reason}"))
+}
+
+fn invalid_nano(reason: &str) -> TtsError {
+    TtsError::IncompatibleContract(format!("VieNeu v3 Nano: {reason}"))
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -250,65 +262,218 @@ impl VieneuContract {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+#[derive(Clone, Debug, Deserialize)]
+pub struct NanoModelConfig {
+    pub model_type: String,
+    pub sample_rate: u32,
+    pub latent_dim: usize,
+    pub group: usize,
+    pub flow_fps: f32,
+    pub dim: usize,
+    pub style_dim: usize,
+    pub n_style: usize,
+    pub steps_default: usize,
+    pub cfg_default: f32,
+    pub pad_id: i64,
+    pub bos_id: i64,
+    pub eos_id: i64,
+    pub vocab: BTreeMap<String, i64>,
+}
 
-    fn model() -> ModelConfig {
-        ModelConfig::parse(
-            br#"{
-            "n_vq":16,"audio_vocab_size":1024,"text_vocab_size":419,
-            "hidden_size":768,"num_hidden_layers":12,
-            "local_num_hidden_layers":1,"local_num_attention_heads":8,
-            "audio_sample_rate":48000,"audio_pad_token_id":1024,
-            "text_prompt_start_token_id":3,"text_prompt_end_token_id":4,
-            "speech_generation_start_token_id":5,"speech_generation_end_token_id":6,
-            "audio_ref_slot_token_id":7,"default_style_token_id":16,
-            "use_speaker_embedding":true,"speaker_embedding_dim":192
-        }"#,
-        )
-        .unwrap()
+impl NanoModelConfig {
+    pub const fn latent_channels(&self) -> usize {
+        self.latent_dim * self.group
     }
 
-    #[test]
-    fn accepts_pinned_model_profile() {
-        assert_eq!(model().n_vq, 16);
-    }
-
-    #[test]
-    fn rejects_legacy_model_without_speaker_anchor() {
-        let bytes = br#"{
-            "n_vq":16,"audio_vocab_size":1024,"text_vocab_size":419,
-            "hidden_size":768,"num_hidden_layers":12,
-            "local_num_hidden_layers":1,"local_num_attention_heads":8,
-            "audio_sample_rate":48000,"audio_pad_token_id":1024,
-            "text_prompt_start_token_id":3,"text_prompt_end_token_id":4,
-            "speech_generation_start_token_id":5,"speech_generation_end_token_id":6,
-            "audio_ref_slot_token_id":7,"default_style_token_id":16,
-            "use_speaker_embedding":false,"speaker_embedding_dim":192
-        }"#;
-        assert!(ModelConfig::parse(bytes).is_err());
-    }
-
-    #[test]
-    fn rejects_empty_or_unrecognized_preset_registry() {
-        assert!(
-            VoiceRegistry::parse(
-                r#"{"default_voice":"Hải Đăng","presets":{}}"#.as_bytes(),
-                &model(),
-            )
-            .is_err()
-        );
-    }
-
-    #[test]
-    fn rejects_non_streaming_codec_metadata() {
-        let json = br#"{"format_version":2,
-            "codec_config":{"sample_rate":48000,"channels":2,
-                "downsample_rate":3840,"num_quantizers":16},
-            "files":{"decode_step":"moss_audio_tokenizer_decode_step.onnx"},
-            "streaming_decode":{"transformer_offsets":[],"attention_caches":[]}
-        }"#;
-        assert!(validate_codec_metadata(json, &model()).is_err());
+    pub fn parse(bytes: &[u8]) -> Result<Self, TtsError> {
+        let config: Self =
+            serde_json::from_slice(bytes).map_err(|_| invalid_nano("invalid config.json"))?;
+        if config.model_type != "vieneu_v3_nano"
+            || config.sample_rate != 24_000
+            || config.latent_dim != 24
+            || config.group != 6
+            || !config.flow_fps.is_finite()
+            || (config.flow_fps - 15.625).abs() >= 1e-4
+            || config.dim != 512
+            || config.style_dim != 256
+            || config.n_style != 50
+            || !(1..=64).contains(&config.steps_default)
+            || !config.cfg_default.is_finite()
+            || !(0.0..=16.0).contains(&config.cfg_default)
+            || config.pad_id != 0
+            || config.bos_id != 1
+            || config.eos_id != 2
+            || config.vocab.len() < 80
+            || config.vocab.get("<pad>") != Some(&0)
+            || config.vocab.get("<bos>") != Some(&1)
+            || config.vocab.get("<eos>") != Some(&2)
+            || config.vocab.values().any(|&id| id < 0)
+        {
+            return Err(invalid_nano("unsupported v3 Nano ONNX FP32 model profile"));
+        }
+        Ok(config)
     }
 }
+
+#[derive(Clone, Debug)]
+pub struct NanoPresetVoice {
+    pub speaker_embedding: Vec<f32>,
+    pub style: Vec<f32>,
+}
+
+#[derive(Clone, Debug)]
+pub struct NanoVoiceRegistry {
+    pub default_voice: String,
+    pub presets: BTreeMap<String, NanoPresetVoice>,
+}
+
+#[derive(Deserialize)]
+struct NanoPresetFile {
+    default_voice: String,
+    presets: BTreeMap<String, NanoPresetEntry>,
+}
+
+#[derive(Deserialize)]
+struct NanoPresetEntry {
+    speaker_emb: Vec<f32>,
+    style: Vec<Vec<f32>>,
+}
+
+impl NanoVoiceRegistry {
+    pub fn parse(bytes: &[u8], model: &NanoModelConfig) -> Result<Self, TtsError> {
+        let document: NanoPresetFile =
+            serde_json::from_slice(bytes).map_err(|_| invalid_nano("invalid Nano voices JSON"))?;
+        let mut presets = BTreeMap::new();
+        if document.presets.len() != NANO_VOICES.len() {
+            return Err(invalid_nano(
+                "preset voice count differs from pinned Nano catalog",
+            ));
+        }
+        let expected_style_len = model.n_style * model.style_dim;
+        for named in NANO_VOICES {
+            let entry = document
+                .presets
+                .get(named.source_name)
+                .ok_or_else(|| invalid_nano("missing pinned Nano preset voice"))?;
+            if entry.speaker_emb.len() != NANO_SPEAKER_DIM
+                || entry.speaker_emb.iter().any(|value| !value.is_finite())
+                || entry.speaker_emb.iter().all(|value| *value == 0.0)
+                || entry.style.len() != model.n_style
+                || entry.style.iter().any(|row| {
+                    row.len() != model.style_dim || row.iter().any(|value| !value.is_finite())
+                })
+            {
+                return Err(invalid_nano(
+                    "preset speaker embedding or style token contract mismatch",
+                ));
+            }
+            let flat_style: Vec<f32> = entry
+                .style
+                .iter()
+                .flat_map(|row| row.iter().copied())
+                .collect();
+            if flat_style.len() != expected_style_len
+                || flat_style.iter().all(|value| *value == 0.0)
+            {
+                return Err(invalid_nano("preset style matrix is empty or all zeros"));
+            }
+            presets.insert(
+                named.id.into(),
+                NanoPresetVoice {
+                    speaker_embedding: entry.speaker_emb.clone(),
+                    style: flat_style,
+                },
+            );
+        }
+        let default_voice = NANO_VOICES
+            .iter()
+            .find(|preset| preset.source_name == document.default_voice)
+            .ok_or_else(|| invalid_nano("unknown upstream Nano default voice"))?
+            .id
+            .to_owned();
+        Ok(Self {
+            default_voice,
+            presets,
+        })
+    }
+
+    pub fn get(&self, id: &str) -> Result<&NanoPresetVoice, TtsError> {
+        self.presets
+            .get(id)
+            .ok_or_else(|| TtsError::UnsupportedVoice(id.into()))
+    }
+}
+
+fn load_nano_constants(
+    path: &Path,
+    config: &NanoModelConfig,
+) -> Result<(Vec<f32>, Vec<f32>), TtsError> {
+    let file = File::open(path).map_err(|_| invalid_nano("constants.npz could not be opened"))?;
+    let mut archive =
+        NpzReader::new(file).map_err(|_| invalid_nano("invalid constants.npz archive"))?;
+    let null_spk: ArrayD<f32> = archive
+        .by_name("null_spk")
+        .map_err(|_| invalid_nano("missing null_spk in constants.npz"))?;
+    let null_style: ArrayD<f32> = archive
+        .by_name("null_style")
+        .map_err(|_| invalid_nano("missing null_style in constants.npz"))?;
+
+    let spk_shape = null_spk.shape();
+    let valid_spk_shape =
+        spk_shape == [NANO_SPEAKER_DIM] || spk_shape == [1, NANO_SPEAKER_DIM];
+    let spk_vec: Vec<f32> = null_spk.iter().copied().collect();
+    if !valid_spk_shape || spk_vec.iter().any(|value| !value.is_finite()) {
+        return Err(invalid_nano("null_spk shape or values differ from contract"));
+    }
+
+    let style_shape = null_style.shape();
+    let valid_style_shape = style_shape == [config.n_style, config.style_dim]
+        || style_shape == [1, config.n_style, config.style_dim];
+    let style_vec: Vec<f32> = null_style.iter().copied().collect();
+    if !valid_style_shape || style_vec.iter().any(|value| !value.is_finite()) {
+        return Err(invalid_nano(
+            "null_style shape or values differ from contract",
+        ));
+    }
+
+    Ok((spk_vec, style_vec))
+}
+
+pub struct NanoContract {
+    pub config: NanoModelConfig,
+    pub null_spk: Vec<f32>,
+    pub null_style: Vec<f32>,
+    pub voices: NanoVoiceRegistry,
+}
+
+impl NanoContract {
+    pub fn load(assets: &VieneuNanoAssets) -> Result<Self, TtsError> {
+        let load = |path: &Path| {
+            fs::read(path).map_err(|_| invalid_nano("Nano model file could not be read"))
+        };
+        let config = NanoModelConfig::parse(&load(&assets.config)?)?;
+        let (null_spk, null_style) = load_nano_constants(&assets.constants, &config)?;
+        let voices = NanoVoiceRegistry::parse(&load(&assets.presets)?, &config)?;
+        for path in [
+            &assets.text_encoder,
+            &assets.duration_predictor,
+            &assets.vector_estimator,
+            &assets.codec_decoder,
+            &assets.g2p_dictionary,
+        ] {
+            if !path.is_file() || path.metadata().map_or(true, |m| m.len() == 0) {
+                return Err(invalid_nano("missing or empty required Nano binary asset"));
+            }
+        }
+        Ok(Self {
+            config,
+            null_spk,
+            null_style,
+            voices,
+        })
+    }
+}
+
+#[cfg(test)]
+#[path = "contract_tests.rs"]
+mod tests;

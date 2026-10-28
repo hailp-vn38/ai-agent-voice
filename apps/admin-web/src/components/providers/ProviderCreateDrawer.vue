@@ -74,18 +74,29 @@ function options(field: ProviderConfigField) {
   const raw = descriptor.value?.capabilities?.[field.enum_source]
   if (!Array.isArray(raw)) return []
   const selectedLanguage = typeof form.config.language === 'string' && form.config.language ? form.config.language : ''
+  const selectedModel = typeof form.config.model === 'string' && form.config.model ? form.config.model : ''
+  const seen = new Set<string>()
   return raw.flatMap((item) => {
     if (typeof item === 'string' || typeof item === 'number') {
-      return [{ value: String(item), label: String(item) }]
+      const value = String(item)
+      if (seen.has(value)) return []
+      seen.add(value)
+      return [{ value, label: value }]
     }
     if (item && typeof item === 'object') {
       const record = item as Record<string, unknown>
       const id = record.key ?? record.id ?? record.value ?? record.name
       if (!id) return []
+      if (field.enum_source === 'voices' && selectedModel && typeof record.model === 'string' && record.model !== selectedModel) {
+        return []
+      }
       if (field.enum_source === 'voices' && selectedLanguage && Array.isArray(record.languages) && record.languages.length > 0 && !record.languages.includes(selectedLanguage)) {
         return []
       }
-      return [{ value: String(id), label: String(record.name ?? id) }]
+      const value = String(id)
+      if (seen.has(value)) return []
+      seen.add(value)
+      return [{ value, label: String(record.name ?? id) }]
     }
     return []
   })
@@ -167,7 +178,20 @@ async function create() {
 function reset() { invalidatePendingRequests(); step.value = 1; descriptor.value = undefined; clearStepTwo(); error.value = null }
 
 watch(open, (value) => { if (value) { type.value = props.initialType ?? 'tts'; void loadAdapters() } else reset() })
-watch(() => form.config.model, () => { if (step.value === 2 && supportsDiscovery.value) void discover() })
+watch(() => form.config.model, (model) => {
+  if (typeof model === 'string' && model) {
+    const voices = descriptor.value?.capabilities?.voices
+    if (Array.isArray(voices)) {
+      const matching = voices.filter((item): item is { id: string; model?: string } =>
+        Boolean(item && typeof item === 'object' && typeof (item as { id?: unknown }).id === 'string' && (typeof (item as { model?: unknown }).model !== 'string' || (item as { model: string }).model === model)),
+      )
+      if (matching.length > 0 && !matching.some((item) => item.id === form.config.voice)) {
+        form.config.voice = matching[0]!.id
+      }
+    }
+  }
+  if (step.value === 2 && supportsDiscovery.value) void discover()
+})
 watch(() => form.config.language, (lang) => {
   if (typeof lang !== 'string' || !lang) return
   const voices = descriptor.value?.capabilities?.voices

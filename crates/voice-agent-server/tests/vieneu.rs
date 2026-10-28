@@ -37,9 +37,37 @@ preload = true
     let canonical =
         provider_config::validate(instance.adapter(), &json!({"voice":"hai_dang"})).unwrap();
     let value: serde_json::Value = serde_json::from_str(&canonical).unwrap();
+    assert_eq!(value["model"], "vieneu_v3_turbo_fp32");
     assert_eq!(value["language"], "vi-VN");
+    let nano_canonical = provider_config::validate(
+        instance.adapter(),
+        &json!({"model":"vieneu_v3_nano_fp32"}),
+    )
+    .unwrap();
+    let nano_value: serde_json::Value = serde_json::from_str(&nano_canonical).unwrap();
+    assert_eq!(nano_value["model"], "vieneu_v3_nano_fp32");
+    assert_eq!(nano_value["voice"], "minh_quan");
+    assert_eq!(nano_value["language"], "vi-VN");
+    let factory = compiled_provider_registry()
+        .tts_factory(instance.adapter())
+        .unwrap();
+    assert_eq!(
+        factory.model_identity(&instance).unwrap(),
+        Some("vieneu_v3_turbo_fp32")
+    );
+    let nano_instance = TtsInstanceConfig::Vieneu(VieneuNativeConfig {
+        model: "vieneu_v3_nano_fp32".into(),
+        voice: "minh_quan".into(),
+        ..Default::default()
+    });
+    assert_eq!(
+        factory.model_identity(&nano_instance).unwrap(),
+        Some("vieneu_v3_nano_fp32")
+    );
     for invalid in [
         json!({"voice":"unknown"}),
+        json!({"model":"vieneu_v3_turbo_fp32","voice":"minh_quan"}),
+        json!({"model":"vieneu_v3_nano_fp32","voice":"hai_dang"}),
         json!({"language":"en-US"}),
         json!({"api_key":"secret"}),
         json!({"num_threads":4}),
@@ -54,13 +82,15 @@ fn native_voice_changes_share_configured_worker_pool() {
     let planner = compiled_local_runtime_adapter_registry()
         .get("vieneu")
         .unwrap();
-    let plan = |voice, preload| {
+    let plan = |model, voice, preload| {
         planner
-            .physical_plan(json!({"voice":voice,"preload":preload}))
+            .physical_plan(json!({"model":model,"voice":voice,"preload":preload}))
             .unwrap()
     };
-    let first = plan("hai_dang", false);
-    let second = plan("mai_anh", true);
+    let first = plan("vieneu_v3_turbo_fp32", "hai_dang", false);
+    let second = plan("vieneu_v3_turbo_fp32", "mai_anh", true);
+    let nano_first = plan("vieneu_v3_nano_fp32", "minh_quan", false);
+    let nano_second = plan("vieneu_v3_nano_fp32", "adam", true);
     assert_eq!(
         first.physical_capacity(),
         voice_agent_server::services::provider_runtime::PhysicalCapacity::FollowsLogicalCapacity
@@ -77,8 +107,31 @@ fn native_voice_changes_share_configured_worker_pool() {
         "deployment startup must also use the configured worker count"
     );
     assert_eq!(
+        voice_agent_server::providers::configured_physical_replicas(
+            "vieneu",
+            json!({"model":"vieneu_v3_nano_fp32","voice":"minh_quan"}),
+            &Default::default(),
+        ),
+        None,
+        "Nano model must preserve model in effective_local_config and use configured worker count"
+    );
+    assert_eq!(
         first.resource_key("pinned", [1; 32], None, 2, 2).unwrap(),
         second.resource_key("pinned", [1; 32], None, 2, 2).unwrap()
+    );
+    assert_eq!(
+        nano_first
+            .resource_key("pinned", [1; 32], None, 2, 2)
+            .unwrap(),
+        nano_second
+            .resource_key("pinned", [1; 32], None, 2, 2)
+            .unwrap()
+    );
+    assert_ne!(
+        first.resource_key("pinned", [1; 32], None, 2, 2).unwrap(),
+        nano_first
+            .resource_key("pinned", [1; 32], None, 2, 2)
+            .unwrap()
     );
 }
 
@@ -260,3 +313,84 @@ fn retained_native_worker_streams_switches_voice_and_recovers_after_cancellation
         writer.finalize().unwrap();
     }
 }
+
+#[test]
+#[ignore = "requires prepared native VieNeu v3 Nano model files and ONNX Runtime"]
+fn retained_nano_worker_synthesizes_24khz_switches_voice_and_recovers_after_cancellation() {
+    use voice_agent_server::providers::tts::vieneu::config::NANO_MODEL_ID;
+
+    let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+    std::env::set_current_dir(&root).unwrap();
+    let assets =
+        voice_agent_server::providers::tts::vieneu::assets::resolve_nano_assets().unwrap();
+    let contract =
+        voice_agent_server::providers::tts::vieneu::contract::NanoContract::load(&assets).unwrap();
+    assert_eq!(contract.config.sample_rate, 24_000);
+    let mut config = AppConfig::parse_and_resolve(root.join("config.toml")).unwrap();
+    config.runtime.onnx.library = root.join("runtime/onnxruntime/libonnxruntime.so");
+    let instance = TtsInstanceConfig::Vieneu(VieneuNativeConfig {
+        model: NANO_MODEL_ID.into(),
+        voice: "minh_quan".into(),
+        ..Default::default()
+    });
+    let provider = compiled_provider_registry()
+        .tts_factory(instance.adapter())
+        .unwrap()
+        .build(&instance, &config.runtime)
+        .unwrap();
+    provider
+        .validate_diagnostic(&TtsDiagnosticRequest {
+            text: "Xin chào.".into(),
+            voice: Some("adam".into()),
+            language: Some("vi-VN".into()),
+        })
+        .unwrap();
+    assert!(
+        provider
+            .validate_diagnostic(&TtsDiagnosticRequest {
+                text: "Xin chào.".into(),
+                voice: Some("hai_dang".into()),
+                language: Some("vi-VN".into()),
+            })
+            .is_err()
+    );
+    let mut worker = provider.open_worker().unwrap();
+    worker.warmup().unwrap();
+    let request = |voice: &str| TtsSynthesisRequest {
+        text: "Xin chào, tôi là trợ lý giọng nói tiếng Việt.".into(),
+        selection: TtsBinding {
+            voice: voice.into(),
+            language: "vi-VN".into(),
+        },
+    };
+    let cancelled = AtomicBool::new(true);
+    assert!(
+        worker
+            .synthesize(&request("minh_quan"), &cancelled, &mut |_| panic!(
+                "cancelled request emitted PCM"
+            ))
+            .is_err()
+    );
+    cancelled.store(false, Ordering::Release);
+    for voice in ["minh_quan", "adam"] {
+        let mut chunks = 0;
+        let mut utterance = Vec::new();
+        worker
+            .synthesize(&request(voice), &cancelled, &mut |pcm| {
+                assert_eq!(pcm.sample_rate_hz(), 24_000);
+                assert!(!pcm.samples().is_empty());
+                assert!(pcm.samples().iter().all(|value| value.is_finite()));
+                utterance.extend_from_slice(pcm.samples());
+                chunks += 1;
+                Ok(())
+            })
+            .unwrap();
+        assert!(chunks >= 1);
+        let rms = (utterance.iter().map(|value| value * value).sum::<f32>()
+            / utterance.len() as f32)
+            .sqrt();
+        assert!(rms > 0.001, "{voice}: silent synthesis");
+        worker.reset().unwrap();
+    }
+}
+

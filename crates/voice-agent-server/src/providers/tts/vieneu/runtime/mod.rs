@@ -1,5 +1,6 @@
 mod graphs;
 mod heads;
+mod nano;
 mod sampling;
 
 use std::{
@@ -14,7 +15,7 @@ use ndarray::{Array1, Axis};
 use ort::{session::Session, value::DynValue};
 
 use super::{
-    assets::VieneuNativeAssets,
+    assets::{VieneuModelAssets, VieneuNativeAssets},
     config::VieneuNativeConfig,
     contract::VieneuContract,
     text::{VieneuTextFrontend, frame_limit},
@@ -28,18 +29,19 @@ use crate::{
 };
 use graphs::{hidden, take_cache, tensor, with_cache};
 use heads::Heads;
+use nano::{NanoNativeState, NanoWorker};
 
 fn failure(error: impl std::fmt::Display) -> TtsError {
     TtsError::IncompatibleContract(format!("VieNeu native: {error}"))
 }
 
-pub(super) struct NativeState {
+pub(super) struct TurboNativeState {
     contract: VieneuContract,
     heads: Heads,
     frontend: VieneuTextFrontend,
 }
 
-impl NativeState {
+impl TurboNativeState {
     pub fn load(assets: &VieneuNativeAssets) -> Result<Self, TtsError> {
         let contract = VieneuContract::load(assets)?;
         let heads = Heads::load(&assets.heads, &contract.config)?;
@@ -52,8 +54,40 @@ impl NativeState {
     }
 }
 
-pub(super) struct VieneuWorker {
-    state: Arc<NativeState>,
+pub(super) enum NativeState {
+    Turbo(Arc<TurboNativeState>),
+    Nano(Arc<NanoNativeState>),
+}
+
+impl NativeState {
+    pub fn load(assets: &VieneuModelAssets) -> Result<Self, TtsError> {
+        match assets {
+            VieneuModelAssets::Turbo(turbo) => {
+                Ok(Self::Turbo(Arc::new(TurboNativeState::load(turbo)?)))
+            }
+            VieneuModelAssets::Nano(nano) => {
+                Ok(Self::Nano(Arc::new(NanoNativeState::load(nano)?)))
+            }
+        }
+    }
+
+    pub const fn sample_rate_hz(&self) -> u32 {
+        match self {
+            Self::Turbo(_) => 48_000,
+            Self::Nano(_) => 24_000,
+        }
+    }
+
+    pub fn supports_voice(&self, voice_id: &str) -> bool {
+        match self {
+            Self::Turbo(state) => state.contract.voices.presets.contains_key(voice_id),
+            Self::Nano(state) => state.contract.voices.presets.contains_key(voice_id),
+        }
+    }
+}
+
+pub(super) struct TurboWorker {
+    state: Arc<TurboNativeState>,
     options: VieneuNativeConfig,
     prefill: Session,
     decode: Session,
@@ -61,9 +95,32 @@ pub(super) struct VieneuWorker {
     codec: MossCodec,
 }
 
+pub(super) enum VieneuWorker {
+    Turbo(TurboWorker),
+    Nano(NanoWorker),
+}
+
 impl VieneuWorker {
     pub fn open(
-        state: Arc<NativeState>,
+        state: &NativeState,
+        assets: &VieneuModelAssets,
+        options: &VieneuNativeConfig,
+    ) -> Result<Self, TtsError> {
+        match (state, assets) {
+            (NativeState::Turbo(state), VieneuModelAssets::Turbo(assets)) => Ok(Self::Turbo(
+                TurboWorker::open(Arc::clone(state), assets, options)?,
+            )),
+            (NativeState::Nano(state), VieneuModelAssets::Nano(assets)) => Ok(Self::Nano(
+                NanoWorker::open(Arc::clone(state), assets, options)?,
+            )),
+            _ => Err(TtsError::Failed),
+        }
+    }
+}
+
+impl TurboWorker {
+    pub fn open(
+        state: Arc<TurboNativeState>,
         assets: &VieneuNativeAssets,
         options: &VieneuNativeConfig,
     ) -> Result<Self, TtsError> {
@@ -253,7 +310,10 @@ impl VieneuWorker {
             )?);
         }
         check_cancelled(cancelled)?;
-        let mut output = self.prefill.run(ort::inputs! { "inputs_embeds" => tensor(vec![1, prompt_length, width], embeddings)? }).map_err(failure)?;
+        let mut output = self
+            .prefill
+            .run(ort::inputs! { "inputs_embeds" => tensor(vec![1, prompt_length, width], embeddings)? })
+            .map_err(failure)?;
         let values = hidden(&output, width)?;
         let mut conditioning = values[values.len() - width..].to_vec();
         let mut cache = take_cache(&mut output, layers)?;
@@ -298,7 +358,7 @@ impl VieneuWorker {
     }
 }
 
-fn check_cancelled(cancelled: &AtomicBool) -> Result<(), TtsError> {
+pub(super) fn check_cancelled(cancelled: &AtomicBool) -> Result<(), TtsError> {
     if cancelled.load(Ordering::Acquire) {
         Err(TtsError::Failed)
     } else {
@@ -308,7 +368,10 @@ fn check_cancelled(cancelled: &AtomicBool) -> Result<(), TtsError> {
 
 impl TtsWorker for VieneuWorker {
     fn warmup(&mut self) -> Result<(), TtsError> {
-        warmup_retained_worker(self, "Xin chào.", 48_000)
+        match self {
+            Self::Turbo(_) => warmup_retained_worker(self, "Xin chào.", 48_000),
+            Self::Nano(worker) => worker.warmup(),
+        }
     }
 
     fn synthesize(
@@ -317,13 +380,21 @@ impl TtsWorker for VieneuWorker {
         cancelled: &AtomicBool,
         on_pcm: &mut dyn FnMut(PcmF32Mono) -> Result<(), TtsError>,
     ) -> Result<(), TtsError> {
-        self.codec.reset()?;
-        let result = self.generate(request, cancelled, on_pcm);
-        let reset = self.codec.reset();
-        result.and(reset)
+        match self {
+            Self::Turbo(worker) => {
+                worker.codec.reset()?;
+                let result = worker.generate(request, cancelled, on_pcm);
+                let reset = worker.codec.reset();
+                result.and(reset)
+            }
+            Self::Nano(worker) => worker.synthesize(request, cancelled, on_pcm),
+        }
     }
 
     fn reset(&mut self) -> Result<(), TtsError> {
-        self.codec.reset()
+        match self {
+            Self::Turbo(worker) => worker.codec.reset(),
+            Self::Nano(_) => Ok(()),
+        }
     }
 }

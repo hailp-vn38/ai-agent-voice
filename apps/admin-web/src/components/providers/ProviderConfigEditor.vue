@@ -6,12 +6,24 @@ const props = defineProps<{ schema?: ProviderConfigSchema; capabilities?: Record
 function options(field: ProviderConfigField): Array<{ id: string; name: string }> {
   const values = field.enum_values ?? (field.enum_source ? props.capabilities?.[field.enum_source] : undefined)
   const selectedLanguage = typeof config.value.language === 'string' && config.value.language ? config.value.language : ''
+  const selectedModel = typeof config.value.model === 'string' && config.value.model ? config.value.model : ''
+  const seen = new Set<string>()
   return Array.isArray(values) ? values.flatMap((value) => {
-    if (typeof value === 'string' || typeof value === 'number') return [{ id: String(value), name: String(value) }]
+    if (typeof value === 'string' || typeof value === 'number') {
+      const id = String(value)
+      if (seen.has(id)) return []
+      seen.add(id)
+      return [{ id, name: id }]
+    }
     if (value && typeof value === 'object' && typeof value.id === 'string') {
+      if (field.enum_source === 'voices' && selectedModel && typeof value.model === 'string' && value.model !== selectedModel) {
+        return []
+      }
       if (field.enum_source === 'voices' && selectedLanguage && Array.isArray(value.languages) && value.languages.length > 0 && !value.languages.includes(selectedLanguage)) {
         return []
       }
+      if (seen.has(value.id)) return []
+      seen.add(value.id)
       return [{ id: value.id, name: String(value.name ?? value.id) }]
     }
     return []
@@ -29,6 +41,19 @@ function update(key: string, value: unknown) {
   const next = { ...config.value }
   if (value === '') delete next[key]
   else next[key] = value
+  if (key === 'model' && typeof value === 'string' && value && Array.isArray(props.capabilities?.voices)) {
+    const matching = props.capabilities.voices.filter((item): item is { id: string; model?: string } =>
+      Boolean(
+        item &&
+          typeof item === 'object' &&
+          typeof (item as { id?: unknown }).id === 'string' &&
+          (typeof (item as { model?: unknown }).model !== 'string' || (item as { model: string }).model === value),
+      ),
+    )
+    if (matching.length > 0 && !matching.some((item) => item.id === next.voice)) {
+      next.voice = matching[0]!.id
+    }
+  }
   if (key === 'language' && typeof value === 'string' && value && Array.isArray(props.capabilities?.voices)) {
     const matching = props.capabilities.voices.filter((item): item is { id: string; languages?: string[] } =>
       Boolean(item && typeof item === 'object' && typeof (item as { id?: unknown }).id === 'string' && Array.isArray((item as { languages?: unknown }).languages) && (item as { languages: string[] }).languages.includes(value)),

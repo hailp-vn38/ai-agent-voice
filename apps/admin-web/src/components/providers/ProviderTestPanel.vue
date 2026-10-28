@@ -23,9 +23,22 @@ const discoveredCapabilities = ref<Record<string, unknown>>()
 const capabilities = computed(() => ({ ...props.capabilities, ...discoveredCapabilities.value }))
 function options(key: 'voices' | 'languages') {
   const values = capabilities.value?.[key]
+  const selectedModel = typeof props.draft?.config_json?.model === 'string' && props.draft.config_json.model ? props.draft.config_json.model : ''
+  const seen = new Set<string>()
   return Array.isArray(values) ? values.flatMap((item) => {
-    if (typeof item === 'string') return [{ id: item, name: item }]
-    if (item && typeof item === 'object' && typeof item.id === 'string') return [{ id: item.id as string, name: String(item.name ?? item.id) }]
+    if (typeof item === 'string') {
+      if (seen.has(item)) return []
+      seen.add(item)
+      return [{ id: item, name: item }]
+    }
+    if (item && typeof item === 'object' && typeof item.id === 'string') {
+      if (key === 'voices' && selectedModel && typeof item.model === 'string' && item.model !== selectedModel) {
+        return []
+      }
+      if (seen.has(item.id)) return []
+      seen.add(item.id)
+      return [{ id: item.id as string, name: String(item.name ?? item.id) }]
+    }
     return []
   }) : []
 }

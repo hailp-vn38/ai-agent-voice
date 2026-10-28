@@ -51,7 +51,7 @@ pub fn validate_raw(adapter: &str, raw: &str) -> Result<String, ProviderConfigEr
         "zipformer_sherpa" => canonical::<Zipformer, _>(&value, Zipformer::valid),
         "gipformer_sherpa_offline" => canonical::<Gipformer, _>(&value, Gipformer::valid),
         "zerotts_onnx" => canonical::<ZeroTts, _>(&value, ZeroTts::valid),
-        "vieneu" if value.get("model").is_none() && value.get("num_threads").is_none() => {
+        "vieneu" if value.get("num_threads").is_none() => {
             canonical::<crate::config::VieneuNativeConfig, _>(
                 &value,
                 crate::config::VieneuNativeConfig::valid_selection,

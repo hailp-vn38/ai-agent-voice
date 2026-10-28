@@ -54,3 +54,37 @@ it('filters voices by selected language and auto-selects a compatible voice when
     pitch_hz: 0,
   })
 })
+
+it('filters voices by selected model and resets voice when switching to an incompatible model', async () => {
+  const wrapper = mount(ProviderConfigEditor, {
+    props: {
+      modelValue: { model: 'vieneu_v3_turbo_fp32', voice: 'hai_dang', language: 'vi-VN' },
+      schema: {
+        fields: [
+          { key: 'model', type: 'select', enum_source: 'models' },
+          { key: 'voice', type: 'select', enum_source: 'voices' },
+        ],
+      },
+      capabilities: {
+        models: [
+          { id: 'vieneu_v3_turbo_fp32', name: 'VieNeu v3 Turbo FP32' },
+          { id: 'vieneu_v3_nano_fp32', name: 'VieNeu v3 Nano FP32' },
+        ],
+        voices: [
+          { id: 'hai_dang', name: 'Hải Đăng', model: 'vieneu_v3_turbo_fp32', languages: ['vi-VN'] },
+          { id: 'adam', name: 'Adam', model: 'vieneu_v3_turbo_fp32', languages: ['vi-VN'] },
+          { id: 'minh_quan', name: 'Minh Quân', model: 'vieneu_v3_nano_fp32', languages: ['vi-VN'] },
+          { id: 'adam', name: 'Adam', model: 'vieneu_v3_nano_fp32', languages: ['vi-VN'] },
+        ],
+      },
+    },
+  })
+  const selects = wrapper.findAll('select')
+  expect(selects[1]!.findAll('option').map((o) => o.attributes('value'))).toEqual(['', 'hai_dang', 'adam'])
+  await selects[0]!.setValue('vieneu_v3_nano_fp32')
+  expect(wrapper.emitted('update:modelValue')?.[0]?.[0]).toEqual({
+    model: 'vieneu_v3_nano_fp32',
+    voice: 'minh_quan',
+    language: 'vi-VN',
+  })
+})

@@ -461,7 +461,7 @@ impl TtsFactory for VieneuNativeFactory {
         config: &'a TtsInstanceConfig,
     ) -> Result<Option<&'a str>, ProviderLoadError> {
         match config {
-            TtsInstanceConfig::Vieneu(_) => Ok(local_model_identity(self.adapter())),
+            TtsInstanceConfig::Vieneu(options) => Ok(Some(options.model.as_str())),
             _ => Err(ProviderLoadError::Configuration(
                 "vieneu factory received another adapter config".into(),
             )),
@@ -480,13 +480,16 @@ impl TtsFactory for VieneuNativeFactory {
         };
         validate_threads(self.adapter(), runtime)?;
         let mut options = options.clone();
-        options.model = local_model_identity(self.adapter())
-            .expect("compiled local adapter")
-            .into();
+        if options.model.trim().is_empty() {
+            options.model = super::tts::vieneu::config::MODEL_ID.into();
+        }
         options.num_threads = runtime.onnx.threads_for(self.adapter());
+        let model = options.parsed_model().ok_or_else(|| {
+            ProviderLoadError::Configuration("unsupported VieNeu model selection".into())
+        })?;
         Ok(Arc::new(
             ConfiguredVieneuNative::load(
-                resolve(vieneu_assets::resolve_assets())?,
+                resolve(vieneu_assets::resolve_model_assets(model))?,
                 options,
                 &runtime.onnx.library,
             )
@@ -906,7 +909,9 @@ pub(crate) fn effective_local_config(
         ProviderLoadError::Configuration("provider config must be an object".into())
     })?;
     if let Some(model) = local_model_identity(adapter) {
-        object.insert("model".into(), model.into());
+        if adapter != "vieneu" || !object.contains_key("model") {
+            object.insert("model".into(), model.into());
+        }
         object.insert(
             "num_threads".into(),
             runtime.onnx.threads_for(adapter).into(),
