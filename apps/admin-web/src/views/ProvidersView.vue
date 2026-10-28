@@ -190,7 +190,7 @@ function saveProvider(payload: {
   description: string
   status: ProviderStatus
   endpoint?: string
-  apiKey?: string
+  apiKey?: string | null
   configJson?: Record<string, unknown>
 }) {
   if (!editingProvider.value || editingProvider.value.source === 'config') return

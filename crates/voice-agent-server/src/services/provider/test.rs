@@ -81,21 +81,24 @@ impl ProviderTestRunner<'_> {
                     .get("gateway_binding")
                     .and_then(|v| v.as_str())
                     .is_some_and(|s| !s.trim().is_empty());
-            match crate::database::credentials::reference(
-                &format!("provider:{}", saved.key),
-                record.as_deref(),
-                crate::database::secrets::provider_secret_env(&saved.key, &adapter),
-            ) {
-                Some(reference) => Some(
-                    self.secrets
-                        .resolve(
-                            &crate::database::secrets::SecretRef::parse(reference)
-                                .map_err(|_| ProviderTestError::Credential)?,
-                        )
-                        .map_err(|_| ProviderTestError::Credential)?,
-                ),
-                None if has_gateway_binding => None,
-                None => return Err(ProviderTestError::Credential),
+            if has_gateway_binding {
+                None
+            } else {
+                match crate::database::credentials::reference(
+                    &format!("provider:{}", saved.key),
+                    record.as_deref(),
+                    crate::database::secrets::provider_secret_env(&saved.key, &adapter),
+                ) {
+                    Some(reference) => Some(
+                        self.secrets
+                            .resolve(
+                                &crate::database::secrets::SecretRef::parse(reference)
+                                    .map_err(|_| ProviderTestError::Credential)?,
+                            )
+                            .map_err(|_| ProviderTestError::Credential)?,
+                    ),
+                    None => return Err(ProviderTestError::Credential),
+                }
             }
         } else {
             draft.api_key.take()

@@ -86,6 +86,8 @@ pub struct AppState {
     pub active_device_sessions: Arc<crate::services::active_device_sessions::ActiveDeviceSessions>,
     /// Router construction may be repeated in tests; only one reminder scanner belongs to state.
     pub reminder_scheduler_started: Arc<std::sync::atomic::AtomicBool>,
+    pub llm_gateway_hub: Arc<crate::services::llm_gateway::LlmGatewayHub>,
+    pub llm_gateway_refresh_started: Arc<std::sync::atomic::AtomicBool>,
     pub notification_hub: Option<Arc<crate::services::notification_hub::NotificationHub>>,
     pub(crate) system_mcp: Option<Arc<crate::tools::system_mcp::SystemMcp>>,
     pub(crate) knowledge_mcp: Arc<std::sync::OnceLock<Arc<crate::tools::knowledge_mcp::KnowledgeMcp>>>,
@@ -764,6 +766,10 @@ impl AppState {
                 Arc::clone(&secret_resolver),
             )
         });
+        let llm_gateway_hub = Arc::new(crate::services::llm_gateway::LlmGatewayHub::new(
+            database.as_ref().map(|db| db.pool().clone()),
+            Arc::clone(&secret_resolver),
+        ));
         let state = Self {
             wiki_engine: None,
             orchestrator: None,
@@ -774,6 +780,8 @@ impl AppState {
             started_at: Instant::now(),
             active_device_sessions: Arc::new(Default::default()),
             reminder_scheduler_started: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            llm_gateway_hub,
+            llm_gateway_refresh_started: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             notification_hub,
             system_mcp: None,
             knowledge_mcp: Arc::new(std::sync::OnceLock::new()),

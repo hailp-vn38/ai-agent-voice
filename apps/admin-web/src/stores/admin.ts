@@ -746,7 +746,7 @@ export const useAdminStore = defineStore('admin', () => {
     })
   }
 
-  async function updateProvider(providerId: string, patch: Partial<Omit<ProviderInstance, 'id' | 'type'>> & { apiKey?: string }) {
+  async function updateProvider(providerId: string, patch: Partial<Omit<ProviderInstance, 'id' | 'type'>> & { apiKey?: string | null }) {
     if (getProvider(providerId)?.source === 'config') return
     return run(async () => {
       const current = getProvider(providerId)

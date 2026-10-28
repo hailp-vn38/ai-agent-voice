@@ -23,8 +23,11 @@ fn provider_response(
         crate::providers::DatabaseRuntimeStatus::Unavailable => "unavailable",
         crate::providers::DatabaseRuntimeStatus::Loaded => "loaded",
     };
-    let credential_env =
-        crate::database::secrets::provider_secret_env(&provider.key, &provider.adapter);
+    let credential_env = crate::database::secrets::provider_secret_env_for_config(
+        &provider.key,
+        &provider.adapter,
+        &provider.config_json,
+    );
     let credential = crate::database::credentials::metadata(provider.credential_json.as_deref());
     let mut response = serde_json::to_value(provider).expect("Provider is serializable");
     response["credential"] = credential;
@@ -93,8 +96,11 @@ fn managed_provider_response(provider: Provider, state: &AppState) -> Value {
         RuntimeState::Failed | RuntimeState::Quarantined => "unavailable",
         _ => "not_loaded",
     };
-    let credential_env =
-        crate::database::secrets::provider_secret_env(&provider.key, &provider.adapter);
+    let credential_env = crate::database::secrets::provider_secret_env_for_config(
+        &provider.key,
+        &provider.adapter,
+        &provider.config_json,
+    );
     let credential = crate::database::credentials::metadata(provider.credential_json.as_deref());
     let mut response = serde_json::to_value(provider).expect("Provider is serializable");
     response["credential"] = credential;
@@ -166,28 +172,41 @@ pub(super) async fn create_provider(State(state): State<AppState>, request: Requ
         Err(_) => return error(&request, StatusCode::BAD_REQUEST, "provider_config_invalid"),
     };
     let provider_key = generate_provider_key(&body.kind);
-    let credential = match body.api_key {
-        Some(value) => {
-            if !crate::database::secrets::adapter_supports_credential(&body.adapter)
-                || !crate::database::credentials::valid_input(&value)
-            {
-                return error(&request, StatusCode::BAD_REQUEST, "credential_invalid");
-            }
-            match state
-                .secret_resolver
-                .seal(&value, &format!("provider:{provider_key}"))
-            {
-                Ok(record) => Some(record),
-                Err(_) => {
-                    return error(
-                        &request,
-                        StatusCode::SERVICE_UNAVAILABLE,
-                        "credential_storage_unavailable",
-                    );
+    let has_gateway_binding = body.adapter == "llm_gateway"
+        || body
+            .config_json
+            .get("gateway_binding")
+            .and_then(Value::as_str)
+            .is_some_and(|s| !s.trim().is_empty());
+    let credential = if has_gateway_binding {
+        if body.api_key.is_some() {
+            return error(&request, StatusCode::BAD_REQUEST, "credential_invalid");
+        }
+        None
+    } else {
+        match body.api_key {
+            Some(value) => {
+                if !crate::database::secrets::adapter_supports_credential(&body.adapter)
+                    || !crate::database::credentials::valid_input(&value)
+                {
+                    return error(&request, StatusCode::BAD_REQUEST, "credential_invalid");
+                }
+                match state
+                    .secret_resolver
+                    .seal(&value, &format!("provider:{provider_key}"))
+                {
+                    Ok(record) => Some(record),
+                    Err(_) => {
+                        return error(
+                            &request,
+                            StatusCode::SERVICE_UNAVAILABLE,
+                            "credential_storage_unavailable",
+                        );
+                    }
                 }
             }
+            None => None,
         }
-        None => None,
     };
     let database = match database(&state) {
         Ok(v) => v,
@@ -449,28 +468,42 @@ pub(super) async fn patch_provider(
         Ok(v) => v,
         Err(_) => return error(&request, StatusCode::BAD_REQUEST, "provider_config_invalid"),
     };
-    let credential = match body.api_key.value() {
-        Some(Some(value))
-            if crate::database::secrets::adapter_supports_credential(&adapter)
-                && crate::database::credentials::valid_input(&value) =>
-        {
-            match state
-                .secret_resolver
-                .seal(&value, &format!("provider:{key}"))
+    let has_gateway_binding = adapter == "llm_gateway"
+        || config_value
+            .get("gateway_binding")
+            .and_then(Value::as_str)
+            .is_some_and(|s| !s.trim().is_empty());
+    let credential = if has_gateway_binding {
+        match body.api_key.value() {
+            None | Some(None) => None,
+            Some(Some(_)) => return error(&request, StatusCode::BAD_REQUEST, "credential_invalid"),
+        }
+    } else {
+        match body.api_key.value() {
+            Some(Some(value))
+                if crate::database::secrets::adapter_supports_credential(&adapter)
+                    && crate::database::credentials::valid_input(&value) =>
             {
-                Ok(record) => Some(record),
-                Err(_) => {
-                    return error(
-                        &request,
-                        StatusCode::SERVICE_UNAVAILABLE,
-                        "credential_storage_unavailable",
-                    );
+                match state
+                    .secret_resolver
+                    .seal(&value, &format!("provider:{key}"))
+                {
+                    Ok(record) => Some(record),
+                    Err(_) => {
+                        return error(
+                            &request,
+                            StatusCode::SERVICE_UNAVAILABLE,
+                            "credential_storage_unavailable",
+                        );
+                    }
                 }
             }
+            Some(_) => return error(&request, StatusCode::BAD_REQUEST, "credential_invalid"),
+            None if crate::database::secrets::adapter_supports_credential(&adapter) => {
+                old_credential
+            }
+            None => None,
         }
-        Some(_) => return error(&request, StatusCode::BAD_REQUEST, "credential_invalid"),
-        None if crate::database::secrets::adapter_supports_credential(&adapter) => old_credential,
-        None => None,
     };
     let enabled = match body.enabled.value() {
         Some(Some(v)) => i64::from(v),

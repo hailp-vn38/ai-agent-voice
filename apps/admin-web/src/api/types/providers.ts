@@ -59,7 +59,7 @@ export interface CreateProviderInput {
 }
 
 export interface UpdateProviderInput {
-  api_key?: string
+  api_key?: string | null
   name?: string
   adapter?: string
   config_json?: Record<string, unknown>

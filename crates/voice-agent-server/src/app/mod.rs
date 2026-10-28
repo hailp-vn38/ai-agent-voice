@@ -86,6 +86,8 @@ pub async fn bootstrap_with_providers_and_secret_resolver(
         secret_resolver,
         lifecycle,
     );
+    crate::services::llm_gateway::SharedGatewayHub::set_global(Arc::clone(&state.llm_gateway_hub));
+    let _ = state.llm_gateway_hub.reload_snapshot().await;
     prepare_background(&mut state).await?;
     prepare_enrollment(&mut state).await?;
     Ok(router_with_state(state))
@@ -104,6 +106,20 @@ pub fn new_lifecycle_from_grace_ms(grace_ms: u64) -> Arc<RuntimeLifecycle> {
 pub fn router_with_state(mut state: AppState) -> Router {
     if let Some(ref hub) = state.notification_hub {
         hub.start_workers(state.lifecycle.stopping().clone());
+    }
+    if !state
+        .llm_gateway_refresh_started
+        .swap(true, std::sync::atomic::Ordering::AcqRel)
+        && state.database.is_some()
+    {
+        let refresh_handle = state
+            .llm_gateway_hub
+            .spawn_proactive_refresh_loop(Duration::from_secs(60), 300);
+        let stopping = state.lifecycle.stopping().clone();
+        tokio::spawn(async move {
+            stopping.cancelled().await;
+            refresh_handle.abort();
+        });
     }
     if !state
         .reminder_scheduler_started
@@ -296,6 +312,8 @@ pub async fn startup_with_lifecycle_and_secret_resolver(
         secret_resolver,
         lifecycle,
     );
+    crate::services::llm_gateway::SharedGatewayHub::set_global(Arc::clone(&state.llm_gateway_hub));
+    let _ = state.llm_gateway_hub.reload_snapshot().await;
     prepare_builtin_speaker(&mut state).await;
     prepare_background(&mut state).await?;
     prepare_enrollment(&mut state).await?;
@@ -433,6 +451,8 @@ async fn managed_startup(
         secret_resolver.clone(),
         lifecycle.clone(),
     );
+    crate::services::llm_gateway::SharedGatewayHub::set_global(Arc::clone(&state.llm_gateway_hub));
+    let _ = state.llm_gateway_hub.reload_snapshot().await;
     let builder = FactoryMaterializer::new(
         Arc::new(config.clone()),
         secret_resolver,

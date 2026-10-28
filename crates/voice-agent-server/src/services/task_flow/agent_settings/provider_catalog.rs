@@ -389,7 +389,8 @@ pub async fn resolve_llm_provider_catalog(state: &AppState) -> Vec<ResolvedLlmPr
             LlmInstanceConfig::LlmGateway(gw) => {
                 let base_url = gw.base_url.as_ref().map(ToString::to_string).unwrap_or_else(
                     || {
-                        crate::services::llm_gateway::SharedGatewayHub::global()
+                        state
+                            .llm_gateway_hub
                             .default_base_url_for_binding(&gw.gateway_binding)
                             .to_owned()
                     },
@@ -482,7 +483,8 @@ pub async fn resolve_llm_provider_catalog(state: &AppState) -> Vec<ResolvedLlmPr
                         .map(str::to_owned)
                         .or_else(|| {
                             parsed_binding.as_ref().map(|b| {
-                                crate::services::llm_gateway::SharedGatewayHub::global()
+                                state
+                                    .llm_gateway_hub
                                     .default_base_url_for_binding(b)
                                     .to_owned()
                             })
@@ -517,7 +519,8 @@ pub async fn resolve_llm_provider_catalog(state: &AppState) -> Vec<ResolvedLlmPr
                         .filter(|s| !s.is_empty())
                         .map(str::to_owned)
                         .unwrap_or_else(|| {
-                            crate::services::llm_gateway::SharedGatewayHub::global()
+                            state
+                                .llm_gateway_hub
                                 .default_base_url_for_binding(&binding)
                                 .to_owned()
                         });

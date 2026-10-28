@@ -123,6 +123,12 @@ const routes: RouteRecordRaw[] = [
     meta: { titleKey: 'nav.providers' },
   },
   {
+    path: '/llm-gateway',
+    name: 'llm-gateway',
+    component: () => import('@/pages/gateway/LlmGatewayPage.vue'),
+    meta: { titleKey: 'nav.llmGateway' },
+  },
+  {
     path: '/speakers',
     name: 'speakers',
     component: () => import('@/views/SpeakersView.vue'),

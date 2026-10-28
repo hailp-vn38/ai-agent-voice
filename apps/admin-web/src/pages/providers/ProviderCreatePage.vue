@@ -20,12 +20,15 @@ import { computed, onBeforeUnmount, reactive, ref, watch, type Component } from 
 import { useRoute, useRouter } from 'vue-router'
 
 import { formatApiError } from '@/api/errors'
+import { llmGatewayApi } from '@/api/llm-gateway'
 import { providerAdaptersApi } from '@/api/provider-adapters'
+import type { GatewayAccountView, GatewayVendorInfo } from '@/api/types/llm-gateway'
 import type { ProviderAdapter, ProviderConfigField } from '@/api/types/providers'
 import DetailHeader from '@/components/admin/DetailHeader.vue'
 import ProviderTestPanel from '@/components/providers/ProviderTestPanel.vue'
 import { Button } from '@/components/ui/button'
 import { useI18n } from '@/composables/useI18n'
+import OAuthLoginModal from '@/pages/gateway/OAuthLoginModal.vue'
 import { useAdminStore } from '@/stores/admin'
 
 const route = useRoute()
@@ -87,6 +90,22 @@ const ADAPTER_CATALOG_META: Record<string, AdapterPresentation> = {
     placeholders: {
       base_url: 'https://api.openai.com/v1',
       model: 'gpt-4.1-mini',
+      timeout_ms: '60000',
+    },
+  },
+  llm_gateway: {
+    name: 'LLM Gateway (OAuth Account / Pool)',
+    detail: 'OAuth 2.0 PKCE / Device Code · Claude, Codex, Gemini, Copilot',
+    mode: 'Cloud',
+    cap: ['Streaming', 'Tool calling'],
+    defaults: {
+      gateway_binding: 'pool:anthropic',
+      model: 'claude-sonnet-4-20250514',
+      timeout_ms: 60000,
+    },
+    placeholders: {
+      model: 'claude-sonnet-4-20250514 / gpt-4.1-mini / gemini-2.5-pro',
+      gateway_binding: 'pool:anthropic',
       timeout_ms: '60000',
     },
   },
@@ -252,14 +271,112 @@ const form = reactive({
 let requestVersion = 0
 let copyTimer: ReturnType<typeof setTimeout> | undefined
 
+type AuthSourceMode = 'static_api_key' | 'gateway_account' | 'gateway_pool'
+
+const authSource = ref<AuthSourceMode>('static_api_key')
+const gatewayVendors = ref<GatewayVendorInfo[]>([])
+const gatewayAccounts = ref<GatewayAccountView[]>([])
+const gatewayLoginOpen = ref(false)
+
+const supportsGatewayBinding = computed(() => {
+  const id = descriptor.value?.adapter || selectedAdapterId.value
+  return id === 'openai' || id === 'llm_gateway'
+})
+
+async function loadGatewayOptions() {
+  try {
+    const [vendorRes, accountRes] = await Promise.all([
+      llmGatewayApi.listVendors(),
+      llmGatewayApi.listAccounts(),
+    ])
+    gatewayVendors.value = vendorRes.vendors
+    gatewayAccounts.value = accountRes.accounts
+  } catch {
+    /* Gateway metadata is optional until user selects gateway binding. */
+  }
+}
+
+function applyDefaultBaseUrlForBinding(binding: string) {
+  if (!fields.value.some((f) => f.key === 'base_url')) return
+  const currentBaseUrl = typeof form.config.base_url === 'string' ? form.config.base_url.trim() : ''
+  if (currentBaseUrl) return
+  let vendorId = ''
+  if (binding.startsWith('account:')) {
+    const key = binding.slice('account:'.length)
+    vendorId = gatewayAccounts.value.find((a) => a.account_key === key)?.vendor ?? ''
+  } else if (binding.startsWith('pool:')) {
+    vendorId = binding.slice('pool:'.length)
+  }
+  const vendorInfo = gatewayVendors.value.find((v) => v.vendor === vendorId)
+  if (vendorInfo?.default_base_url) {
+    form.config.base_url = vendorInfo.default_base_url
+  }
+}
+
+function updateGatewayBinding(binding: string) {
+  errorMessage.value = ''
+  if (!binding) {
+    delete form.config.gateway_binding
+    return
+  }
+  form.config.gateway_binding = binding
+  applyDefaultBaseUrlForBinding(binding)
+}
+
+function setAuthSource(mode: AuthSourceMode) {
+  authSource.value = mode
+  errorMessage.value = ''
+  if (mode === 'static_api_key') {
+    delete form.config.gateway_binding
+    return
+  }
+  form.apiKey = ''
+  if (mode === 'gateway_pool') {
+    const current = typeof form.config.gateway_binding === 'string' ? form.config.gateway_binding : ''
+    const nextBinding = current.startsWith('pool:')
+      ? current
+      : (gatewayVendors.value[0]?.pool_binding ?? 'pool:openai_codex')
+    updateGatewayBinding(nextBinding)
+  } else if (mode === 'gateway_account') {
+    const current = typeof form.config.gateway_binding === 'string' ? form.config.gateway_binding : ''
+    const firstKey = gatewayAccounts.value[0]?.account_key
+    const nextBinding = current.startsWith('account:')
+      ? current
+      : firstKey
+        ? `account:${firstKey}`
+        : ''
+    updateGatewayBinding(nextBinding)
+  }
+}
+
+function onGatewayOAuthCompleted(account: GatewayAccountView) {
+  void loadGatewayOptions().then(() => {
+    if (authSource.value === 'gateway_account') {
+      updateGatewayBinding(`account:${account.account_key}`)
+    } else if (authSource.value === 'gateway_pool') {
+      updateGatewayBinding(`pool:${account.vendor}`)
+    }
+  })
+}
+
 const fields = computed<ProviderConfigField[]>(() => descriptor.value?.config_schema?.fields ?? [])
 
 function isAdvancedField(field: ProviderConfigField): boolean {
   return Boolean(field.advanced) || (!field.required && ADVANCED_FIELD_KEYS.has(field.key))
 }
 
-const regularFields = computed(() => fields.value.filter((field) => !isAdvancedField(field)))
-const advancedFields = computed(() => fields.value.filter((field) => isAdvancedField(field)))
+const regularFields = computed(() =>
+  fields.value.filter(
+    (field) =>
+      !isAdvancedField(field) && !(supportsGatewayBinding.value && field.key === 'gateway_binding'),
+  ),
+)
+const advancedFields = computed(() =>
+  fields.value.filter(
+    (field) =>
+      isAdvancedField(field) && !(supportsGatewayBinding.value && field.key === 'gateway_binding'),
+  ),
+)
 
 const cleanConfig = computed(() =>
   Object.fromEntries(
@@ -328,6 +445,9 @@ const chosenExecutionLabel = computed(() =>
 
 const supportsApiKey = computed(() => {
   const id = descriptor.value?.adapter || selectedAdapterId.value
+  if (supportsGatewayBinding.value && authSource.value !== 'static_api_key') {
+    return false
+  }
   return Boolean(
     descriptor.value?.secret_ref ||
       ADAPTER_CATALOG_META[id]?.apiKey ||
@@ -368,6 +488,14 @@ function applyAdapterDefaults(adapterId: string, schemaFields: ProviderConfigFie
     }
   }
   form.config = nextConfig
+  if (adapterId === 'llm_gateway') {
+    authSource.value = 'gateway_pool'
+    if (!form.config.gateway_binding) {
+      form.config.gateway_binding = gatewayVendors.value[0]?.pool_binding ?? 'pool:anthropic'
+    }
+  } else {
+    authSource.value = 'static_api_key'
+  }
 }
 
 function invalidatePendingRequests() {
@@ -560,11 +688,22 @@ async function discover() {
   }
 }
 
+function isFieldRequired(field: ProviderConfigField): boolean {
+  if (
+    field.key === 'base_url' &&
+    supportsGatewayBinding.value &&
+    authSource.value !== 'static_api_key'
+  ) {
+    return false
+  }
+  return Boolean(field.required)
+}
+
 function validateField(field: ProviderConfigField): string {
   const value = form.config[field.key]
   const label = fieldLabel(field)
   if (
-    field.required &&
+    isFieldRequired(field) &&
     (value === undefined ||
       value === null ||
       value === '' ||
@@ -609,6 +748,13 @@ const configurationError = computed<string>(() => {
   const trimmedName = form.name.trim()
   if (!trimmedName) return 'Bạn cần nhập tên hiển thị.'
   if (trimmedName.length > 128) return 'Tên hiển thị tối đa 128 ký tự.'
+  if (
+    supportsGatewayBinding.value &&
+    authSource.value !== 'static_api_key' &&
+    (!form.config.gateway_binding || !String(form.config.gateway_binding).trim())
+  ) {
+    return t('llmGateway.auth.bindingRequired')
+  }
   for (const field of fields.value) {
     const fieldError = validateField(field)
     if (fieldError) return fieldError
@@ -647,6 +793,13 @@ function validateConfiguration(): string {
   const trimmedName = form.name.trim()
   if (!trimmedName) return 'Bạn cần nhập tên hiển thị.'
   if (trimmedName.length > 128) return 'Tên hiển thị tối đa 128 ký tự.'
+  if (
+    supportsGatewayBinding.value &&
+    authSource.value !== 'static_api_key' &&
+    (!form.config.gateway_binding || !String(form.config.gateway_binding).trim())
+  ) {
+    return t('llmGateway.auth.bindingRequired')
+  }
   for (const field of fields.value) {
     const fieldError = validateField(field)
     if (fieldError) {
@@ -851,6 +1004,7 @@ onBeforeUnmount(() => {
 })
 
 void loadAdapters(true)
+void loadGatewayOptions()
 </script>
 
 <template>
@@ -1028,7 +1182,7 @@ void loadAdapters(true)
               >
                 <span>
                   {{ fieldLabel(field) }}
-                  <b v-if="field.required" class="req">*</b>
+                  <b v-if="isFieldRequired(field)" class="req">*</b>
                 </span>
 
                 <div
@@ -1100,9 +1254,103 @@ void loadAdapters(true)
                 <small v-else-if="field.description">{{ field.description }}</small>
               </label>
 
-              <div v-if="!regularFields.length" class="full note flex gap8">
+              <div v-if="!regularFields.length && !supportsGatewayBinding" class="full note flex gap8">
                 <Check class="size-[17px] shrink-0 text-success" aria-hidden="true" />
                 <span>Adapter này không yêu cầu tham số cấu hình bổ sung.</span>
+              </div>
+
+              <!-- Authentication Source Selector for openai / llm_gateway -->
+              <div v-if="supportsGatewayBinding" class="form-label full">
+                <span>{{ t('llmGateway.auth.title') }} <b class="req">*</b></span>
+                <div class="flex gap6" style="flex-wrap: wrap">
+                  <button
+                    v-if="(descriptor?.adapter || selectedAdapterId) === 'openai'"
+                    type="button"
+                    class="type-pill"
+                    :class="{ active: authSource === 'static_api_key' }"
+                    @click="setAuthSource('static_api_key')"
+                  >
+                    {{ t('llmGateway.auth.staticApiKey') }}
+                  </button>
+                  <button
+                    type="button"
+                    class="type-pill"
+                    :class="{ active: authSource === 'gateway_account' }"
+                    @click="setAuthSource('gateway_account')"
+                  >
+                    {{ t('llmGateway.auth.gatewayAccount') }}
+                  </button>
+                  <button
+                    type="button"
+                    class="type-pill"
+                    :class="{ active: authSource === 'gateway_pool' }"
+                    @click="setAuthSource('gateway_pool')"
+                  >
+                    {{ t('llmGateway.auth.gatewayPool') }}
+                  </button>
+                </div>
+
+                <div v-if="authSource === 'gateway_account'" class="mt12 space-y-2">
+                  <div class="flex gap8" style="align-items: center; flex-wrap: wrap">
+                    <select
+                      class="select"
+                      style="flex: 1; min-width: 240px"
+                      data-field="gateway_binding"
+                      :value="String(form.config.gateway_binding ?? '')"
+                      @change="updateGatewayBinding(($event.target as HTMLSelectElement).value)"
+                    >
+                      <option value="">{{ t('llmGateway.auth.selectAccount') }}</option>
+                      <option
+                        v-for="acc in gatewayAccounts"
+                        :key="acc.account_key"
+                        :value="`account:${acc.account_key}`"
+                      >
+                        {{ acc.label }} ({{ acc.vendor }} — {{ acc.account_email || acc.account_key }})
+                      </option>
+                    </select>
+                    <button
+                      type="button"
+                      class="btn btn-sm"
+                      @click="gatewayLoginOpen = true"
+                    >
+                      {{ t('llmGateway.auth.loginNew') }}
+                    </button>
+                  </div>
+                  <small>
+                    {{ t('llmGateway.auth.accountHint') }}
+                  </small>
+                </div>
+
+                <div v-else-if="authSource === 'gateway_pool'" class="mt12 space-y-2">
+                  <div class="flex gap8" style="align-items: center; flex-wrap: wrap">
+                    <select
+                      class="select"
+                      style="flex: 1; min-width: 240px"
+                      data-field="gateway_binding"
+                      :value="String(form.config.gateway_binding ?? '')"
+                      @change="updateGatewayBinding(($event.target as HTMLSelectElement).value)"
+                    >
+                      <option value="">{{ t('llmGateway.auth.selectPool') }}</option>
+                      <option
+                        v-for="v in gatewayVendors"
+                        :key="v.vendor"
+                        :value="v.pool_binding"
+                      >
+                        {{ v.display_name }} ({{ v.pool_binding }} — {{ v.active_accounts }}/{{ v.total_accounts }} active)
+                      </option>
+                    </select>
+                    <button
+                      type="button"
+                      class="btn btn-sm"
+                      @click="gatewayLoginOpen = true"
+                    >
+                      {{ t('llmGateway.auth.addToPool') }}
+                    </button>
+                  </div>
+                  <small>
+                    {{ t('llmGateway.auth.poolHint') }}
+                  </small>
+                </div>
               </div>
 
               <label v-if="supportsApiKey" class="form-label full">
@@ -1431,6 +1679,12 @@ void loadAdapters(true)
         </div>
       </aside>
     </div>
+
+    <OAuthLoginModal
+      v-model="gatewayLoginOpen"
+      :vendors="gatewayVendors"
+      @completed="onGatewayOAuthCompleted"
+    />
   </div>
 </template>
 

@@ -3,6 +3,7 @@
 mod background;
 mod knowledge;
 mod knowledge_processing;
+mod llm_gateway;
 mod notification_hub;
 mod notifications;
 mod system_mcp;
@@ -346,6 +347,37 @@ pub(super) fn router(state: AppState) -> Router<AppState> {
             "/provider-adapters/{adapter}/capabilities/discover",
             axum::routing::post(discover_provider_capabilities),
         )
+        .route("/llm-gateway/vendors", get(llm_gateway::list_vendors))
+        .route("/llm-gateway/accounts", get(llm_gateway::list_accounts))
+        .route(
+            "/llm-gateway/oauth/start",
+            axum::routing::post(llm_gateway::start_oauth),
+        )
+        .route(
+            "/llm-gateway/oauth/callback",
+            get(llm_gateway::oauth_callback),
+        )
+        .route(
+            "/llm-gateway/oauth/sessions/{session_id}/complete",
+            axum::routing::post(llm_gateway::complete_oauth_session),
+        )
+        .route(
+            "/llm-gateway/oauth/sessions/{session_id}/poll",
+            axum::routing::post(llm_gateway::poll_oauth_session),
+        )
+        .route(
+            "/llm-gateway/accounts/{account_key}/refresh",
+            axum::routing::post(llm_gateway::refresh_account),
+        )
+        .route(
+            "/llm-gateway/accounts/{account_key}/clear-cooldown",
+            axum::routing::post(llm_gateway::clear_account_cooldown),
+        )
+        .route(
+            "/llm-gateway/accounts/{account_key}",
+            axum::routing::patch(llm_gateway::patch_account)
+                .delete(llm_gateway::delete_account),
+        )
         .route(
             "/mcp-servers",
             get(list_mcp_servers).post(create_mcp_server),
@@ -528,6 +560,11 @@ async fn request_id(mut request: Request, next: Next) -> Response {
 }
 
 async fn authenticate(State(state): State<AppState>, request: Request, next: Next) -> Response {
+    if request.method() == http::Method::GET
+        && request.uri().path().ends_with("/llm-gateway/oauth/callback")
+    {
+        return next.run(request).await;
+    }
     let valid = request
         .headers()
         .get_all(header::AUTHORIZATION)

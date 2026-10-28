@@ -199,17 +199,25 @@ function save(payload: {
   description: string
   status: ProviderStatus
   endpoint?: string
-  apiKey?: string
+  apiKey?: string | null
   configJson?: Record<string, unknown>
 }) {
   if (!provider.value || isConfigProvider.value) return
   const current = provider.value
+  const nextConfig = payload.configJson ?? config.value
+  const hasGatewayBinding =
+    payload.adapter === 'llm_gateway' ||
+    (typeof nextConfig.gateway_binding === 'string' && nextConfig.gateway_binding.trim().length > 0)
   void mutate(() => providersApi.update(current.key, {
     name: payload.name,
     adapter: payload.adapter,
-    config_json: payload.configJson ?? config.value,
+    config_json: nextConfig,
     enabled: payload.status !== 'disabled',
-    ...(payload.apiKey ? { api_key: payload.apiKey } : {}),
+    ...(hasGatewayBinding || payload.apiKey === null
+      ? { api_key: null }
+      : payload.apiKey
+        ? { api_key: payload.apiKey }
+        : {}),
   }, current.revision))
 }
 async function remove() {
@@ -404,6 +412,15 @@ onBeforeUnmount(() => {
               <div v-if="endpoint" class="grid grid-cols-[110px_minmax(0,1fr)] gap-3">
                 <dt class="text-xs text-muted-foreground">{{ t('providers.endpoint') }}</dt>
                 <dd class="break-all font-mono text-xs">{{ endpoint }}</dd>
+              </div>
+              <div v-if="stringConfig('gateway_binding')" class="grid grid-cols-[110px_minmax(0,1fr)] gap-3">
+                <dt class="text-xs text-muted-foreground">{{ t('llmGateway.auth.title') }}</dt>
+                <dd class="flex flex-wrap items-center gap-2 font-mono text-xs">
+                  <Badge variant="outline">{{ stringConfig('gateway_binding') }}</Badge>
+                  <RouterLink to="/llm-gateway" class="text-studio-violet hover:underline">
+                    {{ t('llmGateway.auth.managePools') }}
+                  </RouterLink>
+                </dd>
               </div>
               <div v-for="field in configFields" :key="field.key" class="grid grid-cols-[110px_minmax(0,1fr)] gap-3">
                 <dt class="break-words text-xs text-muted-foreground">{{ field.label }}</dt>

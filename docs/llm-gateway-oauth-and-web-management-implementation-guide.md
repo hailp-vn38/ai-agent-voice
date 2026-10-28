@@ -553,23 +553,23 @@ Khi tạo hoặc chỉnh sửa LLM Provider (`llm_gateway` hoặc `openai`):
 | `crates/voice-agent-server/src/providers/{registry,factory_registry,database_loader}.rs` | **Cập nhật** | ✅ Đã xong (Bước 2) | Đăng ký `LlmGatewayFactory` & `llm::gateway::REGISTRATION`; cho phép nạp provider `"llm_gateway"` và `"openai"` có `gateway_binding` không cần `secret_ref` tĩnh. |
 | `crates/voice-agent-server/src/services/provider/{test,diagnostic}.rs` | **Cập nhật** | ✅ Đã xong (Bước 2) | Cập nhật `ProviderTestRunner::credential` và `diagnostic.rs` để hỗ trợ chạy Diagnostic trên `"llm_gateway"` và provider `"openai"` có `gateway_binding`. |
 | `crates/voice-agent-server/src/services/task_flow/agent_settings/provider_catalog.rs` | **Cập nhật** | ✅ Đã xong (Bước 2) | Ánh xạ provider `"llm_gateway"` và `"openai"` có `gateway_binding` (từ cả `config.toml` và bảng `providers`) sang `ResolvedLlmProvider`, `to_llm_provider()` và `to_orchestrator_provider()`. |
-| `crates/voice-agent-server/src/app/admin/providers.rs` | **Cập nhật** | ⏳ Bước 4 | Hỗ trợ tạo/sửa `"llm_gateway"` và xoá `old_credential` khi chuyển sang `gateway_binding`. |
+| `crates/voice-agent-server/src/app/admin/providers.rs` | **Cập nhật** | ✅ Đã xong (Bước 4) | Hỗ trợ tạo/sửa `"llm_gateway"` và xoá `old_credential` khi chuyển sang `gateway_binding`, dùng `provider_secret_env_for_config()`. |
 | `../orchestrator_agent_rs/src/{config.rs,gateway/client.rs}` | **Cập nhật** | ✅ Đã xong (Bước 3) | Bổ sung `ProviderAuth::CustomExecutor(Arc<dyn CustomModelExecutor>)` để gọi qua `LlmGatewayProvider` trên từng turn của `Orchestrator`. |
-| `crates/voice-agent-server/src/app/admin/llm_gateway.rs` | **Mới** | ⏳ Bước 4 | Các HTTP handler cho `/api/admin/llm-gateway/*`. |
-| `crates/voice-agent-server/src/app/{mod.rs,admin/mod.rs}` | **Cập nhật** | ⏳ Bước 4 | Khởi tạo `LlmGatewayHub`, đăng ký `SharedGatewayHub::set_global`, bật `spawn_proactive_refresh_loop` và mount routes `/api/admin/llm-gateway/*`. |
+| `crates/voice-agent-server/src/app/admin/llm_gateway.rs` | **Mới** | ✅ Đã xong (Bước 4) | Các HTTP handler cho 10 routes `/api/admin/llm-gateway/*` và bộ kiểm thử tích hợp `admin_llm_gateway_routes_and_provider_binding_lifecycle`. |
+| `crates/voice-agent-server/src/app/{state.rs,mod.rs,admin/mod.rs}` | **Cập nhật** | ✅ Đã xong (Bước 4) | Khởi tạo `LlmGatewayHub`, đăng ký `SharedGatewayHub::set_global`, nạp `reload_snapshot()` lúc khởi động, bật `spawn_proactive_refresh_loop` và mount routes `/api/admin/llm-gateway/*`. |
 
 ### 8.2. Phía Web (`apps/admin-web`)
 
-| File | Loại thay đổi | Mô tả chi tiết |
-| :--- | :--- | :--- |
-| `src/api/types/llm-gateway.ts` | **Mới** | Định nghĩa kiểu TypeScript cho `GatewayVendor`, `GatewayAccountView`, `OAuthLoginChallenge`, `OAuthPollStatus`. |
-| `src/api/llm-gateway.ts` | **Mới** | Các hàm HTTP client gọi `/api/admin/llm-gateway/*`. |
-| `src/pages/gateway/LlmGatewayPage.vue` | **Mới** | Trang quản lý tài khoản OAuth `/llm-gateway`. |
-| `src/pages/gateway/OAuthLoginModal.vue` | **Mới** | Modal đăng nhập trình duyệt (PKCE Popup + Paste Callback URL + GitHub Device Code). |
-| `src/pages/providers/ProviderCreatePage.vue` | **Cập nhật** | Thêm tuỳ chọn chọn `OAuth Gateway Account` hoặc `OAuth Gateway Pool` khi tạo LLM Provider. |
-| `src/pages/providers/ProviderDetailPage.vue` | **Cập nhật** | Hiển thị và cho phép đổi `gateway_binding` trên trang chi tiết Provider. |
-| `src/config/navigation.ts` & `src/router/index.ts` | **Cập nhật** | Thêm mục điều hướng `nav.llmGateway` và route `/llm-gateway`. |
-| `src/i18n/messages.ts` | **Cập nhật** | Bổ sung từ điển đa ngôn ngữ cho trang `/llm-gateway` và phần chọn Gateway Binding. |
+| File | Loại thay đổi | Trạng thái | Mô tả chi tiết |
+| :--- | :--- | :--- | :--- |
+| `src/api/types/llm-gateway.ts` | **Mới** | ✅ Đã xong (Bước 5) | Định nghĩa kiểu TypeScript cho `GatewayVendor`, `GatewayAccountView`, `OAuthLoginChallenge`, `OAuthPollStatus`. |
+| `src/api/llm-gateway.ts` | **Mới** | ✅ Đã xong (Bước 5) | Các hàm HTTP client gọi `/api/admin/llm-gateway/*`. |
+| `src/pages/gateway/LlmGatewayPage.vue` | **Mới** | ✅ Đã xong (Bước 5) | Trang quản lý tài khoản OAuth `/llm-gateway` (Vendor Pool Cards + Accounts Table + Cooldown/Refresh/Edit/Delete). |
+| `src/pages/gateway/OAuthLoginModal.vue` | **Mới** | ✅ Đã xong (Bước 5) | Modal đăng nhập trình duyệt (PKCE Popup + Paste Callback URL + GitHub Device Code). |
+| `src/pages/providers/ProviderCreatePage.vue` | **Cập nhật** | ✅ Đã xong (Bước 5) | Thêm adapter `llm_gateway` và bộ chọn `Authentication Source` (`Static API Key` / `OAuth Gateway Account` / `OAuth Gateway Pool`). |
+| `src/pages/providers/ProviderDetailPage.vue` & `src/components/admin/ProviderFormModal.vue` | **Cập nhật** | ✅ Đã xong (Bước 5) | Hiển thị và cho phép đổi `gateway_binding`, tự động gửi `api_key: null` khi chuyển sang OAuth Gateway. |
+| `src/config/navigation.ts` & `src/router/index.ts` | **Cập nhật** | ✅ Đã xong (Bước 5) | Thêm mục điều hướng `nav.llmGateway` và route `/llm-gateway`. |
+| `src/i18n/messages.ts` | **Cập nhật** | ✅ Đã xong (Bước 5) | Bổ sung từ điển đa ngôn ngữ cho trang `/llm-gateway`. |
 
 ### 8.3. Tài liệu Domain (`GLOSSARY.md`, `CONTEXT.md` & `docs/adr/`)
 
@@ -629,6 +629,6 @@ Khi tạo hoặc chỉnh sửa LLM Provider (`llm_gateway` hoặc `openai`):
 - [x] **Bước 1 (Database & Deep Module `services::llm_gateway` — ĐÃ HOÀN THÀNH)**: Thêm migration `0138_llm_gateway_accounts.sql`, cài đặt `LlmGatewayHub` với `SecretResolver::seal`/`resolve`, In-RAM `GatewayRuntimeSnapshot`, `oauth_flow.rs`, 4 vendor drivers (`anthropic`, `openai_codex`, `gemini`, `github_copilot`) và `services/llm_gateway/tests.rs` (3/3 PASS).
 - [x] **Bước 2 (Deep Module `providers::llm::gateway` & OpenAI Gateway Binding — ĐÃ HOÀN THÀNH)**: Cài đặt `LlmGatewayProvider` (`wire_openai.rs` + `wire_anthropic.rs`), đăng ký vào `config/providers.rs`, `config/validation.rs`, `database/providers/{config,mod}.rs`, `database/security/secrets.rs`, `providers/{registry,factory_registry,database_loader}.rs`, `services/provider/{test,diagnostic}.rs`, `services/task_flow/agent_settings/provider_catalog.rs` và `providers/llm/gateway/tests.rs` (2/2 PASS, `provider_registry` 8/8 PASS, `provider_materializer` 18/18 PASS).
 - [x] **Bước 3 (Orchestrator Dynamic Executor Bridge — ĐÃ HOÀN THÀNH)**: Bổ sung `CustomModelExecutor` & `ProviderAuth::CustomExecutor` trong `orchestrator_agent_rs`, cài đặt `GatewayOrchestratorExecutor` trong `services/task_flow/agent_settings/provider_catalog.rs`, và kiểm thử `llm_gateway_provider_diagnostic_and_orchestrator_custom_executor` (`providers/llm/gateway/tests.rs` 3/3 PASS, `orchestrator_agent_rs` 65/65 PASS).
-- [ ] **Bước 4 (Admin HTTP Adapters & Startup Wiring)**: Tạo `app/admin/llm_gateway.rs`, cập nhật `app/admin/providers.rs` (hỗ trợ xoá `old_credential` khi chuyển sang `gateway_binding`) và mount vào `app/admin/mod.rs` + `app/mod.rs`.
-- [ ] **Bước 5 (Web UI `/llm-gateway` & Mapping `/providers`)**: Xây dựng `LlmGatewayPage.vue`, `OAuthLoginModal.vue`, và tích hợp bộ chọn `Gateway Binding` vào `ProviderCreatePage.vue` / `ProviderDetailPage.vue`.
+- [x] **Bước 4 (Admin HTTP Adapters & Startup Wiring — ĐÃ HOÀN THÀNH)**: Tạo `app/admin/llm_gateway.rs` với đầy đủ 10 routes `/api/admin/llm-gateway/*`, cập nhật `app/admin/providers.rs` (hỗ trợ xoá `old_credential` khi chuyển sang `gateway_binding`, dùng `provider_secret_env_for_config`), khởi tạo `LlmGatewayHub` trong `app/state.rs`, nạp `reload_snapshot()` và `spawn_proactive_refresh_loop` trong `app/mod.rs`, mount vào `app/admin/mod.rs` (`admin_llm_gateway_routes_and_provider_binding_lifecycle` PASS).
+- [x] **Bước 5 (Web UI `/llm-gateway` & Mapping `/providers` — ĐÃ HOÀN THÀNH)**: Xây dựng `src/api/types/llm-gateway.ts`, `src/api/llm-gateway.ts`, `LlmGatewayPage.vue`, `OAuthLoginModal.vue`, tích hợp bộ chọn `Authentication Source` / `Gateway Binding` vào `ProviderCreatePage.vue`, `ProviderDetailPage.vue` & `ProviderFormModal.vue`, cập nhật `navigation.ts`, `router/index.ts`, `i18n/messages.ts` (`web build` PASS, `web test` 373/373 PASS).
 - [x] **Bước 6 (Domain Docs & ADR — ĐÃ HOÀN THÀNH)**: Cập nhật `GLOSSARY.md`, `CONTEXT.md`, `docs/adr/0083-admin-managed-resource-credentials.md` và tạo mới `docs/adr/0130-internal-llm-gateway-oauth-account-pools.md`.

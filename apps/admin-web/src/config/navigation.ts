@@ -1,4 +1,4 @@
-import { BookOpen, Bot, Boxes, Brain, ClipboardList, Cpu, FolderOpen, LayoutDashboard, LayoutTemplate, Mic, Server, Workflow } from '@lucide/vue'
+import { BookOpen, Bot, Boxes, Brain, ClipboardList, Cpu, FolderOpen, KeyRound, LayoutDashboard, LayoutTemplate, Mic, Server, Workflow } from '@lucide/vue'
 
 import type { MessageKey } from '@/i18n/messages'
 
@@ -26,6 +26,7 @@ export const navigationGroups = [
     label: 'nav.group.infrastructure',
     items: [
       { label: 'nav.providers', to: '/providers', icon: Boxes },
+      { label: 'nav.llmGateway', to: '/llm-gateway', icon: KeyRound },
       { label: 'nav.mcp', to: '/mcp', icon: Workflow },
       { label: 'nav.system', to: '/system', icon: Server },
     ],

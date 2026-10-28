@@ -298,6 +298,7 @@ pub struct GatewayAccountView {
 #[derive(Debug, Clone, Deserialize)]
 pub struct StartOAuthLoginRequest {
     pub vendor: GatewayVendor,
+    #[serde(alias = "display_name")]
     pub label: String,
     #[serde(default)]
     pub redirect_uri: Option<String>,
@@ -332,6 +333,7 @@ pub enum OAuthPollStatus {
 
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct UpdateGatewayAccountPatch {
+    #[serde(alias = "display_name")]
     pub label: Option<String>,
     pub enabled: Option<bool>,
     pub priority: Option<i64>,
@@ -367,7 +369,7 @@ pub enum GatewayError {
     OAuthCallbackInvalid,
     #[error("oauth_exchange_failed: {0}")]
     OAuthExchangeFailed(String),
-    #[error("account_in_use_by_providers")]
+    #[error("gateway_account_in_use")]
     AccountInUse(Vec<String>),
     #[error("database_unavailable")]
     DatabaseUnavailable,
@@ -392,7 +394,7 @@ impl GatewayError {
             Self::OAuthStateMismatch => "oauth_state_mismatch",
             Self::OAuthCallbackInvalid => "oauth_callback_invalid",
             Self::OAuthExchangeFailed(_) => "oauth_exchange_failed",
-            Self::AccountInUse(_) => "account_in_use_by_providers",
+            Self::AccountInUse(_) => "gateway_account_in_use",
             Self::DatabaseUnavailable => "database_unavailable",
             Self::ValidationFailed => "validation_failed",
         }

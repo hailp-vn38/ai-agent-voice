@@ -2,7 +2,9 @@
 import { TriangleAlert } from '@lucide/vue'
 import { computed, reactive, ref, useId, watch } from 'vue'
 
+import { llmGatewayApi } from '@/api/llm-gateway'
 import { providerAdaptersApi } from '@/api/provider-adapters'
+import type { GatewayAccountView, GatewayVendorInfo } from '@/api/types/llm-gateway'
 import type { ProviderAdapter } from '@/api/types/providers'
 import ProviderConfigEditor from '@/components/providers/ProviderConfigEditor.vue'
 import ProviderTestPanel from '@/components/providers/ProviderTestPanel.vue'
@@ -33,7 +35,7 @@ const isReadOnly = computed(() => props.provider?.source === 'config')
 
 const open = defineModel<boolean>({ required: true })
 const emit = defineEmits<{
-  save: [payload: { name: string; type: ProviderType; adapter: string; model: string; description: string; status: ProviderStatus; endpoint?: string; apiKey?: string; configJson?: Record<string, unknown> }]
+  save: [payload: { name: string; type: ProviderType; adapter: string; model: string; description: string; status: ProviderStatus; endpoint?: string; apiKey?: string | null; configJson?: Record<string, unknown> }]
 }>()
 
 const { t, providerTypeLabel } = useI18n()
@@ -42,6 +44,89 @@ const descriptor = ref<ProviderAdapter>()
 const configError = ref('')
 let descriptorVersion = 0
 const adapterListId = useId()
+
+type AuthSourceMode = 'static_api_key' | 'gateway_account' | 'gateway_pool'
+const authSource = ref<AuthSourceMode>('static_api_key')
+const gatewayVendors = ref<GatewayVendorInfo[]>([])
+const gatewayAccounts = ref<GatewayAccountView[]>([])
+
+const supportsGatewayBinding = computed(
+  () => form.adapter === 'openai' || form.adapter === 'llm_gateway',
+)
+
+const filteredSchema = computed(() => {
+  if (!descriptor.value?.config_schema) return undefined
+  if (!supportsGatewayBinding.value) return descriptor.value.config_schema
+  return {
+    ...descriptor.value.config_schema,
+    fields: (descriptor.value.config_schema.fields ?? []).filter(
+      (f) => f.key !== 'gateway_binding',
+    ),
+  }
+})
+
+async function loadGatewayData() {
+  try {
+    const [vendorRes, accountRes] = await Promise.all([
+      llmGatewayApi.listVendors(),
+      llmGatewayApi.listAccounts(),
+    ])
+    gatewayVendors.value = vendorRes.vendors
+    gatewayAccounts.value = accountRes.accounts
+  } catch {
+    /* Optional gateway lookup. */
+  }
+}
+
+function updateGatewayBinding(binding: string) {
+  if (isReadOnly.value) return
+  configError.value = ''
+  const next = { ...form.configJson }
+  if (!binding) {
+    delete next.gateway_binding
+    form.configJson = next
+    return
+  }
+  next.gateway_binding = binding
+  if (form.adapter === 'openai') {
+    const currentBaseUrl = typeof next.base_url === 'string' ? next.base_url.trim() : ''
+    if (!currentBaseUrl) {
+      let vendorId = ''
+      if (binding.startsWith('account:')) {
+        const key = binding.slice('account:'.length)
+        vendorId = gatewayAccounts.value.find((a) => a.account_key === key)?.vendor ?? ''
+      } else if (binding.startsWith('pool:')) {
+        vendorId = binding.slice('pool:'.length)
+      }
+      const vendorInfo = gatewayVendors.value.find((v) => v.vendor === vendorId)
+      if (vendorInfo?.default_base_url) {
+        next.base_url = vendorInfo.default_base_url
+      }
+    }
+  }
+  form.configJson = next
+}
+
+function setAuthSource(mode: AuthSourceMode) {
+  if (isReadOnly.value) return
+  authSource.value = mode
+  configError.value = ''
+  if (mode === 'static_api_key') {
+    const next = { ...form.configJson }
+    delete next.gateway_binding
+    form.configJson = next
+    return
+  }
+  form.apiKey = ''
+  const current =
+    typeof form.configJson.gateway_binding === 'string' ? form.configJson.gateway_binding : ''
+  if (mode === 'gateway_pool' && !current.startsWith('pool:')) {
+    updateGatewayBinding(gatewayVendors.value[0]?.pool_binding ?? 'pool:openai_codex')
+  } else if (mode === 'gateway_account' && !current.startsWith('account:')) {
+    const firstKey = gatewayAccounts.value[0]?.account_key
+    updateGatewayBinding(firstKey ? `account:${firstKey}` : '')
+  }
+}
 
 const form = reactive({
   name: '',
@@ -99,6 +184,20 @@ watch(
     form.status = props.provider?.status ?? 'ready'
     form.endpoint = props.provider?.endpoint ?? ''
     form.configJson = { ...props.provider?.configJson }
+    const binding =
+      typeof form.configJson.gateway_binding === 'string'
+        ? form.configJson.gateway_binding.trim()
+        : ''
+    if (binding.startsWith('account:')) {
+      authSource.value = 'gateway_account'
+    } else if (binding.startsWith('pool:') || form.adapter === 'llm_gateway') {
+      authSource.value = 'gateway_pool'
+    } else {
+      authSource.value = 'static_api_key'
+    }
+    if (form.adapter === 'openai' || form.adapter === 'llm_gateway') {
+      void loadGatewayData()
+    }
   },
   { immediate: true },
 )
@@ -106,6 +205,21 @@ watch(
 function submit() {
   if (isReadOnly.value) return
   if (!form.name.trim() || !form.adapter.trim()) return
+  const nextConfig = { ...form.configJson }
+  if (supportsGatewayBinding.value && authSource.value === 'static_api_key') {
+    delete nextConfig.gateway_binding
+  }
+  const usingGateway =
+    form.adapter === 'llm_gateway' ||
+    (supportsGatewayBinding.value && authSource.value !== 'static_api_key')
+  if (
+    usingGateway &&
+    (typeof nextConfig.gateway_binding !== 'string' || !nextConfig.gateway_binding.trim())
+  ) {
+    configError.value = t('llmGateway.auth.bindingRequired')
+    return
+  }
+  configError.value = ''
   emit('save', {
     name: form.name.trim(),
     type: form.type,
@@ -114,8 +228,12 @@ function submit() {
     description: form.description.trim(),
     status: form.status,
     endpoint: form.endpoint.trim() || undefined,
-    configJson: { ...form.configJson },
-    ...(form.apiKey && ['openai', 'chillaudio_ws'].includes(form.adapter) ? { apiKey: form.apiKey } : {}),
+    configJson: nextConfig,
+    ...(usingGateway
+      ? { apiKey: null }
+      : form.apiKey && ['openai', 'chillaudio_ws'].includes(form.adapter)
+        ? { apiKey: form.apiKey }
+        : {}),
   })
   form.apiKey = ''
   open.value = false
@@ -178,9 +296,93 @@ function submit() {
         </select>
       </label>
 
-      <div class="sm:col-span-2"><p v-if="configError" class="text-sm text-danger">{{ configError }}</p><ProviderConfigEditor :readonly="isReadOnly" v-model="form.configJson" :schema="descriptor?.config_schema" :capabilities="descriptor?.capabilities" /></div>
+      <div class="sm:col-span-2"><p v-if="configError" class="text-sm text-danger">{{ configError }}</p><ProviderConfigEditor :readonly="isReadOnly" v-model="form.configJson" :schema="filteredSchema" :capabilities="descriptor?.capabilities" /></div>
 
-      <label v-if="['openai', 'chillaudio_ws'].includes(form.adapter)" class="block space-y-1.5 sm:col-span-2">
+      <div v-if="supportsGatewayBinding" class="space-y-2.5 rounded-lg border border-border/70 bg-surface/50 p-3.5 sm:col-span-2">
+        <span class="block text-sm font-medium">{{ t('llmGateway.auth.title') }}</span>
+        <div class="flex flex-wrap gap-2">
+          <button
+            v-if="form.adapter === 'openai'"
+            type="button"
+            class="rounded-md border px-3 py-1 text-xs font-medium transition-colors"
+            :class="
+              authSource === 'static_api_key'
+                ? 'border-studio-violet bg-studio-violet text-white'
+                : 'border-border bg-background text-muted-foreground hover:bg-accent'
+            "
+            :disabled="isReadOnly"
+            @click="setAuthSource('static_api_key')"
+          >
+            {{ t('llmGateway.auth.staticApiKey') }}
+          </button>
+          <button
+            type="button"
+            class="rounded-md border px-3 py-1 text-xs font-medium transition-colors"
+            :class="
+              authSource === 'gateway_account'
+                ? 'border-studio-violet bg-studio-violet text-white'
+                : 'border-border bg-background text-muted-foreground hover:bg-accent'
+            "
+            :disabled="isReadOnly"
+            @click="setAuthSource('gateway_account')"
+          >
+            {{ t('llmGateway.auth.gatewayAccount') }}
+          </button>
+          <button
+            type="button"
+            class="rounded-md border px-3 py-1 text-xs font-medium transition-colors"
+            :class="
+              authSource === 'gateway_pool'
+                ? 'border-studio-violet bg-studio-violet text-white'
+                : 'border-border bg-background text-muted-foreground hover:bg-accent'
+            "
+            :disabled="isReadOnly"
+            @click="setAuthSource('gateway_pool')"
+          >
+            {{ t('llmGateway.auth.gatewayPool') }}
+          </button>
+        </div>
+
+        <label v-if="authSource === 'gateway_account'" class="block space-y-1">
+          <span class="text-xs text-muted-foreground">{{ t('llmGateway.auth.gatewayAccount') }}</span>
+          <select
+            :disabled="isReadOnly"
+            class="admin-input font-mono text-xs"
+            :value="String(form.configJson.gateway_binding ?? '')"
+            @change="updateGatewayBinding(($event.target as HTMLSelectElement).value)"
+          >
+            <option value="">{{ t('llmGateway.auth.selectAccount') }}</option>
+            <option
+              v-for="acc in gatewayAccounts"
+              :key="acc.account_key"
+              :value="`account:${acc.account_key}`"
+            >
+              {{ acc.label }} ({{ acc.vendor }} — {{ acc.account_email || acc.account_key }})
+            </option>
+          </select>
+        </label>
+
+        <label v-else-if="authSource === 'gateway_pool'" class="block space-y-1">
+          <span class="text-xs text-muted-foreground">{{ t('llmGateway.auth.gatewayPool') }}</span>
+          <select
+            :disabled="isReadOnly"
+            class="admin-input font-mono text-xs"
+            :value="String(form.configJson.gateway_binding ?? '')"
+            @change="updateGatewayBinding(($event.target as HTMLSelectElement).value)"
+          >
+            <option value="">{{ t('llmGateway.auth.selectPool') }}</option>
+            <option
+              v-for="v in gatewayVendors"
+              :key="v.vendor"
+              :value="v.pool_binding"
+            >
+              {{ v.display_name }} ({{ v.pool_binding }} — {{ v.active_accounts }}/{{ v.total_accounts }} active)
+            </option>
+          </select>
+        </label>
+      </div>
+
+      <label v-if="(['openai', 'chillaudio_ws'].includes(form.adapter)) && (!supportsGatewayBinding || authSource === 'static_api_key')" class="block space-y-1.5 sm:col-span-2">
         <span class="text-sm font-medium">API key / token mới (tùy chọn)</span>
         <p v-if="provider?.credential" class="text-xs text-muted-foreground">Key hiện tại: {{ provider.credential.masked_key }}</p>
         <input :disabled="isReadOnly" v-model="form.apiKey" type="password" autocomplete="new-password" maxlength="4096" class="admin-input" />

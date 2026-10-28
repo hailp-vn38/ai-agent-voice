@@ -758,7 +758,7 @@ For Structured Log Entry, Correlation Context, Log Ring Buffer, and Live Log Str
 
 ## Internal LLM Gateway & OAuth Accounts
 
-For Gateway Account, Gateway Account Pool, Gateway Binding, and OAuth Login Session, use the definitions in [GLOSSARY.md](GLOSSARY.md#internal-llm-gateway--oauth-accounts).
+See [ADR 0130](docs/adr/0130-internal-llm-gateway-oauth-account-pools.md). For Gateway Account, Gateway Account Pool, Gateway Binding, and OAuth Login Session, use the definitions in [GLOSSARY.md](GLOSSARY.md#internal-llm-gateway--oauth-accounts). The runtime hub lives in `services::llm_gateway`, the LLM adapter in `providers::llm::gateway`, and the Admin HTTP surface in `app::admin::llm_gateway` (`/api/admin/llm-gateway/*`).
 
 
 
