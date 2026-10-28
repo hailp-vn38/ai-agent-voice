@@ -7,7 +7,8 @@ pub use crate::providers::{
         gipformer::config::GipformerSherpaOfflineConfig, zipformer::config::ZipformerSherpaConfig,
     },
     llm::{
-        muse::MuseConfig, openai::config::OpenAiConfig, opencode_free::OpenCodeFreeConfig,
+        gateway::LlmGatewayConfig, muse::MuseConfig, openai::config::OpenAiConfig,
+        opencode_free::OpenCodeFreeConfig,
     },
     tts::{
         chillaudio::config::ChillAudioWsConfig,
@@ -123,6 +124,8 @@ pub enum LlmInstanceConfig {
     #[serde(rename = "opencode_free")]
     OpenCodeFree(OpenCodeFreeConfig),
     Muse(MuseConfig),
+    #[serde(rename = "llm_gateway")]
+    LlmGateway(LlmGatewayConfig),
     #[cfg(feature = "qualification-providers")]
     QualificationLlm(QualificationConfig),
 }
@@ -133,6 +136,7 @@ impl LlmInstanceConfig {
             Self::Openai(_) => "openai",
             Self::OpenCodeFree(_) => "opencode_free",
             Self::Muse(_) => "muse",
+            Self::LlmGateway(_) => "llm_gateway",
             #[cfg(feature = "qualification-providers")]
             Self::QualificationLlm(_) => "qualification_llm",
         }
@@ -142,6 +146,7 @@ impl LlmInstanceConfig {
             Self::Openai(config) => config.timeout_ms,
             Self::OpenCodeFree(config) => config.timeout_ms,
             Self::Muse(config) => config.timeout_ms,
+            Self::LlmGateway(config) => config.timeout_ms,
             #[cfg(feature = "qualification-providers")]
             Self::QualificationLlm(_) => 15_000,
         }
@@ -151,6 +156,7 @@ impl LlmInstanceConfig {
             Self::Openai(config) => config,
             Self::OpenCodeFree(_) => unreachable!("OpenCode Free has no OpenAI config"),
             Self::Muse(_) => unreachable!("Muse has no OpenAI config"),
+            Self::LlmGateway(_) => unreachable!("LlmGateway has no OpenAI config"),
             #[cfg(feature = "qualification-providers")]
             Self::QualificationLlm(_) => unreachable!("qualification LLM has no OpenAI config"),
         }
@@ -164,6 +170,9 @@ impl LlmInstanceConfig {
                 crate::providers::llm::effective_capability_tags(config.tags.as_deref())
             }
             Self::Muse(config) => {
+                crate::providers::llm::effective_capability_tags(config.tags.as_deref())
+            }
+            Self::LlmGateway(config) => {
                 crate::providers::llm::effective_capability_tags(config.tags.as_deref())
             }
             #[cfg(feature = "qualification-providers")]

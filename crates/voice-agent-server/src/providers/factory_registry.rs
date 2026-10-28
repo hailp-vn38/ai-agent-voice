@@ -17,7 +17,9 @@ use crate::{
         VadProvider,
         asr::{GipformerAsrProvider, ZipformerAsrProvider, gipformer, zipformer},
         llm::{
-            muse::MuseFactory, openai::provider::ConfiguredOpenAiLlm,
+            gateway::{LlmGatewayFactory, LlmGatewayProvider},
+            muse::MuseFactory,
+            openai::provider::ConfiguredOpenAiLlm,
             opencode_free::OpenCodeFreeProvider,
         },
         tts::{
@@ -337,6 +339,13 @@ impl LlmFactory for OpenAiFactory {
         if options.model.trim().is_empty() {
             return Err(ProviderLoadError::Configuration(
                 "OpenAI model is required".into(),
+            ));
+        }
+        if options.gateway_binding.is_some() {
+            return Ok(Arc::new(
+                LlmGatewayProvider::from_openai_config(options).map_err(|_| {
+                    ProviderLoadError::Provider("OpenAI gateway provider initialization failed".into())
+                })?,
             ));
         }
         Ok(Arc::new(
@@ -795,6 +804,7 @@ static GIPFORMER_SHERPA_OFFLINE_FACTORY: GipformerSherpaOfflineFactory =
 static OPENAI_FACTORY: OpenAiFactory = OpenAiFactory;
 static OPENCODE_FREE_FACTORY: OpenCodeFreeFactory = OpenCodeFreeFactory;
 static MUSE_FACTORY: MuseFactory = MuseFactory;
+static LLM_GATEWAY_FACTORY: LlmGatewayFactory = LlmGatewayFactory;
 static ZEROTTS_ONNX_FACTORY: ZeroTtsOnnxFactory = ZeroTtsOnnxFactory;
 static VIENEU_NATIVE_FACTORY: VieneuNativeFactory = VieneuNativeFactory;
 static CHILLAUDIO_WS_FACTORY: ChillAudioWsFactory = ChillAudioWsFactory;
@@ -824,6 +834,7 @@ static LLM_FACTORIES: &[&dyn LlmFactory] = &[
     &OPENAI_FACTORY,
     &OPENCODE_FREE_FACTORY,
     &MUSE_FACTORY,
+    &LLM_GATEWAY_FACTORY,
     #[cfg(feature = "qualification-providers")]
     &QUALIFICATION_LLM_FACTORY,
 ];

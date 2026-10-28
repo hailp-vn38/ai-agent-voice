@@ -26,6 +26,8 @@ pub struct OpenAiConfig {
     pub temperature_percent: Option<u16>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tags: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gateway_binding: Option<crate::services::llm_gateway::GatewayBinding>,
 }
 
 impl Default for OpenAiConfig {
@@ -40,6 +42,7 @@ impl Default for OpenAiConfig {
             reasoning_effort: None,
             temperature_percent: None,
             tags: None,
+            gateway_binding: None,
         }
     }
 }

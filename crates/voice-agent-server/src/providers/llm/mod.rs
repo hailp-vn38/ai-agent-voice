@@ -6,12 +6,14 @@ use futures_util::Stream;
 use serde_json::Value;
 use thiserror::Error;
 
+pub(crate) mod gateway;
 pub(crate) mod muse;
 pub(crate) mod openai;
 pub(crate) mod opencode_free;
 #[cfg(feature = "qualification-providers")]
 pub mod qualification;
 
+pub use gateway::{LlmGatewayConfig, LlmGatewayProvider};
 pub use muse::{MuseConfig, MuseLlmProvider};
 
 pub(crate) const REASONING_EFFORTS: &[&str] = &["low", "medium", "high"];

@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted
+Accepted (Extended by [ADR 0130](0130-internal-llm-gateway-oauth-account-pools.md) for OAuth Gateway Account token bundles and out-of-band snapshot renewal)
 
 Provider and External MCP credentials are managed through the authenticated Admin API and persisted in SQLite so operators can configure them from Admin Web without provisioning an environment variable for every resource. This replaces the deployment-only credential ownership in ADR 0061 and the deployment-owned credential document; typed Provider configuration remains credential-free under ADR 0062.
 

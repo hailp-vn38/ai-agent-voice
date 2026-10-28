@@ -184,6 +184,7 @@ async fn openai_provider_executes_all_seven_capabilities_against_upstream() {
                 .map(|tag| (*tag).to_owned())
                 .collect(),
         ),
+        gateway_binding: None,
     };
     let provider = ConfiguredOpenAiLlm::from_config(&config).unwrap();
 

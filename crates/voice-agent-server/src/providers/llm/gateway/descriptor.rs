@@ -1,0 +1,115 @@
+use crate::providers::{
+    capabilities::{CapabilityDiscoveryMode, DiscoverySource, ProviderCapabilities},
+    descriptor::{
+        ConfigFieldType, ProviderConfigField, ProviderConfigSchema, ProviderDescriptor,
+        ProviderType, field, multi_select_field, select_field,
+    },
+    llm::{LLM_CAPABILITY_TAGS, REASONING_EFFORTS},
+    registry::ProviderAdapterRegistration,
+};
+
+use super::config::ADAPTER_NAME;
+
+const FIELDS: &[ProviderConfigField] = &[
+    field(
+        "gateway_binding",
+        "OAuth Gateway Binding (account:<key> or pool:<vendor>)",
+        ConfigFieldType::String,
+        true,
+        None,
+        None,
+        None,
+        Some(160),
+    ),
+    field(
+        "model",
+        "Model",
+        ConfigFieldType::String,
+        true,
+        None,
+        None,
+        None,
+        Some(256),
+    ),
+    field(
+        "base_url",
+        "Base URL Override (optional)",
+        ConfigFieldType::String,
+        false,
+        None,
+        None,
+        None,
+        Some(2048),
+    ),
+    field(
+        "timeout_ms",
+        "Timeout (ms)",
+        ConfigFieldType::Integer,
+        false,
+        None,
+        Some(1_000),
+        Some(600_000),
+        None,
+    ),
+    field(
+        "max_tokens",
+        "Max output tokens",
+        ConfigFieldType::Integer,
+        false,
+        None,
+        Some(256),
+        Some(65_536),
+        None,
+    ),
+    field(
+        "context_limit_tokens",
+        "Context window (tokens)",
+        ConfigFieldType::Integer,
+        false,
+        None,
+        Some(4_096),
+        Some(2_000_000),
+        None,
+    ),
+    select_field("reasoning_effort", "Reasoning effort", REASONING_EFFORTS),
+    field(
+        "temperature_percent",
+        "Temperature (0-200%)",
+        ConfigFieldType::Integer,
+        false,
+        None,
+        Some(0),
+        Some(200),
+        None,
+    ),
+    multi_select_field("tags", "Capability tags", LLM_CAPABILITY_TAGS),
+];
+
+pub static DESCRIPTOR: ProviderDescriptor = ProviderDescriptor {
+    adapter: ADAPTER_NAME,
+    provider_type: ProviderType::Llm,
+    display_name: "OAuth LLM Gateway (Claude / Codex / Gemini / Copilot)",
+    description: "Internal OAuth 2.0 LLM Gateway supporting single-account and vendor-pool bindings.",
+    config_schema: ProviderConfigSchema { fields: FIELDS },
+    capabilities: ProviderCapabilities {
+        models: Some(&[]),
+        voices: None,
+        languages: None,
+        streaming: Some(true),
+        offline: Some(false),
+        tool_calling: Some(true),
+        vision: Some(true),
+        input_sample_rates: None,
+        channels: None,
+        provider_output_sample_rates: None,
+        voice_delivery_sample_rates: None,
+    },
+    discovery: CapabilityDiscoveryMode {
+        models: DiscoverySource::Unsupported,
+        voices: DiscoverySource::Unsupported,
+        languages: DiscoverySource::Unsupported,
+    },
+};
+
+pub static REGISTRATION: ProviderAdapterRegistration =
+    ProviderAdapterRegistration::remote(&DESCRIPTOR, None);

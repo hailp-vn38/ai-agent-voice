@@ -292,17 +292,22 @@ impl ProviderDiagnosticService {
         if !kind.is_empty() && provider_type != kind {
             return Err(ProviderDiagnosticRequestError::TypeMismatch);
         }
+        let config_json = config.ok_or(RuntimeError::Configuration)?;
         let secret_ref = crate::database::credentials::reference(
             &format!("provider:{provider_key}"),
             credential.as_deref(),
-            crate::database::secrets::provider_secret_env(&provider_key, &adapter),
+            crate::database::secrets::provider_secret_env_for_config(
+                &provider_key,
+                &adapter,
+                &config_json,
+            ),
         );
         Ok(DesiredProvider {
             id,
             key: provider_key,
             kind: provider_type,
             adapter,
-            config_json: config.ok_or(RuntimeError::Configuration)?,
+            config_json,
             secret_ref,
             revision,
         })

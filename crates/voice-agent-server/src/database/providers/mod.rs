@@ -301,7 +301,7 @@ impl Database {
                     let secret_ref = credentials::reference(
                         &format!("provider:{key}"),
                         credential.as_deref(),
-                        secrets::provider_secret_env(&key, &adapter),
+                        secrets::provider_secret_env_for_config(&key, &adapter, &config_json),
                     );
                     DesiredProvider {
                         id,
@@ -336,7 +336,11 @@ impl Database {
                 let secret_ref = crate::database::credentials::reference(
                     &format!("provider:{key}"),
                     credential.as_deref(),
-                    crate::database::secrets::provider_secret_env(&key, &adapter),
+                    crate::database::secrets::provider_secret_env_for_config(
+                        &key,
+                        &adapter,
+                        &config_json,
+                    ),
                 );
                 Some(DesiredProvider {
                     id,

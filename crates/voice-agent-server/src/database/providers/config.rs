@@ -34,6 +34,10 @@ pub fn validate_raw(adapter: &str, raw: &str) -> Result<String, ProviderConfigEr
             &value,
             crate::config::MuseConfig::valid,
         ),
+        "llm_gateway" => canonical::<crate::config::LlmGatewayConfig, _>(
+            &value,
+            crate::config::LlmGatewayConfig::valid,
+        ),
         "campplus_sherpa" => canonical::<crate::config::CampPlusConfig, _>(
             &value,
             crate::config::CampPlusConfig::valid,
@@ -129,6 +133,7 @@ fn string(value: &str, max: usize) -> bool {
 #[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 struct OpenAi {
+    #[serde(default = "crate::config::defaults::default_openai_base_url")]
     base_url: Url,
     model: String,
     #[serde(default = "default_timeout")]
@@ -143,6 +148,8 @@ struct OpenAi {
     temperature_percent: Option<u16>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     tags: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    gateway_binding: Option<crate::services::llm_gateway::GatewayBinding>,
 }
 impl OpenAi {
     fn valid(&self) -> bool {

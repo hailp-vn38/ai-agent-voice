@@ -756,4 +756,9 @@ For Notification, Notification Inbox, Notification Channel, Notification Channel
 
 For Structured Log Entry, Correlation Context, Log Ring Buffer, and Live Log Stream, use the definitions in [GLOSSARY.md](GLOSSARY.md#system-observability--structured-logs).
 
+## Internal LLM Gateway & OAuth Accounts
+
+For Gateway Account, Gateway Account Pool, Gateway Binding, and OAuth Login Session, use the definitions in [GLOSSARY.md](GLOSSARY.md#internal-llm-gateway--oauth-accounts).
+
+
 

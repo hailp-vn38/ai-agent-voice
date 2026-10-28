@@ -272,4 +272,23 @@ _Avoid_: History Archive, Notification Inbox, SQLite log table
 Luồng đẩy thời gian thực một chiều từ server tới trình duyệt của Admin đã xác thực, áp dụng bộ lọc ngay tại server trước khi phát từng Structured Log Entry.
 _Avoid_: Job Change Signal, Voice Session WebSocket, unauthenticated tail
 
+## Internal LLM Gateway & OAuth Accounts
+
+**Gateway Account**:
+Một tài khoản nhà cung cấp mô hình ngôn ngữ đã được xác thực qua OAuth 2.0 (như Claude, OpenAI Codex, Google Gemini, hoặc GitHub Copilot) do Admin quản lý độc lập với từng Provider Instance, có vòng đời làm mới phiên xác thực và trạng thái sẵn sàng riêng.
+_Avoid_: Provider Instance, static API key, Admin User
+
+**Gateway Account Pool**:
+Tập hợp các Gateway Account đang bật và không nằm trong thời gian tạm nghỉ do giới hạn tốc độ của cùng một nhà cung cấp, cho phép phân phối lượt gọi luân phiên giữa nhiều tài khoản.
+_Avoid_: Provider Runtime Pool, fallback chain, retry loop
+
+**Gateway Binding**:
+Tham chiếu phi bí mật trên cấu hình của một Provider Instance liên kết nó với một Gateway Account cụ thể hoặc một Gateway Account Pool thay vì sử dụng khóa API tĩnh.
+_Avoid_: Secret Reference, inline credential, OAuth token
+
+**OAuth Login Session**:
+Phiên đăng nhập tạm thời được khởi tạo khi Admin bắt đầu luồng ủy quyền OAuth trên trình duyệt (qua mã PKCE hoặc mã thiết bị), tồn tại cho đến khi đổi thành công thành một Gateway Account hoặc hết hạn.
+_Avoid_: Admin Session, Voice Session, Gateway Account
+
+
 

@@ -718,6 +718,12 @@ fn validate_providers(config: &AppConfig) -> Result<(), ConfigError> {
                 )));
             }
             LlmInstanceConfig::Muse(_) => {}
+            LlmInstanceConfig::LlmGateway(options) if !options.valid() => {
+                return Err(ConfigError::Validation(format!(
+                    "LLM instance `{id}` has invalid llm_gateway configuration"
+                )));
+            }
+            LlmInstanceConfig::LlmGateway(_) => {}
             #[cfg(feature = "qualification-providers")]
             LlmInstanceConfig::QualificationLlm(_) => {}
         }

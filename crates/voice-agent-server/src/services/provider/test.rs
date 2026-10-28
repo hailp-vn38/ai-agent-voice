@@ -75,20 +75,28 @@ impl ProviderTestRunner<'_> {
             if kind != draft.kind || adapter != draft.adapter {
                 return Err(ProviderTestError::Credential);
             }
-            let reference = crate::database::credentials::reference(
+            let has_gateway_binding = adapter == "llm_gateway"
+                || draft
+                    .config_json
+                    .get("gateway_binding")
+                    .and_then(|v| v.as_str())
+                    .is_some_and(|s| !s.trim().is_empty());
+            match crate::database::credentials::reference(
                 &format!("provider:{}", saved.key),
                 record.as_deref(),
                 crate::database::secrets::provider_secret_env(&saved.key, &adapter),
-            )
-            .ok_or(ProviderTestError::Credential)?;
-            Some(
-                self.secrets
-                    .resolve(
-                        &crate::database::secrets::SecretRef::parse(reference)
-                            .map_err(|_| ProviderTestError::Credential)?,
-                    )
-                    .map_err(|_| ProviderTestError::Credential)?,
-            )
+            ) {
+                Some(reference) => Some(
+                    self.secrets
+                        .resolve(
+                            &crate::database::secrets::SecretRef::parse(reference)
+                                .map_err(|_| ProviderTestError::Credential)?,
+                        )
+                        .map_err(|_| ProviderTestError::Credential)?,
+                ),
+                None if has_gateway_binding => None,
+                None => return Err(ProviderTestError::Credential),
+            }
         } else {
             draft.api_key.take()
         };

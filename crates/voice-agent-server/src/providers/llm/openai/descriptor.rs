@@ -70,6 +70,16 @@ const FIELDS: &[ProviderConfigField] = &[
         None,
     ),
     multi_select_field("tags", "Capability tags", LLM_CAPABILITY_TAGS),
+    field(
+        "gateway_binding",
+        "OAuth Gateway Binding (optional: account:<key> or pool:<vendor>)",
+        ConfigFieldType::String,
+        false,
+        None,
+        None,
+        None,
+        Some(160),
+    ),
 ];
 pub static DESCRIPTOR: ProviderDescriptor = ProviderDescriptor {
     adapter: "openai",

@@ -63,7 +63,16 @@ impl ResolvedLlmProvider {
     }
 
     pub fn requires_api_key(&self) -> bool {
+        if self.adapter == "llm_gateway" || self.gateway_binding().is_some() {
+            return false;
+        }
         !self.is_tts_adapter() || self.adapter == "chillaudio_ws"
+    }
+
+    pub fn gateway_binding(&self) -> Option<crate::services::llm_gateway::GatewayBinding> {
+        let raw = self.api_key.as_ref()?.expose();
+        let binding_str = raw.strip_prefix("gateway_binding:")?;
+        crate::services::llm_gateway::GatewayBinding::parse(binding_str).ok()
     }
 
     pub fn supports_tag(&self, tag: &str) -> bool {
@@ -99,11 +108,15 @@ impl ResolvedLlmProvider {
             "openai" => {
                 let base_url = url::Url::parse(&self.base_url)
                     .map_err(|_| crate::providers::LlmError::Failed)?;
-                let api_key = self
-                    .api_key
-                    .as_ref()
-                    .map(|k| crate::config::SecretString::new(k.expose()))
-                    .unwrap_or_default();
+                let gateway_binding = self.gateway_binding();
+                let api_key = if gateway_binding.is_some() {
+                    crate::config::SecretString::default()
+                } else {
+                    self.api_key
+                        .as_ref()
+                        .map(|k| crate::config::SecretString::new(k.expose()))
+                        .unwrap_or_default()
+                };
                 let cfg = crate::config::OpenAiConfig {
                     api_key,
                     base_url,
@@ -114,9 +127,38 @@ impl ResolvedLlmProvider {
                     reasoning_effort: self.reasoning_effort.clone(),
                     temperature_percent: self.temperature_percent,
                     tags: Some(self.tags.clone()),
+                    gateway_binding,
                 };
+                if cfg.gateway_binding.is_some() {
+                    return Ok(Box::new(
+                        crate::providers::llm::LlmGatewayProvider::from_openai_config(&cfg)?,
+                    ));
+                }
                 Ok(Box::new(
                     crate::providers::llm::ConfiguredOpenAiLlm::from_config(&cfg)?,
+                ))
+            }
+            "llm_gateway" => {
+                let Some(gateway_binding) = self.gateway_binding() else {
+                    return Err(crate::providers::LlmError::Failed);
+                };
+                let base_url = (!self.base_url.trim().is_empty())
+                    .then(|| url::Url::parse(&self.base_url))
+                    .transpose()
+                    .map_err(|_| crate::providers::LlmError::Failed)?;
+                let cfg = crate::config::LlmGatewayConfig {
+                    gateway_binding,
+                    model: self.model.clone(),
+                    base_url,
+                    timeout_ms: self.timeout_ms.max(1_000),
+                    max_tokens,
+                    context_limit_tokens,
+                    reasoning_effort: self.reasoning_effort.clone(),
+                    temperature_percent: self.temperature_percent,
+                    tags: Some(self.tags.clone()),
+                };
+                Ok(Box::new(
+                    crate::providers::llm::LlmGatewayProvider::from_config(&cfg)?,
                 ))
             }
             "opencode_free" => {
@@ -179,11 +221,20 @@ impl ResolvedLlmProvider {
     }
 
     pub fn to_orchestrator_provider(&self) -> LlmProviderConfig {
-        let auth = match &self.api_key {
-            Some(key) => ProviderAuth::ApiKey(orchestrator_agent_rs::SecretString::new(
-                key.expose().to_owned(),
-            )),
-            None => ProviderAuth::None,
+        let auth = if let Some(binding) = self.gateway_binding() {
+            match crate::services::llm_gateway::SharedGatewayHub::global().acquire_lease(&binding) {
+                Ok(lease) => ProviderAuth::ApiKey(orchestrator_agent_rs::SecretString::new(
+                    lease.access_token.expose().to_owned(),
+                )),
+                Err(_) => ProviderAuth::None,
+            }
+        } else {
+            match &self.api_key {
+                Some(key) => ProviderAuth::ApiKey(orchestrator_agent_rs::SecretString::new(
+                    key.expose().to_owned(),
+                )),
+                None => ProviderAuth::None,
+            }
         };
         LlmProviderConfig {
             id: self.provider_ref.clone(),
@@ -241,6 +292,15 @@ pub async fn resolve_llm_provider_catalog(state: &AppState) -> Vec<ResolvedLlmPr
         let provider_ref = format!("config:llm:{key}");
         match instance {
             LlmInstanceConfig::Openai(openai) => {
+                let api_key = if let Some(ref binding) = openai.gateway_binding {
+                    Some(SecretString::new(format!(
+                        "gateway_binding:{}",
+                        binding.as_config_string()
+                    )))
+                } else {
+                    (!openai.api_key.expose().trim().is_empty())
+                        .then(|| SecretString::new(openai.api_key.expose().to_owned()))
+                };
                 out.push(ResolvedLlmProvider {
                     provider_ref,
                     name: format!("{key} ({})", openai.model),
@@ -248,8 +308,7 @@ pub async fn resolve_llm_provider_catalog(state: &AppState) -> Vec<ResolvedLlmPr
                     adapter: "openai".to_owned(),
                     model: openai.model.clone(),
                     base_url: openai.base_url.to_string(),
-                    api_key: (!openai.api_key.expose().trim().is_empty())
-                        .then(|| SecretString::new(openai.api_key.expose().to_owned())),
+                    api_key,
                     timeout_ms: openai.timeout_ms,
                     max_tokens: openai.max_tokens.unwrap_or(orch_cfg.max_output_tokens),
                     context_limit_tokens: openai
@@ -315,6 +374,37 @@ pub async fn resolve_llm_provider_catalog(state: &AppState) -> Vec<ResolvedLlmPr
                     }),
                 });
             }
+            LlmInstanceConfig::LlmGateway(gw) => {
+                let base_url = gw.base_url.as_ref().map(ToString::to_string).unwrap_or_else(
+                    || {
+                        crate::services::llm_gateway::SharedGatewayHub::global()
+                            .default_base_url_for_binding(&gw.gateway_binding)
+                            .to_owned()
+                    },
+                );
+                out.push(ResolvedLlmProvider {
+                    provider_ref,
+                    name: format!("{key} ({})", gw.model),
+                    source: "config",
+                    adapter: "llm_gateway".to_owned(),
+                    model: gw.model.clone(),
+                    base_url,
+                    api_key: Some(SecretString::new(format!(
+                        "gateway_binding:{}",
+                        gw.gateway_binding.as_config_string()
+                    ))),
+                    timeout_ms: gw.timeout_ms,
+                    max_tokens: gw.max_tokens.unwrap_or(orch_cfg.max_output_tokens),
+                    context_limit_tokens: gw
+                        .context_limit_tokens
+                        .map(|v| v as usize)
+                        .unwrap_or(orch_cfg.context_limit_tokens),
+                    reasoning_effort: gw.reasoning_effort.clone(),
+                    temperature_percent: gw.temperature_percent,
+                    tags: crate::providers::llm::effective_llm_tags(gw.tags.as_deref()),
+                    muse_options: None,
+                });
+            }
             #[cfg(feature = "qualification-providers")]
             LlmInstanceConfig::QualificationLlm(_) => {}
         }
@@ -370,22 +460,65 @@ pub async fn resolve_llm_provider_catalog(state: &AppState) -> Vec<ResolvedLlmPr
 
             let (base_url, api_key, muse_options) = match adapter.as_str() {
                 "openai" => {
-                    let Some(url) = parsed
+                    let parsed_binding = parsed
+                        .get("gateway_binding")
+                        .and_then(Value::as_str)
+                        .and_then(|s| crate::services::llm_gateway::GatewayBinding::parse(s).ok());
+                    let url = parsed
                         .get("base_url")
                         .and_then(Value::as_str)
                         .map(str::trim)
                         .filter(|s| !s.is_empty())
                         .map(str::to_owned)
+                        .or_else(|| {
+                            parsed_binding.as_ref().map(|b| {
+                                crate::services::llm_gateway::SharedGatewayHub::global()
+                                    .default_base_url_for_binding(b)
+                                    .to_owned()
+                            })
+                        });
+                    let Some(url) = url else {
+                        continue;
+                    };
+                    let resolved_key = if let Some(binding) = parsed_binding {
+                        Some(SecretString::new(format!(
+                            "gateway_binding:{}",
+                            binding.as_config_string()
+                        )))
+                    } else {
+                        resolve_db_provider_secret(
+                            state,
+                            &key,
+                            &adapter,
+                            credential_json.as_deref(),
+                        )
+                    };
+                    (url, resolved_key, None)
+                }
+                "llm_gateway" => {
+                    let Some(binding) = parsed
+                        .get("gateway_binding")
+                        .and_then(Value::as_str)
+                        .and_then(|s| crate::services::llm_gateway::GatewayBinding::parse(s).ok())
                     else {
                         continue;
                     };
-                    let resolved_key = resolve_db_provider_secret(
-                        state,
-                        &key,
-                        &adapter,
-                        credential_json.as_deref(),
-                    );
-                    (url, resolved_key, None)
+                    let url = parsed
+                        .get("base_url")
+                        .and_then(Value::as_str)
+                        .map(str::trim)
+                        .filter(|s| !s.is_empty())
+                        .map(str::to_owned)
+                        .unwrap_or_else(|| {
+                            crate::services::llm_gateway::SharedGatewayHub::global()
+                                .default_base_url_for_binding(&binding)
+                                .to_owned()
+                        });
+                    let binding_token = SecretString::new(format!(
+                        "gateway_binding:{}",
+                        binding.as_config_string()
+                    ));
+                    (url, Some(binding_token), None)
                 }
                 "opencode_free" => (
                     crate::providers::llm::opencode_free::BASE_URL.to_owned(),

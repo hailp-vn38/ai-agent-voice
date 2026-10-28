@@ -68,6 +68,28 @@ pub fn provider_secret_env(key: &str, adapter: &str) -> Option<String> {
     Some(format!("VOICE_PROVIDER_{}_API_KEY", env_key(key)?))
 }
 
+/// Fallback environment credential for remote provider adapters, suppressing the fallback when
+/// an `"openai"` provider row delegates credentials via `gateway_binding`.
+pub fn provider_secret_env_for_config(
+    key: &str,
+    adapter: &str,
+    config_json: &str,
+) -> Option<String> {
+    if adapter == "openai"
+        && serde_json::from_str::<serde_json::Value>(config_json)
+            .ok()
+            .and_then(|v| {
+                v.get("gateway_binding")
+                    .and_then(serde_json::Value::as_str)
+                    .map(|s| !s.trim().is_empty())
+            })
+            == Some(true)
+    {
+        return None;
+    }
+    provider_secret_env(key, adapter)
+}
+
 /// Fallback environment credential for authenticated MCP servers.
 pub fn mcp_secret_env(key: &str, auth_type: &str) -> Option<String> {
     if !matches!(auth_type, "bearer" | "header") {

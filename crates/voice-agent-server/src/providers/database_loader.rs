@@ -313,8 +313,18 @@ fn materialize_one_from_source(
         &config.runtime,
     )
     .map_err(|_| DatabaseRuntimeFailure::Configuration)?;
-    let secret = match &row.secret_ref {
-        Some(reference) => Some(
+    let uses_gateway_binding = row.adapter == "llm_gateway"
+        || (row.adapter == "openai"
+            && value
+                .get("gateway_binding")
+                .and_then(Value::as_str)
+                .is_some());
+    if row.adapter == "llm_gateway" && row.secret_ref.is_some() {
+        return Err(DatabaseRuntimeFailure::Configuration);
+    }
+    let secret = match (&row.secret_ref, uses_gateway_binding) {
+        (_, true) | (None, false) => None,
+        (Some(reference), false) => Some(
             secrets
                 .resolve(
                     &SecretRef::parse(reference.clone())
@@ -322,7 +332,6 @@ fn materialize_one_from_source(
                 )
                 .map_err(|_| DatabaseRuntimeFailure::Secret)?,
         ),
-        None => None,
     };
     let registry = compiled_provider_registry();
     match row.kind.as_str() {
