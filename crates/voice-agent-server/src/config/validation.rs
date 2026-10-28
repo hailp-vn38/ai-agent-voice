@@ -141,34 +141,17 @@ impl AppConfig {
         for (id, instance) in &mut self.providers.llm.instances {
             match instance {
                 crate::config::LlmInstanceConfig::Openai(openai) => {
-                    if let Some(env_name) =
-                        crate::database::secrets::provider_secret_env(id, "openai")
-                        && let Ok(val) = std::env::var(&env_name)
-                        && !val.trim().is_empty()
-                    {
-                        openai.api_key = crate::config::SecretString::new(val);
-                    }
+                    apply_provider_env_secret(id, "openai", &mut openai.api_key);
                 }
                 crate::config::LlmInstanceConfig::Muse(muse) => {
-                    if let Some(env_name) =
-                        crate::database::secrets::provider_secret_env(id, "muse")
-                        && let Ok(val) = std::env::var(&env_name)
-                        && !val.trim().is_empty()
-                    {
-                        muse.api_key = crate::config::SecretString::new(val);
-                    }
+                    apply_provider_env_secret(id, "muse", &mut muse.api_key);
                 }
                 _ => {}
             }
         }
         for (id, instance) in &mut self.providers.tts.instances {
-            if let crate::config::TtsInstanceConfig::ChillAudioWs(tts) = instance
-                && let Some(env_name) =
-                    crate::database::secrets::provider_secret_env(id, "chillaudio_ws")
-                && let Ok(val) = std::env::var(&env_name)
-                && !val.trim().is_empty()
-            {
-                tts.token = crate::config::SecretString::new(val);
+            if let crate::config::TtsInstanceConfig::ChillAudioWs(tts) = instance {
+                apply_provider_env_secret(id, "chillaudio_ws", &mut tts.token);
             }
         }
         Ok(())
@@ -243,6 +226,19 @@ impl AppConfig {
 
     pub fn max_capture_frames(&self) -> usize {
         (self.audio.max_utterance_ms / u64::from(self.audio.frame_ms)) as usize
+    }
+}
+
+fn apply_provider_env_secret(
+    id: &str,
+    adapter: &str,
+    target: &mut crate::config::SecretString,
+) {
+    if let Some(env_name) = crate::database::secrets::provider_secret_env(id, adapter)
+        && let Ok(val) = std::env::var(&env_name)
+        && !val.trim().is_empty()
+    {
+        *target = crate::config::SecretString::new(val);
     }
 }
 

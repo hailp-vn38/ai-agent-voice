@@ -379,17 +379,12 @@ pub async fn resolve_llm_provider_catalog(state: &AppState) -> Vec<ResolvedLlmPr
                     else {
                         continue;
                     };
-                    let secret_ref = crate::database::credentials::reference(
-                        &format!("provider:{key}"),
+                    let resolved_key = resolve_db_provider_secret(
+                        state,
+                        &key,
+                        &adapter,
                         credential_json.as_deref(),
-                        crate::database::secrets::provider_secret_env(&key, &adapter),
                     );
-                    let resolved_key = secret_ref
-                        .and_then(|r| crate::database::secrets::SecretRef::parse(r).ok())
-                        .and_then(|s| state.secret_resolver.resolve(&s).ok())
-                        .map(|v| v.expose().trim().to_owned())
-                        .filter(|s| !s.is_empty())
-                        .map(SecretString::new);
                     (url, resolved_key, None)
                 }
                 "opencode_free" => (
@@ -401,17 +396,12 @@ pub async fn resolve_llm_provider_catalog(state: &AppState) -> Vec<ResolvedLlmPr
                 ),
                 "muse" => {
                     let url = crate::providers::llm::muse::SITE_URL.to_owned();
-                    let secret_ref = crate::database::credentials::reference(
-                        &format!("provider:{key}"),
+                    let resolved_key = resolve_db_provider_secret(
+                        state,
+                        &key,
+                        &adapter,
                         credential_json.as_deref(),
-                        crate::database::secrets::provider_secret_env(&key, &adapter),
                     );
-                    let resolved_key = secret_ref
-                        .and_then(|r| crate::database::secrets::SecretRef::parse(r).ok())
-                        .and_then(|s| state.secret_resolver.resolve(&s).ok())
-                        .map(|v| v.expose().trim().to_owned())
-                        .filter(|s| !s.is_empty())
-                        .map(SecretString::new);
                     let account_concurrency = parsed
                         .get("account_concurrency")
                         .and_then(Value::as_u64)
@@ -505,17 +495,12 @@ pub async fn resolve_llm_provider_catalog(state: &AppState) -> Vec<ResolvedLlmPr
             }
             let parsed = serde_json::from_str::<Value>(&config_json).unwrap_or(Value::Null);
             let (model, base_url) = extract_tts_model_and_url(&adapter, &parsed);
-            let secret_ref = crate::database::credentials::reference(
-                &format!("provider:{key}"),
+            let api_key = resolve_db_provider_secret(
+                state,
+                &key,
+                &adapter,
                 credential_json.as_deref(),
-                crate::database::secrets::provider_secret_env(&key, &adapter),
             );
-            let api_key = secret_ref
-                .and_then(|r| crate::database::secrets::SecretRef::parse(r).ok())
-                .and_then(|s| state.secret_resolver.resolve(&s).ok())
-                .map(|v| v.expose().trim().to_owned())
-                .filter(|s| !s.is_empty())
-                .map(SecretString::new);
 
             out.push(ResolvedLlmProvider {
                 provider_ref: key,
@@ -573,6 +558,25 @@ pub async fn resolve_llm_provider_catalog(state: &AppState) -> Vec<ResolvedLlmPr
     }
 
     out
+}
+
+fn resolve_db_provider_secret(
+    state: &AppState,
+    key: &str,
+    adapter: &str,
+    credential_json: Option<&str>,
+) -> Option<SecretString> {
+    let secret_ref = crate::database::credentials::reference(
+        &format!("provider:{key}"),
+        credential_json,
+        crate::database::secrets::provider_secret_env(key, adapter),
+    );
+    secret_ref
+        .and_then(|r| crate::database::secrets::SecretRef::parse(r).ok())
+        .and_then(|s| state.secret_resolver.resolve(&s).ok())
+        .map(|v| v.expose().trim().to_owned())
+        .filter(|s| !s.is_empty())
+        .map(SecretString::new)
 }
 
 fn extract_tts_model_and_url(adapter: &str, parsed: &Value) -> (String, String) {

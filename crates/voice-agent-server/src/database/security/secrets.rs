@@ -55,9 +55,14 @@ fn env_key(key: &str) -> Option<String> {
     Some(key.to_ascii_uppercase())
 }
 
+/// Whether a provider adapter accepts a persisted or environment-backed credential.
+pub fn adapter_supports_credential(adapter: &str) -> bool {
+    matches!(adapter, "openai" | "muse" | "chillaudio_ws")
+}
+
 /// Fallback environment credential for remote provider adapters.
 pub fn provider_secret_env(key: &str, adapter: &str) -> Option<String> {
-    if !matches!(adapter, "openai" | "muse" | "chillaudio_ws") {
+    if !adapter_supports_credential(adapter) {
         return None;
     }
     Some(format!("VOICE_PROVIDER_{}_API_KEY", env_key(key)?))

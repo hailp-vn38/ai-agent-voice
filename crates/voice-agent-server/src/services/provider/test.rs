@@ -96,7 +96,7 @@ impl ProviderTestRunner<'_> {
             .as_ref()
             .is_some_and(|value| !crate::database::credentials::valid_input(value))
             || (credential.is_some()
-                && !matches!(draft.adapter.as_str(), "openai" | "muse" | "chillaudio_ws"))
+                && !crate::database::secrets::adapter_supports_credential(&draft.adapter))
         {
             return Err(ProviderTestError::Credential);
         }
