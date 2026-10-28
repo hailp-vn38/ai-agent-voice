@@ -141,6 +141,19 @@ api_key = ""
 base_url = "https://api.openai.com/v1"
 model = "model-name"
 
+# Standalone Muse.ai LLM & Media provider via local Chromium CDP (Chat, Vision, Image, Video).
+# Supply session cookies via api_key or VOICE_PROVIDER_MUSE_PRIMARY_API_KEY:
+#   "hatch_sess=...; hatch_gw=...; hatch_vml=...; hatch_native_auth_device=..."
+# [providers.llm.instances.muse_primary]
+# adapter = "muse"
+# api_key = ""
+# model = "muse-chat"
+# timeout_ms = 120000
+# account_concurrency = 2
+# cdp_port = 19222
+# headless = true
+# tags = ["chat", "vision", "image", "video"]
+
 [providers.tts.instances.zerotts_maichi]
 adapter = "zerotts_onnx"
 voice = "maichi"
@@ -334,6 +347,7 @@ Bạn trả lời tự nhiên, thân thiện và súc tích.
 # vieneu = 4294967296
 # openai = 67108864
 # opencode_free = 67108864
+# muse = 67108864
 # chillaudio_ws = 67108864
 # edge_tts = 67108864
 

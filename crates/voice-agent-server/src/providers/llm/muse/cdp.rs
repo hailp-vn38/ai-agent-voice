@@ -245,7 +245,11 @@ impl CdpBrowserEngine {
                 )
             })?;
             let mut cmd = Command::new(bin);
-            cmd.arg(format!("--remote-debugging-port={}", self.cdp_port))
+            cmd.kill_on_drop(true)
+                .stdin(std::process::Stdio::null())
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .arg(format!("--remote-debugging-port={}", self.cdp_port))
                 .arg("--remote-allow-origins=*")
                 .arg(format!("--user-data-dir={}", self.profile_dir.display()))
                 .arg("--no-first-run")

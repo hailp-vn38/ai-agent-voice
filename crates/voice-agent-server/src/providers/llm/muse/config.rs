@@ -126,6 +126,55 @@ pub fn has_required_cookies(cookies: &BTreeMap<String, String>) -> bool {
         .all(|name| cookies.get(*name).is_some_and(|v| !v.trim().is_empty()))
 }
 
+#[derive(Deserialize)]
+struct BrowserCookieEntry {
+    name: String,
+    value: String,
+    #[serde(default, rename = "expirationDate")]
+    expiration_date: Option<f64>,
+}
+
+#[derive(Deserialize)]
+struct BrowserCookieExport {
+    #[serde(default)]
+    label: Option<String>,
+    cookies: Vec<BrowserCookieEntry>,
+}
+
+fn account_from_browser_cookies(
+    entries: Vec<BrowserCookieEntry>,
+    label: Option<&str>,
+    idx: usize,
+) -> Option<MuseAccountCredential> {
+    let mut cookies = BTreeMap::new();
+    let mut min_expires: Option<u64> = None;
+    for entry in entries {
+        let name = entry.name.trim();
+        let value = entry.value.trim();
+        if !name.is_empty() && !value.is_empty() {
+            if REQUIRED_COOKIES.contains(&name)
+                && let Some(exp) = entry.expiration_date
+                && exp.is_finite()
+                && exp > 0.0
+            {
+                let exp_secs = exp as u64;
+                min_expires = Some(min_expires.map_or(exp_secs, |cur| cur.min(exp_secs)));
+            }
+            cookies.insert(name.to_string(), value.to_string());
+        }
+    }
+    if has_required_cookies(&cookies) {
+        Some(MuseAccountCredential {
+            label: sanitize_account_label(label.unwrap_or(""), idx),
+            cookies,
+            cookie_expires: min_expires,
+            vm_id: None,
+        })
+    } else {
+        None
+    }
+}
+
 pub fn parse_accounts(raw: &str) -> Vec<MuseAccountCredential> {
     let trimmed = raw.trim();
     if trimmed.is_empty() {
@@ -133,7 +182,7 @@ pub fn parse_accounts(raw: &str) -> Vec<MuseAccountCredential> {
     }
     if trimmed.starts_with('[') {
         if let Ok(accounts) = serde_json::from_str::<Vec<MuseAccountCredential>>(trimmed) {
-            return accounts
+            let valid: Vec<MuseAccountCredential> = accounts
                 .into_iter()
                 .enumerate()
                 .filter(|(_, acc)| has_required_cookies(&acc.cookies))
@@ -142,6 +191,14 @@ pub fn parse_accounts(raw: &str) -> Vec<MuseAccountCredential> {
                     acc
                 })
                 .collect();
+            if !valid.is_empty() {
+                return valid;
+            }
+        }
+        if let Ok(entries) = serde_json::from_str::<Vec<BrowserCookieEntry>>(trimmed)
+            && let Some(acc) = account_from_browser_cookies(entries, None, 0)
+        {
+            return vec![acc];
         }
     }
     if trimmed.starts_with('{') {
@@ -150,6 +207,12 @@ pub fn parse_accounts(raw: &str) -> Vec<MuseAccountCredential> {
                 acc.label = sanitize_account_label(&acc.label, 0);
                 return vec![acc];
             }
+        }
+        if let Ok(export) = serde_json::from_str::<BrowserCookieExport>(trimmed)
+            && let Some(acc) =
+                account_from_browser_cookies(export.cookies, export.label.as_deref(), 0)
+        {
+            return vec![acc];
         }
     }
     trimmed

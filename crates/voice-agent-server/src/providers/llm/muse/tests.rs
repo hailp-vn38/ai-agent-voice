@@ -762,3 +762,193 @@ async fn cancelled_future_disposes_dirty_tab_via_raii_lease() {
 
     assert!(matches!(second, LlmOutput::Media { .. }));
 }
+
+#[test]
+fn config_toml_includes_muse_primary_and_validates_cleanly() {
+    let browser_export_json = r#"{"url":"https://muse.ai","cookies":[
+        {"domain":".muse.ai","expirationDate":1795756335.2,"name":"hatch_sess","value":"s1"},
+        {"domain":".muse.ai","expirationDate":1824700335.2,"name":"hatch_gw","value":"g1"},
+        {"domain":".muse.ai","expirationDate":1793337767.9,"name":"hatch_vml","value":"v1"},
+        {"domain":"muse.ai","expirationDate":1794063196.5,"name":"hatch_native_auth_device","value":"d1"}
+    ]}"#;
+    let parsed = super::config::parse_accounts(browser_export_json);
+    assert_eq!(parsed.len(), 1);
+    assert_eq!(parsed[0].cookie_expires, Some(1_793_337_767));
+
+    let config_path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../config.toml");
+    if !config_path.exists() {
+        return;
+    }
+    let config = crate::config::AppConfig::parse_and_resolve(&config_path)
+        .expect("config.toml should parse and validate cleanly");
+
+    let muse_instance = config
+        .providers
+        .llm
+        .instances
+        .get("muse_primary")
+        .expect("muse_primary instance should exist in config.toml");
+    assert_eq!(muse_instance.adapter(), "muse");
+    if let crate::config::LlmInstanceConfig::Muse(muse_cfg) = muse_instance {
+        let accounts = muse_cfg.parse_accounts();
+        assert_eq!(accounts.len(), 1, "should parse 1 account from browser cookie export JSON");
+        assert!(accounts[0].cookie_expires.is_some());
+        MuseLlmProvider::from_config(muse_cfg)
+            .expect("MuseLlmProvider::from_config should succeed with config.toml cookies");
+    } else {
+        panic!("expected LlmInstanceConfig::Muse");
+    }
+
+    let snapshot =
+        crate::providers::deployment_provider_snapshot(&config, "llm", "muse_primary")
+            .expect("deployment_provider_snapshot for muse_primary should succeed");
+    assert_eq!(snapshot.adapter, "muse");
+    assert_eq!(snapshot.kind, "llm");
+
+    let runtime_estimates = &config
+        .provider_runtime
+        .as_ref()
+        .expect("provider_runtime enabled in config.toml")
+        .estimated_peak_bytes;
+    assert_eq!(runtime_estimates.get("muse"), Some(&67_108_864));
+}
+
+#[tokio::test]
+async fn real_chromium_cdp_launches_isolated_context_and_executes_dom_scripts() {
+    use super::cdp::{CdpBrowserEngine, CookieParam};
+    use super::dom;
+
+    let engine = CdpBrowserEngine::new(19299, true);
+    let cookies = vec![
+        CookieParam {
+            name: "hatch_sess".to_string(),
+            value: "test_sess".to_string(),
+            domain: ".muse.ai".to_string(),
+            path: "/".to_string(),
+            secure: true,
+            expires: 1_900_000_000.0,
+        },
+        CookieParam {
+            name: "hatch_gw".to_string(),
+            value: "test_gw".to_string(),
+            domain: ".muse.ai".to_string(),
+            path: "/".to_string(),
+            secure: true,
+            expires: 1_900_000_000.0,
+        },
+    ];
+
+    let page = match engine.open_page("real-cdp-test-ctx", &cookies).await {
+        Ok(page) => page,
+        Err(CdpError::BrowserUnavailable(_)) => return,
+        Err(err) => panic!("unexpected CDP error: {err}"),
+    };
+
+    let html = r#"data:text/html,<!doctype html><html><body>
+        <input type="file" />
+        <textarea></textarea>
+        <button data-testid="hatch-chat-send-button" aria-label="Send" onclick="
+            const msg = document.createElement('div');
+            msg.className = 'hatch-agent-bubble-bg';
+            msg.innerText = 'Real CDP agent reply';
+            document.body.appendChild(msg);
+        ">Send</button>
+    </body></html>"#;
+
+    page.navigate(html)
+        .await
+        .expect("navigate to data URL should succeed");
+    tokio::time::sleep(Duration::from_millis(200)).await;
+
+    let b64 = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, VALID_PNG_BYTES);
+    let attach_js = dom::attach_file_js(&b64, "image/png", "ref_0.png");
+    let attach_res = page
+        .evaluate_json(&attach_js, false, Duration::from_secs(5))
+        .await
+        .expect("attach_file_js should evaluate in real Chromium");
+    assert_eq!(attach_res.get("ok").and_then(Value::as_bool), Some(true));
+
+    let fill_js = dom::fill_input_js("Hello from Rust CDP");
+    let fill_res = page
+        .evaluate_json(&fill_js, false, Duration::from_secs(5))
+        .await
+        .expect("fill_input_js should evaluate in real Chromium");
+    assert_eq!(fill_res.get("ok").and_then(Value::as_bool), Some(true));
+
+    let click_res = page
+        .evaluate_json(dom::CLICK_SEND_JS, false, Duration::from_secs(5))
+        .await
+        .expect("CLICK_SEND_JS should evaluate in real Chromium");
+    assert_eq!(click_res.as_str(), Some("clicked"));
+
+    let state = page
+        .evaluate_json(dom::CHAT_STATE_JS, false, Duration::from_secs(5))
+        .await
+        .expect("CHAT_STATE_JS should evaluate in real Chromium");
+    assert_eq!(state.get("agentCount").and_then(Value::as_u64), Some(1));
+    assert_eq!(
+        state.get("lastText").and_then(Value::as_str),
+        Some("Real CDP agent reply")
+    );
+
+    page.close().await;
+    engine.dispose_context("real-cdp-test-ctx").await;
+}
+
+#[tokio::test]
+#[ignore]
+async fn live_muse_primary_chat_smoke_test() {
+    let config_path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../config.toml");
+    let config = crate::config::AppConfig::parse_and_resolve(&config_path)
+        .expect("config.toml should parse and validate cleanly");
+    let crate::config::LlmInstanceConfig::Muse(muse_cfg) = config
+        .providers
+        .llm
+        .instances
+        .get("muse_primary")
+        .expect("muse_primary instance should exist")
+    else {
+        panic!("expected LlmInstanceConfig::Muse");
+    };
+
+    let provider = MuseLlmProvider::from_config(muse_cfg)
+        .expect("MuseLlmProvider::from_config should succeed");
+    let request = LlmRequest::text_turn("Reply with the single word PONG.".to_string());
+
+    let output = provider
+        .invoke(LlmOperation::Chat {
+            request,
+            reasoning: false,
+        })
+        .await
+        .expect("live muse.ai chat should succeed");
+    println!("Live muse.ai response: {output:?}");
+    match output {
+        LlmOutput::Text(text) => assert!(!text.trim().is_empty()),
+        other => panic!("unexpected output: {other:?}"),
+    }
+
+    let img_output = provider
+        .invoke(LlmOperation::ImageGeneration {
+            prompt: "A minimalist red circle on a white background".to_string(),
+            width: 1024,
+            height: 1024,
+            reference_images: Vec::new(),
+            transparent_background: false,
+        })
+        .await
+        .expect("live muse.ai image generation should succeed");
+    match img_output {
+        LlmOutput::Media { bytes, mime_type } => {
+            println!(
+                "Live muse.ai image generated: mime_type={mime_type}, bytes_len={}",
+                bytes.len()
+            );
+            assert!(!bytes.is_empty());
+            assert!(mime_type.starts_with("image/"));
+        }
+        other => panic!("unexpected image output: {other:?}"),
+    }
+}
+
+

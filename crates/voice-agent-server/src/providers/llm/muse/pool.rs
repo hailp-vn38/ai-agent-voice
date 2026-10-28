@@ -3,7 +3,7 @@ use std::sync::{Arc, Mutex as StdMutex, OnceLock, Weak};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use sha2::{Digest, Sha256};
-use tokio::sync::{mpsc, Notify};
+use tokio::sync::Notify;
 use uuid::Uuid;
 
 use super::cdp::{BrowserEngine, BrowserPage, CdpBrowserEngine, CdpError, CookieParam};
@@ -163,7 +163,14 @@ pub(super) struct SharedMusePool {
     http_client: reqwest::Client,
     inner: Arc<StdMutex<PoolInner>>,
     notify: Arc<Notify>,
-    dispose_tx: mpsc::UnboundedSender<Arc<dyn BrowserPage>>,
+}
+
+fn spawn_page_close(page: Arc<dyn BrowserPage>) {
+    if let Ok(handle) = tokio::runtime::Handle::try_current() {
+        handle.spawn(async move {
+            page.close().await;
+        });
+    }
 }
 
 static GLOBAL_POOLS: OnceLock<StdMutex<HashMap<MusePoolKey, Weak<SharedMusePool>>>> =
@@ -211,13 +218,6 @@ impl SharedMusePool {
             rr_cursor: 0,
         }));
         let notify = Arc::new(Notify::new());
-        let (dispose_tx, mut dispose_rx) = mpsc::unbounded_channel::<Arc<dyn BrowserPage>>();
-
-        tokio::spawn(async move {
-            while let Some(page) = dispose_rx.recv().await {
-                page.close().await;
-            }
-        });
 
         let http_client = reqwest::Client::builder()
             .timeout(Duration::from_secs(15))
@@ -231,7 +231,6 @@ impl SharedMusePool {
             http_client,
             inner,
             notify,
-            dispose_tx,
         })
     }
 
@@ -266,7 +265,7 @@ impl SharedMusePool {
             }
         }
         for page in stale_pages {
-            let _ = self.dispose_tx.send(page);
+            spawn_page_close(page);
         }
         self.notify.notify_waiters();
     }
@@ -497,7 +496,7 @@ impl SharedMusePool {
             };
 
             for page in stale_to_close {
-                let _ = self.dispose_tx.send(page);
+                spawn_page_close(page);
             }
 
             match selection {
@@ -513,7 +512,6 @@ impl SharedMusePool {
                         clean_return: false,
                         inner: Arc::clone(&self.inner),
                         notify: Arc::clone(&self.notify),
-                        dispose_tx: self.dispose_tx.clone(),
                     });
                 }
                 Some(CheckoutPlan::OpenNew { account_idx }) => {
@@ -551,7 +549,6 @@ impl SharedMusePool {
                                 clean_return: false,
                                 inner: Arc::clone(&self.inner),
                                 notify: Arc::clone(&self.notify),
-                                dispose_tx: self.dispose_tx.clone(),
                             });
                         }
                         Err(err) => {
@@ -625,7 +622,6 @@ pub(super) struct TabLease {
     clean_return: bool,
     inner: Arc<StdMutex<PoolInner>>,
     notify: Arc<Notify>,
-    dispose_tx: mpsc::UnboundedSender<Arc<dyn BrowserPage>>,
 }
 
 impl TabLease {
@@ -671,7 +667,7 @@ impl TabLease {
             }
         }
         for page in stale_pages {
-            let _ = self.dispose_tx.send(page);
+            spawn_page_close(page);
         }
         self.notify.notify_waiters();
     }
@@ -701,7 +697,7 @@ impl Drop for TabLease {
         };
         self.notify.notify_waiters();
         if let Some(page) = page_to_close {
-            let _ = self.dispose_tx.send(page);
+            spawn_page_close(page);
         }
     }
 }
