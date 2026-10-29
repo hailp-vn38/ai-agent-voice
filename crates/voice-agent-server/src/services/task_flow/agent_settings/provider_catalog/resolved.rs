@@ -45,7 +45,10 @@ impl ResolvedLlmProvider {
     pub fn is_asr_adapter(&self) -> bool {
         matches!(
             self.adapter.as_str(),
-            "zipformer_sherpa" | "gipformer_sherpa_offline" | "qualification_asr"
+            "zipformer_sherpa"
+                | "gipformer_sherpa_offline"
+                | "sensevoice_sherpa_offline"
+                | "qualification_asr"
         ) || self.provider_ref.starts_with("config:asr:")
     }
 

@@ -211,6 +211,16 @@ const ADAPTER_CATALOG_META: Record<string, AdapterPresentation> = {
       max_active_paths: 4,
     },
   },
+  sensevoice_sherpa_offline: {
+    name: 'SenseVoice Sherpa Offline',
+    detail: 'Multilingual ASR (EN/ZH/JA/KO/YUE) · local offline inference',
+    mode: 'Local',
+    cap: ['Offline', '16 kHz'],
+    defaults: {
+      language: 'auto',
+      use_itn: true,
+    },
+  },
   silero_onnx: {
     name: 'Silero ONNX',
     detail: 'Local voice activity detection · 16 kHz',

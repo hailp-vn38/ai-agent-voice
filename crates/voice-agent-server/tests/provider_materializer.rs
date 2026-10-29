@@ -249,6 +249,51 @@ fn native_resource_identity_normalizes_defaults_and_isolates_execution_and_crede
 }
 
 #[test]
+fn sensevoice_resource_identity_normalizes_defaults_and_isolates_language_itn_and_threads() {
+    use std::{collections::HashMap, sync::Arc};
+    use voice_agent_server::{
+        services::provider_runtime::{FactoryMaterializer, RuntimeMaterializer},
+        workers::WorkerSupervisor,
+    };
+    let mut cfg = config();
+    cfg.runtime.onnx.library = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/onnx-runtime-fingerprint.txt");
+    let builder = FactoryMaterializer::new(
+        Arc::new(cfg.clone()),
+        Arc::new(Secrets(AtomicUsize::new(0))),
+        HashMap::from([("sensevoice_sherpa_offline".into(), 1024)]),
+        Arc::new(WorkerSupervisor::start_many(vec![], vec![])),
+    )
+    .unwrap();
+    let mut row = DesiredProvider {
+        id: 1,
+        key: "sv-a".into(),
+        kind: "asr".into(),
+        adapter: "sensevoice_sherpa_offline".into(),
+        revision: 1,
+        config_json: r#"{}"#.into(),
+        secret_ref: None,
+    };
+    let default_key = builder.resource_key(&row).unwrap().unwrap();
+    row.config_json = r#"{"language":"auto","use_itn":true}"#.into();
+    assert_eq!(builder.resource_key(&row).unwrap(), Some(default_key.clone()));
+
+    row.config_json = r#"{"language":"en","use_itn":true}"#.into();
+    let en_key = builder.resource_key(&row).unwrap().unwrap();
+    assert_ne!(en_key, default_key, "language changes the SenseVoice recognizer config");
+
+    row.config_json = r#"{"language":"en","use_itn":false}"#.into();
+    let no_itn_key = builder.resource_key(&row).unwrap().unwrap();
+    assert_ne!(no_itn_key, en_key, "use_itn changes the SenseVoice recognizer config");
+
+    row.config_json = r#"{"language":"fr","use_itn":true}"#.into();
+    assert!(builder.resource_key(&row).is_err(), "unsupported language must be rejected");
+
+    row.config_json = r#"{"language":"auto","use_itn":true,"num_threads":2}"#.into();
+    assert!(builder.resource_key(&row).is_err(), "DB thread override must be rejected");
+}
+
+#[test]
 fn zerotts_resource_identity_shares_voices_but_isolates_delivery_mode() {
     use std::{collections::HashMap, sync::Arc};
     use voice_agent_server::{

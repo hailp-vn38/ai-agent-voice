@@ -135,6 +135,13 @@ adapter = "gipformer_sherpa_offline"
 decoding_method = "modified_beam_search"
 max_active_paths = 4
 
+# SenseVoiceSmall is an offline multilingual ASR adapter (Auto, English, Mandarin,
+# Japanese, Korean, Cantonese) running on sherpa-onnx INT8.
+[providers.asr.instances.sensevoice_multi]
+adapter = "sensevoice_sherpa_offline"
+language = "auto"
+use_itn = true
+
 [providers.llm.instances.openai_primary]
 adapter = "openai"
 api_key = ""
@@ -262,6 +269,7 @@ campplus_sherpa = 1
 silero_onnx = 1
 zipformer_sherpa = 2
 gipformer_sherpa_offline = 4
+sensevoice_sherpa_offline = 4
 zerotts_onnx = 2
 vieneu = 2
 kokoro_vi_onnx = 2
@@ -326,6 +334,7 @@ Bạn trả lời tự nhiên, thân thiện và súc tích.
 # campplus_sherpa = 268435456
 # silero_onnx = 134217728
 # gipformer_sherpa_offline = 536870912
+# sensevoice_sherpa_offline = 536870912
 # kokoro_vi_onnx = 3221225472
 # vifasttts_onnx = 536870912
 # ZeroTTS: 2 streaming workers peaked at 2729220 KiB RSS in a short development smoke test.

@@ -11,9 +11,9 @@ use voice_agent_server::config::{
     AppConfig, AsrInstanceConfig, AsrProvidersConfig, AudioConfig, AuthConfig, BargeInConfig,
     DeploymentConfig, EffectiveAgentConfig, GipformerSherpaOfflineConfig, LimitsConfig, LlmConfig,
     LlmInstanceConfig, LlmProvidersConfig, OpenAiConfig, ProviderDefaultsConfig, ProvidersConfig,
-    RuntimeConfig, ServerConfig, SileroOnnxConfig, SpeechOutputConfig, TtsConfig,
-    TtsInstanceConfig, TtsProvidersConfig, VadInstanceConfig, VadProvidersConfig, WebsocketConfig,
-    WorkersConfig, ZeroTtsOnnxConfig, ZipformerSherpaConfig,
+    RuntimeConfig, SenseVoiceSherpaOfflineConfig, ServerConfig, SileroOnnxConfig,
+    SpeechOutputConfig, TtsConfig, TtsInstanceConfig, TtsProvidersConfig, VadInstanceConfig,
+    VadProvidersConfig, WebsocketConfig, WorkersConfig, ZeroTtsOnnxConfig, ZipformerSherpaConfig,
 };
 use voice_agent_server::{
     app::AppState,
@@ -345,6 +345,50 @@ fn gipformer_config_defaults_are_qualification_defaults() {
     assert_eq!(config.num_threads, 4);
     assert_eq!(config.decoding_method.as_str(), "modified_beam_search");
     assert_eq!(config.max_active_paths, 4);
+}
+
+#[test]
+fn sensevoice_config_defaults_and_validation_work_across_multilingual_options() {
+    let config: SenseVoiceSherpaOfflineConfig = toml::from_str("")
+        .expect("SenseVoice default configuration should parse");
+    assert_eq!(config.model, "sensevoice_small_int8");
+    assert_eq!(config.language, "auto");
+    assert!(config.use_itn);
+    assert_eq!(config.num_threads, 4);
+
+    let full = load_catalog_config(
+        r#"
+[providers.asr.instances.sensevoice_multi]
+adapter = "sensevoice_sherpa_offline"
+language = "ja"
+use_itn = false
+"#,
+    )
+    .unwrap();
+    assert_eq!(
+        full.providers.asr.instances["sensevoice_multi"].adapter(),
+        "sensevoice_sherpa_offline"
+    );
+
+    for invalid in [
+        r#"
+[providers.asr.instances.sensevoice_multi]
+adapter = "sensevoice_sherpa_offline"
+language = "fr"
+"#,
+        r#"
+[providers.asr.instances.sensevoice_multi]
+adapter = "sensevoice_sherpa_offline"
+num_threads = 0
+"#,
+        r#"
+[providers.asr.instances.sensevoice_multi]
+adapter = "sensevoice_sherpa_offline"
+model = ""
+"#,
+    ] {
+        assert!(load_catalog_config(invalid).is_err());
+    }
 }
 
 #[test]

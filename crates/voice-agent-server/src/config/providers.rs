@@ -4,7 +4,9 @@ use std::collections::BTreeMap;
 use super::defaults::*;
 pub use crate::providers::{
     asr::{
-        gipformer::config::GipformerSherpaOfflineConfig, zipformer::config::ZipformerSherpaConfig,
+        gipformer::config::GipformerSherpaOfflineConfig,
+        sensevoice::config::SenseVoiceSherpaOfflineConfig,
+        zipformer::config::ZipformerSherpaConfig,
     },
     llm::{
         gateway::LlmGatewayConfig, openai::config::OpenAiConfig, opencode_free::OpenCodeFreeConfig,
@@ -293,6 +295,8 @@ pub enum AsrInstanceConfig {
     #[serde(rename = "zipformer_sherpa")]
     ZipformerSherpa(ZipformerSherpaConfig),
     GipformerSherpaOffline(GipformerSherpaOfflineConfig),
+    #[serde(rename = "sensevoice_sherpa_offline")]
+    SenseVoiceSherpaOffline(SenseVoiceSherpaOfflineConfig),
     #[cfg(feature = "qualification-providers")]
     QualificationAsr(QualificationConfig),
 }
@@ -302,6 +306,7 @@ impl AsrInstanceConfig {
         match self {
             Self::ZipformerSherpa(_) => "zipformer_sherpa",
             Self::GipformerSherpaOffline(_) => "gipformer_sherpa_offline",
+            Self::SenseVoiceSherpaOffline(_) => "sensevoice_sherpa_offline",
             #[cfg(feature = "qualification-providers")]
             Self::QualificationAsr(_) => "qualification_asr",
         }
@@ -310,6 +315,7 @@ impl AsrInstanceConfig {
         match self {
             Self::ZipformerSherpa(config) => &config.model,
             Self::GipformerSherpaOffline(config) => &config.model,
+            Self::SenseVoiceSherpaOffline(config) => &config.model,
             #[cfg(feature = "qualification-providers")]
             Self::QualificationAsr(_) => "qualification",
         }

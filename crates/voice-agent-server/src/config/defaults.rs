@@ -250,6 +250,15 @@ pub(crate) fn default_gipformer_decoding_method() -> super::TransducerDecodingMe
 pub(crate) fn default_gipformer_max_active_paths() -> i32 {
     4
 }
+pub(crate) fn default_sensevoice_threads() -> i32 {
+    4
+}
+pub(crate) fn default_sensevoice_language() -> String {
+    "auto".into()
+}
+pub(crate) fn default_sensevoice_itn() -> bool {
+    true
+}
 pub(super) fn default_onnx_runtime_library() -> std::path::PathBuf {
     if cfg!(target_os = "macos") {
         "runtime/onnxruntime/libonnxruntime.dylib".into()
@@ -359,6 +368,12 @@ pub(super) fn default_enrollment_prompt_assets_dir() -> std::path::PathBuf {
 
 pub(crate) fn default_gipformer_model() -> String {
     crate::providers::local_model_identity("gipformer_sherpa_offline")
+        .expect("compiled local adapter")
+        .into()
+}
+
+pub(crate) fn default_sensevoice_model() -> String {
+    crate::providers::local_model_identity("sensevoice_sherpa_offline")
         .expect("compiled local adapter")
         .into()
 }

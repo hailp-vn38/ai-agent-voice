@@ -2,8 +2,9 @@
 
 use crate::{
     config::{
-        GipformerSherpaOfflineConfig, KokoroViOnnxConfig, SileroOnnxConfig, VieneuNativeConfig,
-        VifastttsOnnxConfig, ZeroTtsOnnxConfig, ZipformerSherpaConfig,
+        GipformerSherpaOfflineConfig, KokoroViOnnxConfig, SenseVoiceSherpaOfflineConfig,
+        SileroOnnxConfig, VieneuNativeConfig, VifastttsOnnxConfig, ZeroTtsOnnxConfig,
+        ZipformerSherpaConfig,
     },
     providers::ProviderLoadError,
     services::provider_runtime::LocalRuntimePlan,
@@ -34,6 +35,7 @@ impl LocalRuntimeAdapterRegistry {
 struct SileroOnnxPlanner;
 struct ZipformerSherpaPlanner;
 struct GipformerSherpaOfflinePlanner;
+struct SenseVoiceSherpaOfflinePlanner;
 struct ZeroTtsOnnxPlanner;
 struct KokoroViOnnxPlanner;
 struct VifastttsOnnxPlanner;
@@ -119,6 +121,47 @@ impl LocalRuntimeAdapter for GipformerSherpaOfflinePlanner {
             max_active_paths: config.max_active_paths,
         })
         .map_err(|_| ProviderLoadError::Configuration("invalid Gipformer physical spec".into()))?;
+        Ok(LocalRuntimePlan::onnx(
+            self.adapter_id(),
+            config.model,
+            spec,
+        ))
+    }
+}
+
+#[derive(serde::Serialize)]
+struct SenseVoicePhysicalSpec {
+    language: String,
+    use_itn: bool,
+}
+
+impl LocalRuntimeAdapter for SenseVoiceSherpaOfflinePlanner {
+    fn adapter_id(&self) -> &'static str {
+        "sensevoice_sherpa_offline"
+    }
+
+    fn physical_plan(
+        &self,
+        effective_config: serde_json::Value,
+    ) -> Result<LocalRuntimePlan, ProviderLoadError> {
+        let config: SenseVoiceSherpaOfflineConfig = serde_json::from_value(effective_config)
+            .map_err(|_| {
+                ProviderLoadError::Configuration("invalid SenseVoice local runtime config".into())
+            })?;
+        if !super::asr::sensevoice::config::valid_language(&config.language)
+            || config.num_threads <= 0
+        {
+            return Err(ProviderLoadError::Configuration(
+                "invalid SenseVoice local runtime config".into(),
+            ));
+        }
+        // sherpa-onnx bakes `language` and `use_itn` into `OfflineSenseVoiceModelConfig` when
+        // constructing `OfflineRecognizer`, so distinct values require separate native instances.
+        let spec = serde_json::to_value(SenseVoicePhysicalSpec {
+            language: config.language,
+            use_itn: config.use_itn,
+        })
+        .map_err(|_| ProviderLoadError::Configuration("invalid SenseVoice physical spec".into()))?;
         Ok(LocalRuntimePlan::onnx(
             self.adapter_id(),
             config.model,
@@ -265,15 +308,18 @@ static SILERO_ONNX_PLANNER: SileroOnnxPlanner = SileroOnnxPlanner;
 static ZIPFORMER_SHERPA_PLANNER: ZipformerSherpaPlanner = ZipformerSherpaPlanner;
 static GIPFORMER_SHERPA_OFFLINE_PLANNER: GipformerSherpaOfflinePlanner =
     GipformerSherpaOfflinePlanner;
+static SENSEVOICE_SHERPA_OFFLINE_PLANNER: SenseVoiceSherpaOfflinePlanner =
+    SenseVoiceSherpaOfflinePlanner;
 static ZEROTTS_ONNX_PLANNER: ZeroTtsOnnxPlanner = ZeroTtsOnnxPlanner;
 static KOKORO_VI_ONNX_PLANNER: KokoroViOnnxPlanner = KokoroViOnnxPlanner;
 static VIFASTTTS_ONNX_PLANNER: VifastttsOnnxPlanner = VifastttsOnnxPlanner;
 static VIENEU_NATIVE_PLANNER: VieneuNativePlanner = VieneuNativePlanner;
-static LOCAL_RUNTIME_ADAPTERS: [&dyn LocalRuntimeAdapter; 8] = [
+static LOCAL_RUNTIME_ADAPTERS: [&dyn LocalRuntimeAdapter; 9] = [
     &CAMPPLUS_PLANNER,
     &SILERO_ONNX_PLANNER,
     &ZIPFORMER_SHERPA_PLANNER,
     &GIPFORMER_SHERPA_OFFLINE_PLANNER,
+    &SENSEVOICE_SHERPA_OFFLINE_PLANNER,
     &ZEROTTS_ONNX_PLANNER,
     &KOKORO_VI_ONNX_PLANNER,
     &VIFASTTTS_ONNX_PLANNER,

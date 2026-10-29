@@ -23,6 +23,13 @@ fn registry_exposes_only_adapters_compiled_into_the_binary() {
             .adapter(),
         "gipformer_sherpa_offline"
     );
+    assert_eq!(
+        registry
+            .asr_factory("sensevoice_sherpa_offline")
+            .unwrap()
+            .adapter(),
+        "sensevoice_sherpa_offline"
+    );
     assert_eq!(registry.llm_factory("openai").unwrap().adapter(), "openai");
     assert!(registry.llm_factory("muse").is_err());
     assert_eq!(
@@ -180,6 +187,7 @@ fn descriptors_expose_only_user_configuration_and_typed_decoding_choices() {
                 | "vifasttts_onnx"
                 | "zipformer_sherpa"
                 | "gipformer_sherpa_offline"
+                | "sensevoice_sherpa_offline"
         ) {
             assert!(fields.iter().all(|field| field["key"] != "model"));
         }
@@ -281,6 +289,7 @@ fn every_local_adapter_pins_an_immutable_upstream_revision() {
         "silero_onnx",
         "zipformer_sherpa",
         "gipformer_sherpa_offline",
+        "sensevoice_sherpa_offline",
         "zerotts_onnx",
         "kokoro_vi_onnx",
         "vifasttts_onnx",
@@ -332,6 +341,9 @@ fn native_transducers_accept_every_advertised_decoding_method() {
                 AsrInstanceConfig::GipformerSherpaOffline(options) => {
                     options.decoding_method = method
                 }
+                AsrInstanceConfig::SenseVoiceSherpaOffline(_) => {
+                    unreachable!("transducer ASR adapter")
+                }
                 #[cfg(feature = "qualification-providers")]
                 AsrInstanceConfig::QualificationAsr(_) => unreachable!("native ASR adapter"),
             }
@@ -366,3 +378,40 @@ fn opencode_free_model_is_a_text_input_without_a_fixed_catalog() {
     assert!(wire["capabilities"].get("models").is_none());
     assert_eq!(wire["discovery"]["models"], "unsupported");
 }
+
+#[test]
+fn sensevoice_descriptor_and_desired_config_validation_cover_multilingual_options() {
+    use voice_agent_server::database::provider_config::validate_raw;
+
+    let registry = compiled_provider_adapter_registry();
+    let descriptor = registry.get("sensevoice_sherpa_offline").unwrap();
+    assert_eq!(descriptor.provider_type, ProviderType::Asr);
+    assert_eq!(descriptor.capabilities.streaming, Some(false));
+    assert_eq!(descriptor.capabilities.offline, Some(true));
+    assert_eq!(descriptor.capabilities.input_sample_rates, Some(&[16_000][..]));
+
+    let languages: Vec<&str> = descriptor
+        .capabilities
+        .languages
+        .unwrap()
+        .iter()
+        .map(|lang| lang.id)
+        .collect();
+    assert_eq!(languages, vec!["auto", "en", "zh", "ja", "ko", "yue"]);
+
+    assert_eq!(
+        validate_raw("sensevoice_sherpa_offline", "{}").unwrap(),
+        r#"{"language":"auto","use_itn":true}"#
+    );
+    for lang in ["auto", "en", "zh", "ja", "ko", "yue"] {
+        let raw = format!(r#"{{"language":"{lang}","use_itn":false}}"#);
+        assert_eq!(
+            validate_raw("sensevoice_sherpa_offline", &raw).unwrap(),
+            raw
+        );
+    }
+    assert!(validate_raw("sensevoice_sherpa_offline", r#"{"language":"fr"}"#).is_err());
+    assert!(validate_raw("sensevoice_sherpa_offline", r#"{"model":"sensevoice_small_int8"}"#).is_err());
+    assert!(validate_raw("sensevoice_sherpa_offline", r#"{"num_threads":4}"#).is_err());
+}
+

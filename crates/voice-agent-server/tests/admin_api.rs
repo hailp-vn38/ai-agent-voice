@@ -2434,6 +2434,16 @@ async fn provider_mutations_reject_server_owned_configuration() {
             ],
         ),
         (
+            "asr",
+            "sensevoice_sherpa_offline",
+            serde_json::json!({"language":"en","use_itn":true}),
+            vec![
+                ("num_threads", serde_json::json!(128)),
+                ("model", serde_json::json!("sensevoice_small_int8")),
+                ("language", serde_json::json!("fr")),
+            ],
+        ),
+        (
             "tts",
             "zerotts_onnx",
             serde_json::json!({"voice":"maichi"}),

@@ -46,6 +46,7 @@ pub fn validate_raw(adapter: &str, raw: &str) -> Result<String, ProviderConfigEr
         "silero_onnx" => canonical::<Silero, _>(&value, Silero::valid),
         "zipformer_sherpa" => canonical::<Zipformer, _>(&value, Zipformer::valid),
         "gipformer_sherpa_offline" => canonical::<Gipformer, _>(&value, Gipformer::valid),
+        "sensevoice_sherpa_offline" => canonical::<SenseVoice, _>(&value, SenseVoice::valid),
         "zerotts_onnx" => canonical::<ZeroTts, _>(&value, ZeroTts::valid),
         "vieneu" if value.get("num_threads").is_none() => {
             canonical::<crate::config::VieneuNativeConfig, _>(
@@ -233,6 +234,19 @@ struct Gipformer {
 impl Gipformer {
     fn valid(&self) -> bool {
         self.language == "vi-VN" && (1..=10_000).contains(&self.max_active_paths)
+    }
+}
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct SenseVoice {
+    #[serde(default = "crate::config::defaults::default_sensevoice_language")]
+    language: String,
+    #[serde(default = "crate::config::defaults::default_sensevoice_itn")]
+    use_itn: bool,
+}
+impl SenseVoice {
+    fn valid(&self) -> bool {
+        crate::providers::asr::sensevoice::config::valid_language(&self.language)
     }
 }
 #[derive(Deserialize, Serialize)]

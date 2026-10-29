@@ -99,6 +99,7 @@ static REGISTRATIONS: &[ProviderAdapterRegistration] = &[
     super::vad::silero::descriptor::REGISTRATION,
     super::asr::zipformer::descriptor::REGISTRATION,
     super::asr::gipformer::descriptor::REGISTRATION,
+    super::asr::sensevoice::descriptor::REGISTRATION,
     super::llm::openai::descriptor::REGISTRATION,
     super::llm::opencode_free::REGISTRATION,
     super::llm::gateway::descriptor::REGISTRATION,

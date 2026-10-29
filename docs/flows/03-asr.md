@@ -2,7 +2,7 @@
 
 ## 1. Boundary
 
-`AsrProvider::open()` tạo `AsrSession`; `push_pcm()` nhận PCM 16 kHz khi người dùng đang nói và có thể trả `AsrPartial`; `finish()` trả đúng một `AsrFinal`. `zipformer_sherpa` là adapter streaming, decode trong `push_pcm()` và thêm 660 ms zero tail trước `input_finished()` để encoder tiêu thụ đủ right context. `gipformer_sherpa_offline` là adapter offline, chỉ buffer canonical PCM trong `push_pcm()` và decode toàn utterance tại `finish()`; nó không phát partial và không có hard-cancel sau khi native decode bắt đầu. Cả hai giữ nguyên worker và wire contract.
+`AsrProvider::open()` tạo `AsrSession`; `push_pcm()` nhận PCM 16 kHz khi người dùng đang nói và có thể trả `AsrPartial`; `finish()` trả đúng một `AsrFinal`. `zipformer_sherpa` là adapter streaming, decode trong `push_pcm()` và thêm 660 ms zero tail trước `input_finished()` để encoder tiêu thụ đủ right context. `gipformer_sherpa_offline` (tiếng Việt) và `sensevoice_sherpa_offline` (đa ngôn ngữ: `auto`, `en`, `zh`, `ja`, `ko`, `yue` dùng SenseVoiceSmall INT8) là các adapter offline, chỉ buffer canonical PCM trong `push_pcm()` và decode toàn utterance tại `finish()`; chúng không phát partial và không có hard-cancel sau khi native decode bắt đầu. Tất cả giữ nguyên worker và wire contract.
 
 `AsrStreamLease` được lấy trước khi mở stream (`SpeechStart` ở Auto, `listen:start` ở Manual) và release sau final, cancel hoặc lỗi. `Active Turn` permit chỉ được lấy tại `SpeechEnd`/`listen:stop`, trước `finish()`; nếu không có permit, server cancel stream, release lease và bỏ turn.
 

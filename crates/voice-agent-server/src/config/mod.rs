@@ -1281,6 +1281,7 @@ fn default_runtime_threads() -> std::collections::BTreeMap<String, i32> {
         ("silero_onnx", 1),
         ("zipformer_sherpa", 2),
         ("gipformer_sherpa_offline", 4),
+        ("sensevoice_sherpa_offline", 4),
         ("zerotts_onnx", 2),
         ("vieneu", 2),
         ("kokoro_vi_onnx", 2),

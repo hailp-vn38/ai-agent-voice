@@ -1410,7 +1410,10 @@ async fn asr_provider_catalog_validation_and_server_asr_transcribe_backend() {
     // Exhaustively verify every `AsrInstanceConfig` variant's `.adapter()` is recognized by `is_asr_adapter()`
     let asr_variants: Vec<crate::config::AsrInstanceConfig> = vec![
         serde_json::from_value(serde_json::json!({ "adapter": "zipformer_sherpa" })).unwrap(),
-        serde_json::from_value(serde_json::json!({ "adapter": "gipformer_sherpa_offline" })).unwrap(),
+        serde_json::from_value(serde_json::json!({ "adapter": "gipformer_sherpa_offline" }))
+            .unwrap(),
+        serde_json::from_value(serde_json::json!({ "adapter": "sensevoice_sherpa_offline" }))
+            .unwrap(),
         #[cfg(feature = "qualification-providers")]
         serde_json::from_value(serde_json::json!({ "adapter": "qualification_asr" })).unwrap(),
     ];
@@ -1418,6 +1421,7 @@ async fn asr_provider_catalog_validation_and_server_asr_transcribe_backend() {
         let adapter_name = match inst {
             crate::config::AsrInstanceConfig::ZipformerSherpa(_) => inst.adapter(),
             crate::config::AsrInstanceConfig::GipformerSherpaOffline(_) => inst.adapter(),
+            crate::config::AsrInstanceConfig::SenseVoiceSherpaOffline(_) => inst.adapter(),
             #[cfg(feature = "qualification-providers")]
             crate::config::AsrInstanceConfig::QualificationAsr(_) => inst.adapter(),
         };

@@ -3,19 +3,22 @@
 use std::sync::Arc;
 
 use sherpa_onnx::{
-    OfflineRecognizer, OfflineRecognizerConfig, OfflineTransducerModelConfig, OnlineRecognizer,
-    OnlineRecognizerConfig,
+    OfflineRecognizer, OfflineRecognizerConfig, OfflineSenseVoiceModelConfig,
+    OfflineTransducerModelConfig, OnlineRecognizer, OnlineRecognizerConfig,
 };
 
 use crate::{
     config::{
         AsrInstanceConfig, GipformerSherpaOfflineConfig, LlmInstanceConfig, RuntimeConfig,
-        TtsInstanceConfig, VadInstanceConfig,
+        SenseVoiceSherpaOfflineConfig, TtsInstanceConfig, VadInstanceConfig,
     },
     providers::{
         AsrProvider, AssetError, LlmProvider, ProviderLoadError, ProviderType, TtsProvider,
         VadProvider,
-        asr::{GipformerAsrProvider, ZipformerAsrProvider, gipformer, zipformer},
+        asr::{
+            GipformerAsrProvider, SenseVoiceAsrProvider, ZipformerAsrProvider, gipformer,
+            sensevoice, zipformer,
+        },
         llm::{
             gateway::{LlmGatewayFactory, LlmGatewayProvider},
             openai::provider::ConfiguredOpenAiLlm,
@@ -218,6 +221,7 @@ impl VadFactory for SileroOnnxFactory {
 
 struct ZipformerSherpaFactory;
 struct GipformerSherpaOfflineFactory;
+struct SenseVoiceSherpaOfflineFactory;
 
 struct OpenAiFactory;
 #[cfg(feature = "qualification-providers")]
@@ -801,10 +805,80 @@ fn build_gipformer_recognizer(
     OfflineRecognizer::create(&config).ok_or(ProviderLoadError::Initialize("Gipformer ASR"))
 }
 
+impl AsrFactory for SenseVoiceSherpaOfflineFactory {
+    fn adapter(&self) -> &'static str {
+        "sensevoice_sherpa_offline"
+    }
+
+    fn model_identity<'a>(
+        &self,
+        config: &'a AsrInstanceConfig,
+    ) -> Result<&'a str, ProviderLoadError> {
+        match config {
+            AsrInstanceConfig::SenseVoiceSherpaOffline(_) => {
+                Ok(local_model_identity(self.adapter()).expect("compiled local adapter"))
+            }
+            _ => Err(ProviderLoadError::Configuration(
+                "sensevoice_sherpa_offline factory received another adapter config".into(),
+            )),
+        }
+    }
+
+    fn build(
+        &self,
+        config: &AsrInstanceConfig,
+        runtime: &RuntimeConfig,
+        max_buffered_samples: usize,
+    ) -> Result<Arc<dyn AsrProvider>, ProviderLoadError> {
+        let AsrInstanceConfig::SenseVoiceSherpaOffline(options) = config else {
+            return Err(ProviderLoadError::Configuration(
+                "sensevoice_sherpa_offline factory received another adapter config".into(),
+            ));
+        };
+        validate_threads(self.adapter(), runtime)?;
+        let mut options = options.clone();
+        options.num_threads = runtime.onnx.threads_for(self.adapter());
+        let recognizer = build_sensevoice_recognizer(
+            &options,
+            &resolve(sensevoice::assets::resolve_assets())?,
+        )?;
+        drop(recognizer.create_stream());
+        Ok(Arc::new(SenseVoiceAsrProvider {
+            recognizer: Arc::new(recognizer),
+            max_buffered_samples,
+        }))
+    }
+}
+
+fn build_sensevoice_recognizer(
+    options: &SenseVoiceSherpaOfflineConfig,
+    assets: &sensevoice::assets::SenseVoiceAssets,
+) -> Result<OfflineRecognizer, ProviderLoadError> {
+    if !sensevoice::config::valid_language(&options.language) {
+        return Err(ProviderLoadError::Configuration(
+            "SenseVoice requires language in auto, en, zh, ja, ko, or yue".into(),
+        ));
+    }
+    let mut config = OfflineRecognizerConfig::default();
+    config.model_config.sense_voice = OfflineSenseVoiceModelConfig {
+        model: Some(path(&assets.model)),
+        language: Some(options.language.clone()),
+        use_itn: options.use_itn,
+    };
+    config.model_config.tokens = Some(path(&assets.tokens));
+    config.model_config.num_threads = options.num_threads;
+    config.model_config.provider = Some("cpu".into());
+    config.feat_config.sample_rate = 16_000;
+    config.feat_config.feature_dim = 80;
+    OfflineRecognizer::create(&config).ok_or(ProviderLoadError::Initialize("SenseVoice ASR"))
+}
+
 static SILERO_ONNX_FACTORY: SileroOnnxFactory = SileroOnnxFactory;
 static ZIPFORMER_SHERPA_FACTORY: ZipformerSherpaFactory = ZipformerSherpaFactory;
 static GIPFORMER_SHERPA_OFFLINE_FACTORY: GipformerSherpaOfflineFactory =
     GipformerSherpaOfflineFactory;
+static SENSEVOICE_SHERPA_OFFLINE_FACTORY: SenseVoiceSherpaOfflineFactory =
+    SenseVoiceSherpaOfflineFactory;
 static OPENAI_FACTORY: OpenAiFactory = OpenAiFactory;
 static OPENCODE_FREE_FACTORY: OpenCodeFreeFactory = OpenCodeFreeFactory;
 static LLM_GATEWAY_FACTORY: LlmGatewayFactory = LlmGatewayFactory;
@@ -830,6 +904,7 @@ static VAD_FACTORIES: &[&dyn VadFactory] = &[
 static ASR_FACTORIES: &[&dyn AsrFactory] = &[
     &ZIPFORMER_SHERPA_FACTORY,
     &GIPFORMER_SHERPA_OFFLINE_FACTORY,
+    &SENSEVOICE_SHERPA_OFFLINE_FACTORY,
     #[cfg(feature = "qualification-providers")]
     &QUALIFICATION_ASR_FACTORY,
 ];
@@ -891,6 +966,7 @@ pub fn local_model_identity(adapter: &str) -> Option<&'static str> {
         "silero_onnx" => Some("silero_vad_v5"),
         "zipformer_sherpa" => Some("zipformer_vi_streaming"),
         "gipformer_sherpa_offline" => Some("gipformer15_vi_int8"),
+        "sensevoice_sherpa_offline" => Some("sensevoice_small_int8"),
         "zerotts_onnx" => Some("zerotts_default"),
         "vieneu" => Some(super::tts::vieneu::config::MODEL_ID),
         "kokoro_vi_onnx" => Some("kokoro_vi_contextbox"),
