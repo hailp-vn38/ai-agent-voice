@@ -179,14 +179,30 @@ fn dual_flow_agent_specs_assign_collectors_to_daily_flow_and_keep_wiki_flow_pure
     assert!(collector.default_allowed_tools.contains(&"add_to_sources"));
 
     let report_stager = find_agent_spec("report_stager").expect("report_stager spec");
-    assert!(report_stager.default_allowed_tools.contains(&"add_to_sources"));
-    assert!(report_stager.default_allowed_tools.contains(&"markdown_create"));
+    assert!(
+        report_stager
+            .default_allowed_tools
+            .contains(&"add_to_sources")
+    );
+    assert!(
+        report_stager
+            .default_allowed_tools
+            .contains(&"markdown_create")
+    );
     assert!(report_stager.default_allowed_tools.contains(&"chart_write"));
     assert!(report_stager.default_allowed_tools.contains(&"chart_get"));
-    assert!(report_stager.default_allowed_skills.contains(&"trading-chart"));
     assert!(
-        !report_stager.default_allowed_tools.contains(&"image_create")
-            && !report_stager.default_allowed_tools.contains(&"tts_synthesize"),
+        report_stager
+            .default_allowed_skills
+            .contains(&"trading-chart")
+    );
+    assert!(
+        !report_stager
+            .default_allowed_tools
+            .contains(&"image_create")
+            && !report_stager
+                .default_allowed_tools
+                .contains(&"tts_synthesize"),
         "report_stager must not duplicate media_creator tools"
     );
 
@@ -199,11 +215,34 @@ fn dual_flow_agent_specs_assign_collectors_to_daily_flow_and_keep_wiki_flow_pure
     assert!(BUILTIN_SKILLS.iter().any(|(id, _)| *id == "trading-chart"));
 
     let media_creator = find_agent_spec("media_creator").expect("media_creator spec");
-    assert!(media_creator.default_allowed_tools.contains(&"image_create"));
-    assert!(media_creator.default_allowed_tools.contains(&"tts_synthesize"));
-    assert!(media_creator.default_allowed_tools.contains(&"artifact_create"));
     assert!(
-        !media_creator.default_allowed_tools.contains(&"markdown_create"),
+        media_creator
+            .default_allowed_tools
+            .contains(&"image_create")
+    );
+    assert!(
+        media_creator
+            .default_allowed_tools
+            .contains(&"tts_synthesize")
+    );
+    assert!(
+        media_creator
+            .default_allowed_tools
+            .contains(&"asr_transcribe")
+    );
+    assert!(
+        media_creator
+            .default_allowed_tools
+            .contains(&"artifact_create")
+    );
+    assert_eq!(
+        media_creator.tool_required_tag("asr_transcribe"),
+        Some("asr")
+    );
+    assert!(
+        !media_creator
+            .default_allowed_tools
+            .contains(&"markdown_create"),
         "media_creator must not duplicate report_stager markdown_create tool"
     );
 
@@ -212,7 +251,10 @@ fn dual_flow_agent_specs_assign_collectors_to_daily_flow_and_keep_wiki_flow_pure
     assert!(!wiki_root.user_routable);
     assert!(!is_user_routable_root_agent("wiki_root"));
     assert_eq!(normalize_user_target_agent("wiki_root"), "daily_root");
-    assert_eq!(normalize_user_target_agent("default/wiki_root"), "daily_root");
+    assert_eq!(
+        normalize_user_target_agent("default/wiki_root"),
+        "daily_root"
+    );
     assert_eq!(normalize_user_target_agent("daily_root"), "daily_root");
     assert_eq!(
         wiki_root.default_subagents,
@@ -373,7 +415,9 @@ fn project_task_to_admin_job_and_events_include_agent_messages_for_tool_calls() 
     assert_eq!(artifact["media_type"], "text/markdown");
     assert_eq!(artifact["step_key"], "daily_root:1:wiki_search");
     let agent_run = &projected["agent_runs"][0];
-    let msgs = agent_run["messages"].as_array().expect("agent_run.messages array");
+    let msgs = agent_run["messages"]
+        .as_array()
+        .expect("agent_run.messages array");
     assert_eq!(msgs.len(), 3);
     assert_eq!(msgs[1]["role"], "assistant");
     assert_eq!(msgs[1]["text"], "Tôi sẽ tra cứu Wiki về Rust trước.");
@@ -621,7 +665,9 @@ fn resolved_llm_provider_exposes_capability_tags_and_enforces_agent_compatibilit
             ..Default::default()
         },
     );
-    assert!(validate_agent_overrides("llm_chat", "llm_chat", &per_tool_overrides, &catalog).is_ok());
+    assert!(
+        validate_agent_overrides("llm_chat", "llm_chat", &per_tool_overrides, &catalog).is_ok()
+    );
 
     let per_tool_settings = crate::services::task_flow::PersistedBackgroundSettings {
         orchestrator_llm_provider: "llm_chat".into(),
@@ -789,11 +835,8 @@ async fn catalog_media_backend_and_reasoning_tag_wire_provider_capabilities() {
         worker_llm_provider: "llm_reasoner".into(),
         ..PersistedBackgroundSettings::default()
     };
-    let (_, defs) = build_agent_definitions(
-        &OrchestratorSectionConfig::default(),
-        &settings,
-        &catalog,
-    );
+    let (_, defs) =
+        build_agent_definitions(&OrchestratorSectionConfig::default(), &settings, &catalog);
     let daily_root = defs.iter().find(|d| d.id == "daily_root").unwrap();
     assert_eq!(
         daily_root.llm.reasoning_effort,
@@ -857,7 +900,9 @@ async fn catalog_media_backend_and_reasoning_tag_wire_provider_capabilities() {
         fn synthesize_stream(
             &self,
             _text: &str,
-            on_pcm: &mut dyn FnMut(crate::audio::PcmF32Mono) -> Result<(), crate::providers::TtsError>,
+            on_pcm: &mut dyn FnMut(
+                crate::audio::PcmF32Mono,
+            ) -> Result<(), crate::providers::TtsError>,
         ) -> Result<(), crate::providers::TtsError> {
             on_pcm(crate::audio::PcmF32Mono::new(vec![0.15; 2_400], 24_000))
         }
@@ -955,15 +1000,23 @@ async fn catalog_media_backend_and_reasoning_tag_wire_provider_capabilities() {
         })
         .await
         .unwrap();
-    assert_eq!(default_dim_img.width, orchestrator_flow_rs::DEFAULT_PNG_WIDTH);
-    assert_eq!(default_dim_img.height, orchestrator_flow_rs::DEFAULT_PNG_HEIGHT);
+    assert_eq!(
+        default_dim_img.width,
+        orchestrator_flow_rs::DEFAULT_PNG_WIDTH
+    );
+    assert_eq!(
+        default_dim_img.height,
+        orchestrator_flow_rs::DEFAULT_PNG_HEIGHT
+    );
 
     server.abort();
 }
 
 #[test]
 fn canonical_prompts_enforce_summarize_analyze_visualize_pipeline_and_flexible_dimensions() {
-    assert!(DAILY_ROOT_PROMPT.contains("Standard Multi-Step Pipeline: Summarize → Analyze → Visualize"));
+    assert!(
+        DAILY_ROOT_PROMPT.contains("Standard Multi-Step Pipeline: Summarize → Analyze → Visualize")
+    );
     assert!(DAILY_ROOT_PROMPT.contains("STRICT SEQUENTIAL RULE"));
     assert!(DAILY_ROOT_PROMPT.contains("Visual Brief"));
     assert!(DAILY_ROOT_PROMPT.contains("Video Built-in Audio & Subtitles vs. Standalone TTS"));
@@ -973,14 +1026,21 @@ fn canonical_prompts_enforce_summarize_analyze_visualize_pipeline_and_flexible_d
     assert!(WIKI_RESEARCHER_PROMPT.contains("Điểm nhấn trực quan (Key Visual Concepts)"));
     assert!(MEDIA_CREATOR_PROMPT.contains("Agent-Selectable or Smart Default"));
     assert!(MEDIA_CREATOR_PROMPT.contains("svg_content"));
-    assert!(MEDIA_CREATOR_PROMPT.contains("Built-in Audio & Subtitles (DO NOT call `tts_synthesize` for videos)"));
-    assert!(MEDIA_CREATOR_PROMPT.contains("do **NOT** split `prompt` into separate 10-second sub-prompts"));
+    assert!(
+        MEDIA_CREATOR_PROMPT
+            .contains("Built-in Audio & Subtitles (DO NOT call `tts_synthesize` for videos)")
+    );
+    assert!(
+        MEDIA_CREATOR_PROMPT
+            .contains("do **NOT** split `prompt` into separate 10-second sub-prompts")
+    );
     assert!(MEDIA_CREATOR_PROMPT.contains("When to Use `video_concat` (ONLY When Exceeding Tool Generation Limit / `requires_concat: true`)"));
 }
 
 #[test]
 fn custom_subagents_enforce_flow_tool_boundaries_and_sync_active_subagents_prompts() {
-    let temp_dir = std::env::temp_dir().join(format!("custom-subagent-unit-{}", uuid::Uuid::new_v4()));
+    let temp_dir =
+        std::env::temp_dir().join(format!("custom-subagent-unit-{}", uuid::Uuid::new_v4()));
     let store_dir = temp_dir.join("store");
     let prompts_dir = temp_dir.join("prompts");
     std::fs::create_dir_all(&store_dir).unwrap();
@@ -1055,8 +1115,10 @@ fn custom_subagents_enforce_flow_tool_boundaries_and_sync_active_subagents_promp
 
     // Flow 2 custom subagent with collector tool must fail validation
     let mut bad_agents = settings.agents.clone();
-    bad_agents.get_mut("wiki_fact_auditor").unwrap().allowed_tools =
-        Some(vec!["yt_fetch_transcript".to_owned()]);
+    bad_agents
+        .get_mut("wiki_fact_auditor")
+        .unwrap()
+        .allowed_tools = Some(vec!["yt_fetch_transcript".to_owned()]);
     assert_eq!(
         validate_agent_overrides(
             &settings.orchestrator_llm_provider,
@@ -1080,7 +1142,10 @@ fn custom_subagents_enforce_flow_tool_boundaries_and_sync_active_subagents_promp
     let daily_root_disk_prompt =
         std::fs::read_to_string(prompts_dir.join("daily_root.md")).unwrap();
     assert!(daily_root_disk_prompt.contains("<active_subagents>"));
-    assert!(daily_root_disk_prompt.contains("`arxiv_digest` (custom): Summarizes arXiv papers into Markdown briefs."));
+    assert!(
+        daily_root_disk_prompt
+            .contains("`arxiv_digest` (custom): Summarizes arXiv papers into Markdown briefs.")
+    );
 
     // Project JSON and verify `is_builtin`, auto-injected `skill` tool, and `allowed_subagents`
     let projected = project_agents_json(&cfg, &loaded, &catalog);
@@ -1093,7 +1158,10 @@ fn custom_subagents_enforce_flow_tool_boundaries_and_sync_active_subagents_promp
             .unwrap()
             .contains(&serde_json::json!("arxiv_digest"))
     );
-    let arxiv_json = projected.iter().find(|a| a["id"] == "arxiv_digest").unwrap();
+    let arxiv_json = projected
+        .iter()
+        .find(|a| a["id"] == "arxiv_digest")
+        .unwrap();
     assert_eq!(arxiv_json["is_builtin"], false);
     assert_eq!(arxiv_json["flow_id"], "daily");
     assert_eq!(arxiv_json["parent_id"], "daily_root");
@@ -1124,7 +1192,8 @@ fn muse_gateway_provider_in_catalog_supports_media_and_custom_executor() {
     assert!(canonical.contains("muse-image"));
 
     // Rejects embedded credentials in `config_json`
-    let with_secret = r#"{"gateway_binding":"pool:muse","model":"muse-image","api_key":"secret_token"}"#;
+    let with_secret =
+        r#"{"gateway_binding":"pool:muse","model":"muse-image","api_key":"secret_token"}"#;
     assert!(crate::database::provider_config::validate_raw("llm_gateway", with_secret).is_err());
 
     // 2. Verify `llm_gateway` bound to `pool:muse` in Task Flow catalog exposes `image` & `video`
@@ -1148,11 +1217,13 @@ fn muse_gateway_provider_in_catalog_supports_media_and_custom_executor() {
         reasoning_effort: None,
         temperature_percent: None,
         tags: vec!["image".into(), "video".into()],
-        muse_options: Some(crate::services::task_flow::agent_settings::MuseCatalogOptions {
-            account_concurrency: 2,
-            cdp_port: 19222,
-            headless: true,
-        }),
+        muse_options: Some(
+            crate::services::task_flow::agent_settings::MuseCatalogOptions {
+                account_concurrency: 2,
+                cdp_port: 19222,
+                headless: true,
+            },
+        ),
     };
 
     assert!(muse_prov.supports_tag("image"));
@@ -1256,25 +1327,24 @@ fn muse_gateway_provider_in_catalog_supports_media_and_custom_executor() {
         Some("Scene 1 (0-10s)\n\nScene 2 (10-20s)".into()),
     )
     .unwrap();
-    let multi_payload =
-        crate::services::task_flow::agent_settings::build_generated_video_payload(
-            &orchestrator_flow_rs::VideoGenerationRequest {
-                prompt: "Two scenes".into(),
-                title: None,
-                filename: "two-scenes.mp4".into(),
-                width: 1280,
-                height: 720,
-                duration_secs: 20,
-                first_frame: None,
-            },
-            "muse_media",
-            &backend_vc,
-            1280,
-            720,
-            20,
-            multi_media,
-        )
-        .unwrap();
+    let multi_payload = crate::services::task_flow::agent_settings::build_generated_video_payload(
+        &orchestrator_flow_rs::VideoGenerationRequest {
+            prompt: "Two scenes".into(),
+            title: None,
+            filename: "two-scenes.mp4".into(),
+            width: 1280,
+            height: 720,
+            duration_secs: 20,
+            first_frame: None,
+        },
+        "muse_media",
+        &backend_vc,
+        1280,
+        720,
+        20,
+        multi_media,
+    )
+    .unwrap();
     assert_eq!(multi_payload.clips.len(), 2);
     assert_eq!(multi_payload.clips[0].filename, "two-scenes-part-1.mp4");
     assert_eq!(multi_payload.clips[1].filename, "two-scenes-part-2.mp4");
@@ -1285,4 +1355,223 @@ fn muse_gateway_provider_in_catalog_supports_media_and_custom_executor() {
         multi_payload.provider_message.as_deref(),
         Some("Scene 1 (0-10s)\n\nScene 2 (10-20s)")
     );
+}
+
+#[tokio::test]
+async fn asr_provider_catalog_validation_and_server_asr_transcribe_backend() {
+    use orchestrator_flow_rs::{AsrTranscriberBackend, AsrTranscriptionRequest, inspect_wav_bytes};
+    use std::collections::BTreeMap;
+
+    let cfg = OrchestratorSectionConfig::default();
+    let chat_prov = default_orchestrator_provider(&cfg);
+    let tts_prov = ResolvedLlmProvider {
+        provider_ref: "config:tts:vieneu".into(),
+        name: "VieNeu TTS".into(),
+        source: "config",
+        adapter: "vieneu".into(),
+        model: "Binh".into(),
+        base_url: String::new(),
+        api_key: None,
+        gateway_binding: None,
+        timeout_ms: 15_000,
+        max_tokens: 4_096,
+        context_limit_tokens: 64_000,
+        reasoning_effort: None,
+        temperature_percent: None,
+        tags: vec!["tts".into()],
+        muse_options: None,
+    };
+    let asr_prov = ResolvedLlmProvider {
+        provider_ref: "config:asr:zipformer_vi".into(),
+        name: "Zipformer VI".into(),
+        source: "config",
+        adapter: "zipformer_sherpa".into(),
+        model: "zipformer-vi-30m".into(),
+        base_url: String::new(),
+        api_key: None,
+        gateway_binding: None,
+        timeout_ms: 15_000,
+        max_tokens: 4_096,
+        context_limit_tokens: 64_000,
+        reasoning_effort: None,
+        temperature_percent: None,
+        tags: vec!["asr".into()],
+        muse_options: None,
+    };
+
+    assert!(asr_prov.is_asr_adapter());
+    assert!(!asr_prov.is_tts_adapter());
+    assert!(!asr_prov.requires_api_key());
+    assert!(asr_prov.supports_tag("asr"));
+    assert!(asr_prov.supports_tag("audio"));
+    assert!(!asr_prov.supports_tag("tts"));
+    assert!(!tts_prov.supports_tag("asr"));
+
+    // Exhaustively verify every `AsrInstanceConfig` variant's `.adapter()` is recognized by `is_asr_adapter()`
+    let asr_variants: Vec<crate::config::AsrInstanceConfig> = vec![
+        serde_json::from_value(serde_json::json!({ "adapter": "zipformer_sherpa" })).unwrap(),
+        serde_json::from_value(serde_json::json!({ "adapter": "gipformer_sherpa_offline" })).unwrap(),
+        #[cfg(feature = "qualification-providers")]
+        serde_json::from_value(serde_json::json!({ "adapter": "qualification_asr" })).unwrap(),
+    ];
+    for inst in &asr_variants {
+        let adapter_name = match inst {
+            crate::config::AsrInstanceConfig::ZipformerSherpa(_) => inst.adapter(),
+            crate::config::AsrInstanceConfig::GipformerSherpaOffline(_) => inst.adapter(),
+            #[cfg(feature = "qualification-providers")]
+            crate::config::AsrInstanceConfig::QualificationAsr(_) => inst.adapter(),
+        };
+        let p = ResolvedLlmProvider {
+            adapter: adapter_name.to_owned(),
+            tags: vec!["asr".into()],
+            ..asr_prov.clone()
+        };
+        assert!(
+            p.is_asr_adapter(),
+            "AsrInstanceConfig adapter `{adapter_name}` must return true for is_asr_adapter()"
+        );
+    }
+
+    let catalog = vec![chat_prov, tts_prov, asr_prov];
+
+    // Assigning a TTS provider to `asr_transcribe` must fail validation with `provider_capability_mismatch`
+    let mut bad_agents = BTreeMap::new();
+    bad_agents.insert(
+        "media_creator".to_owned(),
+        AgentConfigOverride {
+            enabled: true,
+            tool_providers: Some(BTreeMap::from([(
+                "asr_transcribe".to_owned(),
+                "config:tts:vieneu".to_owned(),
+            )])),
+            ..Default::default()
+        },
+    );
+    assert_eq!(
+        validate_agent_overrides(
+            DEFAULT_ORCHESTRATOR_PROVIDER_REF,
+            DEFAULT_ORCHESTRATOR_PROVIDER_REF,
+            &bad_agents,
+            &catalog,
+        ),
+        Err("provider_capability_mismatch")
+    );
+
+    // Assigning the ASR provider to `asr_transcribe` succeeds and `build_agent_definitions` filters out ASR from Orchestrator chat LLM list
+    let mut ok_agents = BTreeMap::new();
+    ok_agents.insert(
+        "media_creator".to_owned(),
+        AgentConfigOverride {
+            enabled: true,
+            tool_providers: Some(BTreeMap::from([(
+                "asr_transcribe".to_owned(),
+                "config:asr:zipformer_vi".to_owned(),
+            )])),
+            ..Default::default()
+        },
+    );
+    assert!(
+        validate_agent_overrides(
+            DEFAULT_ORCHESTRATOR_PROVIDER_REF,
+            DEFAULT_ORCHESTRATOR_PROVIDER_REF,
+            &ok_agents,
+            &catalog,
+        )
+        .is_ok()
+    );
+
+    let settings = PersistedBackgroundSettings {
+        orchestrator_llm_provider: DEFAULT_ORCHESTRATOR_PROVIDER_REF.into(),
+        worker_llm_provider: DEFAULT_ORCHESTRATOR_PROVIDER_REF.into(),
+        agents: ok_agents,
+        ..Default::default()
+    };
+    let (orch_providers, _) = build_agent_definitions(&cfg, &settings, &catalog);
+    assert!(
+        !orch_providers
+            .iter()
+            .any(|p| p.id == "config:asr:zipformer_vi"),
+        "ASR adapters must not be registered as OpenAI-compatible chat LLM providers"
+    );
+
+    // Server native ASR runtime integration via `CatalogMediaBackend`
+    struct TestServerAsr;
+    struct TestServerAsrSession(usize);
+    impl crate::providers::AsrProvider for TestServerAsr {
+        fn open(
+            &self,
+        ) -> Result<Box<dyn crate::providers::AsrSession>, crate::providers::AsrError> {
+            Ok(Box::new(TestServerAsrSession(0)))
+        }
+        fn adapter(&self) -> &'static str {
+            "zipformer_sherpa"
+        }
+    }
+    impl crate::providers::AsrSession for TestServerAsrSession {
+        fn push_pcm(
+            &mut self,
+            pcm: &crate::audio::PcmF32Mono,
+        ) -> Result<Vec<crate::providers::AsrEvent>, crate::providers::AsrError> {
+            assert_eq!(pcm.sample_rate_hz(), 16_000);
+            self.0 += pcm.samples().len();
+            Ok(Vec::new())
+        }
+        fn finish(&mut self) -> Result<crate::providers::AsrResult, crate::providers::AsrError> {
+            Ok(crate::providers::AsrResult::new(format!(
+                "Xin chào từ Zipformer ({} mẫu 16kHz)",
+                self.0
+            )))
+        }
+        fn cancel(&mut self) {}
+    }
+
+    let asr_runtime = std::sync::Arc::new(crate::workers::AsrWorkerRuntime::new(
+        std::sync::Arc::new(TestServerAsr),
+        crate::workers::WorkerRuntimeConfig {
+            max_workers: 2,
+            voice_reserved_capacity: 1,
+            final_timeout: std::time::Duration::from_secs(10),
+            cleanup_grace: std::time::Duration::from_secs(5),
+            ..crate::workers::WorkerRuntimeConfig::default()
+        },
+    ));
+
+    let backend = CatalogMediaBackend::from_catalog(catalog)
+        .with_settings(settings)
+        .with_asr_runtime("config:asr:zipformer_vi", asr_runtime.clone());
+
+    // Build a 48 kHz stereo 16-bit WAV (1 second = 48_000 stereo frames) -> resampled to 16_000 samples @ 16 kHz mono
+    let mut wav_cursor = std::io::Cursor::new(Vec::new());
+    {
+        let spec = hound::WavSpec {
+            channels: 2,
+            sample_rate: 48_000,
+            bits_per_sample: 16,
+            sample_format: hound::SampleFormat::Int,
+        };
+        let mut writer = hound::WavWriter::new(&mut wav_cursor, spec).unwrap();
+        for _ in 0..(48_000 * 2) {
+            writer.write_sample(1200_i16).unwrap();
+        }
+        writer.finalize().unwrap();
+    }
+    let wav_bytes = wav_cursor.into_inner();
+    let header = inspect_wav_bytes(&wav_bytes).unwrap();
+    let payload = backend
+        .transcribe_asr(&AsrTranscriptionRequest {
+            wav_bytes,
+            header,
+            language: Some("vi-VN".into()),
+        })
+        .await
+        .unwrap();
+    assert_eq!(payload.text, "Xin chào từ Zipformer (16000 mẫu 16kHz)");
+    assert_eq!(
+        payload.provider_id.as_deref(),
+        Some("config:asr:zipformer_vi")
+    );
+    assert_eq!(payload.model.as_deref(), Some("zipformer-vi-30m"));
+    assert_eq!(payload.sample_rate, 48_000);
+    assert_eq!(payload.channels, 2);
+    let _ = asr_runtime.shutdown_acknowledged();
 }

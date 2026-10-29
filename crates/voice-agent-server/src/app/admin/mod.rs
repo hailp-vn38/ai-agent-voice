@@ -1,6 +1,8 @@
 //! Bounded, separately authenticated Admin HTTP surface.  It deliberately exposes only
 //! Agent and Device desired configuration in this rollout.
 mod background;
+#[cfg(test)]
+mod background_tests;
 mod knowledge;
 mod knowledge_processing;
 mod llm_gateway;
@@ -30,6 +32,7 @@ pub(super) const MAX_ASR_TEST_BODY: usize = 5 * 1024 * 1024;
 /// `speaker.max_audio_body_bytes` (512 KiB) and the 12s duration cap.
 pub(super) const MAX_SPEAKER_SAMPLE_BODY: usize = 512 * 1024;
 pub(super) const MAX_QUICK_CAPTURE_BODY: usize = 4 * 1024 * 1024;
+pub(super) const MAX_JOB_CREATE_BODY: usize = 16 * 1024 * 1024;
 const PAGE_DEFAULT: u32 = 50;
 const PAGE_MAX: u32 = 200;
 
@@ -152,7 +155,10 @@ pub(super) fn router(state: AppState) -> Router<AppState> {
         )
         .route("/jobs/{id}/events", get(background::events))
         .route("/jobs/{id}/history", get(background::history))
-        .route("/jobs/{id}/followup", axum::routing::post(background::followup))
+        .route(
+            "/jobs/{id}/followup",
+            axum::routing::post(background::followup),
+        )
         .route(
             "/jobs/{id}/artifacts/{artifact_id}",
             get(background::artifact),
@@ -397,8 +403,7 @@ pub(super) fn router(state: AppState) -> Router<AppState> {
         )
         .route(
             "/llm-gateway/accounts/{account_key}",
-            axum::routing::patch(llm_gateway::patch_account)
-                .delete(llm_gateway::delete_account),
+            axum::routing::patch(llm_gateway::patch_account).delete(llm_gateway::delete_account),
         )
         .route(
             "/mcp-servers",
@@ -553,6 +558,9 @@ async fn transport(request: Request, next: Next) -> Response {
             && request.uri().path().contains("/samples/")
         {
             MAX_SPEAKER_SAMPLE_BODY
+        } else if request.method() == http::Method::POST && request.uri().path().ends_with("/jobs")
+        {
+            MAX_JOB_CREATE_BODY
         } else {
             MAX_BODY
         };
@@ -583,7 +591,10 @@ async fn request_id(mut request: Request, next: Next) -> Response {
 
 async fn authenticate(State(state): State<AppState>, request: Request, next: Next) -> Response {
     if request.method() == http::Method::GET
-        && request.uri().path().ends_with("/llm-gateway/oauth/callback")
+        && request
+            .uri()
+            .path()
+            .ends_with("/llm-gateway/oauth/callback")
     {
         return next.run(request).await;
     }
@@ -681,6 +692,14 @@ fn mutation_sql_error(request: &Request, sql_error_value: &sqlx::Error) -> Respo
 
 #[allow(clippy::result_large_err)] // Preserves the request so callers can attach its request ID.
 async fn json<T: DeserializeOwned>(request: Request) -> Result<(Request, T), Response> {
+    json_with_limit(request, MAX_BODY).await
+}
+
+#[allow(clippy::result_large_err)]
+pub(super) async fn json_with_limit<T: DeserializeOwned>(
+    request: Request,
+    max_body: usize,
+) -> Result<(Request, T), Response> {
     if request
         .headers()
         .get(header::CONTENT_ENCODING)
@@ -716,7 +735,7 @@ async fn json<T: DeserializeOwned>(request: Request) -> Result<(Request, T), Res
         ));
     }
     let (parts, body) = request.into_parts();
-    let bytes = match to_bytes(body, MAX_BODY).await {
+    let bytes = match to_bytes(body, max_body).await {
         Ok(bytes) => bytes,
         Err(_) => {
             let request = Request::from_parts(parts, Body::empty());

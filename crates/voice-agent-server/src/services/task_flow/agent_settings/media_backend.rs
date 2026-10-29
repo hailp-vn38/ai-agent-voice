@@ -1,13 +1,14 @@
-//! Media generation (`image_create`, `video_create`) and TTS synthesis (`tts_synthesize`)
-//! runtime backends backed by the live LLM/TTS provider catalog.
+//! Media generation (`image_create`, `video_create`), TTS synthesis (`tts_synthesize`),
+//! and ASR transcription (`asr_transcribe`) runtime backends backed by the live LLM/TTS/ASR provider catalog.
 
 use crate::app::AppState;
 
+use super::media_asr::decode_wav_to_16khz_mono;
 use super::persistence::{PersistedBackgroundSettings, load_persisted_settings};
 use super::provider_catalog::ResolvedLlmProvider;
 
 #[derive(Clone, Default)]
-pub(crate) struct ServerTtsRuntimeBridge {
+pub(crate) struct ServerMediaRuntimeBridge {
     config: Option<std::sync::Arc<crate::config::AppConfig>>,
     database: Option<std::sync::Arc<crate::database::Database>>,
     runtimes: std::sync::Arc<crate::providers::RuntimeCatalog>,
@@ -15,7 +16,7 @@ pub(crate) struct ServerTtsRuntimeBridge {
         Option<std::sync::Arc<crate::services::provider_runtime::ProviderRuntimeManager>>,
 }
 
-impl ServerTtsRuntimeBridge {
+impl ServerMediaRuntimeBridge {
     pub(crate) fn from_state(state: &AppState) -> Self {
         Self {
             config: Some(std::sync::Arc::clone(&state.config)),
@@ -23,6 +24,14 @@ impl ServerTtsRuntimeBridge {
             runtimes: std::sync::Arc::clone(&state.runtimes),
             runtime_manager: state.provider_runtime_manager.clone(),
         }
+    }
+
+    pub(crate) fn runtimes(&self) -> &std::sync::Arc<crate::providers::RuntimeCatalog> {
+        &self.runtimes
+    }
+
+    pub(crate) fn runtimes_mut(&mut self) -> &mut std::sync::Arc<crate::providers::RuntimeCatalog> {
+        &mut self.runtimes
     }
 
     pub(crate) fn insert_runtime(
@@ -33,6 +42,98 @@ impl ServerTtsRuntimeBridge {
         std::sync::Arc::make_mut(&mut self.runtimes)
             .tts
             .insert(provider_ref, runtime);
+    }
+
+    pub(crate) async fn acquire_managed_lease(
+        &self,
+        expected_kind: &str,
+        label: &str,
+        provider_ref: &str,
+    ) -> Result<
+        (
+            crate::database::DesiredProvider,
+            crate::services::provider_runtime::ResourceLease,
+        ),
+        String,
+    > {
+        let manager = self.runtime_manager.as_ref().ok_or_else(|| {
+            format!(
+                "{label} provider `{provider_ref}` runtime is not loaded and runtime manager is inactive"
+            )
+        })?;
+        let desired = self
+            .resolve_desired_provider(expected_kind, label, provider_ref)
+            .await?;
+        let deadline = manager.admission_deadline();
+        let lease = if desired.id == 0 {
+            manager
+                .acquire_deployment_until(desired.clone(), deadline)
+                .await
+                .map_err(|e| format!("{label} deployment runtime lease failed: {e}"))?
+        } else {
+            manager
+                .acquire_until(desired.clone(), deadline)
+                .await
+                .map_err(|e| format!("{label} database runtime lease failed: {e}"))?
+        };
+        Ok((desired, lease))
+    }
+
+    pub(crate) async fn resolve_desired_provider(
+        &self,
+        expected_kind: &str,
+        label: &str,
+        provider_ref: &str,
+    ) -> Result<crate::database::DesiredProvider, String> {
+        let prefix = format!("config:{expected_kind}:");
+        let config_key = provider_ref.strip_prefix(&prefix).or_else(|| {
+            self.config.as_ref().and_then(|c| {
+                let has_key = match expected_kind {
+                    "tts" => c.providers.tts.instances.contains_key(provider_ref),
+                    "asr" => c.providers.asr.instances.contains_key(provider_ref),
+                    _ => false,
+                };
+                has_key.then_some(provider_ref)
+            })
+        });
+        if let Some(key) = config_key {
+            let config = self
+                .config
+                .as_deref()
+                .ok_or_else(|| format!("deployment config unavailable for {label} lookup"))?;
+            return crate::providers::deployment_provider_snapshot(config, expected_kind, key)
+                .map_err(|_| format!("config {label} provider `{provider_ref}` not found"));
+        }
+        let database = self
+            .database
+            .as_ref()
+            .ok_or_else(|| format!("database is unavailable for {label} provider lookup"))?;
+        let (id, key, kind, adapter, config, revision, enabled, credential) = database
+            .diagnostic_provider_row(provider_ref)
+            .await
+            .map_err(|e| format!("{label} provider `{provider_ref}` lookup failed: {e}"))?;
+        if enabled == 0 {
+            return Err(format!("{label} provider `{provider_ref}` is disabled"));
+        }
+        if kind != expected_kind {
+            return Err(format!(
+                "provider `{provider_ref}` is not a {label} provider"
+            ));
+        }
+        let secret_ref = crate::database::credentials::reference(
+            &format!("provider:{key}"),
+            credential.as_deref(),
+            crate::database::secrets::provider_secret_env(&key, &adapter),
+        );
+        Ok(crate::database::DesiredProvider {
+            id,
+            key,
+            kind,
+            adapter,
+            config_json: config.unwrap_or_else(|| "{}".to_owned()),
+            secret_ref,
+            revision,
+        })
     }
 
     async fn synthesize(
@@ -60,24 +161,9 @@ impl ServerTtsRuntimeBridge {
         }
 
         // 2. Managed runtime lease via `ProviderRuntimeManager` (ADR-0071)
-        let manager = self.runtime_manager.as_ref().ok_or_else(|| {
-            format!(
-                "TTS provider `{provider_ref}` runtime is not loaded and runtime manager is inactive"
-            )
-        })?;
-        let desired = self.resolve_desired_tts_provider(provider_ref).await?;
-        let deadline = manager.admission_deadline();
-        let lease = if desired.id == 0 {
-            manager
-                .acquire_deployment_until(desired.clone(), deadline)
-                .await
-                .map_err(|e| format!("TTS deployment runtime lease failed: {e}"))?
-        } else {
-            manager
-                .acquire_until(desired.clone(), deadline)
-                .await
-                .map_err(|e| format!("TTS database runtime lease failed: {e}"))?
-        };
+        let (desired, lease) = self
+            .acquire_managed_lease("tts", "TTS", provider_ref)
+            .await?;
         let runtime = lease
             .runtimes()
             .and_then(|cat| cat.tts.get(&desired.key).cloned())
@@ -86,57 +172,6 @@ impl ServerTtsRuntimeBridge {
             .synthesize_background_wav(text, voice)
             .await
             .map_err(|e| e.to_string())
-    }
-
-    async fn resolve_desired_tts_provider(
-        &self,
-        provider_ref: &str,
-    ) -> Result<crate::database::DesiredProvider, String> {
-        let config_key = provider_ref.strip_prefix("config:tts:").or_else(|| {
-            self.config.as_ref().and_then(|c| {
-                c.providers
-                    .tts
-                    .instances
-                    .contains_key(provider_ref)
-                    .then_some(provider_ref)
-            })
-        });
-        if let Some(key) = config_key {
-            let config = self
-                .config
-                .as_deref()
-                .ok_or_else(|| "deployment config unavailable for TTS lookup".to_owned())?;
-            return crate::providers::deployment_provider_snapshot(config, "tts", key)
-                .map_err(|_| format!("config TTS provider `{provider_ref}` not found"));
-        }
-        let database = self
-            .database
-            .as_ref()
-            .ok_or_else(|| "database is unavailable for TTS provider lookup".to_owned())?;
-        let (id, key, kind, adapter, config, revision, enabled, credential) = database
-            .diagnostic_provider_row(provider_ref)
-            .await
-            .map_err(|e| format!("TTS provider `{provider_ref}` lookup failed: {e}"))?;
-        if enabled == 0 {
-            return Err(format!("TTS provider `{provider_ref}` is disabled"));
-        }
-        if kind != "tts" {
-            return Err(format!("provider `{provider_ref}` is not a TTS provider"));
-        }
-        let secret_ref = crate::database::credentials::reference(
-            &format!("provider:{key}"),
-            credential.as_deref(),
-            crate::database::secrets::provider_secret_env(&key, &adapter),
-        );
-        Ok(crate::database::DesiredProvider {
-            id,
-            key,
-            kind,
-            adapter,
-            config_json: config.unwrap_or_else(|| "{}".to_owned()),
-            secret_ref,
-            revision,
-        })
     }
 }
 
@@ -155,13 +190,13 @@ fn inspect_wav_metadata(bytes: &[u8], fallback_text: &str, speed: f32) -> (u32, 
     }
 }
 
-static LIVE_SERVER_TTS_BRIDGE: std::sync::OnceLock<
-    std::sync::Arc<std::sync::RwLock<Option<ServerTtsRuntimeBridge>>>,
+static LIVE_SERVER_MEDIA_BRIDGE: std::sync::OnceLock<
+    std::sync::Arc<std::sync::RwLock<Option<ServerMediaRuntimeBridge>>>,
 > = std::sync::OnceLock::new();
 
-pub(crate) fn install_server_tts_runtime(state: &AppState) {
-    let bridge = ServerTtsRuntimeBridge::from_state(state);
-    let shared = LIVE_SERVER_TTS_BRIDGE
+pub(crate) fn install_server_media_runtime(state: &AppState) {
+    let bridge = ServerMediaRuntimeBridge::from_state(state);
+    let shared = LIVE_SERVER_MEDIA_BRIDGE
         .get_or_init(|| std::sync::Arc::new(std::sync::RwLock::new(None)))
         .clone();
     *shared.write().unwrap_or_else(|e| e.into_inner()) = Some(bridge);
@@ -192,16 +227,18 @@ pub(crate) fn update_live_media_catalog(
 pub type CatalogImageGeneratorBackend = CatalogMediaBackend;
 pub type CatalogVideoGeneratorBackend = CatalogMediaBackend;
 pub type CatalogTtsSynthesizerBackend = CatalogMediaBackend;
+pub type CatalogAsrTranscriberBackend = CatalogMediaBackend;
 
 #[derive(Clone)]
 pub struct CatalogMediaBackend {
     store_dir: Option<std::path::PathBuf>,
     catalog: std::sync::Arc<std::sync::RwLock<Vec<ResolvedLlmProvider>>>,
     settings: std::sync::Arc<std::sync::RwLock<Option<PersistedBackgroundSettings>>>,
-    tts_bridge: Option<ServerTtsRuntimeBridge>,
+    media_bridge: Option<ServerMediaRuntimeBridge>,
     default_image: orchestrator_flow_rs::DefaultImageGeneratorBackend,
     default_video: orchestrator_flow_rs::DefaultVideoGeneratorBackend,
     default_tts: orchestrator_flow_rs::DefaultTtsSynthesizerBackend,
+    default_asr: orchestrator_flow_rs::DefaultAsrTranscriberBackend,
 }
 
 impl CatalogMediaBackend {
@@ -223,10 +260,11 @@ impl CatalogMediaBackend {
             store_dir: Some(dir),
             catalog: shared,
             settings: shared_settings,
-            tts_bridge: None,
+            media_bridge: None,
             default_image: orchestrator_flow_rs::DefaultImageGeneratorBackend,
             default_video: orchestrator_flow_rs::DefaultVideoGeneratorBackend,
             default_tts: orchestrator_flow_rs::DefaultTtsSynthesizerBackend,
+            default_asr: orchestrator_flow_rs::DefaultAsrTranscriberBackend,
         }
     }
 
@@ -235,10 +273,11 @@ impl CatalogMediaBackend {
             store_dir: None,
             catalog: std::sync::Arc::new(std::sync::RwLock::new(catalog)),
             settings: std::sync::Arc::new(std::sync::RwLock::new(None)),
-            tts_bridge: None,
+            media_bridge: None,
             default_image: orchestrator_flow_rs::DefaultImageGeneratorBackend,
             default_video: orchestrator_flow_rs::DefaultVideoGeneratorBackend,
             default_tts: orchestrator_flow_rs::DefaultTtsSynthesizerBackend,
+            default_asr: orchestrator_flow_rs::DefaultAsrTranscriberBackend,
         }
     }
 
@@ -253,9 +292,21 @@ impl CatalogMediaBackend {
         runtime: std::sync::Arc<crate::workers::TtsWorkerRuntime>,
     ) -> Self {
         let bridge = self
-            .tts_bridge
-            .get_or_insert_with(ServerTtsRuntimeBridge::default);
+            .media_bridge
+            .get_or_insert_with(ServerMediaRuntimeBridge::default);
         bridge.insert_runtime(provider_ref.into(), runtime);
+        self
+    }
+
+    pub fn with_asr_runtime(
+        mut self,
+        provider_ref: impl Into<String>,
+        runtime: std::sync::Arc<crate::workers::AsrWorkerRuntime>,
+    ) -> Self {
+        let bridge = self
+            .media_bridge
+            .get_or_insert_with(ServerMediaRuntimeBridge::default);
+        bridge.insert_asr_runtime(provider_ref.into(), runtime);
         self
     }
 
@@ -277,24 +328,36 @@ impl CatalogMediaBackend {
         resolve_media_tool_provider(&guard, settings.as_ref(), tool_name, required_tag, true)
     }
 
+    fn resolve_bridge(&self, label: &str, provider_ref: &str) -> Result<ServerMediaRuntimeBridge, String> {
+        self.media_bridge
+            .clone()
+            .or_else(|| {
+                LIVE_SERVER_MEDIA_BRIDGE
+                    .get()
+                    .and_then(|lock| lock.read().unwrap_or_else(|e| e.into_inner()).clone())
+            })
+            .ok_or_else(|| {
+                format!("server {label} runtime bridge is not initialized for `{provider_ref}`")
+            })
+    }
+
     async fn synthesize_via_server_tts(
         &self,
         provider_ref: &str,
         text: &str,
         voice: Option<&str>,
     ) -> Result<Vec<u8>, String> {
-        let bridge = self
-            .tts_bridge
-            .clone()
-            .or_else(|| {
-                LIVE_SERVER_TTS_BRIDGE
-                    .get()
-                    .and_then(|lock| lock.read().unwrap_or_else(|e| e.into_inner()).clone())
-            })
-            .ok_or_else(|| {
-                format!("server TTS runtime bridge is not initialized for `{provider_ref}`")
-            })?;
+        let bridge = self.resolve_bridge("TTS", provider_ref)?;
         bridge.synthesize(provider_ref, text, voice).await
+    }
+
+    async fn transcribe_via_server_asr(
+        &self,
+        provider_ref: &str,
+        pcm: crate::audio::PcmF32Mono,
+    ) -> Result<String, String> {
+        let bridge = self.resolve_bridge("ASR", provider_ref)?;
+        bridge.transcribe_asr(provider_ref, pcm).await
     }
 }
 
@@ -309,9 +372,8 @@ pub(crate) fn resolve_media_tool_provider(
         p.supports_tag(required_tag)
             && (!require_api_key || !p.requires_api_key() || p.api_key.is_some())
     };
-    let matches_prov = |p: &ResolvedLlmProvider, pref: &str| -> bool {
-        p.provider_ref == pref && is_usable(p)
-    };
+    let matches_prov =
+        |p: &ResolvedLlmProvider, pref: &str| -> bool { p.provider_ref == pref && is_usable(p) };
     if let Some(settings) = settings {
         if let Some(tool_ref) = settings
             .agents
@@ -325,7 +387,7 @@ pub(crate) fn resolve_media_tool_provider(
         {
             return Some(found.clone());
         }
-        if matches!(required_tag, "image" | "video" | "tts" | "audio")
+        if matches!(required_tag, "image" | "video" | "tts" | "asr" | "audio")
             && let Some(explicit_ref) = settings
                 .agents
                 .get("media_creator")
@@ -347,6 +409,11 @@ pub(crate) fn resolve_media_tool_provider(
         && let Some(tts_prov) = catalog.iter().find(|p| p.is_tts_adapter() && is_usable(p))
     {
         return Some(tts_prov.clone());
+    }
+    if required_tag.eq_ignore_ascii_case("asr")
+        && let Some(asr_prov) = catalog.iter().find(|p| p.is_asr_adapter() && is_usable(p))
+    {
+        return Some(asr_prov.clone());
     }
     catalog.iter().find(|p| is_usable(p)).cloned()
 }
@@ -429,10 +496,13 @@ impl orchestrator_flow_rs::VideoGeneratorBackend for CatalogMediaBackend {
             .duration_secs
             .clamp(1, constraints.max_total_duration_secs.max(1));
         let provider = resolved.to_llm_provider().map_err(|e| e.to_string())?;
-        let first_frame = req.first_frame.as_ref().map(|img| crate::providers::ReferenceImage {
-            bytes: img.bytes.clone(),
-            mime_type: img.mime_type.clone(),
-        });
+        let first_frame = req
+            .first_frame
+            .as_ref()
+            .map(|img| crate::providers::ReferenceImage {
+                bytes: img.bytes.clone(),
+                mime_type: img.mime_type.clone(),
+            });
         let output = provider
             .invoke(crate::providers::LlmOperation::VideoGeneration {
                 prompt: req.prompt.clone(),
@@ -581,6 +651,64 @@ impl orchestrator_flow_rs::TtsSynthesizerBackend for CatalogMediaBackend {
             sample_rate_hz: 24_000,
             duration_ms,
             provider: resolved.provider_ref.clone(),
+        })
+    }
+}
+
+#[async_trait::async_trait]
+impl orchestrator_flow_rs::AsrTranscriberBackend for CatalogMediaBackend {
+    async fn transcribe_asr(
+        &self,
+        req: &orchestrator_flow_rs::AsrTranscriptionRequest,
+    ) -> Result<orchestrator_flow_rs::TranscribedAudioPayload, String> {
+        let Some(resolved) = self.select_provider("asr_transcribe", "asr") else {
+            return self.default_asr.transcribe_asr(req).await;
+        };
+        let lang = req
+            .language
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_owned);
+
+        if resolved.is_asr_adapter() {
+            let wav_bytes = req.wav_bytes.clone();
+            let pcm = tokio::task::spawn_blocking(move || decode_wav_to_16khz_mono(&wav_bytes))
+                .await
+                .map_err(|e| format!("WAV decode worker join error: {e}"))??;
+            let text = self
+                .transcribe_via_server_asr(&resolved.provider_ref, pcm)
+                .await?;
+            return Ok(orchestrator_flow_rs::TranscribedAudioPayload {
+                text,
+                language: lang,
+                duration_ms: req.header.duration_ms,
+                sample_rate: req.header.sample_rate,
+                channels: req.header.channels,
+                provider_id: Some(resolved.provider_ref.clone()),
+                model: Some(resolved.model.clone()),
+            });
+        }
+
+        let provider = resolved.to_llm_provider().map_err(|e| e.to_string())?;
+        let output = provider
+            .invoke(crate::providers::LlmOperation::AudioTranscription {
+                wav_bytes: req.wav_bytes.clone(),
+                language: lang.clone(),
+            })
+            .await
+            .map_err(|e| e.to_string())?;
+        let crate::providers::LlmOutput::Text(text) = output else {
+            return Err("ASR audio provider returned non-text output".to_owned());
+        };
+        Ok(orchestrator_flow_rs::TranscribedAudioPayload {
+            text,
+            language: lang,
+            duration_ms: req.header.duration_ms,
+            sample_rate: req.header.sample_rate,
+            channels: req.header.channels,
+            provider_id: Some(resolved.provider_ref.clone()),
+            model: Some(resolved.model.clone()),
         })
     }
 }

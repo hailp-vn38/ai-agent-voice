@@ -43,13 +43,14 @@ impl AgentSpec {
     }
 
     /// Maps media/specialized tools on this agent to their required provider capability tag
-    /// (e.g. `"image_create"` -> `"image"`, `"video_create"` -> `"video"`, `"tts_synthesize"` -> `"tts"`).
+    /// (e.g. `"image_create"` -> `"image"`, `"video_create"` -> `"video"`, `"tts_synthesize"` -> `"tts"`, `"asr_transcribe"` -> `"asr"`).
     pub const fn tool_capability_tags(&self) -> &'static [(&'static str, &'static str)] {
         match self.id.as_bytes() {
             b"media_creator" => &[
                 ("image_create", "image"),
                 ("video_create", "video"),
                 ("tts_synthesize", "tts"),
+                ("asr_transcribe", "asr"),
             ],
             _ => &[],
         }
@@ -223,7 +224,7 @@ pub const AGENT_SPECS: &[AgentSpec] = &[
         parent_id: Some("daily_root"),
         mode: AgentMode::Subagent,
         user_routable: false,
-        default_description: "Generates PNG illustrations and SVG vector diagrams/infographics via image_create (with agent-selected or default dimensions), MP4 videos with built-in voiceover audio and subtitles via video_create, concatenates multi-clip MP4 videos into a continuous primary video via video_concat ONLY when duration exceeds max_clip_duration_secs, synthesizes standalone TTS audio via tts_synthesize ONLY for audio-only requests, and publishes structured Task Artifacts via artifact_create.",
+        default_description: "Generates PNG illustrations and SVG vector diagrams/infographics via image_create (with agent-selected or default dimensions), MP4 videos with built-in voiceover audio and subtitles via video_create, concatenates multi-clip MP4 videos into a continuous primary video via video_concat ONLY when duration exceeds max_clip_duration_secs, synthesizes standalone TTS audio via tts_synthesize ONLY for audio-only requests, transcribes attached WAV audio artifacts via asr_transcribe, and publishes structured Task Artifacts via artifact_create.",
         default_prompt: MEDIA_CREATOR_PROMPT,
         default_steps: 12,
         default_allowed_tools: &[
@@ -231,6 +232,7 @@ pub const AGENT_SPECS: &[AgentSpec] = &[
             "video_create",
             "video_concat",
             "tts_synthesize",
+            "asr_transcribe",
             "artifact_create",
         ],
         available_tools: &[
@@ -239,6 +241,7 @@ pub const AGENT_SPECS: &[AgentSpec] = &[
             "video_create",
             "video_concat",
             "tts_synthesize",
+            "asr_transcribe",
             "artifact_create",
         ],
         default_allowed_skills: &[],
@@ -288,7 +291,12 @@ pub const AGENT_SPECS: &[AgentSpec] = &[
         default_allowed_tools: WIKI_INGESTOR_TOOLS,
         available_tools: WIKI_INGESTOR_TOOLS,
         default_allowed_skills: &["wiki-taxonomy", "wiki-ingest", "trading-chart"],
-        suggested_skills: &["wiki-taxonomy", "wiki-ingest", "trading-chart", "wiki-query"],
+        suggested_skills: &[
+            "wiki-taxonomy",
+            "wiki-ingest",
+            "trading-chart",
+            "wiki-query",
+        ],
         default_subagents: &[],
     },
     AgentSpec {

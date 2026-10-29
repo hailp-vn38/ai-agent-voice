@@ -45,11 +45,24 @@ fn task_manager_for_submit(state: &AppState, req: &Request) -> Result<Arc<TaskMa
 }
 
 fn task_failure(request: &Request, cause: TaskError) -> Response {
+    if cause.code() == ErrorCode::OrchestratorError {
+        let msg = cause.to_string();
+        if msg.contains("WORKSPACE_QUOTA_EXCEEDED") {
+            return error(
+                request,
+                StatusCode::INSUFFICIENT_STORAGE,
+                "workspace_quota_exceeded",
+            );
+        }
+        if msg.contains("ARTIFACT_TOO_LARGE") {
+            return error(request, StatusCode::PAYLOAD_TOO_LARGE, "artifact_too_large");
+        }
+    }
     let status = match cause.code() {
         ErrorCode::InvalidInput | ErrorCode::InvalidConfig => StatusCode::BAD_REQUEST,
         ErrorCode::NotFound => StatusCode::NOT_FOUND,
         ErrorCode::PermissionDenied => StatusCode::FORBIDDEN,
-        ErrorCode::StoreAlreadyOwned => StatusCode::CONFLICT,
+        ErrorCode::StoreAlreadyOwned | ErrorCode::SessionBusy => StatusCode::CONFLICT,
         ErrorCode::NotReady | ErrorCode::ShuttingDown => StatusCode::SERVICE_UNAVAILABLE,
         ErrorCode::StoreError | ErrorCode::OrchestratorError => StatusCode::SERVICE_UNAVAILABLE,
     };
@@ -75,10 +88,7 @@ async fn build_settings_json(
     };
     let orchestrator_llm_provider = valid_ref(&settings.orchestrator_llm_provider);
     let worker_llm_provider = valid_ref(&settings.worker_llm_provider);
-    let llm_providers: Vec<Value> = catalog
-        .iter()
-        .map(|p| p.to_json_summary())
-        .collect();
+    let llm_providers: Vec<Value> = catalog.iter().map(|p| p.to_json_summary()).collect();
     let agents = project_agents_json(&state.config.orchestrator, settings, &catalog);
     let skills_list = skills::list(state).unwrap_or_default();
     let available_agents = state
@@ -320,9 +330,7 @@ fn skill_error_response(request: &Request, err: SkillCatalogError) -> Response {
             error(request, StatusCode::PAYLOAD_TOO_LARGE, "skill_too_large")
         }
         SkillCatalogError::NotFound => error(request, StatusCode::NOT_FOUND, "not_found"),
-        SkillCatalogError::AlreadyExists => {
-            error(request, StatusCode::CONFLICT, "already_exists")
-        }
+        SkillCatalogError::AlreadyExists => error(request, StatusCode::CONFLICT, "already_exists"),
         SkillCatalogError::RevisionConflict => {
             error(request, StatusCode::CONFLICT, "revision_conflict")
         }
@@ -372,12 +380,7 @@ pub(super) async fn get_skill(
     match skills::get(&state, &id) {
         Ok(detail) => {
             let etag = format!("\"{}\"", detail.summary.etag);
-            (
-                StatusCode::OK,
-                [(header::ETAG, etag)],
-                Json(detail),
-            )
-                .into_response()
+            (StatusCode::OK, [(header::ETAG, etag)], Json(detail)).into_response()
         }
         Err(err) => skill_error_response(&request, err),
     }
@@ -424,6 +427,21 @@ pub(super) async fn delete_skill(
     }
 }
 
+pub(super) const MAX_JOB_ATTACHMENTS: usize = 4;
+pub(super) const MAX_JOB_ATTACHMENT_BYTES: usize = 10 * 1024 * 1024;
+
+fn default_wav_mime() -> String {
+    "audio/wav".to_owned()
+}
+
+#[derive(Deserialize)]
+pub(super) struct JobAttachmentInput {
+    pub name: String,
+    #[serde(default = "default_wav_mime")]
+    pub mime_type: String,
+    pub data_base64: String,
+}
+
 #[derive(Deserialize)]
 pub(super) struct CreateJobInput {
     pub goal: String,
@@ -433,6 +451,44 @@ pub(super) struct CreateJobInput {
     pub target_agent: Option<String>,
     #[serde(default)]
     pub related_wiki_links: Vec<String>,
+    #[serde(default)]
+    pub attachments: Vec<JobAttachmentInput>,
+}
+
+pub(super) fn sanitize_wav_attachment_name(raw: &str) -> Option<String> {
+    let base = raw.trim().rsplit(['/', '\\']).next().unwrap_or("").trim();
+    if base.is_empty() || base.chars().count() > 128 {
+        return None;
+    }
+    if !base.to_ascii_lowercase().ends_with(".wav") {
+        return None;
+    }
+    if base
+        .chars()
+        .any(|c| c.is_control() || matches!(c, '/' | '\\' | '\0'))
+    {
+        return None;
+    }
+    Some(base.to_owned())
+}
+
+pub(super) fn valid_wav_mime(raw: &str) -> bool {
+    matches!(
+        raw.trim().to_ascii_lowercase().as_str(),
+        "audio/wav" | "audio/x-wav" | "audio/wave"
+    )
+}
+
+pub(super) fn decode_attachment_base64(raw: &str) -> Result<Vec<u8>, &'static str> {
+    use base64::Engine as _;
+    let payload = raw.trim();
+    if payload.is_empty() {
+        return Err("invalid_attachment");
+    }
+    base64::engine::general_purpose::STANDARD
+        .decode(payload)
+        .or_else(|_| base64::engine::general_purpose::STANDARD_NO_PAD.decode(payload))
+        .map_err(|_| "invalid_attachment")
 }
 
 fn extract_idempotency_key(
@@ -491,14 +547,17 @@ fn store_idempotent_job(
 }
 
 pub(super) async fn create(State(state): State<AppState>, request: Request) -> Response {
+    use sha2::{Digest, Sha256};
+
     let idempotency_key = match extract_idempotency_key(request.headers()) {
         Ok(v) => v,
         Err(code) => return error(&request, StatusCode::BAD_REQUEST, code),
     };
-    let (request, input): (_, CreateJobInput) = match json(request).await {
-        Ok(v) => v,
-        Err(e) => return e,
-    };
+    let (request, input): (_, CreateJobInput) =
+        match json_with_limit(request, MAX_JOB_CREATE_BODY).await {
+            Ok(v) => v,
+            Err(e) => return e,
+        };
     let tm = match task_manager_for_submit(&state, &request) {
         Ok(tm) => tm,
         Err(resp) => return resp,
@@ -507,6 +566,48 @@ pub(super) async fn create(State(state): State<AppState>, request: Request) -> R
     if goal.is_empty() {
         return error(&request, StatusCode::BAD_REQUEST, "invalid_arguments");
     }
+    if input.attachments.len() > MAX_JOB_ATTACHMENTS {
+        return error(&request, StatusCode::BAD_REQUEST, "invalid_attachment");
+    }
+
+    let mut artifact_inputs = Vec::with_capacity(input.attachments.len());
+    let mut attachment_digests = Vec::with_capacity(input.attachments.len());
+    for att in input.attachments {
+        let Some(clean_name) = sanitize_wav_attachment_name(&att.name) else {
+            return error(&request, StatusCode::BAD_REQUEST, "invalid_attachment");
+        };
+        if !valid_wav_mime(&att.mime_type) {
+            return error(&request, StatusCode::BAD_REQUEST, "invalid_attachment");
+        }
+        let bytes = match decode_attachment_base64(&att.data_base64) {
+            Ok(b) => b,
+            Err(code) => return error(&request, StatusCode::BAD_REQUEST, code),
+        };
+        if bytes.len() > MAX_JOB_ATTACHMENT_BYTES {
+            return error(
+                &request,
+                StatusCode::PAYLOAD_TOO_LARGE,
+                "attachment_too_large",
+            );
+        }
+        if orchestrator_flow_rs::inspect_wav_bytes(&bytes).is_err() {
+            return error(&request, StatusCode::BAD_REQUEST, "invalid_attachment");
+        }
+        let mut hasher = Sha256::new();
+        hasher.update(&bytes);
+        let sha_hex: String = hasher
+            .finalize()
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect();
+        attachment_digests.push(format!("{clean_name}|{sha_hex}"));
+        artifact_inputs.push(orchestrator_agent_rs::ArtifactInput::intermediate_bytes(
+            clean_name,
+            "audio/wav",
+            bytes,
+        ));
+    }
+
     let title = input
         .title
         .as_deref()
@@ -520,11 +621,15 @@ pub(super) async fn create(State(state): State<AppState>, request: Request) -> R
         .map(str::trim)
         .filter(|s| !s.is_empty())
         .map(str::to_owned);
-    let fingerprint = format!(
+    let mut fingerprint = format!(
         "create:{title}:{goal}:{}:{:?}",
         target_agent.as_deref().unwrap_or(""),
         input.related_wiki_links
     );
+    if !attachment_digests.is_empty() {
+        fingerprint.push_str(":att=");
+        fingerprint.push_str(&attachment_digests.join(","));
+    }
 
     match lookup_idempotent_job(&state, &tm, idempotency_key.as_deref(), &fingerprint).await {
         Ok(Some(job_json)) => return (StatusCode::OK, Json(job_json)).into_response(),
@@ -537,6 +642,9 @@ pub(super) async fn create(State(state): State<AppState>, request: Request) -> R
         .with_wiki_links(input.related_wiki_links);
     if let Some(target) = target_agent {
         req = req.with_target(target);
+    }
+    if !artifact_inputs.is_empty() {
+        req = req.with_input_artifacts(artifact_inputs);
     }
 
     match tm.create_task(req).await {

@@ -64,8 +64,18 @@ impl ResolvedLlmProvider {
         ) || self.provider_ref.starts_with("config:tts:")
     }
 
+    pub fn is_asr_adapter(&self) -> bool {
+        matches!(
+            self.adapter.as_str(),
+            "zipformer_sherpa" | "gipformer_sherpa_offline" | "qualification_asr"
+        ) || self.provider_ref.starts_with("config:asr:")
+    }
+
     pub fn requires_api_key(&self) -> bool {
-        if self.adapter == "llm_gateway" || self.gateway_binding().is_some() {
+        if self.adapter == "llm_gateway"
+            || self.gateway_binding().is_some()
+            || self.is_asr_adapter()
+        {
             return false;
         }
         !self.is_tts_adapter() || self.adapter == "chillaudio_ws"
@@ -118,20 +128,45 @@ impl ResolvedLlmProvider {
                 max_clip_duration_secs: 60,
                 max_clips_per_call: 1,
                 max_total_duration_secs: 60,
-                provider_guidance: "Generates a single MP4 clip up to 60 seconds per call.".to_owned(),
+                provider_guidance: "Generates a single MP4 clip up to 60 seconds per call."
+                    .to_owned(),
             }
         }
     }
 
     pub fn supports_tag(&self, tag: &str) -> bool {
         let normalized = tag.trim().to_ascii_lowercase();
+        if normalized == "asr" {
+            if self.is_asr_adapter() {
+                return true;
+            }
+            if self.is_tts_adapter() {
+                return false;
+            }
+            return self.tags.iter().any(|t| {
+                let candidate = t.trim().to_ascii_lowercase();
+                candidate == "asr" || candidate == "audio"
+            });
+        }
+        if normalized == "tts" {
+            if self.is_tts_adapter() {
+                return true;
+            }
+            if self.is_asr_adapter() {
+                return false;
+            }
+            return self.tags.iter().any(|t| {
+                let candidate = t.trim().to_ascii_lowercase();
+                candidate == "tts" || candidate == "audio"
+            });
+        }
         self.tags.iter().any(|t| {
             let candidate = t.trim().to_ascii_lowercase();
             candidate == normalized
                 || (normalized == "chat" && candidate == "reasoning")
-                || ((normalized == "tts" || normalized == "audio")
-                    && (candidate == "tts" || candidate == "audio"))
-        }) || ((normalized == "tts" || normalized == "audio") && self.is_tts_adapter())
+                || (normalized == "audio"
+                    && (candidate == "audio" || candidate == "tts" || candidate == "asr"))
+        }) || (normalized == "audio" && (self.is_tts_adapter() || self.is_asr_adapter()))
     }
 
     pub(super) fn clamped_max_tokens(&self) -> u32 {
@@ -289,8 +324,10 @@ pub fn find_provider_by_tag<'a>(
 }
 
 pub(crate) fn agent_supports_provider(agent_id: &str, provider: &ResolvedLlmProvider) -> bool {
-    let allowed = find_agent_spec(agent_id)
-        .map_or(&["chat", "reasoning"][..], AgentSpec::allowed_capability_tags);
+    let allowed = find_agent_spec(agent_id).map_or(
+        &["chat", "reasoning"][..],
+        AgentSpec::allowed_capability_tags,
+    );
     allowed.iter().any(|tag| provider.supports_tag(tag))
 }
 
@@ -380,22 +417,23 @@ pub async fn resolve_llm_provider_catalog(state: &AppState) -> Vec<ResolvedLlmPr
                 });
             }
             LlmInstanceConfig::LlmGateway(gw) => {
-                let base_url = gw.base_url.as_ref().map(ToString::to_string).unwrap_or_else(
-                    || {
+                let base_url = gw
+                    .base_url
+                    .as_ref()
+                    .map(ToString::to_string)
+                    .unwrap_or_else(|| {
                         state
                             .llm_gateway_hub
                             .default_base_url_for_binding(&gw.gateway_binding)
                             .to_owned()
-                    },
-                );
+                    });
                 let tags = if gw.tags.is_none()
                     && matches!(
                         &gw.gateway_binding,
                         crate::services::llm_gateway::GatewayBinding::Pool(
                             crate::services::llm_gateway::GatewayVendor::Muse
                         )
-                    )
-                {
+                    ) {
                     vec![
                         "chat".to_owned(),
                         "vision".to_owned(),
@@ -590,18 +628,83 @@ pub async fn resolve_llm_provider_catalog(state: &AppState) -> Vec<ResolvedLlmPr
         }
     }
 
-    // 3. Deployment config TTS instances (`config:tts:<key>`)
-    let mut tts_config_keys: Vec<&String> = state.config.providers.tts.instances.keys().collect();
-    tts_config_keys.sort();
-    for key in tts_config_keys {
-        let Some(instance) = state.config.providers.tts.instances.get(key) else {
-            continue;
-        };
-        let adapter = instance.adapter().to_owned();
-        let serialized = serde_json::to_value(instance).unwrap_or(Value::Null);
-        let (model, base_url) = extract_tts_model_and_url(&adapter, &serialized);
+    // 3–5. Deployment config, database, and resident TTS providers
+    append_speech_provider_group(
+        state,
+        orch_cfg,
+        &mut out,
+        "tts",
+        state.config.tts.timeout_ms,
+        state
+            .config
+            .providers
+            .tts
+            .instances
+            .iter()
+            .map(|(k, v)| {
+                (
+                    k.clone(),
+                    v.adapter().to_owned(),
+                    serde_json::to_value(v).unwrap_or(Value::Null),
+                )
+            })
+            .collect(),
+        state
+            .runtimes
+            .tts
+            .iter()
+            .map(|(k, r)| (k.clone(), r.provider().adapter().to_owned()))
+            .collect(),
+    )
+    .await;
+
+    // 6–8. Deployment config, database, and resident ASR providers
+    append_speech_provider_group(
+        state,
+        orch_cfg,
+        &mut out,
+        "asr",
+        state.config.workers.asr.final_timeout_ms,
+        state
+            .config
+            .providers
+            .asr
+            .instances
+            .iter()
+            .map(|(k, v)| {
+                (
+                    k.clone(),
+                    v.adapter().to_owned(),
+                    serde_json::to_value(v).unwrap_or(Value::Null),
+                )
+            })
+            .collect(),
+        state
+            .runtimes
+            .asr
+            .iter()
+            .map(|(k, r)| (k.clone(), r.adapter().to_owned()))
+            .collect(),
+    )
+    .await;
+
+    out
+}
+
+async fn append_speech_provider_group(
+    state: &AppState,
+    orch_cfg: &crate::config::OrchestratorSectionConfig,
+    out: &mut Vec<ResolvedLlmProvider>,
+    kind: &str,
+    timeout_ms: u64,
+    mut config_entries: Vec<(String, String, Value)>,
+    mut runtime_entries: Vec<(String, String)>,
+) {
+    config_entries.sort_by(|a, b| a.0.cmp(&b.0));
+    for (key, adapter, serialized) in config_entries {
+        let (model, base_url) = extract_speech_model_and_url(kind, &adapter, &serialized);
         out.push(ResolvedLlmProvider {
-            provider_ref: format!("config:tts:{key}"),
+            provider_ref: format!("config:{kind}:{key}"),
             name: format!("{key} ({model})"),
             source: "config",
             adapter,
@@ -609,21 +712,21 @@ pub async fn resolve_llm_provider_catalog(state: &AppState) -> Vec<ResolvedLlmPr
             base_url,
             api_key: None,
             gateway_binding: None,
-            timeout_ms: state.config.tts.timeout_ms,
+            timeout_ms,
             max_tokens: orch_cfg.max_output_tokens,
             context_limit_tokens: orch_cfg.context_limit_tokens,
             reasoning_effort: None,
             temperature_percent: None,
-            tags: vec!["tts".to_owned()],
+            tags: vec![kind.to_owned()],
             muse_options: None,
         });
     }
 
-    // 4. Database TTS providers (`providers` table where `type='tts' AND enabled=1`)
     if let Some(database) = &state.database
         && let Ok(rows) = sqlx::query_as::<_, (String, String, String, String, Option<String>)>(
-            "SELECT key, name, adapter, config_json, credential_json FROM providers WHERE type='tts' AND enabled=1 ORDER BY id",
+            "SELECT key, name, adapter, config_json, credential_json FROM providers WHERE type=?1 AND enabled=1 ORDER BY id",
         )
+        .bind(kind)
         .fetch_all(database.pool())
         .await
     {
@@ -632,14 +735,13 @@ pub async fn resolve_llm_provider_catalog(state: &AppState) -> Vec<ResolvedLlmPr
                 continue;
             }
             let parsed = serde_json::from_str::<Value>(&config_json).unwrap_or(Value::Null);
-            let (model, base_url) = extract_tts_model_and_url(&adapter, &parsed);
+            let (model, base_url) = extract_speech_model_and_url(kind, &adapter, &parsed);
             let api_key = resolve_db_provider_secret(
                 state,
                 &key,
                 &adapter,
                 credential_json.as_deref(),
             );
-
             out.push(ResolvedLlmProvider {
                 provider_ref: key,
                 name,
@@ -649,32 +751,26 @@ pub async fn resolve_llm_provider_catalog(state: &AppState) -> Vec<ResolvedLlmPr
                 base_url,
                 api_key,
                 gateway_binding: None,
-                timeout_ms: state.config.tts.timeout_ms,
+                timeout_ms,
                 max_tokens: orch_cfg.max_output_tokens,
                 context_limit_tokens: orch_cfg.context_limit_tokens,
                 reasoning_effort: None,
                 temperature_percent: None,
-                tags: vec!["tts".to_owned()],
+                tags: vec![kind.to_owned()],
                 muse_options: None,
             });
         }
     }
 
-    // 5. Resident TTS runtimes (`state.runtimes.tts`) not already covered above
-    let mut runtime_tts_keys: Vec<&String> = state.runtimes.tts.keys().collect();
-    runtime_tts_keys.sort();
-    for key in runtime_tts_keys {
-        let Some(runtime) = state.runtimes.tts.get(key) else {
-            continue;
-        };
-        let adapter = runtime.provider().adapter().to_owned();
+    runtime_entries.sort_by(|a, b| a.0.cmp(&b.0));
+    for (key, adapter) in runtime_entries {
         if adapter == "unavailable" {
             continue;
         }
-        let config_ref = format!("config:tts:{key}");
+        let config_ref = format!("config:{kind}:{key}");
         if out
             .iter()
-            .any(|p| p.provider_ref == *key || p.provider_ref == config_ref)
+            .any(|p| p.provider_ref == key || p.provider_ref == config_ref)
         {
             continue;
         }
@@ -687,17 +783,15 @@ pub async fn resolve_llm_provider_catalog(state: &AppState) -> Vec<ResolvedLlmPr
             base_url: String::new(),
             api_key: None,
             gateway_binding: None,
-            timeout_ms: state.config.tts.timeout_ms,
+            timeout_ms,
             max_tokens: orch_cfg.max_output_tokens,
             context_limit_tokens: orch_cfg.context_limit_tokens,
             reasoning_effort: None,
             temperature_percent: None,
-            tags: vec!["tts".to_owned()],
+            tags: vec![kind.to_owned()],
             muse_options: None,
         });
     }
-
-    out
 }
 
 fn resolve_db_provider_secret(
@@ -719,13 +813,29 @@ fn resolve_db_provider_secret(
         .map(SecretString::new)
 }
 
-fn extract_tts_model_and_url(adapter: &str, parsed: &Value) -> (String, String) {
-    let model = parsed
-        .get("model")
-        .or_else(|| parsed.get("voice"))
+fn extract_speech_model_and_url(kind: &str, adapter: &str, parsed: &Value) -> (String, String) {
+    let raw_model = if kind == "asr" {
+        parsed
+            .get("model")
+            .or_else(|| parsed.get("model_dir"))
+            .or_else(|| parsed.get("encoder"))
+    } else {
+        parsed.get("model").or_else(|| parsed.get("voice"))
+    };
+    let model = raw_model
         .and_then(Value::as_str)
         .map(str::trim)
         .filter(|s| !s.is_empty())
+        .map(|s| {
+            if kind == "asr" {
+                std::path::Path::new(s)
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or(s)
+            } else {
+                s
+            }
+        })
         .unwrap_or(adapter)
         .to_owned();
     let base_url = parsed

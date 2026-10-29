@@ -11,19 +11,19 @@ mod workspace_seed;
 #[cfg(test)]
 mod tests;
 
-pub(crate) use agent_settings::install_server_tts_runtime;
+pub(crate) use agent_settings::install_server_media_runtime;
 pub use agent_settings::{
     AGENT_SPECS, AgentConfigOverride, AgentSpec, CUSTOM_DAILY_SUBAGENT_TOOLS,
-    CUSTOM_WIKI_SUBAGENT_TOOLS, CatalogImageGeneratorBackend, CatalogMediaBackend,
-    CatalogTtsSynthesizerBackend, CatalogVideoGeneratorBackend, CreateCustomSubagentInput,
-    DEFAULT_ORCHESTRATOR_PROVIDER_REF, DEFAULT_USER_ROOT_AGENT_ID, PersistedBackgroundSettings,
-    ResolvedLlmProvider, SubagentMutationError, WIKI_AUTOFLOW_ROOT_AGENT_ID,
-    build_agent_definitions, create_custom_subagent, custom_subagent_flow_policy,
-    default_orchestrator_provider, delete_custom_subagent, find_agent_spec,
-    is_user_routable_root_agent, load_persisted_settings, normalize_user_target_agent,
-    project_agents_json, resolve_llm_provider_catalog, save_persisted_settings,
-    sync_orchestrator_from_state, valid_custom_subagent_id, validate_agent_overrides,
-    validate_agent_overrides_with_skills, write_agent_prompts,
+    CUSTOM_WIKI_SUBAGENT_TOOLS, CatalogAsrTranscriberBackend, CatalogImageGeneratorBackend,
+    CatalogMediaBackend, CatalogTtsSynthesizerBackend, CatalogVideoGeneratorBackend,
+    CreateCustomSubagentInput, DEFAULT_ORCHESTRATOR_PROVIDER_REF, DEFAULT_USER_ROOT_AGENT_ID,
+    PersistedBackgroundSettings, ResolvedLlmProvider, SubagentMutationError,
+    WIKI_AUTOFLOW_ROOT_AGENT_ID, build_agent_definitions, create_custom_subagent,
+    custom_subagent_flow_policy, default_orchestrator_provider, delete_custom_subagent,
+    find_agent_spec, is_user_routable_root_agent, load_persisted_settings,
+    normalize_user_target_agent, project_agents_json, resolve_llm_provider_catalog,
+    save_persisted_settings, sync_orchestrator_from_state, valid_custom_subagent_id,
+    validate_agent_overrides, validate_agent_overrides_with_skills, write_agent_prompts,
 };
 pub use charts::{ChartDocument, ChartError, chart_host_tools, read_chart_json_for_admin};
 pub use projections::{
@@ -42,9 +42,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use llm_wiki::{AdaptiveReadBudget, WikiEngine, WikiError};
-use orchestrator_agent_rs::{
-    LlmConfig, Orchestrator, OrchestratorConfig, OrchestratorError,
-};
+use orchestrator_agent_rs::{LlmConfig, Orchestrator, OrchestratorConfig, OrchestratorError};
 use orchestrator_flow_rs::{
     CreateTaskRequest, TaskConfig, TaskError, TaskManager, TaskRuntimeConfig, TaskSource, TaskView,
     WikiAutoFlowBinding, WorkspaceToolKit,
@@ -180,7 +178,8 @@ async fn init_orchestrator_and_task_manager(
     .with_read_budget(read_budget)
     .with_image_backend(media_backend.clone())
     .with_video_backend(media_backend.clone())
-    .with_tts_backend(media_backend);
+    .with_tts_backend(media_backend.clone())
+    .with_asr_backend(media_backend);
 
     // Phase 1: Prepare `TaskManager` (`tasks.db` + `tasks.owner.lock` + `HostTool` builders)
     let runtime_cfg = TaskRuntimeConfig {

@@ -205,6 +205,14 @@ impl AsrWorkerRuntime {
         self.config.clone()
     }
 
+    pub fn provider(&self) -> &Arc<dyn AsrProvider> {
+        &self.provider
+    }
+
+    pub fn adapter(&self) -> &'static str {
+        self.provider.adapter()
+    }
+
     /// Registers exactly one actor mailbox for this Voice Session. The runtime is the sole
     /// consumer of worker events and routes them by immutable session identity.
     pub fn register_session(&self, session: &str) -> session_mpsc::Receiver<AsrWorkerEvent> {

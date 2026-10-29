@@ -5,6 +5,7 @@ import type {
   BackgroundSettings,
   BackgroundSettingsUpdate,
   CreateSubagentInput,
+  JobAttachmentUpload,
   JobEventPage,
   JobPage,
   JobSkillDetail,
@@ -110,9 +111,12 @@ export const agentJobsApi = {
   artifact(jobId: string, artifactId: string) {
     return requestBlob(jobPath(jobId) + '/artifacts/' + encodeURIComponent(artifactId))
   },
-  createJob(goal: string, idempotencyKey?: string) {
+  createJob(goal: string, idempotencyKey?: string, attachments?: JobAttachmentUpload[]) {
     return requestJson<AdminJob>(jobsPath, jsonRequest('POST', {
-      goal, output_format: 'text', allow_partial: false,
+      goal,
+      output_format: 'text',
+      allow_partial: false,
+      ...(attachments && attachments.length > 0 ? { attachments } : {}),
     }), { headers: idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : undefined })
   },
   cancelJob(id: string) {

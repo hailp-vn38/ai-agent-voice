@@ -2,6 +2,9 @@
 //! Built-in Sub-Agents, and Custom Sub-Agents, integrated with the Server LLM/TTS Provider Catalog.
 
 mod gateway_executor;
+mod media_asr;
+#[cfg(test)]
+mod media_asr_tests;
 mod media_backend;
 mod persistence;
 mod provider_catalog;
@@ -9,13 +12,13 @@ mod resolution;
 mod specs;
 mod validation;
 
+pub use gateway_executor::GatewayOrchestratorExecutor;
 #[cfg(test)]
 pub(crate) use media_backend::build_generated_video_payload;
-pub(crate) use media_backend::install_server_tts_runtime;
-pub use gateway_executor::GatewayOrchestratorExecutor;
+pub(crate) use media_backend::install_server_media_runtime;
 pub use media_backend::{
-    CatalogImageGeneratorBackend, CatalogMediaBackend, CatalogTtsSynthesizerBackend,
-    CatalogVideoGeneratorBackend,
+    CatalogAsrTranscriberBackend, CatalogImageGeneratorBackend, CatalogMediaBackend,
+    CatalogTtsSynthesizerBackend, CatalogVideoGeneratorBackend,
 };
 pub use persistence::{
     AgentConfigOverride, PersistedBackgroundSettings, ValidCustomSubagentRef,

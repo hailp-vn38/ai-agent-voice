@@ -161,6 +161,12 @@ export interface JobStep {
 export type ArtifactKind = 'report' | 'image' | 'video' | 'audio' | 'document' | 'data' | 'other'
 export type ArtifactRole = 'primary' | 'intermediate'
 
+export interface JobAttachmentUpload {
+  name: string
+  mime_type: string
+  data_base64: string
+}
+
 export interface JobArtifact {
   id: string
   step_key: string | null

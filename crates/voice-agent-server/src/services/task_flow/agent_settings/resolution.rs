@@ -2,9 +2,7 @@
 
 use std::collections::BTreeMap;
 
-use orchestrator_agent_rs::{
-    AgentDefinition, AgentMode, LlmProviderConfig, ReasoningEffort,
-};
+use orchestrator_agent_rs::{AgentDefinition, AgentMode, LlmProviderConfig, ReasoningEffort};
 use serde_json::{Value, json};
 
 use crate::config::OrchestratorSectionConfig;
@@ -317,6 +315,7 @@ pub fn build_agent_definitions(
         .iter()
         .filter(|p| {
             !p.is_tts_adapter()
+                && !p.is_asr_adapter()
                 && (p.base_url.starts_with("http://") || p.base_url.starts_with("https://"))
         })
         .map(ResolvedLlmProvider::to_orchestrator_provider)

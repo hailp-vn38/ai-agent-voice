@@ -17,6 +17,9 @@ export function providerSupportsAnyTag(
     if ((tag === 'tts' || tag === 'audio') && (tags.includes('tts') || tags.includes('audio'))) {
       return true
     }
+    if ((tag === 'asr' || tag === 'audio') && (tags.includes('asr') || tags.includes('audio'))) {
+      return true
+    }
     return false
   })
 }
@@ -58,6 +61,7 @@ export function toolCapabilityEntries(
       ['image_create', 'image'],
       ['video_create', 'video'],
       ['tts_synthesize', 'tts'],
+      ['asr_transcribe', 'asr'],
     ]
   }
   return []

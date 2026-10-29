@@ -738,7 +738,7 @@ An identity of a normalized Admin creation or retry request used to distinguish 
 _Avoid_: Job ID, prompt token
 
 **Workspace ToolKit**:
-The compile-time set of host capabilities (Wiki search/write, Markdown reports, Web HTML extraction, PDF conversion, YouTube transcript collection, and Reminder scheduling) granted to Orchestrator Agents by role.
+The compile-time set of host capabilities (Wiki search/write, Markdown reports, image/video generation, TTS synthesis, ASR transcription, Web HTML extraction, PDF conversion, YouTube transcript collection, and Reminder scheduling) granted to Orchestrator Agents by role.
 _Avoid_: ZIP Plugin Package, External Plugin Installation, subprocess plugin runner
 
 **Wiki Auto-Flow**:

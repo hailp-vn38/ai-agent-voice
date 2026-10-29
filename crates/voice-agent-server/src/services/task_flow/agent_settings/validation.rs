@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::app::AppState;
 
-use super::media_backend::{install_server_tts_runtime, update_live_media_catalog};
+use super::media_backend::{install_server_media_runtime, update_live_media_catalog};
 use super::persistence::{
     AgentConfigOverride, PersistedBackgroundSettings, default_true, save_persisted_settings,
     write_agent_prompts,
@@ -278,9 +278,7 @@ pub async fn create_custom_subagent(
         ) {
             return Err(match code {
                 "invalid_provider" => SubagentMutationError::InvalidProvider,
-                "provider_capability_mismatch" => {
-                    SubagentMutationError::ProviderCapabilityMismatch
-                }
+                "provider_capability_mismatch" => SubagentMutationError::ProviderCapabilityMismatch,
                 "invalid_agent_id" => SubagentMutationError::InvalidId,
                 other => SubagentMutationError::InvalidArguments(other),
             });
@@ -351,14 +349,13 @@ async fn reconfigure_orchestrator_with_settings(
     state: &AppState,
     settings: &PersistedBackgroundSettings,
 ) -> Result<(), String> {
-    install_server_tts_runtime(state);
+    install_server_media_runtime(state);
     let catalog = resolve_llm_provider_catalog(state).await;
     update_live_media_catalog(&catalog, Some(settings));
     let Some(orch) = state.orchestrator.as_ref() else {
         return Ok(());
     };
-    let (providers, defs) =
-        build_agent_definitions(&state.config.orchestrator, settings, &catalog);
+    let (providers, defs) = build_agent_definitions(&state.config.orchestrator, settings, &catalog);
     orch.reconfigure(providers, defs)
         .await
         .map_err(|e| e.to_string())

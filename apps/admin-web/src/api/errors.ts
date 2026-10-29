@@ -87,6 +87,12 @@ export function formatApiError(error: unknown): string {
     contract_conflict: 'Tool contract đã thay đổi; cần tải lại observation trước khi duyệt.',
     database_unavailable: 'Database hiện không khả dụng.',
     database_busy: 'Database đang bận; hãy thử lại sau.',
+    attachment_too_large: 'File âm thanh đính kèm vượt quá giới hạn dung lượng (tối đa 10 MB mỗi file).',
+    invalid_attachment: 'File âm thanh đính kèm không hợp lệ (chỉ chấp nhận file .wav RIFF/WAVE tối đa 4 file).',
+    session_busy: 'Phiên xử lý của Job hiện đang bận thực thi một lượt khác.',
+    SESSION_BUSY: 'Phiên xử lý của Job hiện đang bận thực thi một lượt khác.',
+    workspace_quota_exceeded: 'Dung lượng lưu trữ Artifact của Workspace đã vượt hạn mức.',
+    WORKSPACE_QUOTA_EXCEEDED: 'Dung lượng lưu trữ Artifact của Workspace đã vượt hạn mức.',
   }
   const httpMessages: Record<number, string> = {
     400: 'Yêu cầu không hợp lệ. Hãy kiểm tra lại dữ liệu và thử lại.',
@@ -100,6 +106,7 @@ export function formatApiError(error: unknown): string {
     502: 'Không thể kết nối tới server (HTTP 502). Hãy thử lại sau ít phút.',
     503: 'Server đang tạm thời không khả dụng. Hãy thử lại sau ít phút.',
     504: 'Server phản hồi quá lâu. Hãy thử lại sau ít phút.',
+    507: 'Dung lượng lưu trữ của Workspace đã đầy (HTTP 507).',
   }
   const baseMessage = messages[error.code]
     ?? (error.code === `http_${error.status}`

@@ -192,7 +192,10 @@ fn project_artifact_catalog_page_maps_task_context_and_download_url() {
     assert_eq!(item["kind"], "image");
     assert_eq!(item["role"], "primary");
     assert_eq!(item["mime_type"], "image/svg+xml");
-    assert_eq!(item["download_url"], "/api/admin/jobs/job-99/artifacts/art-1");
+    assert_eq!(
+        item["download_url"],
+        "/api/admin/jobs/job-99/artifacts/art-1"
+    );
 }
 
 #[tokio::test]
@@ -393,7 +396,8 @@ fn project_task_events_preserves_subagent_sequence_numbers_when_root_continues()
 
 #[tokio::test]
 async fn background_settings_integrates_llm_providers_and_configures_subagents() {
-    let temp_root = std::env::temp_dir().join(format!("background-agents-{}", uuid::Uuid::new_v4()));
+    let temp_root =
+        std::env::temp_dir().join(format!("background-agents-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&temp_root).unwrap();
     let config: AppConfig = toml::from_str(&format!(
         r#"
@@ -629,7 +633,8 @@ prompts_dir = "{}"
 
 #[tokio::test]
 async fn background_skills_crud_etag_preconditions_and_agent_visibility() {
-    let temp_root = std::env::temp_dir().join(format!("background-skills-{}", uuid::Uuid::new_v4()));
+    let temp_root =
+        std::env::temp_dir().join(format!("background-skills-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&temp_root).unwrap();
     let config: AppConfig = toml::from_str(&format!(
         r#"
@@ -675,7 +680,9 @@ skills_dir = "{}"
         .json()
         .await
         .unwrap();
-    let skills = initial["skills"].as_array().expect("skills array in settings");
+    let skills = initial["skills"]
+        .as_array()
+        .expect("skills array in settings");
     assert_eq!(skills.len(), 7);
     for expected_id in [
         "daily-synthesis-staging",
@@ -698,7 +705,10 @@ skills_dir = "{}"
     let agents = initial["agents"].as_array().unwrap();
     let daily_root = agents.iter().find(|a| a["id"] == "daily_root").unwrap();
     assert_eq!(daily_root["available_skills"], json!([]));
-    let researcher = agents.iter().find(|a| a["id"] == "wiki_researcher").unwrap();
+    let researcher = agents
+        .iter()
+        .find(|a| a["id"] == "wiki_researcher")
+        .unwrap();
     let researcher_avail = researcher["available_skills"].as_array().unwrap();
     assert_eq!(researcher_avail.len(), 7);
     assert_eq!(researcher_avail[0], "wiki-query");
@@ -726,7 +736,10 @@ skills_dir = "{}"
     assert_eq!(detail["is_modified"], false);
     assert!(detail["default"].is_object());
     let default_name = detail["default"]["name"].as_str().unwrap().to_owned();
-    let default_desc = detail["default"]["description"].as_str().unwrap().to_owned();
+    let default_desc = detail["default"]["description"]
+        .as_str()
+        .unwrap()
+        .to_owned();
     let default_body = detail["default"]["body"].as_str().unwrap().to_owned();
 
     // 3. Edit built-in skill wiki-ingest with If-Match
@@ -1187,3 +1200,191 @@ skills_dir = "{}"
     server.abort();
 }
 
+#[tokio::test]
+async fn post_jobs_accepts_wav_attachment_over_256kib_validates_idempotency_and_preserves_route_body_caps()
+ {
+    use base64::Engine as _;
+
+    let temp_root = std::env::temp_dir().join(format!("background-jobs-wav-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&temp_root).unwrap();
+    let config: AppConfig = toml::from_str(&format!(
+        r#"
+[server]
+bind = "127.0.0.1:0"
+public_ws_url = "ws://127.0.0.1:0/voice/v1/"
+[provider_defaults]
+vad = "test"
+asr = "test"
+llm = "test"
+tts = "test"
+[database]
+url = "sqlite://{}"
+[api]
+enabled = true
+admin_token = "background-test-token"
+[orchestrator]
+enabled = true
+endpoint = "http://127.0.0.1:9/v1"
+api_key = "test-key"
+model = "test-model"
+store_dir = "{}"
+tasks_store_dir = "{}"
+reports_dir = "{}"
+work_dir = "{}"
+prompts_dir = "{}"
+skills_dir = "{}"
+[wiki]
+vault_dir = "{}"
+"#,
+        temp_root.join("voice-agent.db").display(),
+        temp_root.join("orch-store").display(),
+        temp_root.join("tasks-store").display(),
+        temp_root.join("reports").display(),
+        temp_root.join("work").display(),
+        temp_root.join("prompts").display(),
+        temp_root.join("skills").display(),
+        temp_root.join("wiki").display(),
+    ))
+    .unwrap();
+    let router = bootstrap_with_providers(config, Arc::new(ProviderSet::unavailable()))
+        .await
+        .unwrap();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base = format!("http://{}/api/admin", listener.local_addr().unwrap());
+    let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    let client = Client::new();
+
+    // Helper to build a valid canonical 16 kHz mono 16-bit PCM WAV with `sample_count` samples
+    let make_wav = |sample_count: usize, seed: i16| -> Vec<u8> {
+        let mut cursor = std::io::Cursor::new(Vec::new());
+        let spec = hound::WavSpec {
+            channels: 1,
+            sample_rate: 16_000,
+            bits_per_sample: 16,
+            sample_format: hound::SampleFormat::Int,
+        };
+        let mut writer = hound::WavWriter::new(&mut cursor, spec).unwrap();
+        for i in 0..sample_count {
+            writer
+                .write_sample(seed.wrapping_add((i % 97) as i16))
+                .unwrap();
+        }
+        writer.finalize().unwrap();
+        cursor.into_inner()
+    };
+
+    // 1. Valid `.wav` attachment whose base64 body exceeds 256 KiB (e.g. 160,000 samples = 320 KiB PCM -> ~427 KiB base64)
+    let wav_a = make_wav(160_000, 100);
+    let wav_a_b64 = base64::engine::general_purpose::STANDARD.encode(&wav_a);
+    assert!(wav_a_b64.len() > 256 * 1024);
+
+    let created_resp = client
+        .post(format!("{base}/jobs"))
+        .bearer_auth("background-test-token")
+        .header("Idempotency-Key", "idem-wav-1")
+        .json(&json!({
+            "goal": "Transcribe this meeting recording",
+            "attachments": [{
+                "name": "meeting.wav",
+                "mime_type": "audio/wav",
+                "data_base64": wav_a_b64,
+            }]
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(created_resp.status(), StatusCode::CREATED);
+    let created_job: Value = created_resp.json().await.unwrap();
+    let job_id = created_job["id"].as_str().unwrap().to_owned();
+    let artifacts = created_job["artifacts"].as_array().unwrap();
+    assert_eq!(artifacts.len(), 1);
+    assert_eq!(artifacts[0]["name"], "meeting.wav");
+    assert_eq!(artifacts[0]["kind"], "audio");
+    assert_eq!(artifacts[0]["role"], "intermediate");
+    assert!(artifacts[0]["producer_invocation_id"].is_null());
+
+    // 2. Same `Idempotency-Key` with a DIFFERENT `.wav` file -> 409 idempotency_key_conflict
+    let wav_b = make_wav(16_000, 200);
+    let wav_b_b64 = base64::engine::general_purpose::STANDARD.encode(&wav_b);
+    let idem_conflict = client
+        .post(format!("{base}/jobs"))
+        .bearer_auth("background-test-token")
+        .header("Idempotency-Key", "idem-wav-1")
+        .json(&json!({
+            "goal": "Transcribe this meeting recording",
+            "attachments": [{
+                "name": "meeting.wav",
+                "mime_type": "audio/wav",
+                "data_base64": wav_b_b64,
+            }]
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(idem_conflict.status(), StatusCode::CONFLICT);
+    assert_eq!(
+        idem_conflict.json::<Value>().await.unwrap()["error"]["code"],
+        "idempotency_key_conflict"
+    );
+
+    // 3. Non-`.wav` attachment -> 400 invalid_attachment
+    let bad_file = client
+        .post(format!("{base}/jobs"))
+        .bearer_auth("background-test-token")
+        .json(&json!({
+            "goal": "Analyze file",
+            "attachments": [{
+                "name": "notes.txt",
+                "mime_type": "text/plain",
+                "data_base64": base64::engine::general_purpose::STANDARD.encode(b"not a wav"),
+            }]
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(bad_file.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(
+        bad_file.json::<Value>().await.unwrap()["error"]["code"],
+        "invalid_attachment"
+    );
+
+    // 4. File > 10 MB -> 413 attachment_too_large
+    let oversized_bytes = vec![b'A'; 10 * 1024 * 1024 + 64];
+    let oversized_b64 = base64::engine::general_purpose::STANDARD.encode(&oversized_bytes);
+    let too_large = client
+        .post(format!("{base}/jobs"))
+        .bearer_auth("background-test-token")
+        .json(&json!({
+            "goal": "Oversized wav",
+            "attachments": [{
+                "name": "huge.wav",
+                "mime_type": "audio/wav",
+                "data_base64": oversized_b64,
+            }]
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(too_large.status(), StatusCode::PAYLOAD_TOO_LARGE);
+    assert_eq!(
+        too_large.json::<Value>().await.unwrap()["error"]["code"],
+        "attachment_too_large"
+    );
+
+    // 5. Sub-routes `/jobs/{id}/*` still enforce the 256 KiB `MAX_BODY` limit -> 413 payload_too_large
+    let huge_followup = "x".repeat(300 * 1024);
+    let followup_resp = client
+        .post(format!("{base}/jobs/{job_id}/followup"))
+        .bearer_auth("background-test-token")
+        .json(&json!({ "input": huge_followup }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(followup_resp.status(), StatusCode::PAYLOAD_TOO_LARGE);
+    assert_eq!(
+        followup_resp.json::<Value>().await.unwrap()["error"]["code"],
+        "request_too_large"
+    );
+
+    server.abort();
+}

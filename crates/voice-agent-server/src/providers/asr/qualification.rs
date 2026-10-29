@@ -39,6 +39,10 @@ impl AsrProvider for QualificationAsr {
     fn open(&self) -> Result<Box<dyn AsrSession>, AsrError> {
         Ok(Box::new(Session(false)))
     }
+
+    fn adapter(&self) -> &'static str {
+        "qualification_asr"
+    }
 }
 struct Session(bool);
 impl AsrSession for Session {

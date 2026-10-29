@@ -38,6 +38,118 @@ impl AsrWorkerRuntime {
             cleanup_started: AtomicBool::new(false),
         })
     }
+
+    /// Transcribes a canonical 16 kHz mono PCM buffer on the Background workload lane
+    /// (`ProviderWorkloadClass::Background`), framing into 100 ms chunks, handling
+    /// `QueueFull` backpressure, and guaranteeing synchronous `cleanup()` inside `spawn_blocking`.
+    pub async fn transcribe_background_pcm(
+        &self,
+        pcm: PcmF32Mono,
+    ) -> Result<String, AsrWorkerError> {
+        const FRAME_SAMPLES: usize = 1_600; // 100 ms @ 16 kHz
+        let runtime = self.clone();
+        tokio::task::spawn_blocking(move || {
+            let op = runtime.open_background()?;
+            let push_deadline =
+                Instant::now() + runtime.config.final_timeout + Duration::from_secs(5);
+
+            for chunk in pcm.samples().chunks(FRAME_SAMPLES) {
+                let mut frame = Some(PcmF32Mono::from_samples(chunk.to_vec()));
+                loop {
+                    while let Some(ev) = op.poll() {
+                        match ev {
+                            AsrWorkerEvent::Failed { .. }
+                            | AsrWorkerEvent::Cancelled { .. }
+                            | AsrWorkerEvent::FinalTimedOut { .. }
+                            | AsrWorkerEvent::CleanupTimedOut { .. } => {
+                                let _ = op.cleanup();
+                                return Err(AsrWorkerError::Initialization);
+                            }
+                            _ => {}
+                        }
+                    }
+                    let next_frame = frame.take().expect("frame ready for push");
+                    match op.send(AsrCommand::Push(next_frame.clone())) {
+                        Ok(()) => break,
+                        Err(AsrWorkerError::QueueFull) => {
+                            if Instant::now() >= push_deadline {
+                                let _ = op.cleanup();
+                                return Err(AsrWorkerError::QueueFull);
+                            }
+                            frame = Some(next_frame);
+                            thread::sleep(Duration::from_millis(2));
+                        }
+                        Err(e) => {
+                            let _ = op.cleanup();
+                            return Err(e);
+                        }
+                    }
+                }
+            }
+
+            loop {
+                match op.send(AsrCommand::Finish) {
+                    Ok(()) => break,
+                    Err(AsrWorkerError::QueueFull) => {
+                        if Instant::now() >= push_deadline {
+                            let _ = op.cleanup();
+                            return Err(AsrWorkerError::QueueFull);
+                        }
+                        while let Some(ev) = op.poll() {
+                            if matches!(
+                                ev,
+                                AsrWorkerEvent::Failed { .. }
+                                    | AsrWorkerEvent::Cancelled { .. }
+                                    | AsrWorkerEvent::FinalTimedOut { .. }
+                                    | AsrWorkerEvent::CleanupTimedOut { .. }
+                            ) {
+                                let _ = op.cleanup();
+                                return Err(AsrWorkerError::Initialization);
+                            }
+                        }
+                        thread::sleep(Duration::from_millis(2));
+                    }
+                    Err(e) => {
+                        let _ = op.cleanup();
+                        return Err(e);
+                    }
+                }
+            }
+
+            let final_deadline = Instant::now()
+                + runtime.config.final_timeout
+                + runtime.config.cleanup_grace
+                + Duration::from_secs(1);
+
+            loop {
+                match op.poll() {
+                    Some(AsrWorkerEvent::Final { text, .. }) => {
+                        let _ = op.cleanup();
+                        return Ok(text);
+                    }
+                    Some(
+                        AsrWorkerEvent::Failed { .. }
+                        | AsrWorkerEvent::Cancelled { .. }
+                        | AsrWorkerEvent::FinalTimedOut { .. }
+                        | AsrWorkerEvent::CleanupTimedOut { .. },
+                    ) => {
+                        let _ = op.cleanup();
+                        return Err(AsrWorkerError::Initialization);
+                    }
+                    Some(AsrWorkerEvent::Opened { .. }) => {}
+                    None => {
+                        if Instant::now() >= final_deadline {
+                            let _ = op.cleanup();
+                            return Err(AsrWorkerError::Capacity);
+                        }
+                        thread::sleep(Duration::from_millis(2));
+                    }
+                }
+            }
+        })
+        .await
+        .map_err(|_| AsrWorkerError::Initialization)?
+    }
 }
 impl AsrBackgroundOperation {
     pub fn send(&self, command: AsrCommand) -> Result<(), AsrWorkerError> {

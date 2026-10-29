@@ -512,13 +512,15 @@ async fn prepare_background(state: &mut AppState) -> Result<(), BootstrapError> 
         guard.background_revision = persisted.revision.max(1);
         guard.background_settings = persisted;
     }
-    crate::services::task_flow::install_server_tts_runtime(state);
+    crate::services::task_flow::install_server_media_runtime(state);
     let catalog = crate::services::task_flow::resolve_llm_provider_catalog(state).await;
     let runtime =
         crate::services::task_flow::init_from_app_config_with_catalog(&state.config, &catalog)
             .await
             .map_err(BootstrapError::TaskFlow)?;
-    if let (Some(task_mgr), Some(orch)) = (runtime.task_manager.clone(), runtime.orchestrator.clone()) {
+    if let (Some(task_mgr), Some(orch)) =
+        (runtime.task_manager.clone(), runtime.orchestrator.clone())
+    {
         if let Ok(mut sub) = task_mgr.subscribe_all() {
             let stopping_sub = state.lifecycle.stopping().clone();
             let notification_hub = state.notification_hub.clone();

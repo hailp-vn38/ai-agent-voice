@@ -8,7 +8,7 @@ import JobsPage from './JobsPage.vue'
 import JobDetailPage from './JobDetailPage.vue'
 
 const { api, listenJobChanges, push } = vi.hoisted(() => ({
-  api: { listJobs: vi.fn(), job: vi.fn(), events: vi.fn(), deleteJob: vi.fn() },
+  api: { listJobs: vi.fn(), job: vi.fn(), events: vi.fn(), deleteJob: vi.fn(), createJob: vi.fn() },
   listenJobChanges: vi.fn(),
   push: vi.fn(),
 }))
@@ -347,6 +347,60 @@ it('shows shimmer on JobDetailPage while the job is loading, then renders the jo
     await flushPromises()
     expect(wrapper.find('[data-job-detail-skeleton]').exists()).toBe(false)
     expect(wrapper.text()).toContain('Run a job')
+  } finally {
+    wrapper.unmount()
+  }
+})
+
+it('attaches .wav audio in Create Job modal, auto-fills goal, and submits base64 payload', async () => {
+  vi.useRealTimers()
+  const createdJob = await api.job()
+  api.createJob.mockResolvedValue({ ...createdJob, id: 'job-wav-1' })
+
+  const wrapper = mount(JobsPage, { global: { stubs: { teleport: true } } })
+  try {
+    await flushPromises()
+    await wrapper.findAll('button').find(button => button.text().includes(translate('jobUi.newJob')))!.trigger('click')
+    await flushPromises()
+
+    const dropzone = wrapper.get('[data-testid="job-wav-dropzone"]')
+    const fakeWav = new File([new Uint8Array([79, 103, 103, 83, 0, 0, 0, 0])], 'fake.wav', {
+      type: 'audio/wav',
+    })
+    await dropzone.trigger('drop', {
+      dataTransfer: { files: [fakeWav] },
+    })
+    await new Promise(resolve => setTimeout(resolve, 25))
+    await flushPromises()
+    expect(wrapper.text()).toContain(translate('jobUi.wavInvalidFormat'))
+
+    const wavFile = new File([new Uint8Array([82, 73, 70, 70, 36, 0, 0, 0, 87, 65, 86, 69])], 'cuoc-hop.wav', {
+      type: 'audio/wav',
+    })
+    await dropzone.trigger('drop', {
+      dataTransfer: { files: [wavFile] },
+    })
+    await new Promise(resolve => setTimeout(resolve, 25))
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('cuoc-hop.wav')
+    expect((wrapper.get('textarea').element as HTMLTextAreaElement).value).toBe(translate('jobUi.wavDefaultGoal'))
+
+    await wrapper.get('[role="dialog"] form').trigger('submit')
+    await flushPromises()
+
+    expect(api.createJob).toHaveBeenCalledTimes(1)
+    const [goalArg, keyArg, attachmentsArg] = api.createJob.mock.calls[0]
+    expect(goalArg).toBe(translate('jobUi.wavDefaultGoal'))
+    expect(typeof keyArg).toBe('string')
+    expect(attachmentsArg).toEqual([
+      {
+        name: 'cuoc-hop.wav',
+        mime_type: 'audio/wav',
+        data_base64: expect.any(String),
+      },
+    ])
+    expect(push).toHaveBeenCalledWith({ name: 'job-detail', params: { jobId: 'job-wav-1' } })
   } finally {
     wrapper.unmount()
   }

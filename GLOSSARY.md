@@ -119,11 +119,11 @@ Bộ 9 công cụ nội bộ (`task_create`, `task_followup`, `task_list`, `task
 _Avoid_: `server_create_job`, `task_delete`, MCP Tool
 
 **Workspace ToolKit**:
-Tập công cụ gắn sẵn theo vai trò Sub-Agent gồm truy vấn/biên soạn Wiki, lưu nguồn thô (`add_to_sources`), tạo báo cáo Markdown, dựng biểu đồ minh họa kiến thức trading (`chart_write`, `chart_get`), sinh hình ảnh và âm thanh TTS, trích xuất trang Web, đọc PDF, thu thập phụ đề YouTube và quản lý lịch nhắc.
+Tập công cụ gắn sẵn theo vai trò Sub-Agent gồm truy vấn/biên soạn Wiki, lưu nguồn thô (`add_to_sources`), tạo báo cáo Markdown, dựng biểu đồ minh họa kiến thức trading (`chart_write`, `chart_get`), sinh hình ảnh/video, tổng hợp âm thanh TTS và phiên âm giọng nói ASR (`asr_transcribe`), trích xuất trang Web, đọc PDF, thu thập phụ đề YouTube và quản lý lịch nhắc.
 _Avoid_: Plugin Package, External Plugin Installation, subprocess plugin runner
 
 **Job Artifact**:
-Tệp kết quả bất biến thuộc nhiều phân loại (báo cáo, hình ảnh, video, âm thanh, tài liệu hoặc dữ liệu có cấu trúc) do công cụ của Root Orchestrator hoặc Sub-Agent xuất bản và gắn với một Background Task kèm thông tin nguồn gốc và kiểm chứng toàn vẹn.
+Tệp bất biến thuộc nhiều phân loại (báo cáo, hình ảnh, video, âm thanh, tài liệu hoặc dữ liệu có cấu trúc) được đính kèm đầu vào khi tạo Background Task hoặc do công cụ của Root Orchestrator / Sub-Agent xuất bản, gắn với Background Task kèm thông tin nguồn gốc và kiểm chứng toàn vẹn.
 _Avoid_: Worker Output, Tool Result, temporary scratch file
 
 **Artifact Catalog**:

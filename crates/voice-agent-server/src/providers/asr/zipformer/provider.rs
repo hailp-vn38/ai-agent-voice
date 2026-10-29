@@ -19,6 +19,10 @@ impl AsrProvider for UnavailableAsr {
     fn open(&self) -> Result<Box<dyn AsrSession>, AsrError> {
         Ok(Box::new(UnavailableAsrSession))
     }
+
+    fn adapter(&self) -> &'static str {
+        "unavailable"
+    }
 }
 
 struct UnavailableAsrSession;

@@ -1,15 +1,25 @@
 <script setup lang="ts">
-import { Activity, ArrowRight, ClipboardList, FolderOpen, Plus, RefreshCw, Search, Settings2, Workflow } from '@lucide/vue'
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { Activity, ArrowRight, ClipboardList, FileAudio, FolderOpen, Plus, RefreshCw, Search, Settings2, Trash2, Upload, Workflow } from '@lucide/vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { agentJobsApi } from '@/api/agent-jobs'
 import { formatApiError, isApiError } from '@/api/errors'
-import type { AdminJob, JobStatus } from '@/api/types/agent-jobs'
+import type { AdminJob, JobAttachmentUpload, JobStatus } from '@/api/types/agent-jobs'
 import PageHeader from '@/components/admin/PageHeader.vue'
 import BaseModal from '@/components/admin/BaseModal.vue'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { useI18n } from '@/composables/useI18n'
+
+interface PendingWavAttachment extends JobAttachmentUpload {
+  id: string
+  sizeBytes: number
+  lastModified: number
+  previewUrl: string
+}
+
+const MAX_WAV_ATTACHMENTS = 4
+const MAX_WAV_BYTES = 10 * 1024 * 1024
 
 const router = useRouter()
 const { t } = useI18n()
@@ -26,9 +36,12 @@ const notice = ref('')
 const backendPending = ref(false)
 const createOpen = ref(false)
 const goal = ref('')
+const wavAttachments = ref<PendingWavAttachment[]>([])
+const wavDragActive = ref(false)
+const wavInputRef = ref<HTMLInputElement | null>(null)
 const statusOptions: JobStatus[] = ['queued', 'planning', 'running', 'cancelling', 'succeeded', 'partial_success', 'failed', 'cancelled']
 let controller: AbortController | undefined
-let creation = { goal: '', key: '' }
+let creation = { sig: '', key: '' }
 
 const activeCount = computed(() => jobs.value.filter(job => ['queued', 'planning', 'running', 'cancelling'].includes(job.status)).length)
 const completedCount = computed(() => jobs.value.filter(job => ['succeeded', 'partial_success'].includes(job.status)).length)
@@ -67,15 +80,134 @@ async function load(nextPage = 1) {
     if (controller === pending) loading.value = false
   }
 }
+function formatBytes(bytes: number) {
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
+  return `${(bytes / (1024 * 1024)).toFixed(2)} MB`
+}
+
+function clearWavAttachments() {
+  for (const item of wavAttachments.value) {
+    if (item.previewUrl) URL.revokeObjectURL(item.previewUrl)
+  }
+  wavAttachments.value = []
+}
+
+function removeWavAttachment(id: string) {
+  const idx = wavAttachments.value.findIndex(item => item.id === id)
+  if (idx >= 0) {
+    const [removed] = wavAttachments.value.splice(idx, 1)
+    if (removed?.previewUrl) URL.revokeObjectURL(removed.previewUrl)
+  }
+}
+
+function readFileAsBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => {
+      const result = typeof reader.result === 'string' ? reader.result : ''
+      const commaIdx = result.indexOf(',')
+      resolve(commaIdx >= 0 ? result.slice(commaIdx + 1) : result)
+    }
+    reader.onerror = () => reject(reader.error ?? new Error('Failed to read file'))
+    reader.readAsDataURL(file)
+  })
+}
+
+function hasRiffMagic(base64Payload: string): boolean {
+  try {
+    const head = atob(base64Payload.slice(0, 8))
+    return head.startsWith('RIFF')
+  } catch {
+    return false
+  }
+}
+
+async function addWavFiles(fileList: FileList | File[]) {
+  error.value = ''
+  const files = Array.from(fileList)
+  if (!files.length) return
+  if (wavAttachments.value.length + files.length > MAX_WAV_ATTACHMENTS) {
+    error.value = t('jobUi.wavTooMany')
+    return
+  }
+  for (const file of files) {
+    const lowerName = file.name.trim().toLowerCase()
+    const mime = (file.type || 'audio/wav').toLowerCase()
+    const validExt = lowerName.endsWith('.wav')
+    const validMime = !file.type || mime === 'audio/wav' || mime === 'audio/x-wav' || mime === 'audio/wave' || mime === 'audio/vnd.wave'
+    if (!validExt || !validMime) {
+      error.value = t('jobUi.wavInvalidFormat')
+      return
+    }
+    if (file.size <= 0 || file.size > MAX_WAV_BYTES) {
+      error.value = t('jobUi.wavTooLarge')
+      return
+    }
+  }
+  const staged: PendingWavAttachment[] = []
+  for (const file of files) {
+    const data_base64 = await readFileAsBase64(file)
+    if (!hasRiffMagic(data_base64)) {
+      error.value = t('jobUi.wavInvalidFormat')
+      return
+    }
+    const previewUrl = typeof URL.createObjectURL === 'function' ? URL.createObjectURL(file) : ''
+    staged.push({
+      id: crypto.randomUUID(),
+      name: file.name.trim(),
+      mime_type: 'audio/wav',
+      data_base64,
+      sizeBytes: file.size,
+      lastModified: file.lastModified || 0,
+      previewUrl,
+    })
+  }
+  wavAttachments.value.push(...staged)
+  if (!goal.value.trim() && wavAttachments.value.length > 0) {
+    goal.value = t('jobUi.wavDefaultGoal')
+  }
+}
+
+function onWavInputChange(event: Event) {
+  const target = event.target as HTMLInputElement | null
+  if (target?.files) {
+    void addWavFiles(target.files)
+    target.value = ''
+  }
+}
+
+function onWavDrop(event: DragEvent) {
+  wavDragActive.value = false
+  if (event.dataTransfer?.files) {
+    void addWavFiles(event.dataTransfer.files)
+  }
+}
+
+watch(createOpen, isOpen => {
+  if (!isOpen && !busy.value) {
+    clearWavAttachments()
+  }
+})
+
 async function create() {
   if (goal.value.trim().length < 5 || busy.value) return
   busy.value = true
   error.value = ''
   notice.value = ''
   try {
-    if (creation.goal !== goal.value.trim()) creation = { goal: goal.value.trim(), key: crypto.randomUUID() }
-    const job = await agentJobsApi.createJob(goal.value.trim(), creation.key)
-    creation = { goal: '', key: '' }
+    const trimmedGoal = goal.value.trim()
+    const attSig = wavAttachments.value.map(a => `${a.name}:${a.sizeBytes}:${a.lastModified}`).join('|')
+    const nextSig = `${trimmedGoal}::${attSig}`
+    if (creation.sig !== nextSig) creation = { sig: nextSig, key: crypto.randomUUID() }
+    const uploads: JobAttachmentUpload[] = wavAttachments.value.map(a => ({
+      name: a.name,
+      mime_type: a.mime_type,
+      data_base64: a.data_base64,
+    }))
+    const job = await agentJobsApi.createJob(trimmedGoal, creation.key, uploads)
+    creation = { sig: '', key: '' }
+    clearWavAttachments()
     createOpen.value = false
     goal.value = ''
     await router.push({ name: 'job-detail', params: { jobId: job.id } })
@@ -89,7 +221,10 @@ function openDetail(id: string) {
   void router.push({ name: 'job-detail', params: { jobId: id } })
 }
 onMounted(() => { void load() })
-onBeforeUnmount(() => { controller?.abort() })
+onBeforeUnmount(() => {
+  controller?.abort()
+  clearWavAttachments()
+})
 </script>
 
 <template>
@@ -169,6 +304,71 @@ onBeforeUnmount(() => { controller?.abort() })
           <span class="text-sm font-medium">{{ t('jobUi.goal') }}</span>
           <textarea v-model="goal" class="admin-textarea min-h-32" maxlength="3000" required :placeholder="t('jobUi.goalPlaceholder')" />
         </label>
+
+        <div class="space-y-2">
+          <div class="flex items-center justify-between">
+            <span class="text-sm font-medium">{{ t('jobUi.wavAttachments') }}</span>
+            <span class="text-xs text-muted-foreground">{{ wavAttachments.length }}/{{ MAX_WAV_ATTACHMENTS }}</span>
+          </div>
+          <input
+            ref="wavInputRef"
+            type="file"
+            accept=".wav,audio/wav,audio/x-wav,audio/wave"
+            multiple
+            class="sr-only"
+            data-testid="job-wav-file-input"
+            @change="onWavInputChange"
+          />
+          <div
+            role="button"
+            tabindex="0"
+            data-testid="job-wav-dropzone"
+            class="flex cursor-pointer flex-col items-center justify-center gap-2 rounded-lg border border-dashed p-4 text-center text-xs transition-colors"
+            :class="wavDragActive ? 'border-studio-violet bg-studio-violet/5 text-foreground' : 'border-border bg-muted/20 text-muted-foreground hover:border-studio-violet/60'"
+            @click="wavInputRef?.click()"
+            @keydown.enter.prevent="wavInputRef?.click()"
+            @keydown.space.prevent="wavInputRef?.click()"
+            @dragover.prevent="wavDragActive = true"
+            @dragleave.prevent="wavDragActive = false"
+            @drop.prevent="onWavDrop"
+          >
+            <Upload class="size-5 text-studio-violet" />
+            <span>{{ t('jobUi.wavDropHint') }}</span>
+          </div>
+
+          <ul v-if="wavAttachments.length" class="space-y-2">
+            <li
+              v-for="att in wavAttachments"
+              :key="att.id"
+              class="rounded-lg border bg-muted/20 p-2.5 text-xs"
+            >
+              <div class="flex items-center justify-between gap-2">
+                <div class="flex min-w-0 items-center gap-2">
+                  <FileAudio class="size-4 shrink-0 text-studio-violet" />
+                  <span class="truncate font-medium">{{ att.name }}</span>
+                  <span class="shrink-0 text-muted-foreground">({{ formatBytes(att.sizeBytes) }})</span>
+                </div>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  type="button"
+                  :aria-label="t('jobUi.removeAttachment')"
+                  @click="removeWavAttachment(att.id)"
+                >
+                  <Trash2 class="size-3.5 text-danger" />
+                </Button>
+              </div>
+              <audio
+                v-if="att.previewUrl"
+                controls
+                preload="metadata"
+                :src="att.previewUrl"
+                class="mt-2 h-8 w-full"
+              />
+            </li>
+          </ul>
+        </div>
+
         <p class="text-xs text-muted-foreground">{{ t('jobUi.adminRequester') }}</p>
         <p v-if="error" role="alert" class="text-sm text-danger">{{ error }}</p>
         <div class="flex justify-end gap-2">

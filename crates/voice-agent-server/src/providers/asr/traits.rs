@@ -32,4 +32,8 @@ pub trait AsrSession: Send {
 
 pub trait AsrProvider: Send + Sync {
     fn open(&self) -> Result<Box<dyn AsrSession>, AsrError>;
+
+    fn adapter(&self) -> &'static str {
+        "zipformer_sherpa"
+    }
 }

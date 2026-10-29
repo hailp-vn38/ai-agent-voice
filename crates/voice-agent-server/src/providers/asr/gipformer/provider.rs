@@ -22,6 +22,10 @@ impl AsrProvider for GipformerAsrProvider {
             max_buffered_samples: self.max_buffered_samples,
         }))
     }
+
+    fn adapter(&self) -> &'static str {
+        "gipformer_sherpa_offline"
+    }
 }
 
 struct GipformerAsrSession {
