@@ -93,8 +93,13 @@ pub(in crate::app::admin) async fn artifact(
             let safe_filename: String = meta
                 .name
                 .chars()
-                .filter(|c| !matches!(c, '"' | '\\' | '\r' | '\n'))
+                .filter(|c| c.is_ascii() && !c.is_ascii_control() && !matches!(c, '"' | '\\'))
                 .collect();
+            let safe_filename = if safe_filename.is_empty() {
+                "artifact".to_string()
+            } else {
+                safe_filename
+            };
             let disposition = format!("inline; filename=\"{safe_filename}\"");
             let etag = format!("\"{}\"", meta.sha256);
             (
@@ -103,6 +108,10 @@ pub(in crate::app::admin) async fn artifact(
                     (axum::http::header::CONTENT_TYPE, meta.mime_type),
                     (axum::http::header::CONTENT_DISPOSITION, disposition),
                     (axum::http::header::ETAG, etag),
+                    (
+                        axum::http::header::CACHE_CONTROL,
+                        "private, no-store".to_string(),
+                    ),
                 ],
                 bytes,
             )

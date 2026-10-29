@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Download, Eye } from '@lucide/vue'
+import { Download, Eye, Film, Image as ImageIcon, Play, X } from '@lucide/vue'
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { agentJobsApi } from '@/api/agent-jobs'
 import type { AdminJob, JobArtifact } from '@/api/types/agent-jobs'
@@ -351,10 +351,14 @@ function roleName(role: string | null): string {
 }
 
 // Media & Artifact handling
+const effectiveJobId = computed(() => props.jobId || props.job?.id || '')
 const previewedArtifact = ref<JobArtifact | null>(null)
+const previewedDirectMedia = ref<CanvasMediaItem | null>(null)
 const downloadingArtifactId = ref<string | null>(null)
 const mediaBlobUrls = ref<Record<string, string>>({})
+const mediaLoadingIds = ref<Record<string, boolean>>({})
 let activeBlobUrls: Record<string, string> = {}
+const inFlightBlobIds = new Set<string>()
 let loadedMediaJobId: string | undefined
 let mediaLoadGeneration = 0
 
@@ -365,17 +369,20 @@ function revokeAllMediaBlobs() {
     }
   }
   activeBlobUrls = {}
+  inFlightBlobIds.clear()
   mediaBlobUrls.value = {}
+  mediaLoadingIds.value = {}
 }
 
 watch(
-  [() => props.jobId, () => props.activities],
+  [effectiveJobId, () => props.activities],
   async ([jobId, activities]) => {
-    const gen = ++mediaLoadGeneration
     if (jobId !== loadedMediaJobId) {
+      mediaLoadGeneration++
       revokeAllMediaBlobs()
       loadedMediaJobId = jobId
     }
+    const gen = mediaLoadGeneration
     const visualArtifacts = new Map<string, JobArtifact>()
     for (const activity of activities) {
       for (const art of activity.artifacts ?? []) {
@@ -385,7 +392,9 @@ watch(
       }
     }
     if (!jobId || visualArtifacts.size === 0 || typeof agentJobsApi.artifact !== 'function') {
-      revokeAllMediaBlobs()
+      if (!jobId || visualArtifacts.size === 0) {
+        revokeAllMediaBlobs()
+      }
       return
     }
     for (const [id, url] of Object.entries(activeBlobUrls)) {
@@ -397,7 +406,9 @@ watch(
     mediaBlobUrls.value = { ...activeBlobUrls }
     await Promise.all(
       [...visualArtifacts.values()].map(async art => {
-        if (activeBlobUrls[art.id]) return
+        if (activeBlobUrls[art.id] || inFlightBlobIds.has(art.id)) return
+        inFlightBlobIds.add(art.id)
+        mediaLoadingIds.value = { ...mediaLoadingIds.value, [art.id]: true }
         try {
           const file = await agentJobsApi.artifact(jobId, art.id)
           if (gen !== mediaLoadGeneration) return
@@ -406,7 +417,14 @@ watch(
           activeBlobUrls = { ...activeBlobUrls, [art.id]: blobUrl }
           mediaBlobUrls.value = { ...activeBlobUrls }
         } catch {
-          // Fallback to download_url or API path via resolveArtifactMediaSrc
+          // Ignore thumbnail hydration failure; user can still click card to retry in modal or download
+        } finally {
+          inFlightBlobIds.delete(art.id)
+          if (gen === mediaLoadGeneration && mediaLoadingIds.value[art.id]) {
+            const next = { ...mediaLoadingIds.value }
+            delete next[art.id]
+            mediaLoadingIds.value = next
+          }
         }
       }),
     )
@@ -422,9 +440,8 @@ onBeforeUnmount(() => {
 function resolveArtifactMediaSrc(art: JobArtifact): string {
   const blobUrl = mediaBlobUrls.value[art.id]
   if (blobUrl) return blobUrl
-  if (art.download_url) return art.download_url
-  if (props.jobId) {
-    return `/api/admin/jobs/${encodeURIComponent(props.jobId)}/artifacts/${encodeURIComponent(art.id)}`
+  if (art.download_url && !art.download_url.startsWith('/api/')) {
+    return art.download_url
   }
   return ''
 }
@@ -476,10 +493,7 @@ const selectedMediaItems = computed<CanvasMediaItem[]>(() => {
 
 const selectedArtifacts = computed<JobArtifact[]>(() => {
   const node = selectedNode.value
-  if (!node) return []
-  if (node.type === 'media') {
-    return node.artifacts.filter(art => mediaArtifactKind(art) !== null)
-  }
+  if (!node || node.type === 'media') return []
   const nonMedia = node.artifacts.filter(art => !mediaArtifactKind(art))
   if (nonMedia.length > 0) return nonMedia
   if (node.type === 'root') {
@@ -488,6 +502,53 @@ const selectedArtifacts = computed<JobArtifact[]>(() => {
   }
   return []
 })
+
+const previewableNodeArtifacts = computed<JobArtifact[]>(() => {
+  const fromMedia = selectedMediaItems.value.flatMap(item => (item.artifact ? [item.artifact] : []))
+  return fromMedia.length > 0 ? fromMedia : selectedArtifacts.value
+})
+
+const previewedArtifactIndex = computed(() =>
+  previewedArtifact.value
+    ? previewableNodeArtifacts.value.findIndex(art => art.id === previewedArtifact.value?.id)
+    : -1,
+)
+
+function stepPreviewedArtifact(offset: -1 | 1) {
+  const next = previewableNodeArtifacts.value[previewedArtifactIndex.value + offset]
+  if (next) previewedArtifact.value = next
+}
+
+function mediaBadgeLabel(media: CanvasMediaItem): string {
+  const raw = media.title.trim()
+  const dot = raw.lastIndexOf('.')
+  if (dot > 0 && dot < raw.length - 1) {
+    return raw.slice(dot + 1).toUpperCase()
+  }
+  return media.kind.toUpperCase()
+}
+
+function openMediaDetail(media: CanvasMediaItem) {
+  if (media.artifact && effectiveJobId.value && canPreviewArtifact(media.artifact)) {
+    previewedArtifact.value = media.artifact
+    return
+  }
+  previewedDirectMedia.value = media
+}
+
+async function downloadMediaItem(media: CanvasMediaItem) {
+  if (media.artifact && effectiveJobId.value) {
+    await downloadArtifact(media.artifact)
+    return
+  }
+  if (!media.src) return
+  const link = document.createElement('a')
+  link.href = media.src
+  link.download = media.title || 'media'
+  link.target = '_blank'
+  link.rel = 'noopener'
+  link.click()
+}
 
 const selectedReport = computed<JobReport>(() => {
   const node = selectedNode.value
@@ -524,14 +585,22 @@ const pendingLlmStage = computed(() => {
 
 function canPreviewArtifact(item: JobArtifact): boolean {
   const preview = artifactPreview(item)
-  return Boolean(props.jobId) && preview.kind !== 'download' && item.size_bytes >= 0 && item.size_bytes <= preview.limit
+  return Boolean(effectiveJobId.value) && preview.kind !== 'download' && item.size_bytes >= 0 && item.size_bytes <= preview.limit
 }
 
 async function downloadArtifact(item: JobArtifact) {
-  if (!props.jobId || downloadingArtifactId.value) return
+  if (!effectiveJobId.value || downloadingArtifactId.value) return
+  const existingBlobUrl = mediaBlobUrls.value[item.id]
+  if (existingBlobUrl) {
+    const link = document.createElement('a')
+    link.href = existingBlobUrl
+    link.download = item.filename || item.name || item.id
+    link.click()
+    return
+  }
   downloadingArtifactId.value = item.id
   try {
-    const data = await agentJobsApi.artifact(props.jobId, item.id)
+    const data = await agentJobsApi.artifact(effectiveJobId.value, item.id)
     const url = URL.createObjectURL(data)
     const link = document.createElement('a')
     link.href = url
@@ -921,370 +990,507 @@ function hasObjectKeys(value: unknown): boolean {
 
         <div id="inspectorScroll" ref="inspectorScrollRef" class="inspector-scroll">
           <div v-if="selectedNode" id="detail" class="inspector-inner" :data-inspected-node="selectedNode.id">
-            <div class="detail-heading">
-              <div class="detail-avatar" :class="selectedNode.type">
-                <svg class="icon lg"><use :href="`#i-${iconType(selectedNode.type)}`" /></svg>
-              </div>
-              <div class="min-w-0 flex-1">
-                <h2>{{ selectedNode.name }}</h2>
-                <div class="metadata">
-                  <span
-                    :class="
-                      selectedNode.state === 'done'
-                        ? 'good'
-                        : selectedNode.state === 'running'
-                          ? 'run'
-                          : selectedNode.state === 'failed'
-                            ? 'bad'
-                            : ''
-                    "
-                  >
-                    ● {{ labelStatus(selectedNode.state) }}
-                  </span>
-                  <span class="point">·</span>
-                  <span class="capitalize">{{ selectedNode.rawStatus }}</span>
-                  <span class="point">·</span>
-                  <span>{{ selectedNode.duration }}</span>
-                  <span class="point">·</span>
-                  <span>{{ labelType(selectedNode.type) }}</span>
-                </div>
-              </div>
-            </div>
-
-            <p class="summary">{{ selectedNode.desc }}</p>
-
-            <p
-              v-if="selectedNode.step?.attempt_state === 'unknown_outcome'"
-              role="alert"
-              class="unknown-alert"
-            >
-              {{ t('jobUi.unknownOutcomeWarning') }}
-            </p>
-
-            <!-- Context Line -->
-            <div v-if="selectedNode.type === 'root' || selectedNode.type === 'agent'" class="context-line">
-              <svg class="icon sm"><use href="#i-agent" /></svg>
-              <span>{{ t('jobUi.childAgents') }}</span>
-              <strong>{{ selectedDescendantAgents }}</strong>
-              <span class="point">·</span>
-              <span>{{ t('jobUi.statToolCalls') }}</span>
-              <strong>{{ selectedDescendantTools }}</strong>
-              <span class="point">·</span>
-              <span>{{ t('jobUi.statLlmCalls') }}</span>
-              <strong>{{ selectedDescendantLlms }}</strong>
-              <span v-if="selectedNode.agentRunId" class="tag font-mono">{{ selectedNode.agentRunId }}</span>
-              <span v-if="selectedNode.state === 'running'" class="tag live">{{ t('jobUi.liveExecution') }}</span>
-            </div>
-            <div v-else class="context-line">
-              <svg class="icon sm"><use :href="selectedNode.type === 'llm' ? '#i-sparkles' : '#i-terminal'" /></svg>
-              <span>{{ t('jobUi.executor') }}</span>
-              <strong>{{ parentOfSelected?.name || selectedNode.role || 'Agent' }}</strong>
-              <span class="point">·</span>
-              <strong>
-                {{
-                  selectedNode.type === 'llm'
-                    ? t('jobUi.modelRequest')
-                    : selectedNode.type === 'tool'
-                      ? t('jobUi.toolInvocation')
-                      : labelType(selectedNode.type)
-                }}
-              </strong>
-              <span v-if="selectedNode.step?.plugin_id" class="tag">
-                {{ selectedNode.step.plugin_id }}<template v-if="selectedNode.step.operation"> · {{ selectedNode.step.operation }}</template>
-              </span>
-              <span v-if="selectedNode.step?.step_key" class="tag font-mono">
-                {{ selectedNode.step.step_key }}<template v-if="selectedNode.step.status"> · {{ selectedNode.step.status }}</template><template v-if="selectedNode.step.attempt_state"> · {{ selectedNode.step.attempt_state }}</template>
-              </span>
-              <span v-if="selectedNode.llm" class="tag">
-                {{ selectedNode.llm.provider }}<template v-if="selectedNode.llm.model"> · {{ selectedNode.llm.model }}</template>
-              </span>
-              <span
-                v-if="selectedNode.llm && (selectedNode.llm.inputTokens !== null || selectedNode.llm.outputTokens !== null)"
-                class="tag font-mono"
-              >
-                {{ selectedNode.llm.inputTokens ?? '—' }} / {{ selectedNode.llm.outputTokens ?? '—' }} tokens
-              </span>
-            </div>
-
-            <!-- Agent Message (when distinct from summary) -->
-            <template v-if="selectedNode.assistantMessage && selectedNode.assistantMessage !== selectedNode.desc">
-              <div class="section-title">
-                <svg class="icon sm"><use href="#i-sparkles" /></svg>
-                {{ t('jobUi.agentMessage') }}
-              </div>
-              <div class="message-box">{{ selectedNode.assistantMessage }}</div>
-            </template>
-
-            <!-- Tool Input / Arguments -->
-            <template v-if="selectedNode.args !== null && selectedNode.args !== undefined && hasObjectKeys(selectedNode.args)">
-              <div class="section-title">
-                <svg class="icon sm"><use :href="selectedNode.type === 'llm' ? '#i-sparkles' : '#i-terminal'" /></svg>
-                {{ selectedNode.type === 'llm' ? t('jobUi.modelRequest') : t('jobUi.toolArguments') }}
-              </div>
-              <div class="codebox" data-codebox="arguments">
-                <div class="codehead">
-                  <svg class="icon sm"><use href="#i-terminal" /></svg>
-                  arguments · JSON
-                  <button
-                    type="button"
-                    data-copy="arguments"
-                    :title="t('jobUi.copyContent')"
-                    @click="copyJson('arguments', selectedNode.args)"
-                  >
-                    <svg class="icon sm"><use :href="copiedKey === 'arguments' ? '#i-check' : '#i-copy'" /></svg>
-                  </button>
-                </div>
-                <pre>{{ formatJson(selectedNode.args) }}</pre>
-              </div>
-            </template>
-
-            <!-- Result (Markdown report and/or structured JSON) -->
-            <template v-if="selectedReport.kind !== 'empty' || (selectedNode.result !== null && selectedNode.result !== undefined)">
-              <div class="section-title">
-                <svg class="icon sm"><use href="#i-check" /></svg>
-                {{ t('jobUi.result') }}
-                <span class="muted">
-                  {{ selectedNode.state === 'failed' ? t('jobUi.blockedOutput') : t('jobUi.structuredOutput') }}
-                </span>
-              </div>
-              <div v-if="selectedReport.kind === 'markdown'" class="markdown-box">
-                <article
-                  class="result-markdown"
-                  data-result-markdown
-                  v-html="(selectedReport as { kind: 'markdown'; html: string }).html"
-                />
-              </div>
+            <!-- Media Node: Library Card Gallery Only (no extraneous text) -->
+            <template v-if="selectedNode.type === 'media'">
               <div
-                v-if="selectedNode.result !== null && selectedNode.result !== undefined && (selectedReport.kind !== 'markdown' || selectedNode.type === 'tool')"
-                class="codebox"
-                data-codebox="result"
+                v-if="selectedMediaItems.length > 0"
+                class="media-library-grid"
+                data-media-library-grid
+                data-modal-media-list
               >
-                <div class="codehead">
-                  <svg class="icon sm"><use href="#i-terminal" /></svg>
-                  response · JSON
-                  <button
-                    type="button"
-                    data-copy="result"
-                    :title="t('jobUi.copyContent')"
-                    @click="copyJson('result', selectedNode.result)"
-                  >
-                    <svg class="icon sm"><use :href="copiedKey === 'result' ? '#i-check' : '#i-copy'" /></svg>
-                  </button>
-                </div>
-                <pre>{{ formatJson(selectedNode.result) }}</pre>
-              </div>
-            </template>
-
-            <!-- Visual Media (Images & Videos) -->
-            <template v-if="selectedMediaItems.length > 0">
-              <div class="section-title">
-                <svg class="icon sm"><use href="#i-file" /></svg>
-                {{ t('jobUi.media') }}
-                <span class="muted">{{ selectedMediaItems.length }}</span>
-              </div>
-              <div class="media-list" data-modal-media-list>
-                <div
+                <article
                   v-for="media in selectedMediaItems"
                   :key="media.id"
-                  class="media-item-card"
+                  role="button"
+                  tabindex="0"
+                  class="media-library-card group"
+                  data-artifact-card
+                  data-media-card
+                  data-artifact-preview
+                  data-canvas-artifact-preview
                   :data-media-kind="media.kind"
                   :data-modal-media-kind="media.kind"
+                  @click="openMediaDetail(media)"
+                  @keydown.enter.prevent="openMediaDetail(media)"
+                  @keydown.space.prevent="openMediaDetail(media)"
                 >
-                  <div class="media-item-preview">
-                    <video
-                      v-if="media.kind === 'video' && media.src"
-                      :src="media.src"
-                      controls
-                      preload="metadata"
-                      class="media-card-video"
-                      data-canvas-media-video
-                      data-modal-media-video
-                    />
+                  <div
+                    class="media-library-thumb"
+                    :class="{ 'card-shimmer': Boolean(media.artifact && mediaLoadingIds[media.artifact.id]) }"
+                  >
+                    <div v-if="media.kind === 'video' && media.src" class="relative h-full w-full bg-black/50">
+                      <video
+                        :src="media.src"
+                        preload="metadata"
+                        muted
+                        playsinline
+                        class="media-library-video"
+                        data-canvas-media-video
+                        data-modal-media-video
+                      />
+                      <div class="pointer-events-none absolute inset-0 flex items-center justify-center bg-black/25">
+                        <div class="grid size-10 place-items-center rounded-full bg-background/90 text-foreground shadow-md">
+                          <Play class="size-4.5 fill-current" />
+                        </div>
+                      </div>
+                    </div>
                     <img
                       v-else-if="media.kind === 'image' && media.src"
                       :src="media.src"
                       :alt="media.title"
                       loading="lazy"
-                      class="media-card-image"
+                      class="media-library-image"
                       data-canvas-media-image
                       data-modal-media-image
                     >
+                    <div
+                      v-else
+                      class="flex h-full w-full flex-col items-center justify-center gap-2 bg-muted/35 p-4 text-muted-foreground"
+                    >
+                      <Film v-if="media.kind === 'video'" class="size-7 text-studio-cyan" />
+                      <ImageIcon v-else class="size-7 text-studio-violet" />
+                    </div>
+
+                    <div class="media-library-badges">
+                      <span class="media-library-badge">{{ mediaBadgeLabel(media) }}</span>
+                    </div>
+
+                    <div class="media-library-hover">
+                      <span class="media-library-hover-pill">
+                        <Eye class="size-3.5 text-studio-violet" />{{ t('artifactsUi.clickToView') }}
+                      </span>
+                    </div>
                   </div>
-                  <div class="media-item-meta">
-                    <div class="min-w-0">
-                      <strong class="block truncate">{{ media.title }}</strong>
-                      <small v-if="media.subtitle" class="block truncate text-muted-foreground">{{ media.subtitle }}</small>
-                    </div>
-                    <div v-if="media.artifact && jobId" class="flex shrink-0 items-center gap-1.5">
+
+                  <div class="media-library-body">
+                    <h3 class="media-library-title" :title="media.title">
+                      {{ media.title }}
+                    </h3>
+                    <div class="media-library-footer">
+                      <span v-if="media.subtitle" class="truncate font-mono text-[10.5px] text-muted-foreground">
+                        {{ media.subtitle }}
+                      </span>
+                      <span v-else class="grow" />
                       <button
                         type="button"
-                        class="small-btn text"
-                        :disabled="downloadingArtifactId !== null"
-                        @click.stop="downloadArtifact(media.artifact)"
+                        class="small-btn text media-download-btn"
+                        data-artifact-download-btn
+                        :disabled="Boolean(media.artifact && downloadingArtifactId === media.artifact.id)"
+                        :title="t('jobUi.download')"
+                        :aria-label="t('jobUi.download')"
+                        @click.stop="downloadMediaItem(media)"
                       >
-                        <Download class="size-3" />{{ t('jobUi.download') }}
-                      </button>
-                      <button
-                        v-if="canPreviewArtifact(media.artifact)"
-                        type="button"
-                        class="small-btn text"
-                        data-artifact-preview
-                        data-canvas-artifact-preview
-                        @click.stop="previewedArtifact = media.artifact"
-                      >
-                        <Eye class="size-3" />Preview
+                        <Download class="size-3.5" />{{ t('jobUi.download') }}
                       </button>
                     </div>
+                  </div>
+                </article>
+              </div>
+              <p v-else class="p-4 text-sm text-muted-foreground">
+                {{ t('artifactsUi.empty') }}
+              </p>
+            </template>
+
+            <!-- Standard Inspector View for Root / Agent / Tool / LLM / Result -->
+            <template v-else>
+              <div class="detail-heading">
+                <div class="detail-avatar" :class="selectedNode.type">
+                  <svg class="icon lg"><use :href="`#i-${iconType(selectedNode.type)}`" /></svg>
+                </div>
+                <div class="min-w-0 flex-1">
+                  <h2>{{ selectedNode.name }}</h2>
+                  <div class="metadata">
+                    <span
+                      :class="
+                        selectedNode.state === 'done'
+                          ? 'good'
+                          : selectedNode.state === 'running'
+                            ? 'run'
+                            : selectedNode.state === 'failed'
+                              ? 'bad'
+                              : ''
+                      "
+                    >
+                      ● {{ labelStatus(selectedNode.state) }}
+                    </span>
+                    <span class="point">·</span>
+                    <span class="capitalize">{{ selectedNode.rawStatus }}</span>
+                    <span class="point">·</span>
+                    <span>{{ selectedNode.duration }}</span>
+                    <span class="point">·</span>
+                    <span>{{ labelType(selectedNode.type) }}</span>
                   </div>
                 </div>
               </div>
-            </template>
 
-            <!-- Artifacts -->
-            <template v-if="selectedArtifacts.length > 0">
-              <div class="section-title">
-                <svg class="icon sm"><use href="#i-file" /></svg>
-                {{ t('jobUi.artifacts') }}
-                <span class="muted">{{ selectedArtifacts.length }}</span>
-              </div>
-              <div
-                v-for="art in selectedArtifacts"
-                :key="art.id"
-                class="artifact-row"
+              <p class="summary">{{ selectedNode.desc }}</p>
+
+              <p
+                v-if="selectedNode.step?.attempt_state === 'unknown_outcome'"
+                role="alert"
+                class="unknown-alert"
               >
-                <svg class="icon sm"><use href="#i-file" /></svg>
-                <strong class="truncate" :title="art.filename || art.name || art.id">
-                  {{ art.filename || art.name || art.id }}
+                {{ t('jobUi.unknownOutcomeWarning') }}
+              </p>
+
+              <!-- Context Line -->
+              <div v-if="selectedNode.type === 'root' || selectedNode.type === 'agent'" class="context-line">
+                <svg class="icon sm"><use href="#i-agent" /></svg>
+                <span>{{ t('jobUi.childAgents') }}</span>
+                <strong>{{ selectedDescendantAgents }}</strong>
+                <span class="point">·</span>
+                <span>{{ t('jobUi.statToolCalls') }}</span>
+                <strong>{{ selectedDescendantTools }}</strong>
+                <span class="point">·</span>
+                <span>{{ t('jobUi.statLlmCalls') }}</span>
+                <strong>{{ selectedDescendantLlms }}</strong>
+                <span v-if="selectedNode.agentRunId" class="tag font-mono">{{ selectedNode.agentRunId }}</span>
+                <span v-if="selectedNode.state === 'running'" class="tag live">{{ t('jobUi.liveExecution') }}</span>
+              </div>
+              <div v-else class="context-line">
+                <svg class="icon sm"><use :href="selectedNode.type === 'llm' ? '#i-sparkles' : '#i-terminal'" /></svg>
+                <span>{{ t('jobUi.executor') }}</span>
+                <strong>{{ parentOfSelected?.name || selectedNode.role || 'Agent' }}</strong>
+                <span class="point">·</span>
+                <strong>
+                  {{
+                    selectedNode.type === 'llm'
+                      ? t('jobUi.modelRequest')
+                      : selectedNode.type === 'tool'
+                        ? t('jobUi.toolInvocation')
+                        : labelType(selectedNode.type)
+                  }}
                 </strong>
-                <small class="truncate">
-                  {{ art.media_type || art.mime_type }}<template v-if="art.size_bytes >= 0"> · {{ (art.size_bytes / 1024).toFixed(1) }} KiB</template>
-                </small>
-                <div v-if="jobId" class="flex shrink-0 items-center gap-1.5">
-                  <button
-                    type="button"
-                    class="small-btn text"
-                    :disabled="downloadingArtifactId !== null"
-                    @click.stop="downloadArtifact(art)"
-                  >
-                    <Download class="size-3" />{{ t('jobUi.download') }}
-                  </button>
-                  <button
-                    v-if="canPreviewArtifact(art)"
-                    type="button"
-                    class="small-btn text"
+                <span v-if="selectedNode.step?.plugin_id" class="tag">
+                  {{ selectedNode.step.plugin_id }}<template v-if="selectedNode.step.operation"> · {{ selectedNode.step.operation }}</template>
+                </span>
+                <span v-if="selectedNode.step?.step_key" class="tag font-mono">
+                  {{ selectedNode.step.step_key }}<template v-if="selectedNode.step.status"> · {{ selectedNode.step.status }}</template><template v-if="selectedNode.step.attempt_state"> · {{ selectedNode.step.attempt_state }}</template>
+                </span>
+                <span v-if="selectedNode.llm" class="tag">
+                  {{ selectedNode.llm.provider }}<template v-if="selectedNode.llm.model"> · {{ selectedNode.llm.model }}</template>
+                </span>
+                <span
+                  v-if="selectedNode.llm && (selectedNode.llm.inputTokens !== null || selectedNode.llm.outputTokens !== null)"
+                  class="tag font-mono"
+                >
+                  {{ selectedNode.llm.inputTokens ?? '—' }} / {{ selectedNode.llm.outputTokens ?? '—' }} tokens
+                </span>
+              </div>
+
+              <!-- Agent Message (when distinct from summary) -->
+              <template v-if="selectedNode.assistantMessage && selectedNode.assistantMessage !== selectedNode.desc">
+                <div class="section-title">
+                  <svg class="icon sm"><use href="#i-sparkles" /></svg>
+                  {{ t('jobUi.agentMessage') }}
+                </div>
+                <div class="message-box">{{ selectedNode.assistantMessage }}</div>
+              </template>
+
+              <!-- Tool Input / Arguments -->
+              <template v-if="selectedNode.args !== null && selectedNode.args !== undefined && hasObjectKeys(selectedNode.args)">
+                <div class="section-title">
+                  <svg class="icon sm"><use :href="selectedNode.type === 'llm' ? '#i-sparkles' : '#i-terminal'" /></svg>
+                  {{ selectedNode.type === 'llm' ? t('jobUi.modelRequest') : t('jobUi.toolArguments') }}
+                </div>
+                <div class="codebox" data-codebox="arguments">
+                  <div class="codehead">
+                    <svg class="icon sm"><use href="#i-terminal" /></svg>
+                    arguments · JSON
+                    <button
+                      type="button"
+                      data-copy="arguments"
+                      :title="t('jobUi.copyContent')"
+                      @click="copyJson('arguments', selectedNode.args)"
+                    >
+                      <svg class="icon sm"><use :href="copiedKey === 'arguments' ? '#i-check' : '#i-copy'" /></svg>
+                    </button>
+                  </div>
+                  <pre>{{ formatJson(selectedNode.args) }}</pre>
+                </div>
+              </template>
+
+              <!-- Result (Markdown report and/or structured JSON) -->
+              <template v-if="selectedReport.kind !== 'empty' || (selectedNode.result !== null && selectedNode.result !== undefined)">
+                <div class="section-title">
+                  <svg class="icon sm"><use href="#i-check" /></svg>
+                  {{ t('jobUi.result') }}
+                  <span class="muted">
+                    {{ selectedNode.state === 'failed' ? t('jobUi.blockedOutput') : t('jobUi.structuredOutput') }}
+                  </span>
+                </div>
+                <div v-if="selectedReport.kind === 'markdown'" class="markdown-box">
+                  <article
+                    class="result-markdown"
+                    data-result-markdown
+                    v-html="(selectedReport as { kind: 'markdown'; html: string }).html"
+                  />
+                </div>
+                <div
+                  v-if="selectedNode.result !== null && selectedNode.result !== undefined && (selectedReport.kind !== 'markdown' || selectedNode.type === 'tool')"
+                  class="codebox"
+                  data-codebox="result"
+                >
+                  <div class="codehead">
+                    <svg class="icon sm"><use href="#i-terminal" /></svg>
+                    response · JSON
+                    <button
+                      type="button"
+                      data-copy="result"
+                      :title="t('jobUi.copyContent')"
+                      @click="copyJson('result', selectedNode.result)"
+                    >
+                      <svg class="icon sm"><use :href="copiedKey === 'result' ? '#i-check' : '#i-copy'" /></svg>
+                    </button>
+                  </div>
+                  <pre>{{ formatJson(selectedNode.result) }}</pre>
+                </div>
+              </template>
+
+              <!-- Visual Media (Images & Videos) -->
+              <template v-if="selectedMediaItems.length > 0">
+                <div class="section-title">
+                  <svg class="icon sm"><use href="#i-file" /></svg>
+                  {{ t('jobUi.media') }}
+                  <span class="muted">{{ selectedMediaItems.length }}</span>
+                </div>
+                <div class="media-library-grid" data-modal-media-list>
+                  <article
+                    v-for="media in selectedMediaItems"
+                    :key="media.id"
+                    role="button"
+                    tabindex="0"
+                    class="media-library-card group"
+                    data-artifact-card
+                    data-media-card
                     data-artifact-preview
                     data-canvas-artifact-preview
-                    @click.stop="previewedArtifact = art"
+                    :data-media-kind="media.kind"
+                    :data-modal-media-kind="media.kind"
+                    @click="openMediaDetail(media)"
+                    @keydown.enter.prevent="openMediaDetail(media)"
+                    @keydown.space.prevent="openMediaDetail(media)"
                   >
-                    <Eye class="size-3" />Preview
-                  </button>
-                </div>
-              </div>
-            </template>
+                    <div
+                    class="media-library-thumb"
+                    :class="{ 'card-shimmer': Boolean(media.artifact && mediaLoadingIds[media.artifact.id]) }"
+                  >
+                      <div v-if="media.kind === 'video' && media.src" class="relative h-full w-full bg-black/50">
+                        <video
+                          :src="media.src"
+                          preload="metadata"
+                          muted
+                          playsinline
+                          class="media-library-video"
+                          data-canvas-media-video
+                          data-modal-media-video
+                        />
+                        <div class="pointer-events-none absolute inset-0 flex items-center justify-center bg-black/25">
+                          <div class="grid size-10 place-items-center rounded-full bg-background/90 text-foreground shadow-md">
+                            <Play class="size-4.5 fill-current" />
+                          </div>
+                        </div>
+                      </div>
+                      <img
+                        v-else-if="media.kind === 'image' && media.src"
+                        :src="media.src"
+                        :alt="media.title"
+                        loading="lazy"
+                        class="media-library-image"
+                        data-canvas-media-image
+                        data-modal-media-image
+                      >
+                      <div
+                        v-else
+                        class="flex h-full w-full flex-col items-center justify-center gap-2 bg-muted/35 p-4 text-muted-foreground"
+                      >
+                        <Film v-if="media.kind === 'video'" class="size-7 text-studio-cyan" />
+                        <ImageIcon v-else class="size-7 text-studio-violet" />
+                      </div>
 
-            <!-- Agent Conversation Messages -->
-            <template v-if="selectedAgentMessages.length > 0">
-              <div class="section-title">
-                <svg class="icon sm"><use href="#i-sparkles" /></svg>
-                {{ t('jobUi.agentMessages') }}
-                <span class="muted">{{ selectedAgentMessages.length }}</span>
-              </div>
-              <div class="space-y-1.5">
+                      <div class="media-library-badges">
+                        <span class="media-library-badge">{{ mediaBadgeLabel(media) }}</span>
+                      </div>
+
+                      <div class="media-library-hover">
+                        <span class="media-library-hover-pill">
+                          <Eye class="size-3.5 text-studio-violet" />{{ t('artifactsUi.clickToView') }}
+                        </span>
+                      </div>
+                    </div>
+
+                    <div class="media-library-body">
+                      <h3 class="media-library-title" :title="media.title">
+                        {{ media.title }}
+                      </h3>
+                      <div class="media-library-footer">
+                        <span v-if="media.subtitle" class="truncate font-mono text-[10.5px] text-muted-foreground">
+                          {{ media.subtitle }}
+                        </span>
+                        <span v-else class="grow" />
+                        <button
+                          type="button"
+                          class="small-btn text media-download-btn"
+                          data-artifact-download-btn
+                          :disabled="Boolean(media.artifact && downloadingArtifactId === media.artifact.id)"
+                          :title="t('jobUi.download')"
+                          :aria-label="t('jobUi.download')"
+                          @click.stop="downloadMediaItem(media)"
+                        >
+                          <Download class="size-3.5" />{{ t('jobUi.download') }}
+                        </button>
+                      </div>
+                    </div>
+                  </article>
+                </div>
+              </template>
+
+              <!-- Artifacts -->
+              <template v-if="selectedArtifacts.length > 0">
+                <div class="section-title">
+                  <svg class="icon sm"><use href="#i-file" /></svg>
+                  {{ t('jobUi.artifacts') }}
+                  <span class="muted">{{ selectedArtifacts.length }}</span>
+                </div>
                 <div
-                  v-for="msg in selectedAgentMessages"
-                  :key="msg.id"
-                  class="message-box"
+                  v-for="art in selectedArtifacts"
+                  :key="art.id"
+                  class="artifact-row"
                 >
-                  <div class="mb-1 flex items-center justify-between text-[10px] font-semibold uppercase text-muted-foreground">
-                    <span>{{ msg.role }}</span>
-                    <span class="font-mono">#{{ msg.sequence }}</span>
+                  <svg class="icon sm"><use href="#i-file" /></svg>
+                  <strong class="truncate" :title="art.filename || art.name || art.id">
+                    {{ art.filename || art.name || art.id }}
+                  </strong>
+                  <small class="truncate">
+                    {{ art.media_type || art.mime_type }}<template v-if="art.size_bytes >= 0"> · {{ (art.size_bytes / 1024).toFixed(1) }} KiB</template>
+                  </small>
+                  <div v-if="effectiveJobId" class="flex shrink-0 items-center gap-1.5">
+                    <button
+                      type="button"
+                      class="small-btn text"
+                      :disabled="downloadingArtifactId !== null"
+                      @click.stop="downloadArtifact(art)"
+                    >
+                      <Download class="size-3" />{{ t('jobUi.download') }}
+                    </button>
+                    <button
+                      v-if="canPreviewArtifact(art)"
+                      type="button"
+                      class="small-btn text"
+                      data-artifact-preview
+                      data-canvas-artifact-preview
+                      @click.stop="previewedArtifact = art"
+                    >
+                      <Eye class="size-3" />Preview
+                    </button>
                   </div>
-                  <p class="m-0 whitespace-pre-wrap break-words">{{ msg.text }}</p>
                 </div>
-              </div>
-            </template>
+              </template>
 
-            <!-- Execution Events Feed -->
-            <div class="section-title">
-              <svg class="icon sm"><use href="#i-clock" /></svg>
-              {{ t('jobUi.executionEvents') }}
-              <span class="muted">{{ selectedNode.events.length }} {{ t('jobUi.entriesCount') }}</span>
-            </div>
-            <div class="feed">
-              <div
-                v-for="(ev, idx) in selectedNode.events"
-                :key="idx"
-                class="event"
-                :class="ev.kind"
-              >
-                <div class="timestamp">{{ ev.time }}</div>
-                <div class="eventbody">
-                  <div class="eventname">
-                    <svg class="icon sm">
-                      <use
-                        :href="
-                          ev.kind === 'error'
-                            ? '#i-alert'
-                            : ev.kind === 'output'
-                              ? '#i-check'
-                              : ev.kind === 'processing'
-                                ? '#i-sparkles'
-                                : '#i-terminal'
-                        "
-                      />
-                    </svg>
-                    <span>{{ ev.title }}</span>
-                    <span v-if="ev.validationPath" class="ml-1 break-all font-mono text-danger">
-                      {{ ev.validationPath }}
-                    </span>
-                  </div>
-                  <div class="message">{{ ev.detail }}</div>
+              <!-- Agent Conversation Messages -->
+              <template v-if="selectedAgentMessages.length > 0">
+                <div class="section-title">
+                  <svg class="icon sm"><use href="#i-sparkles" /></svg>
+                  {{ t('jobUi.agentMessages') }}
+                  <span class="muted">{{ selectedAgentMessages.length }}</span>
                 </div>
-              </div>
-              <div v-if="pendingLlmStage" class="event processing">
-                <div class="timestamp">live</div>
-                <div class="eventbody">
-                  <div class="eventname">
-                    <svg class="icon sm"><use href="#i-sparkles" /></svg>
-                    <span>{{ pendingLlmStage }}</span>
+                <div class="space-y-1.5">
+                  <div
+                    v-for="msg in selectedAgentMessages"
+                    :key="msg.id"
+                    class="message-box"
+                  >
+                    <div class="mb-1 flex items-center justify-between text-[10px] font-semibold uppercase text-muted-foreground">
+                      <span>{{ msg.role }}</span>
+                      <span class="font-mono">#{{ msg.sequence }}</span>
+                    </div>
+                    <p class="m-0 whitespace-pre-wrap break-words">{{ msg.text }}</p>
                   </div>
                 </div>
-              </div>
-            </div>
-            <p v-if="selectedNode.errorCode" class="error-code-box">
-              {{ selectedNode.errorCode }}
-            </p>
+              </template>
 
-            <!-- Child Execution List -->
-            <template
-              v-if="
-                (selectedNode.type === 'root' || selectedNode.type === 'agent') &&
-                selectedDirectChildren.length > 0
-              "
-            >
+              <!-- Execution Events Feed -->
               <div class="section-title">
-                <svg class="icon sm"><use href="#i-layer" /></svg>
-                {{ t('jobUi.childExecution') }}
-                <span class="muted">{{ selectedDirectChildren.length }} {{ t('jobUi.directChildren') }}</span>
+                <svg class="icon sm"><use href="#i-clock" /></svg>
+                {{ t('jobUi.executionEvents') }}
+                <span class="muted">{{ selectedNode.events.length }} {{ t('jobUi.entriesCount') }}</span>
               </div>
-              <button
-                v-for="child in selectedDirectChildren"
-                :key="child.id"
-                type="button"
-                class="artifact-row child-btn"
-                :data-child="child.id"
-                @click="selectNode(child.id, false)"
+              <div class="feed">
+                <div
+                  v-for="(ev, idx) in selectedNode.events"
+                  :key="idx"
+                  class="event"
+                  :class="ev.kind"
+                >
+                  <div class="timestamp">{{ ev.time }}</div>
+                  <div class="eventbody">
+                    <div class="eventname">
+                      <svg class="icon sm">
+                        <use
+                          :href="
+                            ev.kind === 'error'
+                              ? '#i-alert'
+                              : ev.kind === 'output'
+                                ? '#i-check'
+                                : ev.kind === 'processing'
+                                  ? '#i-sparkles'
+                                  : '#i-terminal'
+                          "
+                        />
+                      </svg>
+                      <span>{{ ev.title }}</span>
+                      <span v-if="ev.validationPath" class="ml-1 break-all font-mono text-danger">
+                        {{ ev.validationPath }}
+                      </span>
+                    </div>
+                    <div class="message">{{ ev.detail }}</div>
+                  </div>
+                </div>
+                <div v-if="pendingLlmStage" class="event processing">
+                  <div class="timestamp">live</div>
+                  <div class="eventbody">
+                    <div class="eventname">
+                      <svg class="icon sm"><use href="#i-sparkles" /></svg>
+                      <span>{{ pendingLlmStage }}</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <p v-if="selectedNode.errorCode" class="error-code-box">
+                {{ selectedNode.errorCode }}
+              </p>
+
+              <!-- Child Execution List -->
+              <template
+                v-if="
+                  (selectedNode.type === 'root' || selectedNode.type === 'agent') &&
+                  selectedDirectChildren.length > 0
+                "
               >
-                <span class="nodeicon" :class="child.type">
-                  <svg class="icon sm"><use :href="`#i-${iconType(child.type)}`" /></svg>
-                </span>
-                <strong class="truncate">{{ child.name }}</strong>
-                <span v-if="child.desc && child.desc !== child.name" class="truncate text-[10.5px] text-muted-foreground">
-                  {{ child.desc }}
-                </span>
-                <small>{{ labelStatus(child.state) }}</small>
-                <svg class="icon sm"><use href="#i-chevron" /></svg>
-              </button>
+                <div class="section-title">
+                  <svg class="icon sm"><use href="#i-layer" /></svg>
+                  {{ t('jobUi.childExecution') }}
+                  <span class="muted">{{ selectedDirectChildren.length }} {{ t('jobUi.directChildren') }}</span>
+                </div>
+                <button
+                  v-for="child in selectedDirectChildren"
+                  :key="child.id"
+                  type="button"
+                  class="artifact-row child-btn"
+                  :data-child="child.id"
+                  @click="selectNode(child.id, false)"
+                >
+                  <span class="nodeicon" :class="child.type">
+                    <svg class="icon sm"><use :href="`#i-${iconType(child.type)}`" /></svg>
+                  </span>
+                  <strong class="truncate">{{ child.name }}</strong>
+                  <span v-if="child.desc && child.desc !== child.name" class="truncate text-[10.5px] text-muted-foreground">
+                    {{ child.desc }}
+                  </span>
+                  <small>{{ labelStatus(child.state) }}</small>
+                  <svg class="icon sm"><use href="#i-chevron" /></svg>
+                </button>
+              </template>
             </template>
           </div>
           <p v-else class="p-6 text-sm text-muted-foreground">
@@ -1295,13 +1501,92 @@ function hasObjectKeys(value: unknown): boolean {
     </div>
 
     <ArtifactPreviewDialog
-      v-if="previewedArtifact && jobId"
+      v-if="previewedArtifact && effectiveJobId"
       :key="previewedArtifact.id"
-      :job-id="jobId"
+      :job-id="effectiveJobId"
       :artifact="previewedArtifact"
+      :initial-url="mediaBlobUrls[previewedArtifact.id]"
+      :show-nav="previewableNodeArtifacts.length > 1"
+      :has-prev="previewedArtifactIndex > 0"
+      :has-next="previewedArtifactIndex >= 0 && previewedArtifactIndex < previewableNodeArtifacts.length - 1"
       @close="previewedArtifact = null"
       @download="previewedArtifact && downloadArtifact(previewedArtifact)"
+      @prev="stepPreviewedArtifact(-1)"
+      @next="stepPreviewedArtifact(1)"
     />
+
+    <!-- Direct Media Detail Modal (fallback for inline embeds or non-artifact URLs) -->
+    <div
+      v-if="previewedDirectMedia"
+      class="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-[2px] sm:p-6"
+      role="presentation"
+      data-media-modal-backdrop
+      @click.self="previewedDirectMedia = null"
+    >
+      <section
+        role="dialog"
+        aria-modal="true"
+        :aria-label="previewedDirectMedia.title"
+        data-media-detail-modal
+        class="studio-panel flex max-h-[90vh] w-full max-w-4xl flex-col overflow-hidden rounded-xl border bg-background shadow-2xl"
+      >
+        <header class="flex shrink-0 items-center justify-between gap-4 border-b bg-muted/20 px-5 py-3.5">
+          <div class="flex min-w-0 items-center gap-3">
+            <div class="grid size-9 shrink-0 place-items-center rounded-lg bg-studio-violet/15 text-studio-violet">
+              <Film v-if="previewedDirectMedia.kind === 'video'" class="size-4.5" />
+              <ImageIcon v-else class="size-4.5" />
+            </div>
+            <div class="min-w-0">
+              <h3 class="truncate text-sm font-semibold sm:text-base">
+                {{ previewedDirectMedia.title }}
+              </h3>
+              <p v-if="previewedDirectMedia.subtitle" class="truncate text-xs text-muted-foreground">
+                {{ previewedDirectMedia.subtitle }}
+              </p>
+            </div>
+          </div>
+          <button
+            type="button"
+            class="small-btn"
+            aria-label="Close preview"
+            @click="previewedDirectMedia = null"
+          >
+            <X class="size-4" />
+          </button>
+        </header>
+        <div class="flex min-h-[18rem] flex-1 items-center justify-center overflow-auto bg-black/30 p-5">
+          <video
+            v-if="previewedDirectMedia.kind === 'video' && previewedDirectMedia.src"
+            :src="previewedDirectMedia.src"
+            controls
+            class="max-h-[68vh] w-full rounded-lg object-contain"
+          />
+          <img
+            v-else-if="previewedDirectMedia.kind === 'image' && previewedDirectMedia.src"
+            :src="previewedDirectMedia.src"
+            :alt="previewedDirectMedia.title"
+            class="max-h-[68vh] w-full rounded-lg object-contain"
+          >
+        </div>
+        <footer class="flex shrink-0 items-center justify-end gap-2 border-t bg-muted/20 px-5 py-3">
+          <button
+            type="button"
+            class="small-btn text"
+            data-media-modal-download-btn
+            @click="downloadMediaItem(previewedDirectMedia)"
+          >
+            <Download class="size-3.5" />{{ t('jobUi.download') }}
+          </button>
+          <button
+            type="button"
+            class="small-btn text"
+            @click="previewedDirectMedia = null"
+          >
+            {{ t('common.close') }}
+          </button>
+        </footer>
+      </section>
+    </div>
   </section>
 </template>
 
@@ -2002,45 +2287,134 @@ function hasObjectKeys(value: unknown): boolean {
   font-size: 10.5px;
 }
 
-/* Media & Artifacts */
-.media-list {
+/* Media & Artifacts Library Cards */
+.media-library-grid {
   display: grid;
-  gap: 10px;
-  margin-top: 6px;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 14px;
+  margin-top: 4px;
 }
-.media-item-card {
-  border-radius: 8px;
-  border: 1px solid var(--border);
-  background: color-mix(in oklab, var(--surface) 65%, var(--card));
-  padding: 8px 10px;
+.media-library-card {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  justify-content: space-between;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: color-mix(in oklab, var(--surface) 55%, var(--card));
+  overflow: hidden;
+  cursor: pointer;
+  transition: transform 0.18s ease, border-color 0.18s ease, box-shadow 0.18s ease;
 }
-.media-item-preview {
+.media-library-card:hover {
+  transform: translateY(-2px);
+  border-color: color-mix(in oklab, var(--studio-violet) 55%, var(--border));
+  box-shadow: 0 8px 24px -8px color-mix(in oklab, var(--foreground) 14%, transparent);
+}
+.media-library-card:focus-visible {
+  outline: 2px solid var(--studio-violet);
+  outline-offset: 2px;
+}
+.media-library-thumb {
+  position: relative;
+  aspect-ratio: 16 / 10;
+  width: 100%;
+  overflow: hidden;
+  border-bottom: 1px solid var(--border);
+  background: color-mix(in oklab, var(--muted) 40%, var(--background));
+}
+.media-library-image,
+.media-library-video {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  transition: transform 0.25s ease;
+}
+.media-library-card:hover .media-library-image,
+.media-library-card:hover .media-library-video {
+  transform: scale(1.04);
+}
+.media-library-badges {
+  pointer-events: none;
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+.media-library-badge {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 5px;
+  border: 1px solid color-mix(in oklab, var(--border) 80%, transparent);
+  background: color-mix(in oklab, var(--background) 88%, transparent);
+  backdrop-filter: blur(4px);
+  padding: 2px 6px;
+  font-size: 9.5px;
+  font-weight: 650;
+  letter-spacing: 0.03em;
+  color: var(--foreground);
+}
+.media-library-hover {
+  pointer-events: none;
+  position: absolute;
+  inset: 0;
   display: flex;
   align-items: center;
   justify-content: center;
-  border-radius: 6px;
-  background: #0b111c;
+  background: rgba(0, 0, 0, 0.36);
+  opacity: 0;
+  transition: opacity 0.18s ease;
+}
+.media-library-card:hover .media-library-hover {
+  opacity: 1;
+}
+.media-library-hover-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border-radius: 9999px;
+  background: color-mix(in oklab, var(--background) 95%, transparent);
+  padding: 5px 11px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--foreground);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+}
+.media-library-body {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 10px 12px;
+}
+.media-library-title {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 650;
+  color: var(--foreground);
+  white-space: nowrap;
   overflow: hidden;
-  max-height: 260px;
+  text-overflow: ellipsis;
+  transition: color 0.15s ease;
 }
-.media-card-image,
-.media-card-video {
-  display: block;
-  max-width: 100%;
-  max-height: 260px;
-  width: auto;
-  height: auto;
-  object-fit: contain;
+.media-library-card:hover .media-library-title {
+  color: var(--studio-violet);
 }
-.media-item-meta {
+.media-library-footer {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  font-size: 11px;
+  border-top: 1px solid color-mix(in oklab, var(--border) 70%, transparent);
+  padding-top: 7px;
+}
+.media-download-btn {
+  flex-shrink: 0;
+  height: 25px;
+  font-size: 10.5px;
 }
 .artifact-row {
   display: flex;

@@ -35,6 +35,8 @@ function quoteEtag(etag: string) {
   return trimmed.startsWith('"') && trimmed.endsWith('"') ? trimmed : `"${trimmed}"`
 }
 
+const inFlightArtifacts = new Map<string, Promise<Blob>>()
+
 /** Admin-facing module: the backend owns scheduler, authorization and durability. */
 export const agentJobsApi = {
   settings(signal?: AbortSignal) {
@@ -109,7 +111,16 @@ export const agentJobsApi = {
     return requestJson<JobEventPage>(withQuery(jobPath(id) + '/events', { after, limit: 100 }), {}, { signal })
   },
   artifact(jobId: string, artifactId: string) {
-    return requestBlob(jobPath(jobId) + '/artifacts/' + encodeURIComponent(artifactId))
+    const key = `${jobId}\u0000${artifactId}`
+    const existing = inFlightArtifacts.get(key)
+    if (existing) return existing
+    const pending = requestBlob(jobPath(jobId) + '/artifacts/' + encodeURIComponent(artifactId)).finally(() => {
+      if (inFlightArtifacts.get(key) === pending) {
+        inFlightArtifacts.delete(key)
+      }
+    })
+    inFlightArtifacts.set(key, pending)
+    return pending
   },
   createJob(goal: string, idempotencyKey?: string, attachments?: JobAttachmentUpload[]) {
     return requestJson<AdminJob>(jobsPath, jsonRequest('POST', {

@@ -1,5 +1,6 @@
-import { mount } from '@vue/test-utils'
-import { beforeEach, describe, expect, it } from 'vitest'
+import { flushPromises, mount } from '@vue/test-utils'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { agentJobsApi } from '@/api/agent-jobs'
 import type { AdminJob, JobEvent } from '@/api/types/agent-jobs'
 import { setLocale } from '@/composables/useI18n'
 import { projectUnifiedActivity } from '@/domain/jobs/unified-activity'
@@ -221,6 +222,11 @@ describe('Agent Tree Compact Job workspace', () => {
   })
 
   it('renders Result and Media nodes in the tree and displays image/video previews in the inline Inspector', async () => {
+    const artifactSpy = vi.spyOn(agentJobsApi, 'artifact').mockImplementation(async (_jobId, artId) => {
+      if (artId === 'art-poster') return new Blob(['png-bytes'], { type: 'image/png' })
+      return new Blob(['mp4-bytes'], { type: 'video/mp4' })
+    })
+
     const mediaJob = {
       ...job,
       id: 'job-media-1',
@@ -264,6 +270,8 @@ describe('Agent Tree Compact Job workspace', () => {
       },
     })
     try {
+      await flushPromises()
+
       // Result node is selected by default when job finishes with output
       const inspector = wrapper.get('[data-tree-inspector]')
       expect(inspector.text()).toContain('Final report text')
@@ -273,17 +281,34 @@ describe('Agent Tree Compact Job workspace', () => {
       expect(mediaRow.attributes('data-kind')).toBe('media')
       await mediaRow.trigger('click')
 
+      expect(inspector.find('[data-media-library-grid]').exists()).toBe(true)
+      expect(inspector.find('.detail-heading').exists()).toBe(false)
+      expect(inspector.find('.context-line').exists()).toBe(false)
+      expect(inspector.find('.feed').exists()).toBe(false)
+
+      const cards = inspector.findAll('[data-media-card]')
+      expect(cards).toHaveLength(2)
+      expect(inspector.findAll('[data-artifact-download-btn]')).toHaveLength(2)
+
       expect(inspector.text()).toContain('poster.png')
       expect(inspector.text()).toContain('demo.mp4')
 
       const img = inspector.get('[data-canvas-media-image]')
       expect(img.attributes('alt')).toBe('poster.png')
-      expect(img.attributes('src')).toContain('/api/admin/jobs/job-media-1/artifacts/art-poster')
+      expect(img.attributes('src')).toMatch(/^blob:/)
 
       const video = inspector.get('[data-canvas-media-video]')
-      expect(video.attributes('src')).toContain('/api/admin/jobs/job-media-1/artifacts/art-demo')
+      expect(video.attributes('src')).toMatch(/^blob:/)
+
+      // Clicking card opens preview dialog and reuses preloaded blob URL without a duplicate fetch
+      const callsBeforeModal = artifactSpy.mock.calls.length
+      await cards[0]!.trigger('click')
+      await flushPromises()
+      expect(wrapper.find('[data-artifact-detail-modal]').exists()).toBe(true)
+      expect(artifactSpy.mock.calls.length).toBe(callsBeforeModal)
     } finally {
       wrapper.unmount()
+      artifactSpy.mockRestore()
     }
   })
 })

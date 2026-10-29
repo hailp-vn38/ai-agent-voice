@@ -813,6 +813,7 @@ onBeforeUnmount(() => {
       :key="selectedArtifact.id"
       :job-id="selectedArtifact.job_id"
       :artifact="selectedArtifact"
+      :initial-url="mediaBlobUrls[selectedArtifact.id]"
       :show-nav="items.length > 1"
       :has-prev="selectedIndex > 0"
       :has-next="selectedIndex >= 0 && selectedIndex < items.length - 1"

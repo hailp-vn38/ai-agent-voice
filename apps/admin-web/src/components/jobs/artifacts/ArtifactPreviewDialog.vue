@@ -68,11 +68,13 @@ const props = withDefaults(
   defineProps<{
     jobId: string
     artifact: JobArtifact | AdminArtifactItem
+    initialUrl?: string
     hasPrev?: boolean
     hasNext?: boolean
     showNav?: boolean
   }>(),
   {
+    initialUrl: '',
     hasPrev: false,
     hasNext: false,
     showNav: false,
@@ -92,6 +94,7 @@ const url = ref('')
 const text = ref('')
 const textViewMode = ref<'rendered' | 'raw'>('rendered')
 let active = true
+let ownsObjectUrl = false
 
 const preview = computed(() => artifactPreview(props.artifact))
 const kind = computed(() => preview.value.kind)
@@ -184,28 +187,57 @@ function onKeydown(event: KeyboardEvent) {
   }
 }
 
+watch(
+  () => props.initialUrl,
+  newUrl => {
+    if (
+      newUrl &&
+      !url.value &&
+      (kind.value === 'image' || kind.value === 'video' || kind.value === 'audio') &&
+      props.artifact.size_bytes <= preview.value.limit
+    ) {
+      url.value = newUrl
+      ownsObjectUrl = false
+      error.value = ''
+      loading.value = false
+    }
+  },
+)
+
 onMounted(async () => {
   window.addEventListener('keydown', onKeydown)
   if (kind.value === 'download') {
     loading.value = false
     return
   }
+  const cap = preview.value.limit
+  if (props.artifact.size_bytes > cap) {
+    error.value = 'File exceeds preview limit. Use Download.'
+    loading.value = false
+    return
+  }
+  if (props.initialUrl && (kind.value === 'image' || kind.value === 'video' || kind.value === 'audio')) {
+    url.value = props.initialUrl
+    ownsObjectUrl = false
+    loading.value = false
+    return
+  }
   try {
     const file = await agentJobsApi.artifact(props.jobId, props.artifact.id)
     if (!active) return
-    const cap = preview.value.limit
     if (file.size > cap) {
       error.value = 'File exceeds preview limit. Use Download.'
       return
     }
     if (kind.value === 'text') {
       text.value = await file.text()
-    } else {
+    } else if (!url.value) {
       const effectiveMime = props.artifact.media_type || props.artifact.mime_type || 'application/octet-stream'
       url.value = URL.createObjectURL(new Blob([file], { type: effectiveMime }))
+      ownsObjectUrl = true
     }
   } catch (cause) {
-    if (active) error.value = formatApiError(cause)
+    if (active && !url.value) error.value = formatApiError(cause)
   } finally {
     if (active) loading.value = false
   }
@@ -214,7 +246,7 @@ onMounted(async () => {
 onBeforeUnmount(() => {
   active = false
   window.removeEventListener('keydown', onKeydown)
-  if (url.value) URL.revokeObjectURL(url.value)
+  if (ownsObjectUrl && url.value) URL.revokeObjectURL(url.value)
 })
 </script>
 
