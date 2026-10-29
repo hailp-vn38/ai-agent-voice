@@ -86,11 +86,19 @@ impl AsrSession for SherpaOfflineAsrSession {
         };
         stream.accept_waveform(16_000, samples);
         self.recognizer.decode(&stream);
-        let result = stream.get_result().ok_or_else(|| {
-            AsrError::Failed(format!("{} returned no final result", self.label))
-        })?;
+        let result = stream
+            .get_result()
+            .ok_or_else(|| AsrError::Failed(format!("{} returned no final result", self.label)))?;
+        let utterance_duration_ms = ((self.samples.len() as u64) * 1_000) / 16_000;
         self.samples.clear();
-        Ok(AsrResult::new(result.text.trim().to_owned()))
+        let text = result.text.trim().to_owned();
+        let segments = crate::providers::asr::subtitle_segmenter::segment_timed_tokens(
+            &text,
+            &result.tokens,
+            result.timestamps.as_deref(),
+            utterance_duration_ms,
+        );
+        Ok(AsrResult::with_segments(text, segments))
     }
 
     fn reset(&mut self) -> Result<(), AsrError> {

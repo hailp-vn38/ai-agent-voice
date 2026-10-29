@@ -46,6 +46,7 @@ impl AsrProvider for ZipformerAsrProvider {
         Ok(Box::new(ZipformerAsrSession {
             recognizer: Arc::clone(&self.recognizer),
             stream: self.recognizer.create_stream(),
+            accepted_samples: 0,
         }))
     }
 }
@@ -53,6 +54,7 @@ impl AsrProvider for ZipformerAsrProvider {
 struct ZipformerAsrSession {
     recognizer: Arc<OnlineRecognizer>,
     stream: OnlineStream,
+    accepted_samples: usize,
 }
 
 impl AsrSession for ZipformerAsrSession {
@@ -60,6 +62,7 @@ impl AsrSession for ZipformerAsrSession {
         if pcm.sample_rate_hz() != 16_000 {
             return Err(AsrError::Failed("ASR requires canonical 16 kHz PCM".into()));
         }
+        self.accepted_samples = self.accepted_samples.saturating_add(pcm.samples().len());
         self.stream
             .accept_waveform(pcm.sample_rate_hz() as i32, pcm.samples());
         while self.recognizer.is_ready(&self.stream) {
@@ -74,21 +77,39 @@ impl AsrSession for ZipformerAsrSession {
     }
 
     fn finish(&mut self) -> Result<AsrResult, AsrError> {
+        let utterance_duration_ms = ((self.accepted_samples as u64) * 1_000) / 16_000;
+        self.accepted_samples = 0;
         self.stream.accept_waveform(16_000, &FINAL_PADDING);
         self.stream.input_finished();
         while self.recognizer.is_ready(&self.stream) {
             self.recognizer.decode(&self.stream);
         }
-        self.recognizer
+        let result = self
+            .recognizer
             .get_result(&self.stream)
-            .map(|result| AsrResult::new(result.text))
-            .ok_or_else(|| AsrError::Failed("Zipformer returned no final result".into()))
+            .ok_or_else(|| AsrError::Failed("Zipformer returned no final result".into()))?;
+        let text = result.text.trim().to_owned();
+        let start_offset = result.start_time.unwrap_or(0.0).max(0.0);
+        let shifted_timestamps: Option<Vec<f32>> = result
+            .timestamps
+            .as_ref()
+            .map(|ts| ts.iter().map(|&t| (t + start_offset).max(0.0)).collect());
+        let segments = crate::providers::asr::subtitle_segmenter::segment_timed_tokens(
+            &text,
+            &result.tokens,
+            shifted_timestamps.as_deref(),
+            utterance_duration_ms,
+        );
+        Ok(AsrResult::with_segments(text, segments))
     }
 
     fn reset(&mut self) -> Result<(), AsrError> {
+        self.accepted_samples = 0;
         self.stream = self.recognizer.create_stream();
         Ok(())
     }
 
-    fn cancel(&mut self) {}
+    fn cancel(&mut self) {
+        self.accepted_samples = 0;
+    }
 }

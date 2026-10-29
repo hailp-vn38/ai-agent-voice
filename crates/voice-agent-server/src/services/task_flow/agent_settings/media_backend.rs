@@ -359,7 +359,7 @@ impl CatalogMediaBackend {
         &self,
         provider_ref: &str,
         pcm: crate::audio::PcmF32Mono,
-    ) -> Result<String, String> {
+    ) -> Result<super::media_asr::MediaAsrTranscript, String> {
         let bridge = self.resolve_bridge("ASR", provider_ref)?;
         bridge.transcribe_asr(provider_ref, pcm).await
     }
@@ -680,17 +680,27 @@ impl orchestrator_flow_rs::AsrTranscriberBackend for CatalogMediaBackend {
             let pcm = tokio::task::spawn_blocking(move || decode_wav_to_16khz_mono(&wav_bytes))
                 .await
                 .map_err(|e| format!("WAV decode worker join error: {e}"))??;
-            let text = self
+            let transcript = self
                 .transcribe_via_server_asr(&resolved.provider_ref, pcm)
                 .await?;
+            let segments = transcript
+                .segments
+                .into_iter()
+                .map(|seg| orchestrator_flow_rs::TranscribedAudioSegment {
+                    start_ms: seg.start_ms,
+                    end_ms: seg.end_ms,
+                    text: seg.text,
+                })
+                .collect();
             return Ok(orchestrator_flow_rs::TranscribedAudioPayload {
-                text,
+                text: transcript.text,
                 language: lang,
                 duration_ms: req.header.duration_ms,
                 sample_rate: req.header.sample_rate,
                 channels: req.header.channels,
                 provider_id: Some(resolved.provider_ref.clone()),
                 model: Some(resolved.model.clone()),
+                segments,
             });
         }
 
@@ -713,6 +723,7 @@ impl orchestrator_flow_rs::AsrTranscriberBackend for CatalogMediaBackend {
             channels: req.header.channels,
             provider_id: Some(resolved.provider_ref.clone()),
             model: Some(resolved.model.clone()),
+            segments: Vec::new(),
         })
     }
 }

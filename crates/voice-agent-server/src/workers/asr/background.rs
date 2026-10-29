@@ -40,12 +40,11 @@ impl AsrWorkerRuntime {
     }
 
     /// Transcribes a canonical 16 kHz mono PCM buffer on the Background workload lane
-    /// (`ProviderWorkloadClass::Background`), framing into 100 ms chunks, handling
-    /// `QueueFull` backpressure, and guaranteeing synchronous `cleanup()` inside `spawn_blocking`.
-    pub async fn transcribe_background_pcm(
+    /// (`ProviderWorkloadClass::Background`), returning both the transcript text and timed subtitle segments.
+    pub async fn transcribe_background_pcm_detailed(
         &self,
         pcm: PcmF32Mono,
-    ) -> Result<String, AsrWorkerError> {
+    ) -> Result<crate::providers::AsrResult, AsrWorkerError> {
         const FRAME_SAMPLES: usize = 1_600; // 100 ms @ 16 kHz
         let runtime = self.clone();
         tokio::task::spawn_blocking(move || {
@@ -123,9 +122,9 @@ impl AsrWorkerRuntime {
 
             loop {
                 match op.poll() {
-                    Some(AsrWorkerEvent::Final { text, .. }) => {
+                    Some(AsrWorkerEvent::Final { text, segments, .. }) => {
                         let _ = op.cleanup();
-                        return Ok(text);
+                        return Ok(crate::providers::AsrResult::with_segments(text, segments));
                     }
                     Some(
                         AsrWorkerEvent::Failed { .. }
@@ -149,6 +148,18 @@ impl AsrWorkerRuntime {
         })
         .await
         .map_err(|_| AsrWorkerError::Initialization)?
+    }
+
+    /// Transcribes a canonical 16 kHz mono PCM buffer on the Background workload lane
+    /// (`ProviderWorkloadClass::Background`), framing into 100 ms chunks, handling
+    /// `QueueFull` backpressure, and guaranteeing synchronous `cleanup()` inside `spawn_blocking`.
+    pub async fn transcribe_background_pcm(
+        &self,
+        pcm: PcmF32Mono,
+    ) -> Result<String, AsrWorkerError> {
+        self.transcribe_background_pcm_detailed(pcm)
+            .await
+            .map(|res| res.into_parts().0)
     }
 }
 impl AsrBackgroundOperation {

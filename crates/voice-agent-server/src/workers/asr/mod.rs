@@ -37,6 +37,7 @@ pub enum AsrWorkerEvent {
     Final {
         identity: WorkerIdentity,
         text: String,
+        segments: Vec<crate::providers::AsrTimedSegment>,
     },
     Failed {
         identity: WorkerIdentity,
@@ -533,11 +534,13 @@ fn run_worker(
             },
             AsrCommand::Finish => match session.finish() {
                 Ok(result) => {
+                    let (text, segments) = result.into_parts();
                     return publish_terminal(
                         &events,
                         AsrWorkerEvent::Final {
                             identity,
-                            text: result.text().to_owned(),
+                            text,
+                            segments,
                         },
                         retained_worker,
                     );

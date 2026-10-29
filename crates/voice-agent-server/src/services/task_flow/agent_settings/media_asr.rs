@@ -211,24 +211,54 @@ fn lowpass_fir_hamming(samples: &[f32], src_rate: u32, dst_rate: u32) -> Vec<f32
     out
 }
 
-/// Splits a 16 kHz mono buffer into segments of at most [`MAX_ASR_SEGMENT_SAMPLES`] (30 seconds).
-/// When splitting is required, searches a `±1 s` window (`[28s, 30s]` around the 29s mark so each
-/// segment remains `≤ 30 s`) in 20 ms (`320`-sample) windows to cut at the lowest-energy silence point.
-pub(crate) fn split_pcm_into_asr_segments(pcm: &PcmF32Mono) -> Vec<PcmF32Mono> {
+#[derive(Debug, Clone)]
+pub(crate) struct AsrPcmSegmentSpan {
+    pub start_sample: usize,
+    pub end_sample: usize,
+    pub pcm: PcmF32Mono,
+}
+
+impl AsrPcmSegmentSpan {
+    pub fn start_offset_ms(&self) -> u64 {
+        ((self.start_sample as u64) * 1_000) / 16_000
+    }
+
+    pub fn end_offset_ms(&self) -> u64 {
+        ((self.end_sample as u64) * 1_000) / 16_000
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct MediaAsrTranscript {
+    pub text: String,
+    pub segments: Vec<crate::providers::AsrTimedSegment>,
+}
+
+/// Splits a 16 kHz mono buffer into spans of at most [`MAX_ASR_SEGMENT_SAMPLES`] (30 seconds),
+/// preserving each chunk's `[start_sample, end_sample)` offset from the start of the file.
+pub(crate) fn split_pcm_into_asr_segment_spans(pcm: &PcmF32Mono) -> Vec<AsrPcmSegmentSpan> {
     let all = pcm.samples();
     if all.len() <= MAX_ASR_SEGMENT_SAMPLES {
-        return vec![pcm.clone()];
+        return vec![AsrPcmSegmentSpan {
+            start_sample: 0,
+            end_sample: all.len(),
+            pcm: pcm.clone(),
+        }];
     }
 
     const WINDOW_SAMPLES: usize = 320; // 20 ms @ 16 kHz
     const HALF_SPAN_SAMPLES: usize = TARGET_ASR_SAMPLE_RATE_HZ as usize; // ±1 s (total 2s span)
 
-    let mut segments = Vec::new();
+    let mut spans = Vec::new();
     let mut offset = 0;
     while offset < all.len() {
         let remaining = all.len() - offset;
         if remaining <= MAX_ASR_SEGMENT_SAMPLES {
-            segments.push(PcmF32Mono::from_samples(all[offset..].to_vec()));
+            spans.push(AsrPcmSegmentSpan {
+                start_sample: offset,
+                end_sample: all.len(),
+                pcm: PcmF32Mono::from_samples(all[offset..].to_vec()),
+            });
             break;
         }
 
@@ -253,11 +283,24 @@ pub(crate) fn split_pcm_into_asr_segments(pcm: &PcmF32Mono) -> Vec<PcmF32Mono> {
         }
 
         let cut = best_cut.max(offset + 1).min(max_end);
-        segments.push(PcmF32Mono::from_samples(all[offset..cut].to_vec()));
+        spans.push(AsrPcmSegmentSpan {
+            start_sample: offset,
+            end_sample: cut,
+            pcm: PcmF32Mono::from_samples(all[offset..cut].to_vec()),
+        });
         offset = cut;
     }
 
-    segments
+    spans
+}
+
+/// Splits a 16 kHz mono buffer into segments of at most [`MAX_ASR_SEGMENT_SAMPLES`] (30 seconds).
+#[cfg(test)]
+pub(crate) fn split_pcm_into_asr_segments(pcm: &PcmF32Mono) -> Vec<PcmF32Mono> {
+    split_pcm_into_asr_segment_spans(pcm)
+        .into_iter()
+        .map(|span| span.pcm)
+        .collect()
 }
 
 impl ServerMediaRuntimeBridge {
@@ -275,8 +318,8 @@ impl ServerMediaRuntimeBridge {
         &self,
         provider_ref: &str,
         pcm: PcmF32Mono,
-    ) -> Result<String, String> {
-        let segments = split_pcm_into_asr_segments(&pcm);
+    ) -> Result<MediaAsrTranscript, String> {
+        let spans = split_pcm_into_asr_segment_spans(&pcm);
         let bare_key = provider_ref
             .strip_prefix("config:asr:")
             .unwrap_or(provider_ref);
@@ -289,7 +332,7 @@ impl ServerMediaRuntimeBridge {
             .or_else(|| self.runtimes().asr.get(bare_key))
             && runtime.adapter() != "unavailable"
         {
-            return Self::transcribe_segments_with_runtime(runtime, segments).await;
+            return Self::transcribe_segments_with_runtime(runtime, spans).await;
         }
 
         // 2. Managed runtime lease via `ProviderRuntimeManager` (ADR-0071)
@@ -300,24 +343,55 @@ impl ServerMediaRuntimeBridge {
             .runtimes()
             .and_then(|cat| cat.asr.get(&desired.key).cloned())
             .ok_or_else(|| format!("ASR runtime `{provider_ref}` is unavailable in lease"))?;
-        Self::transcribe_segments_with_runtime(&runtime, segments).await
+        Self::transcribe_segments_with_runtime(&runtime, spans).await
     }
 
-    async fn transcribe_segments_with_runtime(
+    pub(crate) async fn transcribe_segments_with_runtime(
         runtime: &std::sync::Arc<crate::workers::AsrWorkerRuntime>,
-        segments: Vec<PcmF32Mono>,
-    ) -> Result<String, String> {
-        let mut parts = Vec::with_capacity(segments.len());
-        for seg in segments {
-            let text = runtime
-                .transcribe_background_pcm(seg)
+        spans: Vec<AsrPcmSegmentSpan>,
+    ) -> Result<MediaAsrTranscript, String> {
+        let mut parts = Vec::with_capacity(spans.len());
+        let mut segments = Vec::new();
+        for span in spans {
+            let start_offset_ms = span.start_offset_ms();
+            let end_offset_ms = span.end_offset_ms().max(start_offset_ms + 1);
+            let result = runtime
+                .transcribe_background_pcm_detailed(span.pcm)
                 .await
                 .map_err(|e| e.to_string())?;
-            let trimmed = text.trim();
+            let (raw_text, raw_segments) = result.into_parts();
+            let trimmed = raw_text.trim();
             if !trimmed.is_empty() {
                 parts.push(trimmed.to_owned());
             }
+            if !raw_segments.is_empty() {
+                for seg in raw_segments {
+                    let seg_text = seg.text.trim();
+                    if seg_text.is_empty() {
+                        continue;
+                    }
+                    let s_ms =
+                        (start_offset_ms + seg.start_ms).min(end_offset_ms.saturating_sub(1));
+                    let e_ms = (start_offset_ms + seg.end_ms)
+                        .max(s_ms + 1)
+                        .min(end_offset_ms);
+                    segments.push(crate::providers::AsrTimedSegment {
+                        start_ms: s_ms,
+                        end_ms: e_ms,
+                        text: seg_text.to_owned(),
+                    });
+                }
+            } else if !trimmed.is_empty() {
+                segments.push(crate::providers::AsrTimedSegment {
+                    start_ms: start_offset_ms,
+                    end_ms: end_offset_ms,
+                    text: trimmed.to_owned(),
+                });
+            }
         }
-        Ok(parts.join(" "))
+        Ok(MediaAsrTranscript {
+            text: parts.join(" "),
+            segments,
+        })
     }
 }

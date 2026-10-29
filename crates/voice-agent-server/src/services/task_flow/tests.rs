@@ -1571,6 +1571,14 @@ async fn asr_provider_catalog_validation_and_server_asr_transcribe_backend() {
         .unwrap();
     assert_eq!(payload.text, "Xin chào từ Zipformer (16000 mẫu 16kHz)");
     assert_eq!(
+        payload.segments,
+        vec![orchestrator_flow_rs::TranscribedAudioSegment {
+            start_ms: 0,
+            end_ms: 1_000,
+            text: "Xin chào từ Zipformer (16000 mẫu 16kHz)".into(),
+        }]
+    );
+    assert_eq!(
         payload.provider_id.as_deref(),
         Some("config:asr:zipformer_vi")
     );

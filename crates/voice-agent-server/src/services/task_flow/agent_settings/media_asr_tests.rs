@@ -1,8 +1,10 @@
 use crate::audio::PcmF32Mono;
 
 use super::media_asr::{
-    MAX_ASR_SEGMENT_SAMPLES, decode_wav_to_16khz_mono, split_pcm_into_asr_segments,
+    MAX_ASR_SEGMENT_SAMPLES, decode_wav_to_16khz_mono, split_pcm_into_asr_segment_spans,
+    split_pcm_into_asr_segments,
 };
+use super::media_backend::ServerMediaRuntimeBridge;
 
 fn encode_pcm16_wav(sample_rate: u32, channels: u16, samples: &[i16]) -> Vec<u8> {
     let mut cursor = std::io::Cursor::new(Vec::new());
@@ -113,4 +115,101 @@ fn decode_wav_to_16khz_mono_handles_formats_channels_rates_and_antialiasing() {
         segments[0].samples().len() + segments[1].samples().len(),
         35 * 16_000
     );
+}
+
+#[tokio::test]
+async fn multi_chunk_asr_segments_shift_offsets_monotonically_across_65s_audio() {
+    use crate::providers::{
+        AsrError, AsrEvent, AsrProvider, AsrResult, AsrSession, AsrTimedSegment,
+    };
+    use crate::workers::{AsrWorkerRuntime, WorkerRuntimeConfig};
+    use std::sync::Arc;
+
+    struct MultiChunkMockAsr;
+    struct MultiChunkMockSession(usize);
+
+    impl AsrProvider for MultiChunkMockAsr {
+        fn open(&self) -> Result<Box<dyn AsrSession>, AsrError> {
+            Ok(Box::new(MultiChunkMockSession(0)))
+        }
+    }
+
+    impl AsrSession for MultiChunkMockSession {
+        fn push_pcm(&mut self, pcm: &PcmF32Mono) -> Result<Vec<AsrEvent>, AsrError> {
+            self.0 += pcm.samples().len();
+            Ok(Vec::new())
+        }
+        fn finish(&mut self) -> Result<AsrResult, AsrError> {
+            let dur_ms = ((self.0 as u64) * 1_000) / 16_000;
+            self.0 = 0;
+            let mid_ms = (dur_ms / 2).max(1);
+            Ok(AsrResult::with_segments(
+                "Câu một. Câu hai.",
+                vec![
+                    AsrTimedSegment {
+                        start_ms: 100.min(mid_ms.saturating_sub(1)),
+                        end_ms: mid_ms,
+                        text: "Câu một.".to_owned(),
+                    },
+                    AsrTimedSegment {
+                        start_ms: mid_ms,
+                        end_ms: dur_ms.max(mid_ms + 1),
+                        text: "Câu hai.".to_owned(),
+                    },
+                ],
+            ))
+        }
+        fn reset(&mut self) -> Result<(), AsrError> {
+            self.0 = 0;
+            Ok(())
+        }
+        fn cancel(&mut self) {
+            self.0 = 0;
+        }
+    }
+
+    let pcm_65s = PcmF32Mono::from_samples(vec![0.05_f32; 65 * 16_000]);
+    let spans = split_pcm_into_asr_segment_spans(&pcm_65s);
+    assert_eq!(spans.len(), 3, "65s audio should split into 3 <=30s spans");
+    assert_eq!(spans[0].start_offset_ms(), 0);
+    assert_eq!(spans[1].start_offset_ms(), spans[0].end_offset_ms());
+    assert_eq!(spans[2].start_offset_ms(), spans[1].end_offset_ms());
+    assert_eq!(spans[2].end_offset_ms(), 65_000);
+
+    let runtime = Arc::new(AsrWorkerRuntime::new(
+        Arc::new(MultiChunkMockAsr),
+        WorkerRuntimeConfig {
+            max_workers: 2,
+            voice_reserved_capacity: 1,
+            ..Default::default()
+        },
+    ));
+    let transcript =
+        ServerMediaRuntimeBridge::transcribe_segments_with_runtime(&runtime, spans.clone())
+            .await
+            .expect("multi-chunk transcription");
+    assert_eq!(
+        transcript.text,
+        "Câu một. Câu hai. Câu một. Câu hai. Câu một. Câu hai."
+    );
+    assert_eq!(transcript.segments.len(), 6);
+    for seg in &transcript.segments {
+        assert!(seg.start_ms < seg.end_ms);
+        assert!(seg.end_ms <= 65_000);
+    }
+    for pair in transcript.segments.windows(2) {
+        assert!(
+            pair[0].end_ms <= pair[1].start_ms,
+            "segments must be non-overlapping and monotonic: {pair:?}"
+        );
+    }
+    assert_eq!(
+        transcript.segments[2].start_ms,
+        spans[1].start_offset_ms() + 100
+    );
+    assert_eq!(
+        transcript.segments[4].start_ms,
+        spans[2].start_offset_ms() + 100
+    );
+    let _ = runtime.shutdown_acknowledged();
 }

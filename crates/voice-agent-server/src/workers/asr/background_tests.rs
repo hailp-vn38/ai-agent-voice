@@ -1,5 +1,5 @@
 use super::*;
-use crate::providers::{AsrError, AsrEvent, AsrResult, AsrSession};
+use crate::providers::{AsrError, AsrEvent, AsrResult, AsrSession, AsrTimedSegment};
 use std::sync::{Condvar, atomic::AtomicUsize};
 
 #[derive(Default)]
@@ -55,7 +55,14 @@ impl AsrSession for Session {
     }
     fn finish(&mut self) -> Result<AsrResult, AsrError> {
         self.finish.block();
-        Ok(AsrResult::new("Xin chào"))
+        Ok(AsrResult::with_segments(
+            "Xin chào",
+            vec![AsrTimedSegment {
+                start_ms: 0,
+                end_ms: 800,
+                text: "Xin chào".to_string(),
+            }],
+        ))
     }
     fn cancel(&mut self) {
         self.reset.block();
@@ -255,9 +262,25 @@ async fn transcribe_background_pcm_chunks_frames_handles_backpressure_and_cleans
 
     // 4_000 samples (> 2 chunks of 1_600 samples) triggers multiple Push commands over command_capacity=2
     let pcm = PcmF32Mono::from_samples(vec![0.1; 4_000]);
+    let detailed = runtime
+        .transcribe_background_pcm_detailed(pcm.clone())
+        .await
+        .unwrap();
+    assert_eq!(detailed.text(), "Xin chào");
+    assert_eq!(
+        detailed.segments(),
+        &[AsrTimedSegment {
+            start_ms: 0,
+            end_ms: 800,
+            text: "Xin chào".to_string(),
+        }]
+    );
+    assert_eq!(pushes.load(Ordering::SeqCst), 4_000);
+    assert!(!runtime.pilot_work_pending());
+
     let text = runtime.transcribe_background_pcm(pcm).await.unwrap();
     assert_eq!(text, "Xin chào");
-    assert_eq!(pushes.load(Ordering::SeqCst), 4_000);
+    assert_eq!(pushes.load(Ordering::SeqCst), 8_000);
     assert!(!runtime.pilot_work_pending());
     assert!(runtime.open_background().is_ok());
 }

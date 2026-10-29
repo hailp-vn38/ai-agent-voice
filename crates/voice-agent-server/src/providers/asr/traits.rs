@@ -1,17 +1,44 @@
 use crate::audio::PcmF32Mono;
 use crate::providers::AsrError;
 
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct AsrTimedSegment {
+    pub start_ms: u64,
+    pub end_ms: u64,
+    pub text: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AsrResult {
     text: String,
+    segments: Vec<AsrTimedSegment>,
 }
 
 impl AsrResult {
     pub fn new(text: impl Into<String>) -> Self {
-        Self { text: text.into() }
+        Self {
+            text: text.into(),
+            segments: Vec::new(),
+        }
     }
+
+    pub fn with_segments(text: impl Into<String>, segments: Vec<AsrTimedSegment>) -> Self {
+        Self {
+            text: text.into(),
+            segments,
+        }
+    }
+
     pub fn text(&self) -> &str {
         &self.text
+    }
+
+    pub fn segments(&self) -> &[AsrTimedSegment] {
+        &self.segments
+    }
+
+    pub fn into_parts(self) -> (String, Vec<AsrTimedSegment>) {
+        (self.text, self.segments)
     }
 }
 

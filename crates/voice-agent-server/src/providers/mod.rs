@@ -21,7 +21,7 @@ pub mod speaker;
 pub mod tts;
 pub mod vad;
 
-pub use asr::{AsrEvent, AsrProvider, AsrResult, AsrSession};
+pub use asr::{AsrEvent, AsrProvider, AsrResult, AsrSession, AsrTimedSegment};
 pub use assets::{Asset, AssetError, VoiceAsset};
 pub use catalog::{ProviderCatalog, ProviderLookupError};
 pub use database_loader::{
