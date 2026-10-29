@@ -85,17 +85,16 @@ pub(super) async fn trigger_source_analysis(state: &AppState, rel_path: &str, bo
     if disabled {
         return;
     }
-    if let Some(ref tm) = state.task_manager {
-        if let Ok(task) =
+    if let Some(ref tm) = state.task_manager
+        && let Ok(task) =
             crate::services::task_flow::submit_wiki_source_analysis(tm, rel_path).await
-        {
-            body["analysis"] = serde_json::json!({
-                "job_id": task.id,
-                "session_id": task.session_id,
-                "turn_id": task.latest_turn_id,
-                "replayed": false,
-            });
-        }
+    {
+        body["analysis"] = serde_json::json!({
+            "job_id": task.id,
+            "session_id": task.session_id,
+            "turn_id": task.latest_turn_id,
+            "replayed": false,
+        });
     }
     if let Some(ref notify) = state.autoflow_notify {
         notify.notify_one();

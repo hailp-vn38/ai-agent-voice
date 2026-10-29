@@ -144,7 +144,7 @@ pub(in crate::app::admin) async fn save_settings(
         Err(resp) => return resp,
     };
     let req_id = id(&req);
-    match hub.update_settings(expected_rev, input, &req_id).await {
+    match hub.update_settings(expected_rev, input, req_id).await {
         Ok(view) => Json(view).into_response(),
         Err(err) => hub_error(&req, err),
     }

@@ -48,7 +48,7 @@ impl VifastttsWorker {
         let acoustic = build_session(acoustic_model, runtime_library, num_threads)?;
         if let Ok(meta) = acoustic.metadata()
             && let Some(onset_has_q) = meta.custom("onset_has_q")
-            && onset_has_q.trim().to_ascii_lowercase() != "true"
+            && !onset_has_q.trim().eq_ignore_ascii_case("true")
         {
             return Err(TtsError::IncompatibleContract(
                 "ViFastTts acoustic ONNX model requires onset_has_q=true".into(),

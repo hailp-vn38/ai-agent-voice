@@ -27,6 +27,12 @@ pub struct GeminiOAuthDriver {
     http: reqwest::Client,
 }
 
+impl Default for GeminiOAuthDriver {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl GeminiOAuthDriver {
     pub fn new() -> Self {
         let http = reqwest::Client::builder()

@@ -18,6 +18,7 @@ struct SpanMetadata {
     fields: BTreeMap<String, Value>,
 }
 
+#[derive(Default)]
 struct FieldVisitor {
     subsystem: Option<String>,
     event_name: Option<String>,
@@ -27,21 +28,6 @@ struct FieldVisitor {
     error_code: Option<String>,
     correlation: CorrelationContext,
     fields: BTreeMap<String, Value>,
-}
-
-impl Default for FieldVisitor {
-    fn default() -> Self {
-        Self {
-            subsystem: None,
-            event_name: None,
-            message: None,
-            outcome: None,
-            duration_ms: None,
-            error_code: None,
-            correlation: CorrelationContext::default(),
-            fields: BTreeMap::new(),
-        }
-    }
 }
 
 fn clean_debug_str(raw: String) -> String {

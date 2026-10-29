@@ -1650,7 +1650,7 @@ impl LlmGatewayHub {
                     completed_account: Some(acc),
                     ..
                 } => Action::Return(OAuthPollStatus::Completed {
-                    account: acc.clone(),
+                    account: Box::new(acc.clone()),
                 }),
                 OAuthSessionFlowState::Pkce {
                     failure: Some(err), ..
@@ -1721,7 +1721,9 @@ impl LlmGatewayHub {
                     {
                         *completed_account = Some(view.clone());
                     }
-                    return Ok(OAuthPollStatus::Completed { account: view });
+                    return Ok(OAuthPollStatus::Completed {
+                        account: Box::new(view),
+                    });
                 }
                 Ok(OAuthPollStatus::Pending {
                     poll_interval_secs: 2,
@@ -1782,7 +1784,9 @@ impl LlmGatewayHub {
                         {
                             *completed_account = Some(view.clone());
                         }
-                        Ok(OAuthPollStatus::Completed { account: view })
+                        Ok(OAuthPollStatus::Completed {
+                            account: Box::new(view),
+                        })
                     }
                     DevicePollOutcome::Failed(err) => {
                         let mut guard = self.sessions.lock().unwrap_or_else(|p| p.into_inner());

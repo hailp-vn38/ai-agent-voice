@@ -165,10 +165,12 @@ fn words_le4_even(data: &[u8]) -> Vec<u32> {
         padded.resize(padded.len() + (4 - rem), 0);
     }
     let mut words: Vec<u32> = padded
-        .chunks_exact(4)
-        .map(|chunk| u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .map(|chunk| u32::from_le_bytes(*chunk))
         .collect();
-    if words.len() % 2 != 0 {
+    if !words.len().is_multiple_of(2) {
         words.push(0);
     }
     words
@@ -284,10 +286,10 @@ fn sha256_digest(data: &[u8]) -> [u8; 32] {
     padded.extend_from_slice(&((length as u64) * 8).to_be_bytes());
 
     let mut state = sha256_init(&data[..7]);
-    for block in padded.chunks_exact(64) {
+    for block in padded.as_chunks::<64>().0 {
         let mut words = [0u32; 64];
-        for (i, chunk) in block.chunks_exact(4).enumerate() {
-            words[i] = u32::from_be_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
+        for (i, chunk) in block.as_chunks::<4>().0.iter().enumerate() {
+            words[i] = u32::from_be_bytes(*chunk);
         }
         expand_sha256_schedule(&mut words, 16);
         let working = sha256_rounds(state, &words, 0);

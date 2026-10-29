@@ -1262,9 +1262,9 @@ async fn real_chromium_cdp_launches_isolated_context_and_executes_dom_scripts() 
         6,
         "must extract 5 loaded videos + 1 skeleton loading placeholder"
     );
-    for i in 0..5 {
-        assert_eq!(atts[i]["kind"], "video");
-        assert_eq!(atts[i]["src"], format!("blob:https://muse.ai/v-{}", i + 1));
+    for (i, att) in atts.iter().enumerate().take(5) {
+        assert_eq!(att["kind"], "video");
+        assert_eq!(att["src"], format!("blob:https://muse.ai/v-{}", i + 1));
     }
     assert_eq!(atts[5]["kind"], "video");
     assert_eq!(atts[5]["src"], "");

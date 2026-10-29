@@ -85,25 +85,24 @@ impl SharedMusePool {
                 return Err(UpstreamFailureKind::AuthInvalid);
             }
             for header_val in resp.headers().get_all(reqwest::header::SET_COOKIE) {
-                if let Ok(raw) = header_val.to_str() {
-                    if let Some(first_part) = raw.split(';').next() {
-                        if let Some((k, v)) = first_part.split_once('=') {
-                            let k = k.trim();
-                            let v = v.trim();
-                            if !k.is_empty() && !v.is_empty() {
-                                rotated_cookies.insert(k.to_string(), v.to_string());
-                            }
-                        }
+                if let Ok(raw) = header_val.to_str()
+                    && let Some(first_part) = raw.split(';').next()
+                    && let Some((k, v)) = first_part.split_once('=')
+                {
+                    let k = k.trim();
+                    let v = v.trim();
+                    if !k.is_empty() && !v.is_empty() {
+                        rotated_cookies.insert(k.to_string(), v.to_string());
                     }
                 }
             }
-            if let Ok(body) = resp.json::<serde_json::Value>().await {
-                if discovered_vm_id.is_none() {
-                    discovered_vm_id = body
-                        .get("vm_id")
-                        .and_then(serde_json::Value::as_str)
-                        .map(ToString::to_string);
-                }
+            if let Ok(body) = resp.json::<serde_json::Value>().await
+                && discovered_vm_id.is_none()
+            {
+                discovered_vm_id = body
+                    .get("vm_id")
+                    .and_then(serde_json::Value::as_str)
+                    .map(ToString::to_string);
             }
         }
 

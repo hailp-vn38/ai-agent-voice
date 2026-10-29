@@ -44,10 +44,10 @@ impl MuseAccountState {
     }
 
     pub(super) fn refresh_health(&mut self, now: Instant) {
-        if let AccountHealth::Cooldown(until) = self.health {
-            if now >= until {
-                self.health = AccountHealth::Healthy;
-            }
+        if let AccountHealth::Cooldown(until) = self.health
+            && now >= until
+        {
+            self.health = AccountHealth::Healthy;
         }
     }
 

@@ -67,10 +67,12 @@ pub(crate) trait BrowserEngine: Send + Sync {
     async fn dispose_context(&self, context_key: &str);
 }
 
+type PendingResponses = Arc<Mutex<HashMap<u64, oneshot::Sender<Result<Value, CdpError>>>>>;
+
 pub(super) struct CdpSession {
     next_id: AtomicU64,
     tx: mpsc::UnboundedSender<String>,
-    pending: Arc<Mutex<HashMap<u64, oneshot::Sender<Result<Value, CdpError>>>>>,
+    pending: PendingResponses,
     closed: Arc<AtomicBool>,
 }
 
@@ -86,8 +88,7 @@ impl CdpSession {
             })?;
         let (mut sink, mut stream) = ws_stream.split();
         let (tx, mut rx) = mpsc::unbounded_channel::<String>();
-        let pending: Arc<Mutex<HashMap<u64, oneshot::Sender<Result<Value, CdpError>>>>> =
-            Arc::new(Mutex::new(HashMap::new()));
+        let pending: PendingResponses = Arc::new(Mutex::new(HashMap::new()));
         let closed = Arc::new(AtomicBool::new(false));
 
         let closed_writer = Arc::clone(&closed);
@@ -107,21 +108,21 @@ impl CdpSession {
             while let Some(frame) = stream.next().await {
                 match frame {
                     Ok(Message::Text(text)) => {
-                        if let Ok(val) = serde_json::from_str::<Value>(&text) {
-                            if let Some(id) = val.get("id").and_then(Value::as_u64) {
-                                let sender = pending_reader.lock().await.remove(&id);
-                                if let Some(sender) = sender {
-                                    if let Some(err) = val.get("error") {
-                                        let msg = err
-                                            .get("message")
-                                            .and_then(Value::as_str)
-                                            .unwrap_or("cdp error")
-                                            .to_string();
-                                        let _ = sender.send(Err(CdpError::Protocol(msg)));
-                                    } else {
-                                        let res = val.get("result").cloned().unwrap_or(Value::Null);
-                                        let _ = sender.send(Ok(res));
-                                    }
+                        if let Ok(val) = serde_json::from_str::<Value>(&text)
+                            && let Some(id) = val.get("id").and_then(Value::as_u64)
+                        {
+                            let sender = pending_reader.lock().await.remove(&id);
+                            if let Some(sender) = sender {
+                                if let Some(err) = val.get("error") {
+                                    let msg = err
+                                        .get("message")
+                                        .and_then(Value::as_str)
+                                        .unwrap_or("cdp error")
+                                        .to_string();
+                                    let _ = sender.send(Err(CdpError::Protocol(msg)));
+                                } else {
+                                    let res = val.get("result").cloned().unwrap_or(Value::Null);
+                                    let _ = sender.send(Ok(res));
                                 }
                             }
                         }
@@ -246,10 +247,10 @@ impl CdpBrowserEngine {
 
     async fn ensure_connected(&self) -> Result<Arc<CdpSession>, CdpError> {
         let mut guard = self.state.lock().await;
-        if let Some(ws) = &guard.browser_ws {
-            if !ws.is_closed() {
-                return Ok(Arc::clone(ws));
-            }
+        if let Some(ws) = &guard.browser_ws
+            && !ws.is_closed()
+        {
+            return Ok(Arc::clone(ws));
         }
 
         let ws_url = if let Some(existing) = self.fetch_browser_ws_url().await {
@@ -459,16 +460,16 @@ impl BrowserEngine for CdpBrowserEngine {
             let ctx_id = guard.contexts.remove(context_key);
             (guard.browser_ws.clone(), ctx_id)
         };
-        if let (Some(ws), Some(ctx_id)) = (browser_ws, ctx_id) {
-            if !ws.is_closed() {
-                let _ = ws
-                    .send(
-                        "Target.disposeBrowserContext",
-                        json!({ "browserContextId": ctx_id }),
-                        Duration::from_secs(5),
-                    )
-                    .await;
-            }
+        if let (Some(ws), Some(ctx_id)) = (browser_ws, ctx_id)
+            && !ws.is_closed()
+        {
+            let _ = ws
+                .send(
+                    "Target.disposeBrowserContext",
+                    json!({ "browserContextId": ctx_id }),
+                    Duration::from_secs(5),
+                )
+                .await;
         }
     }
 }
@@ -600,10 +601,11 @@ impl BrowserPage for CdpBrowserPage {
 }
 
 fn find_chromium_binary() -> Option<String> {
-    if let Ok(custom) = std::env::var("CHROMIUM_PATH") {
-        if !custom.trim().is_empty() && std::path::Path::new(&custom).exists() {
-            return Some(custom);
-        }
+    if let Ok(custom) = std::env::var("CHROMIUM_PATH")
+        && !custom.trim().is_empty()
+        && std::path::Path::new(&custom).exists()
+    {
+        return Some(custom);
     }
     let candidates = [
         "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",

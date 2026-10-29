@@ -24,6 +24,12 @@ pub struct AnthropicOAuthDriver {
     http: reqwest::Client,
 }
 
+impl Default for AnthropicOAuthDriver {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl AnthropicOAuthDriver {
     pub fn new() -> Self {
         let http = reqwest::Client::builder()

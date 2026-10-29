@@ -81,7 +81,7 @@ fn resolve_effective_agents(
                 .map(str::trim)
                 .filter(|s| !s.is_empty())
                 .map(str::to_owned);
-            let effective_ref = explicit_ref.as_deref().unwrap_or_else(|| match spec.mode {
+            let effective_ref = explicit_ref.as_deref().unwrap_or(match spec.mode {
                 AgentMode::Primary => settings.orchestrator_llm_provider.as_str(),
                 _ => settings.worker_llm_provider.as_str(),
             });

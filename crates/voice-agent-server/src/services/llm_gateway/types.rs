@@ -976,7 +976,7 @@ pub struct OAuthCallbackSubmission {
 #[serde(tag = "status", rename_all = "snake_case")]
 pub enum OAuthPollStatus {
     Pending { poll_interval_secs: u64 },
-    Completed { account: GatewayAccountView },
+    Completed { account: Box<GatewayAccountView> },
     Failed { error: String },
 }
 

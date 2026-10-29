@@ -12,8 +12,8 @@ mod writer;
 use admission::Admission;
 use close::{CloseReason, SessionCloseSet, SessionControl};
 use frame::{
-    Sent, TransportActivity, WriteFailure, checked_text, close_direct, next_application_frame,
-    send_frame, send_outbound,
+    Sent, TransportActivity, checked_text, close_direct, next_application_frame, send_frame,
+    send_outbound,
 };
 use session::handle_socket;
 #[cfg(test)]
@@ -107,12 +107,12 @@ pub(crate) async fn handler(
         .into_response()
 }
 
-pub(self) fn bearer_auth_result(enabled: bool) -> &'static str {
+fn bearer_auth_result(enabled: bool) -> &'static str {
     if enabled { "accepted" } else { "not_required" }
 }
 
 /// Connection telemetry deliberately has no raw headers, token, Device ID or Client ID.
-pub(self) fn log_ws_auth(
+fn log_ws_auth(
     bearer_auth_enabled: bool,
     bearer_auth_result: &'static str,
     device_admission_result: &'static str,
@@ -145,48 +145,48 @@ pub(self) fn log_ws_auth(
 #[derive(Deserialize)]
 pub(crate) struct WebsocketQuery {
     #[serde(rename = "protocol-version")]
-    pub(self) protocol_version: Option<String>,
+    protocol_version: Option<String>,
     #[serde(rename = "device-id")]
-    pub(self) device_id: Option<String>,
+    device_id: Option<String>,
     #[serde(rename = "client-id")]
-    pub(self) client_id: Option<String>,
-    pub(self) authorization: Option<String>,
-    pub(self) ticket: Option<String>,
+    client_id: Option<String>,
+    authorization: Option<String>,
+    ticket: Option<String>,
 }
 
-pub(self) struct SocketRuntimes {
-    pub(self) job_submit: Option<crate::services::task_flow::VoiceTaskSubmit>,
-    pub(self) active_device_sessions:
+struct SocketRuntimes {
+    job_submit: Option<crate::services::task_flow::VoiceTaskSubmit>,
+    active_device_sessions:
         Arc<crate::services::active_device_sessions::ActiveDeviceSessions>,
-    pub(self) database: Option<Arc<crate::database::Database>>,
-    pub(self) system_mcp: Option<crate::tools::system_mcp::SessionSystemMcp>,
-    pub(self) reminder_tools: Option<crate::services::notifications::SessionReminderTools>,
-    pub(self) assistant_connection: Option<super::super::assistant::Connection>,
-    pub(self) connect_started: Instant,
-    pub(self) metrics: Option<Arc<RuntimeMetrics>>,
-    pub(self) asr: Arc<AsrWorkerRuntime>,
-    pub(self) vad: Arc<VadWorkerRuntime>,
-    pub(self) llm: Arc<LlmRuntime>,
-    pub(self) tts: Arc<TtsWorkerRuntime>,
-    pub(self) vad_segmenter: VadSegmenterConfig,
-    pub(self) vad_pre_roll_samples: u64,
-    pub(self) active_turn_limiter: Arc<ActiveTurnLimiter>,
-    pub(self) pilot_admission: crate::session::pilot::PilotAdmission,
+    database: Option<Arc<crate::database::Database>>,
+    system_mcp: Option<crate::tools::system_mcp::SessionSystemMcp>,
+    reminder_tools: Option<crate::services::notifications::SessionReminderTools>,
+    assistant_connection: Option<super::super::assistant::Connection>,
+    connect_started: Instant,
+    metrics: Option<Arc<RuntimeMetrics>>,
+    asr: Arc<AsrWorkerRuntime>,
+    vad: Arc<VadWorkerRuntime>,
+    llm: Arc<LlmRuntime>,
+    tts: Arc<TtsWorkerRuntime>,
+    vad_segmenter: VadSegmenterConfig,
+    vad_pre_roll_samples: u64,
+    active_turn_limiter: Arc<ActiveTurnLimiter>,
+    pilot_admission: crate::session::pilot::PilotAdmission,
     /// Test-only; see [`WriterOutcomeProbe`](crate::session::WriterOutcomeProbe).
-    pub(self) writer_probe: Option<Arc<dyn crate::session::WriterOutcomeProbe>>,
-    pub(self) profile: crate::session::EffectiveSessionProfile,
+    writer_probe: Option<Arc<dyn crate::session::WriterOutcomeProbe>>,
+    profile: crate::session::EffectiveSessionProfile,
     /// This connection's own session identity, resolved before the upgrade so the archive and the
     /// Voice Session cannot disagree about which connection a transcript belongs to.
-    pub(self) session_id: String,
+    session_id: String,
     /// The optional Persistent Transcript binding, resolved with the profile above.  `None` means
     /// capture is off or this session has no database identity, and the actor then archives
     /// nothing at all.
-    pub(self) transcript: Option<crate::database::history::TranscriptCapture>,
+    transcript: Option<crate::database::history::TranscriptCapture>,
     /// Ticket 10 Observe, resolved at admission. `None` keeps the actor free of speaker inference
     /// and utterance PCM retention.
-    pub(self) speaker_observe: Option<Arc<SpeakerObserve>>,
+    speaker_observe: Option<Arc<SpeakerObserve>>,
     /// The application admission gate. The actor only asks; the application closes it.
-    pub(self) admission_gate: Arc<crate::lifecycle::AdmissionGate>,
+    admission_gate: Arc<crate::lifecycle::AdmissionGate>,
 }
 
 #[cfg(test)]

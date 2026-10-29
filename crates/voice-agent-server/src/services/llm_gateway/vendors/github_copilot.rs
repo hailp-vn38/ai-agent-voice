@@ -32,6 +32,12 @@ pub struct GithubCopilotOAuthDriver {
     usage_url: String,
 }
 
+impl Default for GithubCopilotOAuthDriver {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl GithubCopilotOAuthDriver {
     pub fn new() -> Self {
         let http = reqwest::Client::builder()

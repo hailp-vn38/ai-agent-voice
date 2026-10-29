@@ -18,7 +18,7 @@ use orchestrator_flow_rs::{ErrorCode, TaskError, TaskManager};
 use std::sync::Arc;
 
 #[allow(clippy::result_large_err)]
-pub(self) fn task_manager(state: &AppState, req: &Request) -> Result<Arc<TaskManager>, Response> {
+fn task_manager(state: &AppState, req: &Request) -> Result<Arc<TaskManager>, Response> {
     state
         .task_manager
         .as_ref()
@@ -27,10 +27,7 @@ pub(self) fn task_manager(state: &AppState, req: &Request) -> Result<Arc<TaskMan
 }
 
 #[allow(clippy::result_large_err)]
-pub(self) fn task_manager_for_submit(
-    state: &AppState,
-    req: &Request,
-) -> Result<Arc<TaskManager>, Response> {
+fn task_manager_for_submit(state: &AppState, req: &Request) -> Result<Arc<TaskManager>, Response> {
     let disabled = state
         .admin_task_control
         .lock()
@@ -47,7 +44,7 @@ pub(self) fn task_manager_for_submit(
     task_manager(state, req)
 }
 
-pub(self) fn task_failure(request: &Request, cause: TaskError) -> Response {
+fn task_failure(request: &Request, cause: TaskError) -> Response {
     if cause.code() == ErrorCode::OrchestratorError {
         let msg = cause.to_string();
         if msg.contains("WORKSPACE_QUOTA_EXCEEDED") {

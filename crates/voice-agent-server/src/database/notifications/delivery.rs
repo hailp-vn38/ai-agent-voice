@@ -626,6 +626,7 @@ impl DeviceNotifications {
     /// Immediately cleans up any in-flight attempts for a WebSocket session that just closed:
     /// - Unstarted claims (`started_at_ms IS NULL`) are deleted without consuming retry quota.
     /// - Started claims (`started_at_ms IS NOT NULL`) become `'uncertain'` with backoff or expire if exhausted.
+    ///
     /// Returns `(device_row_id, schedule_revision)` if any reminder transitioned to `'expired'`.
     pub async fn on_session_closed(
         &self,

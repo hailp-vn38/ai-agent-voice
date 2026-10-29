@@ -201,11 +201,11 @@ pub fn parse_accounts(raw: &str) -> Vec<MuseAccountCredential> {
         }
     }
     if trimmed.starts_with('{') {
-        if let Ok(mut acc) = serde_json::from_str::<MuseAccountCredential>(trimmed) {
-            if has_required_cookies(&acc.cookies) {
-                acc.label = sanitize_account_label(&acc.label, 0);
-                return vec![acc];
-            }
+        if let Ok(mut acc) = serde_json::from_str::<MuseAccountCredential>(trimmed)
+            && has_required_cookies(&acc.cookies)
+        {
+            acc.label = sanitize_account_label(&acc.label, 0);
+            return vec![acc];
         }
         if let Ok(export) = serde_json::from_str::<BrowserCookieExport>(trimmed)
             && let Some(acc) =

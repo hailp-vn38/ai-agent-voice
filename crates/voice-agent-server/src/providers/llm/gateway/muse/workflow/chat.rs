@@ -62,13 +62,14 @@ where
     };
 
     let base_state = poll_chat_state(&page).await?;
-    if !on_thread && !images.is_empty() {
-        if let Err(err) = attach_images(&page, images).await {
-            if let WorkflowFailure::Upstream(kind, _) = &err {
-                lease.fail_account(*kind);
-            }
-            return Err(err);
+    if !on_thread
+        && !images.is_empty()
+        && let Err(err) = attach_images(&page, images).await
+    {
+        if let WorkflowFailure::Upstream(kind, _) = &err {
+            lease.fail_account(*kind);
         }
+        return Err(err);
     }
 
     if let Err(err) = send_prompt_verified(&page, &prompt_to_send).await {

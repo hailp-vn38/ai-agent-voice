@@ -14,17 +14,12 @@ pub(crate) const RESULT_CHARS_RANGE: std::ops::RangeInclusive<usize> = 512..=64_
 pub(crate) const MAX_TOKENS: usize = 64;
 
 /// Access level resolved for an authenticated Knowledge MCP caller.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum KnowledgeMcpAccess {
     ReadOnly,
+    #[default]
     ReadWrite,
-}
-
-impl Default for KnowledgeMcpAccess {
-    fn default() -> Self {
-        Self::ReadWrite
-    }
 }
 
 /// Stored token entry in `knowledge_mcp_settings.json`.

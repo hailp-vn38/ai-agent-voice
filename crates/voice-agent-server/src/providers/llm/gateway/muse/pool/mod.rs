@@ -44,10 +44,11 @@ fn spawn_page_close(page: Arc<dyn BrowserPage>) {
     }
 }
 
-static GLOBAL_POOLS: OnceLock<StdMutex<HashMap<(MusePoolKey, usize), Arc<SharedMusePool>>>> =
-    OnceLock::new();
-static GLOBAL_CDP_ENGINES: OnceLock<StdMutex<HashMap<(u16, bool), Arc<dyn BrowserEngine>>>> =
-    OnceLock::new();
+type GlobalPoolMap = HashMap<(MusePoolKey, usize), Arc<SharedMusePool>>;
+type GlobalCdpEngineMap = HashMap<(u16, bool), Arc<dyn BrowserEngine>>;
+
+static GLOBAL_POOLS: OnceLock<StdMutex<GlobalPoolMap>> = OnceLock::new();
+static GLOBAL_CDP_ENGINES: OnceLock<StdMutex<GlobalCdpEngineMap>> = OnceLock::new();
 
 fn shared_cdp_engine(cdp_port: u16, headless: bool) -> Arc<dyn BrowserEngine> {
     let map_mutex = GLOBAL_CDP_ENGINES.get_or_init(|| StdMutex::new(HashMap::new()));
@@ -212,25 +213,25 @@ impl SharedMusePool {
                     ref prior_turns,
                     image_count,
                 } = mode
+                    && !prior_turns.is_empty()
+                    && (prior_turns.len() * 2 + 2) <= HOT_BUBBLE_LIMIT
                 {
-                    if !prior_turns.is_empty() && (prior_turns.len() * 2 + 2) <= HOT_BUBBLE_LIMIT {
-                        'outer: for (acc_idx, acc) in guard.accounts.iter_mut().enumerate() {
-                            if !acc.is_available(now) {
-                                continue;
-                            }
-                            if let Some(pos) = acc.idle_tabs.iter().position(|t| {
-                                t.hot.as_ref().is_some_and(|h| {
-                                    !h.turns.is_empty()
-                                        && h.turns.len() <= prior_turns.len()
-                                        && prior_turns.starts_with(&h.turns)
-                                        && h.image_count == image_count
-                                })
-                            }) {
-                                let tab = acc.idle_tabs.remove(pos);
-                                let matched_hot = tab.hot.clone();
-                                hot_found = Some((acc_idx, tab, matched_hot));
-                                break 'outer;
-                            }
+                    'outer: for (acc_idx, acc) in guard.accounts.iter_mut().enumerate() {
+                        if !acc.is_available(now) {
+                            continue;
+                        }
+                        if let Some(pos) = acc.idle_tabs.iter().position(|t| {
+                            t.hot.as_ref().is_some_and(|h| {
+                                !h.turns.is_empty()
+                                    && h.turns.len() <= prior_turns.len()
+                                    && prior_turns.starts_with(&h.turns)
+                                    && h.image_count == image_count
+                            })
+                        }) {
+                            let tab = acc.idle_tabs.remove(pos);
+                            let matched_hot = tab.hot.clone();
+                            hot_found = Some((acc_idx, tab, matched_hot));
+                            break 'outer;
                         }
                     }
                 }

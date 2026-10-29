@@ -95,7 +95,7 @@ async fn llm_gateway_provider_streams_anthropic_and_rotates_on_429_without_retry
         .await
         .expect("acc2");
 
-    let rate_limit_token = format!("Bearer tok_anthropic_code_1");
+    let rate_limit_token = "Bearer tok_anthropic_code_1".to_string();
     let app = Router::new()
         .route(
             "/v1/messages",

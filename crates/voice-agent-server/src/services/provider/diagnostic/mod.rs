@@ -28,35 +28,35 @@ pub use types::*;
 
 /// The application-owned diagnostic admission boundary. It never constructs or reloads a runtime.
 pub struct ProviderDiagnosticService {
-    pub(self) limiter: ProviderDiagnosticLimiter,
-    pub(self) pilot: Option<crate::session::pilot::PilotAdmission>,
-    pub(self) execution_timeout: Duration,
-    pub(self) registry: Arc<RuntimeCatalog>,
-    pub(self) runtime_snapshot: Option<Arc<DatabaseRuntimeSnapshot>>,
-    pub(self) database: Option<Arc<Database>>,
+    limiter: ProviderDiagnosticLimiter,
+    pilot: Option<crate::session::pilot::PilotAdmission>,
+    execution_timeout: Duration,
+    registry: Arc<RuntimeCatalog>,
+    runtime_snapshot: Option<Arc<DatabaseRuntimeSnapshot>>,
+    database: Option<Arc<Database>>,
     /// Quarantined permits intentionally stay owned until process teardown. This makes degraded
     /// capacity observable by admission rather than accidentally reusing a worker that has not
     /// acknowledged cancellation.
-    pub(self) quarantined_capacity: Arc<Mutex<Vec<QuarantinedDiagnosticCapacity>>>,
-    pub(self) manager: Option<Arc<ProviderRuntimeManager>>,
-    pub(self) config: Option<Arc<crate::config::AppConfig>>,
-    pub(self) managed_target: Option<DesiredProvider>,
-    pub(self) managed_admission: Mutex<Option<ProviderDiagnosticPermit>>,
-    pub(self) _managed_lease: Option<ResourceLease>,
+    quarantined_capacity: Arc<Mutex<Vec<QuarantinedDiagnosticCapacity>>>,
+    manager: Option<Arc<ProviderRuntimeManager>>,
+    config: Option<Arc<crate::config::AppConfig>>,
+    managed_target: Option<DesiredProvider>,
+    managed_admission: Mutex<Option<ProviderDiagnosticPermit>>,
+    _managed_lease: Option<ResourceLease>,
 }
 
-pub(self) struct QuarantinedDiagnosticCapacity {
-    pub(self) _pipeline: Option<crate::session::pilot::PilotPermit>,
-    pub(self) _capacity: ProviderCapacityPermit,
-    pub(self) _resource: Option<ResourceLease>,
+struct QuarantinedDiagnosticCapacity {
+    _pipeline: Option<crate::session::pilot::PilotPermit>,
+    _capacity: ProviderCapacityPermit,
+    _resource: Option<ResourceLease>,
 }
 
 pub struct ProviderDiagnosticLease {
-    pub(self) pipeline: Option<crate::session::pilot::PilotPermit>,
-    pub(self) _diagnostic: ProviderDiagnosticPermit,
-    pub(self) capacity: Option<ProviderCapacityPermit>,
-    pub(self) quarantine: Arc<Mutex<Vec<QuarantinedDiagnosticCapacity>>>,
-    pub(self) resource_lease: Option<ResourceLease>,
+    pipeline: Option<crate::session::pilot::PilotPermit>,
+    _diagnostic: ProviderDiagnosticPermit,
+    capacity: Option<ProviderCapacityPermit>,
+    quarantine: Arc<Mutex<Vec<QuarantinedDiagnosticCapacity>>>,
+    resource_lease: Option<ResourceLease>,
     pub metadata: ProviderDiagnosticRuntimeMetadata,
 }
 
@@ -100,7 +100,7 @@ impl ProviderDiagnosticService {
         self
     }
 
-    pub(self) async fn request_snapshot(
+    async fn request_snapshot(
         &self,
         key: &str,
         kind: &str,
@@ -168,7 +168,7 @@ impl ProviderDiagnosticService {
         })
     }
 
-    pub(self) async fn managed_request(
+    async fn managed_request(
         &self,
         key: &str,
         kind: &str,

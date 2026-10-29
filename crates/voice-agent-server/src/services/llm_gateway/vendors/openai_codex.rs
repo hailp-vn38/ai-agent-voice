@@ -28,6 +28,12 @@ pub struct OpenAiCodexOAuthDriver {
     http: reqwest::Client,
 }
 
+impl Default for OpenAiCodexOAuthDriver {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl OpenAiCodexOAuthDriver {
     pub fn new() -> Self {
         let http = reqwest::Client::builder()

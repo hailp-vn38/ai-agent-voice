@@ -115,8 +115,9 @@ async fn wait_and_download_media(
     let mut asked_to_attach = false;
     let mut busy = false;
     let mut loading = false;
+    type MediaPollSignature = (usize, String, Vec<usize>, Vec<String>, bool);
     let mut stable_polls = 0usize;
-    let mut last_sig: Option<(usize, String, Vec<usize>, Vec<String>, bool)> = None;
+    let mut last_sig: Option<MediaPollSignature> = None;
 
     loop {
         let now = Instant::now();

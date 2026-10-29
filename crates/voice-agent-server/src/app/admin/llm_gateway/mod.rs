@@ -20,7 +20,7 @@ pub(super) use pools::{
 use super::*;
 use crate::services::llm_gateway::GatewayError;
 
-pub(self) fn gateway_error(request: &Request, err: GatewayError) -> Response {
+fn gateway_error(request: &Request, err: GatewayError) -> Response {
     let code = err.code();
     match err {
         GatewayError::InvalidBinding

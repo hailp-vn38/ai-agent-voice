@@ -37,24 +37,23 @@ impl SherpaOfflineAsrSession {
 impl AsrSession for SherpaOfflineAsrSession {
     fn push_pcm(&mut self, pcm: &PcmF32Mono) -> Result<Vec<AsrEvent>, AsrError> {
         if self.cancelled {
-            return Err(AsrError::Failed(
-                format!("{} ASR session is cancelled", self.label).into(),
-            ));
+            return Err(AsrError::Failed(format!(
+                "{} ASR session is cancelled",
+                self.label
+            )));
         }
         if pcm.sample_rate_hz() != 16_000 {
-            return Err(AsrError::Failed(
-                format!("{} ASR requires canonical 16 kHz PCM", self.label).into(),
-            ));
+            return Err(AsrError::Failed(format!(
+                "{} ASR requires canonical 16 kHz PCM",
+                self.label
+            )));
         }
         let next_len = self.samples.len().saturating_add(pcm.samples().len());
         if next_len > self.max_buffered_samples {
-            return Err(AsrError::Failed(
-                format!(
-                    "{} ASR utterance exceeds the configured canonical audio limit",
-                    self.label
-                )
-                .into(),
-            ));
+            return Err(AsrError::Failed(format!(
+                "{} ASR utterance exceeds the configured canonical audio limit",
+                self.label
+            )));
         }
         self.samples.extend_from_slice(pcm.samples());
         Ok(Vec::new())
@@ -62,9 +61,10 @@ impl AsrSession for SherpaOfflineAsrSession {
 
     fn finish(&mut self) -> Result<AsrResult, AsrError> {
         if self.cancelled {
-            return Err(AsrError::Failed(
-                format!("{} ASR session is cancelled", self.label).into(),
-            ));
+            return Err(AsrError::Failed(format!(
+                "{} ASR session is cancelled",
+                self.label
+            )));
         }
         if self.samples.is_empty() {
             return Ok(AsrResult::new(""));
@@ -87,7 +87,7 @@ impl AsrSession for SherpaOfflineAsrSession {
         stream.accept_waveform(16_000, samples);
         self.recognizer.decode(&stream);
         let result = stream.get_result().ok_or_else(|| {
-            AsrError::Failed(format!("{} returned no final result", self.label).into())
+            AsrError::Failed(format!("{} returned no final result", self.label))
         })?;
         self.samples.clear();
         Ok(AsrResult::new(result.text.trim().to_owned()))

@@ -93,6 +93,7 @@ pub(super) struct TurboWorker {
     codec: MossCodec,
 }
 
+#[allow(clippy::large_enum_variant)]
 pub(super) enum VieneuWorker {
     Turbo(TurboWorker),
     Nano(NanoWorker),
