@@ -102,6 +102,7 @@ tts_concurrency = 2
 # an absent Template binding uses the corresponding provider declared here.
 vad = "silero_default"
 asr = "gipformer_vi"
+# asr = "sensevoice_multi"
 llm = "openai_primary"
 tts = "chillaudio_default"
 # Optional LLM instance ID (with capability tag "vision") used when [vision].enabled is true.

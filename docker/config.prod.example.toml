@@ -33,6 +33,11 @@ adapter = "gipformer_sherpa_offline"
 decoding_method = "modified_beam_search"
 max_active_paths = 4
 
+[providers.asr.instances.sensevoice_multi]
+adapter = "sensevoice_sherpa_offline"
+language = "auto"
+use_itn = true
+
 [providers.llm.instances.openai_primary]
 adapter = "openai"
 api_key = "REPLACE_WITH_PROVIDER_KEY"
