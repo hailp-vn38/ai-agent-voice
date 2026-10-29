@@ -846,7 +846,12 @@ async fn wait_and_download_media(
         loading = any_matching_loading
             || !ready_atts.is_empty()
             || new_atts.iter().any(|a| a.tid.contains(kind.as_str()));
-        busy = state.generating || loading;
+        let within_video_grace = kind == MediaKind::Video
+            && state.agent_count > base_agent_count
+            && text_done_at.is_none_or(|t| {
+                t.elapsed() < kind.grace_duration(denied_approval, has_done_marker)
+            });
+        busy = state.generating || loading || within_video_grace;
 
         if loading {
             text_done_at = None;

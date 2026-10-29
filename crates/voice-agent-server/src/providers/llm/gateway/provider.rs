@@ -596,7 +596,7 @@ impl LlmGatewayProvider {
             1
         };
         let min_timeout_ms = match kind {
-            MediaKind::Video => 300_000,
+            MediaKind::Video => 600_000,
             MediaKind::Image => 1_000,
         };
         let timeout = Duration::from_millis(self.config.timeout_ms.max(min_timeout_ms));
