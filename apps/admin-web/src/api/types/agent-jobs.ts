@@ -230,9 +230,12 @@ export interface AdminJob {
   agent_runs?: AgentRunView[]
   coverage?: CoverageView | null
   id: string
+  title?: string | null
   goal: string
   status: JobStatus
   created_at: string
+  started_at?: string | null
+  finished_at?: string | null
   requester_scope: string
   plan_revision: number
   retry_of_job_id: string | null
@@ -241,6 +244,7 @@ export interface AdminJob {
   steps: JobStep[]
   artifacts: JobArtifact[]
   error_code?: string | null
+  error_message?: string | null
 }
 export interface JobPage {
   items: AdminJob[]

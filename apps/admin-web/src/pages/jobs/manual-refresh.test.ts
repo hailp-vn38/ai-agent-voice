@@ -37,7 +37,7 @@ beforeEach(() => {
 })
 afterEach(() => { vi.useRealTimers() })
 
-it('shows the selected timeline item details in a modal when clicked instead of a right-side canvas view', async () => {
+it('shows the selected execution tree node details in the inline right-hand inspector when clicked', async () => {
   const job = await api.job()
   const steps = ['first', 'second'].map(name => ({
     step_key: name, agent_run_id: 'child', plugin_id: 'core', operation: 'web.extract',
@@ -61,32 +61,27 @@ it('shows the selected timeline item details in a modal when clicked instead of 
   const wrapper = mount(JobDetailPage, { global: { stubs: { teleport: true } } })
   try {
     await flushPromises()
-    expect(wrapper.find('[data-canvas-inspector]').exists()).toBe(false)
-    expect(wrapper.find('[data-activity-modal]').exists()).toBe(false)
-    const items = wrapper.findAll('ol button')
-    await items[1]!.trigger('click')
-    expect(wrapper.find('[data-canvas-inspector]').exists()).toBe(false)
-    const modal = wrapper.get('[data-activity-modal]')
-    expect(modal.attributes('role')).toBe('dialog')
-    expect(modal.attributes('aria-modal')).toBe('true')
-    expect(modal.text()).toContain('Extract second')
-    expect(modal.text()).toContain('https://example.com/second')
-    expect(modal.text()).toContain('Article second')
-    expect(modal.text()).toContain('Extracted news second')
-    expect(modal.text()).toContain('web_extract')
-    expect(modal.text()).not.toContain('Extracted news first')
-    await items[0]!.trigger('click')
-    expect(wrapper.get('[data-activity-modal]').text()).toContain('Extracted news first')
-    expect(wrapper.get('[data-activity-modal]').text()).not.toContain('Extracted news second')
-    await items[2]!.trigger('click')
-    expect(wrapper.get('[data-activity-modal]').text()).toContain('Fetch news highlights')
-    expect(wrapper.get('[data-activity-modal]').text()).toContain('News summary')
-    await items[3]!.trigger('click')
-    expect(wrapper.get('[data-activity-modal]').text()).toContain('Coordinate extraction')
-    expect(wrapper.get('[data-activity-modal]').text()).not.toContain('Extracted news')
-    expect(wrapper.get('[data-activity-modal]').text()).not.toContain('News summary')
-    await wrapper.get('[data-inspector-close]').trigger('click')
-    expect(wrapper.find('[data-activity-modal]').exists()).toBe(false)
+    const inspector = wrapper.get('[data-tree-inspector]')
+    await wrapper.get('[data-node="step:second"]').trigger('click')
+    expect(inspector.text()).toContain('Extract second')
+    expect(inspector.text()).toContain('https://example.com/second')
+    expect(inspector.text()).toContain('Article second')
+    expect(inspector.text()).toContain('Extracted news second')
+    expect(inspector.text()).toContain('web_extract')
+    expect(inspector.text()).not.toContain('Extracted news first')
+
+    await wrapper.get('[data-node="step:first"]').trigger('click')
+    expect(inspector.text()).toContain('Extracted news first')
+    expect(inspector.text()).not.toContain('Extracted news second')
+
+    await wrapper.get('[data-node="agent:child"]').trigger('click')
+    expect(inspector.text()).toContain('Fetch news highlights')
+    expect(inspector.text()).toContain('News summary')
+
+    await wrapper.get('[data-node="root"]').trigger('click')
+    expect(inspector.text()).toContain('Coordinate extraction')
+    expect(inspector.text()).not.toContain('Extracted news')
+    expect(inspector.text()).not.toContain('News summary')
   } finally { wrapper.unmount() }
 })
 
@@ -94,7 +89,7 @@ it.each([
   { result: { summary: 'Completed report' }, expected: 'Completed report' },
   { result: { count: 2 }, expected: JSON.stringify({ count: 2 }, null, 2) },
   { result: null, expected: 'Job output' },
-])('renders Result and artifacts directly inside the DAG canvas instead of standalone panels below', async ({ result, expected }) => {
+])('renders Result and artifacts directly inside the Execution Tree inspector workspace instead of standalone panels below', async ({ result, expected }) => {
   const job = await api.job()
   api.job.mockClear().mockResolvedValue({ ...job, result, artifacts: [
     { id: 'report.txt', media_type: 'text/plain', size_bytes: 12, sha256: 'digest' },
@@ -102,18 +97,18 @@ it.each([
   const wrapper = mount(JobDetailPage, { global: { stubs: { teleport: true } } })
   try {
     await flushPromises()
-    expect(wrapper.findAll('h2').some(node => node.text() === translate('jobUi.result'))).toBe(false)
     expect(wrapper.findAll('h2').some(node => node.text() === translate('jobUi.artifacts'))).toBe(false)
-    const resultCard = wrapper.get('[data-step="job:result"]')
-    expect(resultCard.text()).toContain(expected)
-    expect(resultCard.text()).toContain('report.txt')
-    expect(resultCard.text()).toContain(translate('jobUi.download'))
+    expect(wrapper.find('[data-step="job:result"]').exists()).toBe(true)
+    const inspector = wrapper.get('[data-tree-inspector]')
+    expect(inspector.text()).toContain(expected)
+    expect(inspector.text()).toContain('report.txt')
+    expect(inspector.text()).toContain(translate('jobUi.download'))
   } finally {
     wrapper.unmount()
   }
 })
 
-it('renders the 4 summary stat cards inside the DAG canvas HUD overlay instead of standalone panels outside', async () => {
+it('renders the top stats bar inside the Execution Tree workspace shell', async () => {
   const job = await api.job()
   api.job.mockClear().mockResolvedValue({
     ...job,
@@ -147,13 +142,11 @@ it('renders the 4 summary stat cards inside the DAG canvas HUD overlay instead o
   const wrapper = mount(JobDetailPage, { global: { stubs: { teleport: true } } })
   try {
     await flushPromises()
-    const canvasBody = wrapper.get('.canvas-body')
-    const hud = canvasBody.get('[data-canvas-stats]')
-    expect(hud.findAll('.hud-card')).toHaveLength(4)
-    expect(hud.get('[data-canvas-stat="agent-runs"]').text()).toContain('1 root · 1 sub-agents')
-    expect(hud.get('[data-canvas-stat="llm-runs"]').text()).toContain('2')
-    expect(hud.get('[data-canvas-stat="plugin-calls"]').text()).toContain('1')
-    expect(hud.get('[data-canvas-stat="total-tokens"]').text()).toContain((3746).toLocaleString())
+    const statsBar = wrapper.get('[data-canvas-stats]')
+    expect(statsBar.get('[data-canvas-stat="agent-runs"]').text()).toContain('1 root · 1 sub-agents')
+    expect(statsBar.get('[data-canvas-stat="llm-runs"]').text()).toContain('2')
+    expect(statsBar.get('[data-canvas-stat="plugin-calls"]').text()).toContain('1')
+    expect(statsBar.get('[data-canvas-stat="total-tokens"]').text()).toContain((3746).toLocaleString())
   } finally {
     wrapper.unmount()
   }

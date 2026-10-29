@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Activity, AlertTriangle, FolderOpen, RefreshCw, RotateCcw, Square, Trash2, Workflow } from '@lucide/vue'
+import { AlertTriangle, FolderOpen, RefreshCw, RotateCcw, Square, Trash2, Workflow } from '@lucide/vue'
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { agentJobsApi } from '@/api/agent-jobs'
@@ -273,17 +273,9 @@ onBeforeUnmount(() => {
         <p v-if="job.error_code" class="mt-2 break-all font-mono text-xs text-danger">{{ job.error_code }}</p>
         <p v-if="unknownOutcome" class="mt-2 text-sm text-danger">{{ t('jobUi.unknownOutcomeWarning') }}</p>
       </div>
-      <div class="sectionbar flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h2 class="flex flex-wrap items-center gap-2 font-semibold">
-            <Activity class="size-4 text-studio-violet" />{{ t('jobUi.executionJourney') }}
-          </h2>
-          <p class="mt-1 text-xs text-muted-foreground">{{ t('jobUi.executionJourneyHint') }}</p>
-        </div>
-        <span class="rounded-md border px-2 py-1 text-xs text-muted-foreground">{{ t('jobUi.timelineReadOnly') }}</span>
-      </div>
       <p v-if="eventsError" role="alert" class="text-xs text-danger">{{ eventsError }}</p>
       <JobUnifiedTimeline
+        :job="job"
         :job-id="job.id"
         :activities="filteredActivity"
         :selected-id="selectedActivityId"

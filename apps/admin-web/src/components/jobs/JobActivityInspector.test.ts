@@ -207,11 +207,11 @@ describe('Job activity presentation', () => {
       props: { jobId: 'job-art-1', activity: activities[1]!, open: true },
     })
     try {
-      const resultCard = timeline.get('[data-step="job:result"]')
-      expect(resultCard.get('[data-result-markdown]').html()).toContain('Final Summary')
-      expect(resultCard.find('[data-canvas-artifact-preview]').exists()).toBe(true)
-      expect(timeline.text()).toContain('📎 summary_report.md')
-      expect(timeline.text()).toContain('1 artifacts')
+      expect(timeline.find('[data-step="job:result"]').exists()).toBe(true)
+      const treeInspector = timeline.get('[data-tree-inspector]')
+      expect(treeInspector.get('[data-result-markdown]').html()).toContain('Final Summary')
+      expect(treeInspector.find('[data-canvas-artifact-preview]').exists()).toBe(true)
+      expect(treeInspector.text()).toContain('summary_report.md')
       expect(inspector.text()).toContain('Final Summary')
       expect(inspector.text()).toContain('summary_report.md')
       expect(inspector.find('[data-artifact-preview]').exists()).toBe(true)
