@@ -15,14 +15,15 @@ use super::pool::UpstreamFailureKind;
 
 pub(crate) use chat::run_chat_turn_once;
 pub(crate) use media::run_media_turn_once;
+#[allow(unused_imports)]
 pub use media::{pick_media_urls, sniff_media_mime_type};
 #[allow(unused_imports)]
 pub(crate) use png::{encode_rgba_png, remove_background_to_rgba_png};
-pub use prompt::{
-    aspect_ratio_hint, flatten_messages, format_image_prompt, format_video_prompt, is_thread_url,
-};
+#[allow(unused_imports)]
+pub use prompt::{aspect_ratio_hint, flatten_messages, is_thread_url};
 #[allow(unused_imports)]
 pub(crate) use prompt::{extract_prior_turns_and_last_user, followup_text};
+pub use prompt::{format_image_prompt, format_video_prompt};
 
 pub const POLL_INTERVAL: Duration = Duration::from_millis(150);
 pub const MEDIA_POLL_INTERVAL: Duration = Duration::from_millis(600);

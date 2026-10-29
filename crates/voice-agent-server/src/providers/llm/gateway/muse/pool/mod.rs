@@ -1,155 +1,26 @@
+mod account;
+mod lease;
+mod types;
+mod warmup;
+
 use std::collections::{BTreeMap, HashMap};
 use std::sync::{Arc, Mutex as StdMutex, OnceLock};
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant};
 
 use sha2::{Digest, Sha256};
 use tokio::sync::Notify;
-use uuid::Uuid;
 
-use super::cdp::{BrowserEngine, BrowserPage, CdpBrowserEngine, CdpError, CookieParam};
-use super::config::{
-    COOKIE_DOMAIN, MuseAccountCredential, NEW_THREAD_URL, SESSION_API_URL, SITE_URL,
-    VM_WAKE_API_URL,
+use super::cdp::{BrowserEngine, BrowserPage, CdpBrowserEngine, CdpError};
+use super::config::MuseAccountCredential;
+
+use account::MuseAccountState;
+pub(crate) use lease::TabLease;
+pub use types::HOT_BUBBLE_LIMIT;
+#[allow(unused_imports)]
+pub(crate) use types::{
+    AccountHealth, CheckoutMode, ConversationTurn, HotConversation, MusePoolKey, PooledTab,
+    UpstreamFailureKind,
 };
-
-pub const HOT_BUBBLE_LIMIT: usize = 16;
-
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub(crate) struct MusePoolKey {
-    pub cdp_port: u16,
-    pub headless: bool,
-    pub account_concurrency: usize,
-    /// SHA-256 digest of credential ensuring secret rotation creates isolated contexts.
-    pub credential_fingerprint: [u8; 32],
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum AccountHealth {
-    Healthy,
-    Cooldown(Instant),
-    Invalid,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum UpstreamFailureKind {
-    AuthInvalid,
-    QuotaExceeded,
-    Transient,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct ConversationTurn {
-    pub user: String,
-    pub assistant: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct HotConversation {
-    pub hint: String,
-    pub turns: Vec<ConversationTurn>,
-    pub image_count: usize,
-    pub thread_url: String,
-}
-
-pub(crate) struct PooledTab {
-    pub page: Arc<dyn BrowserPage>,
-    pub hot: Option<HotConversation>,
-    pub stale: bool,
-}
-
-#[derive(Debug, Clone)]
-pub(crate) enum CheckoutMode {
-    Stateless,
-    Continuation {
-        prior_turns: Vec<ConversationTurn>,
-        image_count: usize,
-    },
-}
-
-struct MuseAccountState {
-    credential: MuseAccountCredential,
-    in_memory_cookies: BTreeMap<String, String>,
-    cookie_expires: Option<u64>,
-    vm_id: Option<String>,
-    warmed: bool,
-    generation: u64,
-    health: AccountHealth,
-    active_tabs: usize,
-    idle_tabs: Vec<PooledTab>,
-}
-
-impl MuseAccountState {
-    fn new(credential: MuseAccountCredential) -> Self {
-        let in_memory_cookies = credential.cookies.clone();
-        let cookie_expires = credential.cookie_expires;
-        let vm_id = credential.vm_id.clone();
-        Self {
-            credential,
-            in_memory_cookies,
-            cookie_expires,
-            vm_id,
-            warmed: false,
-            generation: 0,
-            health: AccountHealth::Healthy,
-            active_tabs: 0,
-            idle_tabs: Vec::new(),
-        }
-    }
-
-    fn is_available(&self, now: Instant) -> bool {
-        match self.health {
-            AccountHealth::Healthy => true,
-            AccountHealth::Cooldown(until) => now >= until,
-            AccountHealth::Invalid => false,
-        }
-    }
-
-    fn refresh_health(&mut self, now: Instant) {
-        if let AccountHealth::Cooldown(until) = self.health {
-            if now >= until {
-                self.health = AccountHealth::Healthy;
-            }
-        }
-    }
-
-    fn context_key(&self, fingerprint: &[u8; 32]) -> String {
-        let prefix = hex_prefix(&fingerprint[..8]);
-        format!("{prefix}:{}:{}", self.credential.label, self.generation)
-    }
-
-    fn cookie_params(&self) -> Vec<CookieParam> {
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs_f64();
-        let floor = now + 3600.0;
-        let expires = match self.cookie_expires.map(|e| e as f64) {
-            Some(exp) if exp > floor => exp,
-            _ => now + 7.0 * 86400.0,
-        };
-        self.in_memory_cookies
-            .iter()
-            .filter(|(_, v)| !v.is_empty())
-            .map(|(k, v)| CookieParam {
-                name: k.clone(),
-                value: v.clone(),
-                domain: COOKIE_DOMAIN.to_string(),
-                path: "/".to_string(),
-                secure: true,
-                expires,
-            })
-            .collect()
-    }
-}
-
-fn hex_prefix(bytes: &[u8]) -> String {
-    let mut out = String::with_capacity(bytes.len() * 2);
-    for b in bytes {
-        use std::fmt::Write;
-        let _ = write!(&mut out, "{b:02x}");
-    }
-    out
-}
 
 struct PoolInner {
     accounts: Vec<MuseAccountState>,
@@ -187,6 +58,17 @@ fn shared_cdp_engine(cdp_port: u16, headless: bool) -> Arc<dyn BrowserEngine> {
     let engine: Arc<dyn BrowserEngine> = Arc::new(CdpBrowserEngine::new(cdp_port, headless));
     map.insert((cdp_port, headless), Arc::clone(&engine));
     engine
+}
+
+enum CheckoutPlan {
+    Reuse {
+        account_idx: usize,
+        tab: PooledTab,
+        matched_hot: Option<HotConversation>,
+    },
+    OpenNew {
+        account_idx: usize,
+    },
 }
 
 impl SharedMusePool {
@@ -285,146 +167,6 @@ impl SharedMusePool {
             inner,
             notify,
         })
-    }
-
-    fn apply_account_failure(&self, account_idx: usize, kind: UpstreamFailureKind) {
-        let mut stale_pages = Vec::new();
-        {
-            let mut guard = self.inner.lock().unwrap_or_else(|e| e.into_inner());
-            if let Some(acc) = guard.accounts.get_mut(account_idx) {
-                acc.health = match kind {
-                    UpstreamFailureKind::AuthInvalid => AccountHealth::Invalid,
-                    UpstreamFailureKind::QuotaExceeded => {
-                        AccountHealth::Cooldown(Instant::now() + Duration::from_secs(3600))
-                    }
-                    UpstreamFailureKind::Transient => {
-                        AccountHealth::Cooldown(Instant::now() + Duration::from_secs(30))
-                    }
-                };
-                if matches!(kind, UpstreamFailureKind::AuthInvalid) {
-                    for idle in acc.idle_tabs.drain(..) {
-                        acc.active_tabs = acc.active_tabs.saturating_sub(1);
-                        stale_pages.push(idle.page);
-                    }
-                }
-            }
-        }
-        for page in stale_pages {
-            spawn_page_close(page);
-        }
-        self.notify.notify_waiters();
-    }
-
-    async fn ensure_account_warm(&self, account_idx: usize) -> Result<(), UpstreamFailureKind> {
-        if !self.http_session_warmup {
-            let mut guard = self.inner.lock().unwrap_or_else(|e| e.into_inner());
-            if let Some(acc) = guard.accounts.get_mut(account_idx) {
-                acc.warmed = true;
-            }
-            return Ok(());
-        }
-
-        let (already_warmed, cookies, vm_id) = {
-            let guard = self.inner.lock().unwrap_or_else(|e| e.into_inner());
-            let Some(acc) = guard.accounts.get(account_idx) else {
-                return Err(UpstreamFailureKind::AuthInvalid);
-            };
-            (acc.warmed, acc.in_memory_cookies.clone(), acc.vm_id.clone())
-        };
-        if already_warmed {
-            return Ok(());
-        }
-
-        let cookie_header = cookies
-            .iter()
-            .filter(|(_, v)| !v.is_empty())
-            .map(|(k, v)| format!("{k}={v}"))
-            .collect::<Vec<_>>()
-            .join("; ");
-
-        let resp = self
-            .http_client
-            .get(SESSION_API_URL)
-            .header("Origin", SITE_URL)
-            .header("Referer", NEW_THREAD_URL)
-            .header("Accept", "application/json")
-            .header("Cookie", &cookie_header)
-            .send()
-            .await;
-
-        let mut rotated_cookies = cookies;
-        let mut discovered_vm_id = vm_id;
-
-        if let Ok(resp) = resp {
-            let status = resp.status().as_u16();
-            if status == 401 || status == 403 {
-                self.apply_account_failure(account_idx, UpstreamFailureKind::AuthInvalid);
-                return Err(UpstreamFailureKind::AuthInvalid);
-            }
-            for header_val in resp.headers().get_all(reqwest::header::SET_COOKIE) {
-                if let Ok(raw) = header_val.to_str() {
-                    if let Some(first_part) = raw.split(';').next() {
-                        if let Some((k, v)) = first_part.split_once('=') {
-                            let k = k.trim();
-                            let v = v.trim();
-                            if !k.is_empty() && !v.is_empty() {
-                                rotated_cookies.insert(k.to_string(), v.to_string());
-                            }
-                        }
-                    }
-                }
-            }
-            if let Ok(body) = resp.json::<serde_json::Value>().await {
-                if discovered_vm_id.is_none() {
-                    discovered_vm_id = body
-                        .get("vm_id")
-                        .and_then(serde_json::Value::as_str)
-                        .map(ToString::to_string);
-                }
-            }
-        }
-
-        if let Some(vm) = &discovered_vm_id {
-            let updated_cookie_header = rotated_cookies
-                .iter()
-                .filter(|(_, v)| !v.is_empty())
-                .map(|(k, v)| format!("{k}={v}"))
-                .collect::<Vec<_>>()
-                .join("; ");
-            let _ = self
-                .http_client
-                .post(VM_WAKE_API_URL)
-                .header("Origin", SITE_URL)
-                .header("Referer", NEW_THREAD_URL)
-                .header("Cookie", updated_cookie_header)
-                .json(&serde_json::json!({
-                    "vm_id": vm,
-                    "retry_count": 0,
-                    "connect_attempt_id": Uuid::new_v4().to_string(),
-                }))
-                .send()
-                .await;
-        }
-
-        let mut guard = self.inner.lock().unwrap_or_else(|e| e.into_inner());
-        if let Some(acc) = guard.accounts.get_mut(account_idx) {
-            if acc.in_memory_cookies != rotated_cookies {
-                acc.in_memory_cookies = rotated_cookies;
-                acc.cookie_expires = Some(
-                    SystemTime::now()
-                        .duration_since(UNIX_EPOCH)
-                        .unwrap_or_default()
-                        .as_secs()
-                        + 7 * 86400,
-                );
-                for tab in &mut acc.idle_tabs {
-                    tab.stale = true;
-                }
-            }
-            acc.vm_id = discovered_vm_id;
-            acc.warmed = true;
-        }
-        Ok(())
     }
 
     pub async fn checkout(&self, mode: CheckoutMode) -> Result<TabLease, CdpError> {
@@ -644,102 +386,6 @@ impl Drop for SharedMusePool {
                     engine.dispose_context(&key).await;
                 }
             });
-        }
-    }
-}
-
-enum CheckoutPlan {
-    Reuse {
-        account_idx: usize,
-        tab: PooledTab,
-        matched_hot: Option<HotConversation>,
-    },
-    OpenNew {
-        account_idx: usize,
-    },
-}
-
-pub(crate) struct TabLease {
-    account_idx: usize,
-    tab: Option<PooledTab>,
-    matched_hot: Option<HotConversation>,
-    clean_return: bool,
-    inner: Arc<StdMutex<PoolInner>>,
-    notify: Arc<Notify>,
-}
-
-impl TabLease {
-    pub fn page(&self) -> &Arc<dyn BrowserPage> {
-        &self
-            .tab
-            .as_ref()
-            .expect("TabLease always holds a tab while borrowed")
-            .page
-    }
-
-    pub fn matched_hot(&self) -> Option<&HotConversation> {
-        self.matched_hot.as_ref()
-    }
-
-    pub fn finish_clean(&mut self, hot: Option<HotConversation>) {
-        if let Some(tab) = &mut self.tab {
-            tab.hot = hot;
-        }
-        self.clean_return = true;
-    }
-
-    pub fn fail_account(&self, kind: UpstreamFailureKind) {
-        let mut stale_pages = Vec::new();
-        {
-            let mut guard = self.inner.lock().unwrap_or_else(|e| e.into_inner());
-            if let Some(acc) = guard.accounts.get_mut(self.account_idx) {
-                acc.health = match kind {
-                    UpstreamFailureKind::AuthInvalid => AccountHealth::Invalid,
-                    UpstreamFailureKind::QuotaExceeded => {
-                        AccountHealth::Cooldown(Instant::now() + Duration::from_secs(3600))
-                    }
-                    UpstreamFailureKind::Transient => {
-                        AccountHealth::Cooldown(Instant::now() + Duration::from_secs(30))
-                    }
-                };
-                if matches!(kind, UpstreamFailureKind::AuthInvalid) {
-                    for idle in acc.idle_tabs.drain(..) {
-                        acc.active_tabs = acc.active_tabs.saturating_sub(1);
-                        stale_pages.push(idle.page);
-                    }
-                }
-            }
-        }
-        for page in stale_pages {
-            spawn_page_close(page);
-        }
-        self.notify.notify_waiters();
-    }
-}
-
-impl Drop for TabLease {
-    fn drop(&mut self) {
-        let Some(tab) = self.tab.take() else {
-            return;
-        };
-        let page_to_close = {
-            let mut guard = self.inner.lock().unwrap_or_else(|e| e.into_inner());
-            if let Some(acc) = guard.accounts.get_mut(self.account_idx) {
-                if self.clean_return && !tab.stale && !matches!(acc.health, AccountHealth::Invalid)
-                {
-                    acc.idle_tabs.push(tab);
-                    None
-                } else {
-                    acc.active_tabs = acc.active_tabs.saturating_sub(1);
-                    Some(tab.page)
-                }
-            } else {
-                Some(tab.page)
-            }
-        };
-        self.notify.notify_waiters();
-        if let Some(page) = page_to_close {
-            spawn_page_close(page);
         }
     }
 }
