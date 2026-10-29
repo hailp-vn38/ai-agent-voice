@@ -505,7 +505,11 @@ pub(super) async fn knowledge_search(
         return error(&req, StatusCode::BAD_REQUEST, "invalid_arguments");
     };
     let limit = q.limit.unwrap_or(50).clamp(1, 200) as usize;
-    if let Some(query) = q.q.as_deref().map(str::trim).filter(|query| !query.is_empty()) {
+    if let Some(query) =
+        q.q.as_deref()
+            .map(str::trim)
+            .filter(|query| !query.is_empty())
+    {
         match mode.execute(&engine, query, space, limit) {
             Ok(results) => {
                 let items: Vec<Value> = results

@@ -132,8 +132,7 @@ impl TtsWorkerRuntime {
             .admission
             .try_admit(workload_class)
             .map_err(|_| TtsWorkerError::Capacity)?;
-        let lease =
-            self.start_with_permit(None, TtsWorkRequest::Voice(synth_req), Some(permit))?;
+        let lease = self.start_with_permit(None, TtsWorkRequest::Voice(synth_req), Some(permit))?;
         let mut sample_rate = None;
         let mut samples = Vec::new();
         loop {

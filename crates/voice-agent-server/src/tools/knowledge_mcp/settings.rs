@@ -189,9 +189,15 @@ fn seed_settings_from_config(cfg: &WikiMcpConfig) -> PersistedKnowledgeMcpSettin
             cfg.path.trim().to_string()
         },
         allow_write: cfg.allow_write,
-        max_concurrency: cfg.max_concurrency.clamp(*CONCURRENCY_RANGE.start(), *CONCURRENCY_RANGE.end()),
-        call_timeout_ms: cfg.call_timeout_ms.clamp(*CALL_TIMEOUT_MS_RANGE.start(), *CALL_TIMEOUT_MS_RANGE.end()),
-        max_result_chars: cfg.max_result_chars.clamp(*RESULT_CHARS_RANGE.start(), *RESULT_CHARS_RANGE.end()),
+        max_concurrency: cfg
+            .max_concurrency
+            .clamp(*CONCURRENCY_RANGE.start(), *CONCURRENCY_RANGE.end()),
+        call_timeout_ms: cfg
+            .call_timeout_ms
+            .clamp(*CALL_TIMEOUT_MS_RANGE.start(), *CALL_TIMEOUT_MS_RANGE.end()),
+        max_result_chars: cfg
+            .max_result_chars
+            .clamp(*RESULT_CHARS_RANGE.start(), *RESULT_CHARS_RANGE.end()),
         tokens,
     }
 }

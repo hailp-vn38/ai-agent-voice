@@ -71,7 +71,8 @@ impl ReminderCoordinator {
                 "reminder schedule changed while device is offline; sync pending reconnect"
             );
         }
-        self.sessions.sync_required(device_row_id, schedule_revision);
+        self.sessions
+            .sync_required(device_row_id, schedule_revision);
         self.scheduler_wakeup.notify_one();
     }
 
@@ -92,23 +93,20 @@ impl ReminderCoordinator {
         ctx: &MutationContext<'_>,
         input: CreateReminder,
     ) -> Result<Reminder, NotificationError> {
-        let (mut reminder, device_row_id) = match self
-            .repo
-            .create_with_context(device_id, ctx, input)
-            .await
-        {
-            Ok(res) => res,
-            Err(err) => {
-                tracing::warn!(
-                    device_id = %device_id,
-                    source = %ctx.source.as_str(),
-                    caller = %ctx.caller,
-                    error = %err,
-                    "reminder create failed"
-                );
-                return Err(err);
-            }
-        };
+        let (mut reminder, device_row_id) =
+            match self.repo.create_with_context(device_id, ctx, input).await {
+                Ok(res) => res,
+                Err(err) => {
+                    tracing::warn!(
+                        device_id = %device_id,
+                        source = %ctx.source.as_str(),
+                        caller = %ctx.caller,
+                        error = %err,
+                        "reminder create failed"
+                    );
+                    return Err(err);
+                }
+            };
         self.enrich_item_capability(device_row_id, &mut reminder);
         let due_at_utc = chrono::DateTime::<chrono::Utc>::from_timestamp_millis(reminder.due_at_ms)
             .map(|dt| dt.to_rfc3339())

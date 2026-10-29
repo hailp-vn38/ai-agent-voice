@@ -160,10 +160,7 @@ impl LlmGatewayHub {
     }
 
     fn refresh_lock_for(&self, account_key: &str) -> Arc<tokio::sync::Mutex<()>> {
-        let mut guard = self
-            .refresh_locks
-            .lock()
-            .unwrap_or_else(|p| p.into_inner());
+        let mut guard = self.refresh_locks.lock().unwrap_or_else(|p| p.into_inner());
         guard
             .entry(account_key.to_owned())
             .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(())))
@@ -356,10 +353,7 @@ impl LlmGatewayHub {
                     .map(|c| c.fetch_add(1, Ordering::Relaxed))
                     .unwrap_or(0);
                 let chosen = candidates[cursor % candidates.len()];
-                let bundle = chosen
-                    .bundle
-                    .as_ref()
-                    .ok_or(GatewayError::PoolExhausted)?;
+                let bundle = chosen.bundle.as_ref().ok_or(GatewayError::PoolExhausted)?;
                 Ok(GatewayLease {
                     account_key: chosen.account_key.clone(),
                     vendor: chosen.vendor,
@@ -422,7 +416,11 @@ impl LlmGatewayHub {
 
         let mut refreshed = 0usize;
         for key in due_keys {
-            if self.refresh_account_internal(&key, Some(threshold)).await.is_ok() {
+            if self
+                .refresh_account_internal(&key, Some(threshold))
+                .await
+                .is_ok()
+            {
                 refreshed += 1;
             }
         }
@@ -955,9 +953,8 @@ impl LlmGatewayHub {
             config_obj.insert("timeout_ms".to_owned(), Value::from(timeout));
         }
 
-        let validated_config =
-            crate::database::provider_config::validate(&adapter, &config_val)
-                .map_err(|_| GatewayError::ValidationFailed)?;
+        let validated_config = crate::database::provider_config::validate(&adapter, &config_val)
+            .map_err(|_| GatewayError::ValidationFailed)?;
         let now_epoch = unix_seconds().unwrap_or(0);
 
         let mut tx = pool
@@ -1090,18 +1087,7 @@ impl LlmGatewayHub {
         let Some(pool) = &self.pool else {
             return Ok(Vec::new());
         };
-        type PoolModelRow = (
-            i64,
-            String,
-            String,
-            String,
-            String,
-            i64,
-            i64,
-            i64,
-            i64,
-            i64,
-        );
+        type PoolModelRow = (i64, String, String, String, String, i64, i64, i64, i64, i64);
         let rows: Vec<PoolModelRow> = sqlx::query_as(
             "SELECT \
                 p.id, \
@@ -1380,11 +1366,13 @@ impl LlmGatewayHub {
                 GatewayBinding::Account(_) => (binding.as_config_string(), "account"),
                 GatewayBinding::Pool(_) => (binding.as_config_string(), "pool"),
             };
-            map.entry(canonical).or_default().push(GatewayBoundProviderRef {
-                provider_key: key,
-                display_name: name,
-                binding_mode: mode.to_owned(),
-            });
+            map.entry(canonical)
+                .or_default()
+                .push(GatewayBoundProviderRef {
+                    provider_key: key,
+                    display_name: name,
+                    binding_mode: mode.to_owned(),
+                });
         }
         map
     }
@@ -1621,7 +1609,10 @@ impl LlmGatewayHub {
         }
     }
 
-    pub async fn poll_oauth_login(&self, session_id: &str) -> Result<OAuthPollStatus, GatewayError> {
+    pub async fn poll_oauth_login(
+        &self,
+        session_id: &str,
+    ) -> Result<OAuthPollStatus, GatewayError> {
         enum Action {
             Return(OAuthPollStatus),
             PollPkce {

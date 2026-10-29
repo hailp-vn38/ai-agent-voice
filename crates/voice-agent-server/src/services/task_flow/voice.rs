@@ -4,8 +4,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use orchestrator_flow_rs::{
-    AgentCatalogEntry, DEFAULT_OWNER_ID, DEFAULT_WORKSPACE_ID, TargetAgent, TaskManager,
-    TaskScope, TaskToolSpec, TaskToolSuite, build_tool_specs_for_agents,
+    AgentCatalogEntry, DEFAULT_OWNER_ID, DEFAULT_WORKSPACE_ID, TargetAgent, TaskManager, TaskScope,
+    TaskToolSpec, TaskToolSuite, build_tool_specs_for_agents,
 };
 use serde_json::{Value, json};
 

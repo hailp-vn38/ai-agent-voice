@@ -5,9 +5,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
-use orchestrator_agent_rs::{
-    AgentMode, SkillDocument, SkillDocumentError, valid_skill_id,
-};
+use orchestrator_agent_rs::{AgentMode, SkillDocument, SkillDocumentError, valid_skill_id};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
@@ -95,7 +93,11 @@ pub fn is_builtin_skill(id: &str) -> bool {
 fn sha256_hex(bytes: &[u8]) -> String {
     let mut hasher = Sha256::new();
     hasher.update(bytes);
-    hasher.finalize().iter().map(|b| format!("{b:02x}")).collect()
+    hasher
+        .finalize()
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect()
 }
 
 fn builtin_defaults(id: &str) -> Option<SkillDefaults> {
@@ -418,9 +420,7 @@ pub async fn save(
         return Err(SkillCatalogError::InvalidArguments("duplicate_skill_name"));
     }
 
-    let current_etag = read_one_skill_from_dir(skills_dir, id)
-        .ok()
-        .map(|s| s.etag);
+    let current_etag = read_one_skill_from_dir(skills_dir, id).ok().map(|s| s.etag);
     let created = match (&precondition, current_etag) {
         (Precondition::IfNoneMatchStar, Some(_)) => return Err(SkillCatalogError::AlreadyExists),
         (Precondition::IfMatch(_), None) => return Err(SkillCatalogError::NotFound),

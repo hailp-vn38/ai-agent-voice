@@ -55,16 +55,25 @@ fn clean_debug_str(raw: String) -> String {
 }
 
 impl FieldVisitor {
-    fn try_record_numeric_field(&mut self, name: &str, value_u64: Option<u64>, value_i64: Option<i64>) -> bool {
+    fn try_record_numeric_field(
+        &mut self,
+        name: &str,
+        value_u64: Option<u64>,
+        value_i64: Option<i64>,
+    ) -> bool {
         match name {
             "turn_id" => {
-                if let Some(v) = value_u64.or_else(|| value_i64.filter(|&x| x >= 0).map(|x| x as u64)) {
+                if let Some(v) =
+                    value_u64.or_else(|| value_i64.filter(|&x| x >= 0).map(|x| x as u64))
+                {
                     self.correlation.turn_id = Some(v);
                     return true;
                 }
             }
             "generation" => {
-                if let Some(v) = value_u64.or_else(|| value_i64.filter(|&x| x >= 0).map(|x| x as u64)) {
+                if let Some(v) =
+                    value_u64.or_else(|| value_i64.filter(|&x| x >= 0).map(|x| x as u64))
+                {
                     self.correlation.generation = Some(v);
                     return true;
                 }
@@ -76,7 +85,9 @@ impl FieldVisitor {
                 }
             }
             "duration_ms" | "elapsed_ms" => {
-                if let Some(v) = value_u64.or_else(|| value_i64.filter(|&x| x >= 0).map(|x| x as u64)) {
+                if let Some(v) =
+                    value_u64.or_else(|| value_i64.filter(|&x| x >= 0).map(|x| x as u64))
+                {
                     self.duration_ms = Some(v);
                     return true;
                 }

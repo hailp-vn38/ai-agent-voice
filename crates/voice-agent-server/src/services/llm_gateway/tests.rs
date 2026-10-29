@@ -154,11 +154,10 @@ async fn llm_gateway_device_code_flow_github_copilot() {
         .acquire_lease(&GatewayBinding::Pool(GatewayVendor::GithubCopilot))
         .expect("pool lease");
     assert_eq!(lease.access_token.expose(), "tid_copilot_bearer_token_01");
-    assert!(
-        lease
-            .extra_headers
-            .contains(&("Copilot-Integration-Id".to_owned(), "vscode-chat".to_owned()))
-    );
+    assert!(lease.extra_headers.contains(&(
+        "Copilot-Integration-Id".to_owned(),
+        "vscode-chat".to_owned()
+    )));
 }
 
 #[test]
@@ -177,16 +176,24 @@ fn github_copilot_inference_headers_omit_github_rest_api_version() {
             .iter()
             .all(|(name, _)| !name.eq_ignore_ascii_case("x-github-api-version"))
     );
-    assert!(headers.contains(&("Copilot-Integration-Id".to_owned(), "vscode-chat".to_owned())));
+    assert!(headers.contains(&(
+        "Copilot-Integration-Id".to_owned(),
+        "vscode-chat".to_owned()
+    )));
 }
 
 #[tokio::test]
 async fn github_copilot_device_flow_slow_down_throttle_and_post_exchange_fallback() {
-    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-    use axum::{Router, http::StatusCode, response::IntoResponse, routing::{get, post}};
-    use serde_json::json;
-    use tokio::net::TcpListener;
     use super::vendors::github_copilot::GithubCopilotOAuthDriver;
+    use axum::{
+        Router,
+        http::StatusCode,
+        response::IntoResponse,
+        routing::{get, post},
+    };
+    use serde_json::json;
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+    use tokio::net::TcpListener;
 
     // 1. Verify hub rate-limit guard prevents hammering upstream when slow_down occurs
     let (hub, fakes, _temp) = test_hub_with_fakes().await;
@@ -336,7 +343,10 @@ async fn github_copilot_device_flow_slow_down_throttle_and_post_exchange_fallbac
     let initial_lease = live_hub
         .acquire_lease(&GatewayBinding::Account(account.account_key.clone()))
         .expect("initial lease");
-    assert_eq!(initial_lease.access_token.expose(), "ghu_live_oauth_token_abc");
+    assert_eq!(
+        initial_lease.access_token.expose(),
+        "ghu_live_oauth_token_abc"
+    );
 
     // Once `copilot_internal/v2/token` is reachable, refreshing upgrades `access_token` to `tid=...`
     copilot_token_healthy.store(true, Ordering::SeqCst);
@@ -405,9 +415,9 @@ async fn llm_gateway_proactive_refresh_and_zero_retry_cooldown_rotation() {
     let mut handles = Vec::new();
     for _ in 0..4 {
         let h = Arc::clone(&hub);
-        handles.push(tokio::spawn(
-            async move { h.proactive_refresh_expiring(300).await },
-        ));
+        handles.push(tokio::spawn(async move {
+            h.proactive_refresh_expiring(300).await
+        }));
     }
     for handle in handles {
         let _ = handle.await.expect("join");
@@ -535,12 +545,12 @@ async fn openai_codex_driver_enforces_fixed_redirect_and_9router_authorize_param
 
 #[test]
 fn vendor_quota_payload_parsers_match_9router_formats() {
-    use serde_json::json;
     use super::vendors::{
         anthropic::parse_anthropic_usage_payload, gemini::parse_gemini_quota_payload,
         github_copilot::parse_github_copilot_usage_payload,
         openai_codex::parse_codex_usage_payload,
     };
+    use serde_json::json;
 
     // 1. OpenAI Codex (`wham/usage`)
     let codex_json = json!({
@@ -735,17 +745,22 @@ async fn hub_fetches_caches_and_routes_around_exhausted_account_quotas() {
 
 #[tokio::test]
 async fn llm_gateway_muse_cookie_paste_interactive_cdp_capture_and_session_renewal() {
+    use axum::{
+        Router,
+        http::HeaderMap,
+        response::IntoResponse,
+        routing::{get, post},
+    };
+    use serde_json::{Value, json};
     use std::sync::Mutex;
     use std::time::Duration;
-    use axum::{Router, http::HeaderMap, response::IntoResponse, routing::{get, post}};
-    use serde_json::{Value, json};
     use tokio::net::TcpListener;
 
+    use super::vendors::muse::MuseOAuthDriver;
     use crate::providers::llm::gateway::muse::{
         cdp::{BrowserEngine, BrowserPage, CdpError, CookieParam},
         config::parse_accounts,
     };
-    use super::vendors::muse::MuseOAuthDriver;
 
     struct FakeMuseLoginPage {
         cookies: Arc<Mutex<BTreeMap<String, String>>>,
@@ -804,7 +819,8 @@ async fn llm_gateway_muse_cookie_paste_interactive_cdp_capture_and_session_renew
     .expect("sqlite memory");
     let cipher: Arc<dyn crate::database::secrets::SecretResolver> =
         Arc::new(CredentialCipher::new(1, &[0x42; 32]).expect("cipher"));
-    let shared_cookies: Arc<Mutex<BTreeMap<String, String>>> = Arc::new(Mutex::new(BTreeMap::new()));
+    let shared_cookies: Arc<Mutex<BTreeMap<String, String>>> =
+        Arc::new(Mutex::new(BTreeMap::new()));
     let fake_login_engine: Arc<dyn BrowserEngine> = Arc::new(FakeMuseLoginEngine {
         cookies: Arc::clone(&shared_cookies),
     });
@@ -846,7 +862,10 @@ async fn llm_gateway_muse_cookie_paste_interactive_cdp_capture_and_session_renew
     );
 
     // Poll #1 before user logs into the Chromium window -> Pending
-    let poll1 = hub.poll_oauth_login(&ch_cdp.session_id).await.expect("poll 1");
+    let poll1 = hub
+        .poll_oauth_login(&ch_cdp.session_id)
+        .await
+        .expect("poll 1");
     assert!(matches!(poll1, OAuthPollStatus::Pending { .. }));
 
     // Simulate user completing login in the Chromium window -> cookies appear in Network.getCookies
@@ -855,11 +874,17 @@ async fn llm_gateway_muse_cookie_paste_interactive_cdp_capture_and_session_renew
         guard.insert("hatch_sess".to_owned(), "cdp_sess_1".to_owned());
         guard.insert("hatch_gw".to_owned(), "cdp_gw_1".to_owned());
         guard.insert("hatch_vml".to_owned(), "cdp_vml_1".to_owned());
-        guard.insert("hatch_native_auth_device".to_owned(), "cdp_dev_1".to_owned());
+        guard.insert(
+            "hatch_native_auth_device".to_owned(),
+            "cdp_dev_1".to_owned(),
+        );
     }
 
     // Poll #2 automatically captures the 4 cookies, seals them into SQLite, and returns Completed!
-    let poll2 = hub.poll_oauth_login(&ch_cdp.session_id).await.expect("poll 2");
+    let poll2 = hub
+        .poll_oauth_login(&ch_cdp.session_id)
+        .await
+        .expect("poll 2");
     let OAuthPollStatus::Completed { account: cdp_acc } = poll2 else {
         panic!("expected Completed from interactive CDP poll, got {poll2:?}");
     };
@@ -947,7 +972,10 @@ async fn llm_gateway_muse_cookie_paste_interactive_cdp_capture_and_session_renew
     let parsed_creds = parse_accounts(lease.access_token.expose());
     assert_eq!(parsed_creds.len(), 1);
     assert_eq!(
-        parsed_creds[0].cookies.get("hatch_sess").map(String::as_str),
+        parsed_creds[0]
+            .cookies
+            .get("hatch_sess")
+            .map(String::as_str),
         Some("sess_rotated_99")
     );
     assert_eq!(parsed_creds[0].vm_id.as_deref(), Some("vm_muse_777"));
@@ -1119,7 +1147,10 @@ async fn llm_gateway_pool_detail_and_model_crud_lifecycle() {
     assert_eq!(updated.model, "gpt-5.6-terra");
     assert_eq!(updated.display_name, "Codex Terra Primary");
     assert_eq!(updated.base_url, None);
-    assert_eq!(updated.tags, vec!["chat".to_owned(), "reasoning".to_owned()]);
+    assert_eq!(
+        updated.tags,
+        vec!["chat".to_owned(), "reasoning".to_owned()]
+    );
     assert_eq!(updated.reasoning_effort.as_deref(), Some("medium"));
     assert_eq!(updated.max_tokens, Some(16384));
     assert!(!updated.enabled);
@@ -1149,10 +1180,11 @@ async fn llm_gateway_pool_detail_and_model_crud_lifecycle() {
     .execute(db.pool())
     .await
     .expect("insert template");
-    let tpl_id: i64 = sqlx::query_scalar("SELECT id FROM agent_templates WHERE key = 'tpl_voice_1'")
-        .fetch_one(db.pool())
-        .await
-        .expect("template id");
+    let tpl_id: i64 =
+        sqlx::query_scalar("SELECT id FROM agent_templates WHERE key = 'tpl_voice_1'")
+            .fetch_one(db.pool())
+            .await
+            .expect("template id");
     sqlx::query(
         "INSERT INTO template_provider_bindings (template_id, provider_type, provider_source, provider_id, created_at, updated_at) \
          VALUES (?, 'llm', 'database', ?, 0, 0)",

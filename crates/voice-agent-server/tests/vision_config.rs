@@ -37,7 +37,10 @@ tags=["chat", "vision"]
     )
     .unwrap();
     assert_eq!(config.providers.llm.instances.len(), 2);
-    assert_eq!(config.providers.llm.instances["two"].openai().model, "model-b");
+    assert_eq!(
+        config.providers.llm.instances["two"].openai().model,
+        "model-b"
+    );
     assert!(config.validate().is_ok());
     assert!(!format!("{config:?}").contains("secret-a"));
 }

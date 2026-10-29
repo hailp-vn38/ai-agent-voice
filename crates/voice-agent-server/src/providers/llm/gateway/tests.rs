@@ -568,7 +568,10 @@ admin_token = "gw-draft-test-token"
     };
     let orch_codex = resolved_codex.to_orchestrator_provider();
     let ProviderAuth::CustomExecutor(codex_exec) = &orch_codex.auth else {
-        panic!("expected ProviderAuth::CustomExecutor, got {:?}", orch_codex.auth);
+        panic!(
+            "expected ProviderAuth::CustomExecutor, got {:?}",
+            orch_codex.auth
+        );
     };
 
     let resolved_claude = ResolvedLlmProvider {
@@ -646,11 +649,11 @@ admin_token = "gw-draft-test-token"
 
 #[tokio::test]
 async fn llm_gateway_provider_executes_muse_chat_vision_image_video_and_rotates_on_quota() {
+    use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
+    use serde_json::{Value, json};
     use std::collections::VecDeque;
     use std::sync::Mutex;
     use std::time::Duration;
-    use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
-    use serde_json::{Value, json};
 
     use crate::providers::llm::{
         LlmCapabilityTag, LlmOperation, LlmOutput, ReferenceImage,
@@ -812,7 +815,9 @@ async fn llm_gateway_provider_executes_muse_chat_vision_image_video_and_rotates_
         .complete_oauth_login(
             &ch1.session_id,
             OAuthCallbackSubmission {
-                callback_url_or_code: "hatch_sess=s1; hatch_gw=g1; hatch_vml=v1; hatch_native_auth_device=d1".to_owned(),
+                callback_url_or_code:
+                    "hatch_sess=s1; hatch_gw=g1; hatch_vml=v1; hatch_native_auth_device=d1"
+                        .to_owned(),
                 state: None,
             },
         )
@@ -841,7 +846,9 @@ async fn llm_gateway_provider_executes_muse_chat_vision_image_video_and_rotates_
         .complete_oauth_login(
             &ch2.session_id,
             OAuthCallbackSubmission {
-                callback_url_or_code: "hatch_sess=s2; hatch_gw=g2; hatch_vml=v2; hatch_native_auth_device=d2".to_owned(),
+                callback_url_or_code:
+                    "hatch_sess=s2; hatch_gw=g2; hatch_vml=v2; hatch_native_auth_device=d2"
+                        .to_owned(),
                 state: None,
             },
         )
@@ -888,8 +895,8 @@ async fn llm_gateway_provider_executes_muse_chat_vision_image_video_and_rotates_
         cdp_port: Some(19222),
         headless: Some(true),
     };
-    let provider =
-        LlmGatewayProvider::with_hub_and_muse_engine(&cfg, Arc::clone(&hub), engine).expect("provider");
+    let provider = LlmGatewayProvider::with_hub_and_muse_engine(&cfg, Arc::clone(&hub), engine)
+        .expect("provider");
 
     assert!(provider.supports_tag(LlmCapabilityTag::Chat));
     assert!(provider.supports_tag(LlmCapabilityTag::Vision));
@@ -904,10 +911,19 @@ async fn llm_gateway_provider_executes_muse_chat_vision_image_video_and_rotates_
         })
         .await
         .expect("chat automatically fails over from acc1 (QuotaExceeded) to acc2");
-    assert_eq!(out_chat, LlmOutput::Text("Xin chào từ Muse Gateway!".to_owned()));
+    assert_eq!(
+        out_chat,
+        LlmOutput::Text("Xin chào từ Muse Gateway!".to_owned())
+    );
     let views = hub.list_accounts(Some(GatewayVendor::Muse)).await.unwrap();
-    let v1 = views.iter().find(|a| a.account_key == acc1.account_key).unwrap();
-    assert!(v1.cooldown_remaining_secs > 0, "acc1 must be in cooldown after QuotaExceeded");
+    let v1 = views
+        .iter()
+        .find(|a| a.account_key == acc1.account_key)
+        .unwrap();
+    assert!(
+        v1.cooldown_remaining_secs > 0,
+        "acc1 must be in cooldown after QuotaExceeded"
+    );
 
     // 3. ImageGeneration via LlmGatewayProvider (`pool:muse`)
     let out_img = provider
@@ -944,5 +960,3 @@ async fn llm_gateway_provider_executes_muse_chat_vision_image_video_and_rotates_
         LlmOutput::single_media(MP4_BYTES.to_vec(), "video/mp4")
     );
 }
-
-

@@ -83,8 +83,8 @@ const fn nano_voice_options() -> [VoiceOption; assets::NANO_VOICES.len()] {
     options
 }
 
-const fn all_voice_options()
--> [VoiceOption; assets::TURBO_VOICES.len() + assets::NANO_VOICES.len()] {
+const fn all_voice_options() -> [VoiceOption; assets::TURBO_VOICES.len() + assets::NANO_VOICES.len()]
+{
     let mut options = [VoiceOption {
         id: "",
         name: "",

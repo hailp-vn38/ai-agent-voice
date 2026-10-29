@@ -736,8 +736,7 @@ impl OAuthTokenBundle {
             return Err(GatewayError::InvalidTokenBundle);
         }
         let scope = format!("gateway_account:{account_key}");
-        let json_bytes =
-            serde_json::to_vec(self).map_err(|_| GatewayError::InvalidTokenBundle)?;
+        let json_bytes = serde_json::to_vec(self).map_err(|_| GatewayError::InvalidTokenBundle)?;
         let compact_b64 = URL_SAFE_NO_PAD.encode(&json_bytes);
         let secret_val = SecretValue::new(compact_b64);
         if !credentials::valid_input(&secret_val) {
@@ -756,8 +755,7 @@ impl OAuthTokenBundle {
         let scope = format!("gateway_account:{account_key}");
         let raw_ref = credentials::reference(&scope, Some(credential_json), None)
             .ok_or(GatewayError::CredentialInvalid)?;
-        let secret_ref =
-            SecretRef::parse(raw_ref).map_err(|_| GatewayError::CredentialInvalid)?;
+        let secret_ref = SecretRef::parse(raw_ref).map_err(|_| GatewayError::CredentialInvalid)?;
         let resolved = secret_resolver
             .resolve(&secret_ref)
             .map_err(|_| GatewayError::CredentialInvalid)?;

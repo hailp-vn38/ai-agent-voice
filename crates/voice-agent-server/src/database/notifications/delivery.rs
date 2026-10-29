@@ -551,14 +551,8 @@ impl DeviceNotifications {
         .execute(&mut *tx)
         .await?;
 
-        let expired = expire_or_schedule_retry(
-            &mut tx,
-            reminder_id,
-            attempts_used,
-            due_at_ms,
-            now,
-        )
-        .await?;
+        let expired =
+            expire_or_schedule_retry(&mut tx, reminder_id, attempts_used, due_at_ms, now).await?;
         let outcome = if expired {
             let revision = bump_schedule_revision(&mut tx, device_row_id).await?;
             FailAttemptOutcome {
@@ -856,7 +850,9 @@ impl DeviceNotifications {
                       AND a.status = 'claimed' \
                 )",
             );
-            qb.build_query_scalar().fetch_one(self.database.pool()).await?
+            qb.build_query_scalar()
+                .fetch_one(self.database.pool())
+                .await?
         };
 
         let min_unnotified_due: Option<i64> = sqlx::query_scalar(

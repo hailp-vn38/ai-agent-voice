@@ -343,7 +343,9 @@ impl LlmFactory for OpenAiFactory {
         if options.gateway_binding.is_some() {
             return Ok(Arc::new(
                 LlmGatewayProvider::from_openai_config(options).map_err(|_| {
-                    ProviderLoadError::Provider("OpenAI gateway provider initialization failed".into())
+                    ProviderLoadError::Provider(
+                        "OpenAI gateway provider initialization failed".into(),
+                    )
                 })?,
             ));
         }

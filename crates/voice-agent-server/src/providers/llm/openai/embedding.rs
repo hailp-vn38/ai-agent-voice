@@ -6,7 +6,10 @@ use crate::providers::llm::{LlmError, LlmOutput};
 use super::provider::ConfiguredOpenAiLlm;
 
 impl ConfiguredOpenAiLlm {
-    pub(super) async fn create_embeddings(&self, inputs: Vec<String>) -> Result<LlmOutput, LlmError> {
+    pub(super) async fn create_embeddings(
+        &self,
+        inputs: Vec<String>,
+    ) -> Result<LlmOutput, LlmError> {
         let api_key = self.ensure_api_key()?;
         if inputs.is_empty() || inputs.iter().any(|s| s.trim().is_empty()) {
             return Err(LlmError::Rejected);

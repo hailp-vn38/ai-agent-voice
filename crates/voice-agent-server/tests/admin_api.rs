@@ -4787,7 +4787,9 @@ async fn agent_reminders_join_current_assignment_and_scope_mutations() {
     );
     assert_eq!(
         client
-            .put(format!("{base}/api/admin/system/assistant-device/reminder-target"))
+            .put(format!(
+                "{base}/api/admin/system/assistant-device/reminder-target"
+            ))
             .bearer_auth("admin-test-token")
             .json(&serde_json::json!({"session_id":"non-existent-session","device_id":"agg-two"}))
             .send()

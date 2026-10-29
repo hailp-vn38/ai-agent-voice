@@ -35,11 +35,9 @@ fn resolve_stored_secret(
     encrypted_credential: Option<&str>,
 ) -> Result<crate::database::secrets::SecretValue, ChannelDeliveryError> {
     let fallback = notification_channel_secret_env(channel.as_str()).map(str::to_owned);
-    let Some(raw_ref) = credentials::reference(
-        channel.credential_scope(),
-        encrypted_credential,
-        fallback,
-    ) else {
+    let Some(raw_ref) =
+        credentials::reference(channel.credential_scope(), encrypted_credential, fallback)
+    else {
         return Err(ChannelDeliveryError::InvalidConfig("missing_bot_token"));
     };
     let secret_ref = SecretRef::parse(raw_ref)
@@ -138,7 +136,8 @@ pub(super) async fn process_due_outbox(
             channel = attempt.channel.as_str(),
         );
         let send_started = std::time::Instant::now();
-        match tracing::Instrument::instrument(adapter.send(&target, &payload), delivery_span).await {
+        match tracing::Instrument::instrument(adapter.send(&target, &payload), delivery_span).await
+        {
             Ok(receipt) => {
                 tracing::info!(
                     subsystem = "notification",

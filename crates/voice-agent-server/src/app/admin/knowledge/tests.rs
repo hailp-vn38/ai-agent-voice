@@ -8,11 +8,7 @@ use reqwest::StatusCode;
 use serde_json::Value;
 use std::sync::Arc;
 
-async fn fixture_server() -> (
-    String,
-    std::path::PathBuf,
-    tokio::task::JoinHandle<()>,
-) {
+async fn fixture_server() -> (String, std::path::PathBuf, tokio::task::JoinHandle<()>) {
     let temp_root =
         std::env::temp_dir().join(format!("knowledge-search-test-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&temp_root).unwrap();
@@ -242,14 +238,15 @@ fn copy_dir_recursive(src: &std::path::Path, dst: &std::path::Path) {
 
 #[tokio::test]
 async fn knowledge_search_evaluates_real_vault_ranking_and_noise_filtering() {
-    let real_vault =
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data/wiki-vault");
+    let real_vault = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data/wiki-vault");
     if !real_vault.join("wiki/index.md").exists() {
         return;
     }
 
-    let temp_root =
-        std::env::temp_dir().join(format!("knowledge-real-vault-test-{}", uuid::Uuid::new_v4()));
+    let temp_root = std::env::temp_dir().join(format!(
+        "knowledge-real-vault-test-{}",
+        uuid::Uuid::new_v4()
+    ));
     let vault_copy = temp_root.join("vault");
     copy_dir_recursive(&real_vault, &vault_copy);
 

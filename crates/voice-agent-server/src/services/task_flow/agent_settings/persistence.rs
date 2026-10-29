@@ -63,7 +63,10 @@ pub struct AgentConfigOverride {
 impl AgentConfigOverride {
     /// Returns `Some(ValidCustomSubagentRef)` if `id` and `self` form a structurally valid
     /// Custom Sub-Agent with a supported `flow_id`, non-empty `description`, and non-empty `system_prompt`.
-    pub fn as_valid_custom_subagent<'a>(&'a self, id: &'a str) -> Option<ValidCustomSubagentRef<'a>> {
+    pub fn as_valid_custom_subagent<'a>(
+        &'a self,
+        id: &'a str,
+    ) -> Option<ValidCustomSubagentRef<'a>> {
         if !valid_custom_subagent_id(id) {
             return None;
         }
@@ -225,7 +228,10 @@ fn format_active_subagents_block(
         if !ovr.enabled || custom.flow_id != flow_id {
             continue;
         }
-        lines.push(format!("- `{}` (custom): {}", custom.id, custom.description));
+        lines.push(format!(
+            "- `{}` (custom): {}",
+            custom.id, custom.description
+        ));
     }
     let body = if lines.is_empty() {
         "(none enabled)".to_owned()
@@ -255,11 +261,8 @@ pub fn write_agent_prompts(
         let filename = format!("{}.md", spec.id);
         expected_files.insert(filename.clone());
         if spec.mode == AgentMode::Primary && !base_prompt.contains("<active_subagents>") {
-            let block = format_active_subagents_block(
-                spec.flow_id,
-                spec.default_subagents,
-                settings,
-            );
+            let block =
+                format_active_subagents_block(spec.flow_id, spec.default_subagents, settings);
             std::fs::write(prompts_dir.join(&filename), format!("{base_prompt}{block}"))?;
         } else {
             std::fs::write(prompts_dir.join(&filename), base_prompt)?;

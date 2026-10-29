@@ -9,10 +9,7 @@ use ort::{
 };
 use ring::rand::{SecureRandom, SystemRandom};
 
-use super::{
-    TtsError, check_cancelled, failure,
-    graphs::tensor,
-};
+use super::{TtsError, check_cancelled, failure, graphs::tensor};
 use crate::{
     audio::PcmF32Mono,
     providers::tts::{
@@ -527,8 +524,7 @@ impl NanoWorker {
         let log_s = extract_first_f32_tensor(&dur_out, Some(1))?[0];
         drop(dur_out);
 
-        let latent_frames =
-            latent_frames_for(log_s, config.flow_fps, self.options.speed_factor());
+        let latent_frames = latent_frames_for(log_s, config.flow_fps, self.options.speed_factor());
         let channels = config.latent_channels();
         let latent_len = channels * latent_frames;
 

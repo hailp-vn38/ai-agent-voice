@@ -103,11 +103,9 @@ impl WebAssistantAuth {
         connection: &Connection,
     ) {
         let mut store = self.tickets.lock().unwrap_or_else(|e| e.into_inner());
-        store.live_sessions.retain(|_, s| {
-            s.close
-                .upgrade()
-                .is_some_and(|token| !token.is_cancelled())
-        });
+        store
+            .live_sessions
+            .retain(|_, s| s.close.upgrade().is_some_and(|token| !token.is_cancelled()));
         store.live_sessions.insert(
             session_id,
             LiveSession {
@@ -119,12 +117,13 @@ impl WebAssistantAuth {
     }
     pub(crate) fn session_agent_key(&self, session_id: &str) -> Option<String> {
         let mut store = self.tickets.lock().unwrap_or_else(|e| e.into_inner());
-        store.live_sessions.retain(|_, s| {
-            s.close
-                .upgrade()
-                .is_some_and(|token| !token.is_cancelled())
-        });
-        store.live_sessions.get(session_id).map(|s| s.agent_key.clone())
+        store
+            .live_sessions
+            .retain(|_, s| s.close.upgrade().is_some_and(|token| !token.is_cancelled()));
+        store
+            .live_sessions
+            .get(session_id)
+            .map(|s| s.agent_key.clone())
     }
     pub(crate) fn bind_reminder_target(
         &self,
@@ -134,11 +133,9 @@ impl WebAssistantAuth {
         device_id: String,
     ) -> Result<u64, &'static str> {
         let mut store = self.tickets.lock().unwrap_or_else(|e| e.into_inner());
-        store.live_sessions.retain(|_, s| {
-            s.close
-                .upgrade()
-                .is_some_and(|token| !token.is_cancelled())
-        });
+        store
+            .live_sessions
+            .retain(|_, s| s.close.upgrade().is_some_and(|token| !token.is_cancelled()));
         let Some(live) = store.live_sessions.get(session_id) else {
             return Err("invalid_session");
         };

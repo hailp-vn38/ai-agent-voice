@@ -393,7 +393,11 @@ pub(super) async fn refresh_account(
     Path(account_key): Path<String>,
     request: Request,
 ) -> Response {
-    match state.llm_gateway_hub.refresh_account_now(&account_key).await {
+    match state
+        .llm_gateway_hub
+        .refresh_account_now(&account_key)
+        .await
+    {
         Ok(account) => Json(serde_json::json!({ "account": account })).into_response(),
         Err(err) => gateway_error(&request, err),
     }
@@ -458,9 +462,7 @@ fn gateway_error(request: &Request, err: GatewayError) -> Response {
         | GatewayError::ValidationFailed => error(request, StatusCode::BAD_REQUEST, code),
         GatewayError::OAuthSessionNotFound
         | GatewayError::AccountNotFound
-        | GatewayError::PoolModelNotFound => {
-            error(request, StatusCode::NOT_FOUND, code)
-        }
+        | GatewayError::PoolModelNotFound => error(request, StatusCode::NOT_FOUND, code),
         GatewayError::OAuthSessionExpired => error(request, StatusCode::GONE, code),
         GatewayError::AccountInUse(providers) => (
             StatusCode::CONFLICT,

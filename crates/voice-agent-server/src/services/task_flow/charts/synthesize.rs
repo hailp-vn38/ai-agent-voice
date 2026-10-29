@@ -65,7 +65,11 @@ impl DeterministicRng {
         bytes.copy_from_slice(&digest[..8]);
         let seed = u64::from_le_bytes(bytes);
         Self {
-            state: if seed == 0 { 0x9E37_79B9_7F4A_7C15 } else { seed },
+            state: if seed == 0 {
+                0x9E37_79B9_7F4A_7C15
+            } else {
+                seed
+            },
         }
     }
 
@@ -97,9 +101,7 @@ fn validate_tag_str(tag: &str, seen: &mut HashSet<String>) -> Result<String, Cha
     {
         return Err(ChartError::Coded {
             code: "invalid_candle_tag",
-            message: format!(
-                "Candle tag '{trimmed}' must match ^[a-zA-Z0-9_-]{{1,40}}$"
-            ),
+            message: format!("Candle tag '{trimmed}' must match ^[a-zA-Z0-9_-]{{1,40}}$"),
         });
     }
     if !seen.insert(trimmed.to_string()) {
@@ -244,7 +246,8 @@ pub fn synthesize_candles_from_swings(
         };
         let is_up = target_price >= prev_price;
         let total_delta = target_price - prev_price;
-        let avg_range = ((total_delta.abs() / (bars as f64)).max(target_price.abs() * 0.006)).max(0.5);
+        let avg_range =
+            ((total_delta.abs() / (bars as f64)).max(target_price.abs() * 0.006)).max(0.5);
         let mut rng = DeterministicRng::from_seed(chart_id, leg_idx);
 
         let swing_tag = match swing.tag.as_deref() {
@@ -360,7 +363,9 @@ pub fn synthesize_candles_from_swings(
                     candles[i2].close = round2(fvg_top + gap_half);
                 }
                 candles[i2].low = fvg_top;
-                candles[i2].high = candles[i2].high.max(candles[i2].open.max(candles[i2].close));
+                candles[i2].high = candles[i2]
+                    .high
+                    .max(candles[i2].open.max(candles[i2].close));
 
                 // Middle impulse candle bridges the entire gap
                 candles[i1].open = candles[i0].close;
@@ -379,7 +384,9 @@ pub fn synthesize_candles_from_swings(
                 if candles[i0].close < fvg_top {
                     candles[i0].close = fvg_top;
                 }
-                candles[i0].high = candles[i0].high.max(candles[i0].open.max(candles[i0].close));
+                candles[i0].high = candles[i0]
+                    .high
+                    .max(candles[i0].open.max(candles[i0].close));
 
                 candles[i2].high = fvg_bottom;
                 if candles[i2].open > fvg_bottom {
@@ -495,16 +502,10 @@ fn find_candle_by_selector<'a>(
 ) -> Result<&'a ChartCandle, ChartError> {
     if let Some(tag) = selector.get("tag").and_then(Value::as_str) {
         let trimmed = tag.trim();
-        if let Some(found) = candles
-            .iter()
-            .find(|c| c.tag.as_deref() == Some(trimmed))
-        {
+        if let Some(found) = candles.iter().find(|c| c.tag.as_deref() == Some(trimmed)) {
             return Ok(found);
         }
-        let valid_tags: Vec<&str> = candles
-            .iter()
-            .filter_map(|c| c.tag.as_deref())
-            .collect();
+        let valid_tags: Vec<&str> = candles.iter().filter_map(|c| c.tag.as_deref()).collect();
         return Err(ChartError::Coded {
             code: "unknown_candle_tag",
             message: format!(
@@ -622,11 +623,7 @@ pub fn resolve_drawing(
         })?
         .to_string();
 
-    let dtype = obj
-        .get("type")
-        .and_then(Value::as_str)
-        .unwrap_or("")
-        .trim();
+    let dtype = obj.get("type").and_then(Value::as_str).unwrap_or("").trim();
     let tone = obj
         .get("tone")
         .and_then(Value::as_str)

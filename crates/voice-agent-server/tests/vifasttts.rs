@@ -43,15 +43,15 @@ preload = true
     assert!(registration.assets.is_some());
     assert_eq!(registration.descriptor.capabilities.streaming, Some(false));
     assert_eq!(
-        registration.descriptor.capabilities.provider_output_sample_rates,
+        registration
+            .descriptor
+            .capabilities
+            .provider_output_sample_rates,
         Some(&[24_000][..])
     );
 
-    let canonical = provider_config::validate(
-        instance.adapter(),
-        &json!({"voice": "ngoc_huyen"}),
-    )
-    .unwrap();
+    let canonical =
+        provider_config::validate(instance.adapter(), &json!({"voice": "ngoc_huyen"})).unwrap();
     let value: serde_json::Value = serde_json::from_str(&canonical).unwrap();
     assert_eq!(value["language"], "vi-VN");
     assert_eq!(value["speed_percent"], 100);
@@ -94,12 +94,20 @@ fn vifasttts_runtime_plan_excludes_preload_and_shares_pool_across_same_speed() {
     let faster = plan(120, false);
 
     assert_eq!(
-        default.resource_key("artifact", [1; 32], None, 2, 1).unwrap(),
-        preloaded.resource_key("artifact", [1; 32], None, 2, 1).unwrap()
+        default
+            .resource_key("artifact", [1; 32], None, 2, 1)
+            .unwrap(),
+        preloaded
+            .resource_key("artifact", [1; 32], None, 2, 1)
+            .unwrap()
     );
     assert_ne!(
-        default.resource_key("artifact", [1; 32], None, 2, 1).unwrap(),
-        faster.resource_key("artifact", [1; 32], None, 2, 1).unwrap()
+        default
+            .resource_key("artifact", [1; 32], None, 2, 1)
+            .unwrap(),
+        faster
+            .resource_key("artifact", [1; 32], None, 2, 1)
+            .unwrap()
     );
 }
 
@@ -112,7 +120,10 @@ fn vifasttts_chunk_text_and_pause_seconds_follow_upstream_rules() {
     assert_eq!(pause_seconds("Xin chào,"), 0.08);
     assert_eq!(pause_seconds("Xin chào"), 0.05);
 
-    let split = chunk_text("Câu một khá dài. Câu hai cũng khá dài, nhưng có dấu phẩy; và tiếp tục.", 25);
+    let split = chunk_text(
+        "Câu một khá dài. Câu hai cũng khá dài, nhưng có dấu phẩy; và tiếp tục.",
+        25,
+    );
     assert!(split.len() >= 3);
     assert!(split.iter().all(|c| c.chars().count() <= 25));
 }
@@ -124,13 +135,7 @@ fn vifasttts_syllable_parser_handles_tones_qu_gi_diphthongs_and_short_a() {
     // "xin": onset=X(12), medial=NONE(0), nucleus=I(5), coda=N(2), tone=NGANG(0), boundary=WORD(1), punct=NONE(0)
     // "chào.": onset=CH(14), medial=NONE(0), nucleus=A(0), coda=W(10), tone=HUYEN(1), boundary=SENTENCE(3), punct=PERIOD(2)
     let ids = features_from_text("Xin chào.");
-    assert_eq!(
-        ids,
-        vec![
-            [12, 0, 5, 2, 0, 1, 0],
-            [14, 0, 0, 10, 1, 3, 2],
-        ]
-    );
+    assert_eq!(ids, vec![[12, 0, 5, 2, 0, 1, 0], [14, 0, 0, 10, 1, 3, 2],]);
 
     // "quốc qua quyển" -> onset=Q(24)
     // "quốc": Q(24), NONE(0), UÔ(12), C(7), SAC(2), WORD(1), NONE(0)
@@ -166,10 +171,10 @@ fn vifasttts_syllable_parser_handles_tones_qu_gi_diphthongs_and_short_a() {
     assert_eq!(
         vowel_ids,
         vec![
-            [5, 1, 5, 0, 0, 1, 0],   // tuy: T(5), W(1), I(5), NONE(0)
-            [4, 0, 9, 9, 0, 1, 0],   // vui: V(4), NONE(0), U(9), J(9)
-            [5, 0, 1, 9, 0, 1, 0],   // tay: T(5), NONE(0), Ă(1), J(9)
-            [5, 0, 0, 9, 0, 3, 3],   // tai?: T(5), NONE(0), A(0), J(9), NGANG(0), SENTENCE(3), QUESTION(3)
+            [5, 1, 5, 0, 0, 1, 0], // tuy: T(5), W(1), I(5), NONE(0)
+            [4, 0, 9, 9, 0, 1, 0], // vui: V(4), NONE(0), U(9), J(9)
+            [5, 0, 1, 9, 0, 1, 0], // tay: T(5), NONE(0), Ă(1), J(9)
+            [5, 0, 0, 9, 0, 3, 3], // tai?: T(5), NONE(0), A(0), J(9), NGANG(0), SENTENCE(3), QUESTION(3)
         ]
     );
 }
@@ -251,7 +256,10 @@ fn vifasttts_provider_validates_diagnostic_requests_and_emits_60ms_chunks() {
             license: license.clone(),
         },
     );
-    assert!(matches!(missing_res, Err(TtsError::IncompatibleContract(_))));
+    assert!(matches!(
+        missing_res,
+        Err(TtsError::IncompatibleContract(_))
+    ));
 
     std::fs::write(&acoustic, b"dummy").unwrap();
     std::fs::write(&vocoder, b"dummy").unwrap();
@@ -321,7 +329,10 @@ fn vifasttts_provider_validates_diagnostic_requests_and_emits_60ms_chunks() {
         Ok(())
     })
     .unwrap();
-    assert_eq!(chunks, vec![(24_000, 1_440), (24_000, 1_440), (24_000, 120)]);
+    assert_eq!(
+        chunks,
+        vec![(24_000, 1_440), (24_000, 1_440), (24_000, 120)]
+    );
 
     // Cancellation stops chunk emission immediately
     let mut cancelled_chunks = 0;
@@ -366,10 +377,13 @@ fn vifasttts_loads_local_onnx_models_and_synthesizes_24khz_pcm() {
 
     let mut chunks = Vec::new();
     provider
-        .synthesize_stream("Xin chào bạn, hôm nay thời tiết rất đẹp.", &mut |pcm| {
-            chunks.push(pcm);
-            Ok(())
-        })
+        .synthesize_stream(
+            "Xin chào bạn, hôm nay thời tiết rất đẹp.",
+            &mut |pcm| {
+                chunks.push(pcm);
+                Ok(())
+            },
+        )
         .expect("synthesize a Vietnamese smoke utterance");
     assert!(!chunks.is_empty());
     assert!(chunks.iter().all(|pcm| pcm.sample_rate_hz() == 24_000));

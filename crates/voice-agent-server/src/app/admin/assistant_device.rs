@@ -146,7 +146,9 @@ pub(super) async fn put_reminder_target(
     };
     let device = match crate::database::devices::get_device_by(db, &input.device_id).await {
         Ok(d) => d,
-        Err(sqlx::Error::RowNotFound) => return error(&request, StatusCode::NOT_FOUND, "not_found"),
+        Err(sqlx::Error::RowNotFound) => {
+            return error(&request, StatusCode::NOT_FOUND, "not_found");
+        }
         Err(e) => return sql_error(&request, &e),
     };
     if device.kind != "physical" || device.enabled != 1 || device.agent_key != session_agent_key {

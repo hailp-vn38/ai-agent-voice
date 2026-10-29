@@ -9,13 +9,11 @@ use tokio::sync::broadcast::error::RecvError;
 
 #[allow(clippy::result_large_err)]
 fn notification_hub(state: &AppState, req: &Request) -> Result<Arc<NotificationHub>, Response> {
-    state.notification_hub.as_ref().cloned().ok_or_else(|| {
-        error(
-            req,
-            StatusCode::SERVICE_UNAVAILABLE,
-            "database_unavailable",
-        )
-    })
+    state
+        .notification_hub
+        .as_ref()
+        .cloned()
+        .ok_or_else(|| error(req, StatusCode::SERVICE_UNAVAILABLE, "database_unavailable"))
 }
 
 fn hub_error(req: &Request, err: NotificationHubError) -> Response {

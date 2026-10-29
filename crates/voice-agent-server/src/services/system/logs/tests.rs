@@ -15,11 +15,7 @@ fn span_correlation_and_subsystem_inheritance_from_tracing_layer() {
         );
         let _session_guard = session_span.enter();
 
-        let turn_span = tracing::info_span!(
-            "voice_turn",
-            turn_id = 7_u64,
-            generation = 2_u64,
-        );
+        let turn_span = tracing::info_span!("voice_turn", turn_id = 7_u64, generation = 2_u64,);
         let _turn_guard = turn_span.enter();
 
         tracing::info!(
@@ -42,8 +38,14 @@ fn span_correlation_and_subsystem_inheritance_from_tracing_layer() {
     assert_eq!(entry.message, "TTS synthesis ended");
     assert_eq!(entry.outcome.as_deref(), Some("success"));
     assert_eq!(entry.duration_ms, Some(185));
-    assert_eq!(entry.correlation.session_id.as_deref(), Some("sess-alpha-01"));
-    assert_eq!(entry.correlation.agent_key.as_deref(), Some("assistant_may"));
+    assert_eq!(
+        entry.correlation.session_id.as_deref(),
+        Some("sess-alpha-01")
+    );
+    assert_eq!(
+        entry.correlation.agent_key.as_deref(),
+        Some("assistant_may")
+    );
     assert_eq!(entry.correlation.device_id, Some(42));
     assert_eq!(entry.correlation.turn_id, Some(7));
     assert_eq!(entry.correlation.generation, Some(2));
@@ -97,8 +99,14 @@ fn redacts_sensitive_keys_bearer_tokens_and_truncates_oversized_strings() {
         Some(&serde_json::json!("[REDACTED]"))
     );
     // Token counters and boolean indicators are preserved intact.
-    assert_eq!(entry.fields.get("input_tokens"), Some(&serde_json::json!(512)));
-    assert_eq!(entry.fields.get("output_tokens"), Some(&serde_json::json!(128)));
+    assert_eq!(
+        entry.fields.get("input_tokens"),
+        Some(&serde_json::json!(512))
+    );
+    assert_eq!(
+        entry.fields.get("output_tokens"),
+        Some(&serde_json::json!(128))
+    );
     assert_eq!(
         entry.fields.get("has_saved_token"),
         Some(&serde_json::json!(true))

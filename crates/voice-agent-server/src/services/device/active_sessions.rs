@@ -138,7 +138,12 @@ impl ActiveDeviceSessions {
             .collect()
     }
 
-    pub fn set_in_flight_reminder(&self, device: i64, session_id: &str, attempt_id: String) -> bool {
+    pub fn set_in_flight_reminder(
+        &self,
+        device: i64,
+        session_id: &str,
+        attempt_id: String,
+    ) -> bool {
         let mut entries = self.entries.lock().unwrap();
         let Some(session) = entries.get_mut(&device).filter(|s| {
             !s.close.is_cancelled()

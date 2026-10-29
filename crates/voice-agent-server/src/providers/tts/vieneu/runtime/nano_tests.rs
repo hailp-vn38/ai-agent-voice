@@ -64,7 +64,11 @@ fn trim_and_fade_handles_short_and_padded_waveforms_safely() {
     let short = vec![0.5_f32, -0.5, 0.25, -0.25];
     let out_short = trim_and_fade(&short, 24_000);
     assert_eq!(out_short.len(), 4);
-    assert!(out_short.iter().all(|v| v.is_finite() && (-1.0..=1.0).contains(v)));
+    assert!(
+        out_short
+            .iter()
+            .all(|v| v.is_finite() && (-1.0..=1.0).contains(v))
+    );
 
     // 100ms leading silence + 100ms active signal + 100ms trailing silence at 24kHz
     let mut padded = vec![0.0_f32; 2_400];

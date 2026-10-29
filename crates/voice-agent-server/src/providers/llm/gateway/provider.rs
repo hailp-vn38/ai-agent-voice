@@ -17,8 +17,8 @@ use crate::{
         LlmFactory, ProviderLoadError,
         llm::{
             LlmCapabilityTag, LlmError, LlmEvent, LlmEventStream, LlmOperation, LlmOutput,
-            LlmProvider, LlmRequest, MAX_REFERENCE_IMAGES, ReferenceImage,
-            capability_tags_support, collect_chat_stream, effective_capability_tags,
+            LlmProvider, LlmRequest, MAX_REFERENCE_IMAGES, ReferenceImage, capability_tags_support,
+            collect_chat_stream, effective_capability_tags,
         },
     },
     services::llm_gateway::{
@@ -94,8 +94,10 @@ fn default_tags_for_config(config: &LlmGatewayConfig) -> Vec<LlmCapabilityTag> {
     {
         return effective_capability_tags(Some(tags));
     }
-    if matches!(&config.gateway_binding, GatewayBinding::Pool(GatewayVendor::Muse))
-        || config.model.trim().starts_with("muse-")
+    if matches!(
+        &config.gateway_binding,
+        GatewayBinding::Pool(GatewayVendor::Muse)
+    ) || config.model.trim().starts_with("muse-")
     {
         return vec![
             LlmCapabilityTag::Chat,
@@ -144,9 +146,7 @@ fn report_muse_failure_to_hub(
                 },
             );
         }
-        WorkflowFailure::Rejected(_)
-        | WorkflowFailure::Timeout(_)
-        | WorkflowFailure::Cdp(_) => {}
+        WorkflowFailure::Rejected(_) | WorkflowFailure::Timeout(_) | WorkflowFailure::Cdp(_) => {}
     }
     failure.into_llm_error()
 }
@@ -174,10 +174,7 @@ impl LlmGatewayProvider {
         Self::with_hub(config, SharedGatewayHub::global())
     }
 
-    pub fn with_hub(
-        config: &LlmGatewayConfig,
-        hub: Arc<LlmGatewayHub>,
-    ) -> Result<Self, LlmError> {
+    pub fn with_hub(config: &LlmGatewayConfig, hub: Arc<LlmGatewayHub>) -> Result<Self, LlmError> {
         Self::with_hub_and_adapter(config, hub, ADAPTER_NAME, None)
     }
 
@@ -625,14 +622,10 @@ impl LlmGatewayProvider {
                     let can_failover = is_pool
                         && is_retryable_muse_failure(&failure)
                         && attempt + 1 < max_attempts;
-                    let err = report_muse_failure_to_hub(
-                        &self.hub,
-                        &current_lease.account_key,
-                        failure,
-                    );
+                    let err =
+                        report_muse_failure_to_hub(&self.hub, &current_lease.account_key, failure);
                     if can_failover
-                        && let Ok(next_lease) =
-                            self.hub.acquire_lease(&self.config.gateway_binding)
+                        && let Ok(next_lease) = self.hub.acquire_lease(&self.config.gateway_binding)
                     {
                         current_lease = next_lease;
                         continue;

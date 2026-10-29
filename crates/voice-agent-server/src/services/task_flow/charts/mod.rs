@@ -30,10 +30,7 @@ const MAX_DRAWINGS_PER_CHART: usize = 50;
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum ChartError {
     #[error("{message}")]
-    Coded {
-        code: &'static str,
-        message: String,
-    },
+    Coded { code: &'static str, message: String },
 }
 
 impl ChartError {
@@ -76,7 +73,11 @@ pub enum ChartDrawing {
         tone: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
         style: Option<String>,
-        #[serde(default, skip_serializing_if = "Option::is_none", rename = "sourceSpec")]
+        #[serde(
+            default,
+            skip_serializing_if = "Option::is_none",
+            rename = "sourceSpec"
+        )]
         source_spec: Option<Value>,
     },
     #[serde(rename = "trend-line")]
@@ -91,7 +92,11 @@ pub enum ChartDrawing {
         style: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
         width: Option<u8>,
-        #[serde(default, skip_serializing_if = "Option::is_none", rename = "sourceSpec")]
+        #[serde(
+            default,
+            skip_serializing_if = "Option::is_none",
+            rename = "sourceSpec"
+        )]
         source_spec: Option<Value>,
     },
     #[serde(rename = "price-zone")]
@@ -103,7 +108,11 @@ pub enum ChartDrawing {
         label: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
         tone: Option<String>,
-        #[serde(default, skip_serializing_if = "Option::is_none", rename = "sourceSpec")]
+        #[serde(
+            default,
+            skip_serializing_if = "Option::is_none",
+            rename = "sourceSpec"
+        )]
         source_spec: Option<Value>,
     },
     #[serde(rename = "text")]
@@ -113,7 +122,11 @@ pub enum ChartDrawing {
         text: String,
         #[serde(skip_serializing_if = "Option::is_none")]
         tone: Option<String>,
-        #[serde(default, skip_serializing_if = "Option::is_none", rename = "sourceSpec")]
+        #[serde(
+            default,
+            skip_serializing_if = "Option::is_none",
+            rename = "sourceSpec"
+        )]
         source_spec: Option<Value>,
     },
 }
@@ -186,9 +199,7 @@ fn validate_chart_path(
         .strip_suffix(".chart.json")
         .ok_or_else(|| ChartError::Coded {
             code: "invalid_chart_path",
-            message: format!(
-                "chart_path '{raw_path}' must match 'charts/<slug>.chart.json'"
-            ),
+            message: format!("chart_path '{raw_path}' must match 'charts/<slug>.chart.json'"),
         })?;
     if slug.is_empty()
         || slug.len() > 96
@@ -198,9 +209,7 @@ fn validate_chart_path(
     {
         return Err(ChartError::Coded {
             code: "invalid_chart_path",
-            message: format!(
-                "Chart slug '{slug}' must match ^[a-zA-Z0-9_-]{{1,96}}$"
-            ),
+            message: format!("Chart slug '{slug}' must match ^[a-zA-Z0-9_-]{{1,96}}$"),
         });
     }
 
@@ -353,16 +362,15 @@ pub fn execute_chart_write(vault_dir: &Path, args: Value) -> Result<Value, Chart
         .to_string();
 
     let candles = if has_swings {
-        let swings: Vec<SwingSpec> = serde_json::from_value(args["swings"].clone()).map_err(|e| {
-            ChartError::Coded {
+        let swings: Vec<SwingSpec> =
+            serde_json::from_value(args["swings"].clone()).map_err(|e| ChartError::Coded {
                 code: "invalid_swings",
                 message: format!("Invalid 'swings' array: {e}"),
-            }
-        })?;
+            })?;
         synthesize_candles_from_swings(&chart_id, &swings, &timeframe)?
     } else if has_candles {
-        let explicit: Vec<ExplicitCandleInput> =
-            serde_json::from_value(args["candles"].clone()).map_err(|e| ChartError::Coded {
+        let explicit: Vec<ExplicitCandleInput> = serde_json::from_value(args["candles"].clone())
+            .map_err(|e| ChartError::Coded {
                 code: "invalid_candles",
                 message: format!("Invalid 'candles' array: {e}"),
             })?;

@@ -98,7 +98,10 @@ fn nano_config_and_voice_registry_validate_pinned_profile() {
 
     let mut without_model_type =
         serde_json::from_slice::<serde_json::Value>(&nano_config_json()).unwrap();
-    without_model_type.as_object_mut().unwrap().remove("model_type");
+    without_model_type
+        .as_object_mut()
+        .unwrap()
+        .remove("model_type");
     let cfg_without_model_type =
         NanoModelConfig::parse(&serde_json::to_vec(&without_model_type).unwrap()).unwrap();
     assert_eq!(cfg_without_model_type.model_type, "vieneu_v3_nano");

@@ -424,11 +424,12 @@ fn load_nano_constants(
         .map_err(|_| invalid_nano("missing null_style in constants.npz"))?;
 
     let spk_shape = null_spk.shape();
-    let valid_spk_shape =
-        spk_shape == [NANO_SPEAKER_DIM] || spk_shape == [1, NANO_SPEAKER_DIM];
+    let valid_spk_shape = spk_shape == [NANO_SPEAKER_DIM] || spk_shape == [1, NANO_SPEAKER_DIM];
     let spk_vec: Vec<f32> = null_spk.iter().copied().collect();
     if !valid_spk_shape || spk_vec.iter().any(|value| !value.is_finite()) {
-        return Err(invalid_nano("null_spk shape or values differ from contract"));
+        return Err(invalid_nano(
+            "null_spk shape or values differ from contract",
+        ));
     }
 
     let style_shape = null_style.shape();

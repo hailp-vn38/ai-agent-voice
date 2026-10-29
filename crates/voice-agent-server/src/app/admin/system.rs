@@ -86,7 +86,8 @@ pub(super) async fn stream_logs(State(state): State<AppState>, request: Request)
             };
             match item {
                 Some(LogStreamItem::Entry(entry)) => {
-                    let data = serde_json::to_string(entry.as_ref()).unwrap_or_else(|_| "{}".into());
+                    let data =
+                        serde_json::to_string(entry.as_ref()).unwrap_or_else(|_| "{}".into());
                     Some((
                         Ok(Event::default().event("log_entry").data(data)),
                         (sub, stopping, false),

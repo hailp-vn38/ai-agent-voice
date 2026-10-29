@@ -39,11 +39,9 @@ preload = true
     let value: serde_json::Value = serde_json::from_str(&canonical).unwrap();
     assert_eq!(value["model"], "vieneu_v3_turbo_fp32");
     assert_eq!(value["language"], "vi-VN");
-    let nano_canonical = provider_config::validate(
-        instance.adapter(),
-        &json!({"model":"vieneu_v3_nano_fp32"}),
-    )
-    .unwrap();
+    let nano_canonical =
+        provider_config::validate(instance.adapter(), &json!({"model":"vieneu_v3_nano_fp32"}))
+            .unwrap();
     let nano_value: serde_json::Value = serde_json::from_str(&nano_canonical).unwrap();
     assert_eq!(nano_value["model"], "vieneu_v3_nano_fp32");
     assert_eq!(nano_value["voice"], "minh_quan");
@@ -207,13 +205,11 @@ fn native_background_pool_runs_successive_jobs() {
 fn retained_native_worker_streams_switches_voice_and_recovers_after_cancellation() {
     let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
     std::env::set_current_dir(&root).unwrap();
-    let assets =
-        voice_agent_server::providers::tts::vieneu::assets::resolve_assets().unwrap();
-    let frontend =
-        voice_agent_server::providers::tts::vieneu::text::VieneuTextFrontend::load(
-            &assets.g2p_dictionary,
-        )
-        .unwrap();
+    let assets = voice_agent_server::providers::tts::vieneu::assets::resolve_assets().unwrap();
+    let frontend = voice_agent_server::providers::tts::vieneu::text::VieneuTextFrontend::load(
+        &assets.g2p_dictionary,
+    )
+    .unwrap();
     let contract =
         voice_agent_server::providers::tts::vieneu::contract::VieneuContract::load(&assets)
             .unwrap();
@@ -331,8 +327,7 @@ fn retained_nano_worker_synthesizes_24khz_switches_voice_and_recovers_after_canc
 
     let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
     std::env::set_current_dir(&root).unwrap();
-    let assets =
-        voice_agent_server::providers::tts::vieneu::assets::resolve_nano_assets().unwrap();
+    let assets = voice_agent_server::providers::tts::vieneu::assets::resolve_nano_assets().unwrap();
     let contract =
         voice_agent_server::providers::tts::vieneu::contract::NanoContract::load(&assets).unwrap();
     assert_eq!(contract.config.sample_rate, 24_000);
@@ -402,4 +397,3 @@ fn retained_nano_worker_synthesizes_24khz_switches_voice_and_recovers_after_canc
         worker.reset().unwrap();
     }
 }
-

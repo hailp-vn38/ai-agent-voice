@@ -8,7 +8,7 @@ use uuid::Uuid;
 
 use super::cdp::{BrowserEngine, BrowserPage, CdpBrowserEngine, CdpError, CookieParam};
 use super::config::{
-    MuseAccountCredential, COOKIE_DOMAIN, NEW_THREAD_URL, SESSION_API_URL, SITE_URL,
+    COOKIE_DOMAIN, MuseAccountCredential, NEW_THREAD_URL, SESSION_API_URL, SITE_URL,
     VM_WAKE_API_URL,
 };
 
@@ -562,8 +562,7 @@ impl SharedMusePool {
                 Some(CheckoutPlan::OpenNew { account_idx }) => {
                     if let Err(kind) = self.ensure_account_warm(account_idx).await {
                         {
-                            let mut guard =
-                                self.inner.lock().unwrap_or_else(|e| e.into_inner());
+                            let mut guard = self.inner.lock().unwrap_or_else(|e| e.into_inner());
                             if let Some(acc) = guard.accounts.get_mut(account_idx) {
                                 acc.active_tabs = acc.active_tabs.saturating_sub(1);
                             }
@@ -726,9 +725,7 @@ impl Drop for TabLease {
         let page_to_close = {
             let mut guard = self.inner.lock().unwrap_or_else(|e| e.into_inner());
             if let Some(acc) = guard.accounts.get_mut(self.account_idx) {
-                if self.clean_return
-                    && !tab.stale
-                    && !matches!(acc.health, AccountHealth::Invalid)
+                if self.clean_return && !tab.stale && !matches!(acc.health, AccountHealth::Invalid)
                 {
                     acc.idle_tabs.push(tab);
                     None

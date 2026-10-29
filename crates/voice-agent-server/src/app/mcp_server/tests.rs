@@ -373,7 +373,10 @@ async fn knowledge_mcp_http_auth_read_write_and_external_client_compatibility() 
         .cloned()
         .unwrap(),
     );
-    let write_out = rw_service.call_tool(write_call).await.expect("call wiki_write_file");
+    let write_out = rw_service
+        .call_tool(write_call)
+        .await
+        .expect("call wiki_write_file");
     assert_ne!(write_out.is_error, Some(true));
     assert!(write_out.structured_content.is_some());
     rw_service.cancel().await.unwrap();
@@ -386,13 +389,14 @@ async fn knowledge_mcp_http_auth_read_write_and_external_client_compatibility() 
             .header("MCP-Protocol-Version", "2025-11-25")
             .json(&body)
     };
-    let ro_list: Value = post_ro(json!({"jsonrpc":"2.0","id":10,"method":"tools/list","params":{}}))
-        .send()
-        .await
-        .unwrap()
-        .json()
-        .await
-        .unwrap();
+    let ro_list: Value =
+        post_ro(json!({"jsonrpc":"2.0","id":10,"method":"tools/list","params":{}}))
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
     assert_eq!(
         ro_list["result"]["tools"].as_array().unwrap().len(),
         expected_ro_len
@@ -543,7 +547,10 @@ async fn admin_web_can_configure_knowledge_mcp_and_create_revoke_tokens_live() {
         .json()
         .await
         .unwrap();
-    let token_id = created_res["created_token"]["id"].as_str().unwrap().to_string();
+    let token_id = created_res["created_token"]["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
     let token_secret = created_res["created_token"]["token"]
         .as_str()
         .unwrap()

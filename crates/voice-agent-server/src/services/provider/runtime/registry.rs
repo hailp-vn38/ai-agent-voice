@@ -1154,9 +1154,10 @@ impl ProviderRuntimeManager {
     pub(super) fn drain_timeout(&self, version: &ProviderVersion, generation: u64) {
         let mut registry = self.registry.lock().expect("runtime registry poisoned");
         // Aliases copy their owner's generation, so fencing on the owner covers them.
-        let running = registry.entries.get(version).is_some_and(|entry| {
-            entry.generation == generation && entry.unload_running
-        });
+        let running = registry
+            .entries
+            .get(version)
+            .is_some_and(|entry| entry.generation == generation && entry.unload_running);
         if running {
             registry.quarantine(version);
         }

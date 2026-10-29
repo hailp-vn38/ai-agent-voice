@@ -76,7 +76,10 @@ fn chart_write_synthesizes_swings_fvg_tags_and_patterns_deterministically() {
 
     let out1 = execute_chart_write(&vault, args.clone()).expect("chart_write succeeds");
     assert_eq!(out1["chartId"], "bullish-ob-fvg-example");
-    assert_eq!(out1["chartPath"], "charts/bullish-ob-fvg-example.chart.json");
+    assert_eq!(
+        out1["chartPath"],
+        "charts/bullish-ob-fvg-example.chart.json"
+    );
     assert_eq!(out1["revision"], 1);
     assert_eq!(out1["drawingCount"], 5);
     assert_eq!(
@@ -85,7 +88,9 @@ fn chart_write_synthesizes_swings_fvg_tags_and_patterns_deterministically() {
     );
 
     // Auto-generated FVG tags must be present in taggedCandles
-    let tagged = out1["taggedCandles"].as_object().expect("taggedCandles map");
+    let tagged = out1["taggedCandles"]
+        .as_object()
+        .expect("taggedCandles map");
     assert!(tagged.contains_key("bos-peak-fvg-start"));
     assert!(tagged.contains_key("bos-peak-fvg-end"));
     assert!(tagged.contains_key("retest"));

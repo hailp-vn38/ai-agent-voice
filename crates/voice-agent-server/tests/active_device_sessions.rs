@@ -157,7 +157,10 @@ async fn reminder_two_phase_claim_reaper_fail_and_disconnect_lifecycle() {
 
     let now_ms = Arc::new(AtomicI64::new(1_800_000_000_000));
     let clock_ref = Arc::clone(&now_ms);
-    let repo = DeviceNotifications::with_clock(db.clone(), Arc::new(move || clock_ref.load(Ordering::SeqCst)));
+    let repo = DeviceNotifications::with_clock(
+        db.clone(),
+        Arc::new(move || clock_ref.load(Ordering::SeqCst)),
+    );
     let sessions = Arc::new(ActiveDeviceSessions::default());
     let coordinator = ReminderCoordinator::new(repo, Arc::clone(&sessions));
 
@@ -215,7 +218,13 @@ async fn reminder_two_phase_claim_reaper_fail_and_disconnect_lifecycle() {
             .unwrap()
     );
     let fail1 = coordinator
-        .fail_attempt(device_row_id, "sess-1", &rem.id, &attempt2, "output_unavailable")
+        .fail_attempt(
+            device_row_id,
+            "sess-1",
+            &rem.id,
+            &attempt2,
+            "output_unavailable",
+        )
         .await
         .unwrap()
         .unwrap();

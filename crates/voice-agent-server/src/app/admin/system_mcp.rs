@@ -182,7 +182,10 @@ fn attach_base_url(state: &AppState, headers: &HeaderMap, mut snap: Value) -> Va
     snap
 }
 
-pub(super) async fn knowledge_settings(State(state): State<AppState>, request: Request) -> Response {
+pub(super) async fn knowledge_settings(
+    State(state): State<AppState>,
+    request: Request,
+) -> Response {
     let Some(core) = state.get_or_init_knowledge_mcp() else {
         return error(
             &request,

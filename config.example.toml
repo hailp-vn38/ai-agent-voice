@@ -141,17 +141,6 @@ api_key = ""
 base_url = "https://api.openai.com/v1"
 model = "model-name"
 
-# Muse.ai LLM & Media provider via LLM Gateway + local Chromium CDP (Chat, Vision, Image, Video).
-# Log in or paste session cookies in Admin Web `/llm-gateway` (vendor = "muse"):
-# [providers.llm.instances.muse_primary]
-# adapter = "llm_gateway"
-# gateway_binding = "pool:muse"
-# model = "muse-chat"
-# timeout_ms = 120000
-# account_concurrency = 2
-# cdp_port = 19222
-# headless = true
-# tags = ["chat", "vision", "image", "video"]
 
 [providers.tts.instances.zerotts_maichi]
 adapter = "zerotts_onnx"

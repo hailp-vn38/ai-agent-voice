@@ -356,7 +356,10 @@ VALUES
         .await
         .expect_err("video-only LLM without chat tag should be rejected for voice template");
     assert!(
-        matches!(err, crate::database::writes::WriteError::Invalid("provider_capability_mismatch")),
+        matches!(
+            err,
+            crate::database::writes::WriteError::Invalid("provider_capability_mismatch")
+        ),
         "unexpected error: {err:?}"
     );
 }

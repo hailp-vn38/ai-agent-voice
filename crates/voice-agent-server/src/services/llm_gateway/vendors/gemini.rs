@@ -83,10 +83,7 @@ impl GeminiOAuthDriver {
         };
         let project_id = data
             .get("cloudaicompanionProject")
-            .and_then(|p| {
-                p.as_str()
-                    .or_else(|| p.get("id").and_then(Value::as_str))
-            })
+            .and_then(|p| p.as_str().or_else(|| p.get("id").and_then(Value::as_str)))
             .filter(|s| !s.trim().is_empty())
             .map(str::to_owned);
         let plan = data
@@ -298,8 +295,7 @@ impl OAuthVendorDriver for GeminiOAuthDriver {
             .as_deref()
             .filter(|s| !s.trim().is_empty())
             .map(str::to_owned);
-        let (discovered_project, plan) =
-            self.fetch_code_assist_context(&bundle.access_token).await;
+        let (discovered_project, plan) = self.fetch_code_assist_context(&bundle.access_token).await;
         let project_id = existing_project
             .clone()
             .or_else(|| discovered_project.clone());

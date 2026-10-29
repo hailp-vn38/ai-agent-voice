@@ -156,7 +156,10 @@ impl LlmProvider for ConfiguredOpenAiLlm {
                 prompt,
                 image_bytes,
                 mime_type,
-            } => self.complete_vision(&prompt, &image_bytes, &mime_type).await,
+            } => {
+                self.complete_vision(&prompt, &image_bytes, &mime_type)
+                    .await
+            }
             LlmOperation::ImageGeneration {
                 prompt,
                 width,

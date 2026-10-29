@@ -220,13 +220,11 @@ pub(crate) fn parse_codex_usage_payload(data: &Value) -> VendorQuotaSnapshot {
     }
 
     let spark_rl = unwrap_rate_limit_node(data.get("spark_rate_limit").or_else(|| {
-        by_limit_id
-            .and_then(Value::as_object)
-            .and_then(|map| {
-                map.iter()
-                    .find(|(k, _)| k.to_ascii_lowercase().contains("spark"))
-                    .map(|(_, v)| v)
-            })
+        by_limit_id.and_then(Value::as_object).and_then(|map| {
+            map.iter()
+                .find(|(k, _)| k.to_ascii_lowercase().contains("spark"))
+                .map(|(_, v)| v)
+        })
     }));
     if let Some(rl) = spark_rl {
         if let Some(w) = parse_codex_window(

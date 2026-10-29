@@ -208,7 +208,10 @@ fn descriptors_expose_only_user_configuration_and_typed_decoding_choices() {
     assert_eq!(edge.capabilities.languages.unwrap().len(), 142);
     assert_eq!(edge.capabilities.voices.unwrap().len(), 322);
     assert_eq!(edge.capabilities.languages.unwrap()[0].id, "vi-VN");
-    assert_eq!(edge.capabilities.voices.unwrap()[0].id, "vi-VN-HoaiMyNeural");
+    assert_eq!(
+        edge.capabilities.voices.unwrap()[0].id,
+        "vi-VN-HoaiMyNeural"
+    );
 }
 
 /// Every voice a local provider advertises is one it can actually load, because both come from the
@@ -264,11 +267,7 @@ fn asset_ownership_follows_whether_a_provider_loads_local_files() {
             owns_assets,
             !matches!(
                 adapter,
-                "openai"
-                    | "opencode_free"
-                    | "llm_gateway"
-                    | "chillaudio_ws"
-                    | "edge_tts"
+                "openai" | "opencode_free" | "llm_gateway" | "chillaudio_ws" | "edge_tts"
             ) && !adapter.starts_with("qualification_"),
             "{adapter}"
         );

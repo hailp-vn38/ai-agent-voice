@@ -54,7 +54,9 @@ impl ConfiguredOpenAiLlm {
             .or_else(|| value.get("audio"))
             .and_then(Value::as_str)
         {
-            let bytes = STANDARD.decode(b64.trim()).map_err(|_| LlmError::Rejected)?;
+            let bytes = STANDARD
+                .decode(b64.trim())
+                .map_err(|_| LlmError::Rejected)?;
             if bytes.is_empty() {
                 return Err(LlmError::Rejected);
             }

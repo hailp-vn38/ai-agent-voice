@@ -42,8 +42,7 @@ admin_token = "gateway-admin-token"
     let config: AppConfig = toml::from_str(&config_str).unwrap();
     let database = Database::connect(&config.database).await.unwrap();
     let pool = database.pool().clone();
-    let resolver: Arc<dyn SecretResolver> =
-        Arc::new(CredentialCipher::new(1, &[9u8; 32]).unwrap());
+    let resolver: Arc<dyn SecretResolver> = Arc::new(CredentialCipher::new(1, &[9u8; 32]).unwrap());
     let lifecycle = new_lifecycle(&config);
     let mut state = AppState::from_provider_set_with_database_resolver_and_shutdown(
         config,
@@ -126,7 +125,9 @@ async fn admin_llm_gateway_routes_and_provider_binding_lifecycle() {
     );
 
     let poll_resp = client
-        .post(format!("{base}/llm-gateway/oauth/sessions/{session_id}/poll"))
+        .post(format!(
+            "{base}/llm-gateway/oauth/sessions/{session_id}/poll"
+        ))
         .bearer_auth("gateway-admin-token")
         .json(&json!({}))
         .send()
@@ -210,10 +211,7 @@ async fn admin_llm_gateway_routes_and_provider_binding_lifecycle() {
     let quota_body: Value = quota_resp.json().await.unwrap();
     assert_eq!(quota_body["quota"]["account_key"], account_key);
     assert_eq!(quota_body["quota"]["limit_reached"], false);
-    assert_eq!(
-        quota_body["quota"]["windows"].as_array().unwrap().len(),
-        2
-    );
+    assert_eq!(quota_body["quota"]["windows"].as_array().unwrap().len(), 2);
 
     let list_quotas_resp = client
         .get(format!("{base}/llm-gateway/quotas?vendor=openai_codex"))
@@ -223,10 +221,7 @@ async fn admin_llm_gateway_routes_and_provider_binding_lifecycle() {
         .unwrap();
     assert_eq!(list_quotas_resp.status(), StatusCode::OK);
     let list_quotas_body: Value = list_quotas_resp.json().await.unwrap();
-    assert_eq!(
-        list_quotas_body["quotas"].as_array().unwrap().len(),
-        1
-    );
+    assert_eq!(list_quotas_body["quotas"].as_array().unwrap().len(), 1);
 
     // 4. Create an `openai` provider with Static API Key, then switch to `gateway_binding`
     let create_prov = client

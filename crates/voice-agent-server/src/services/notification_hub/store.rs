@@ -8,11 +8,9 @@ use super::types::{
 use crate::database::{
     Database,
     audit::{AuditOutcome, audit, audit_conflict},
-    credentials,
-     is_busy,
+    credentials, is_busy,
     secrets::{
-        SecretRef, SecretResolveError, SecretResolver, SecretValue,
-        notification_channel_secret_env,
+        SecretRef, SecretResolveError, SecretResolver, SecretValue, notification_channel_secret_env,
     },
 };
 use serde::{Deserialize, Serialize};
@@ -110,10 +108,7 @@ pub(super) struct ClaimedDeliveryAttempt {
     pub channel_enabled: bool,
 }
 
-fn row_to_item(
-    row: InboxRow,
-    deliveries: Vec<ChannelDeliveryStatusView>,
-) -> NotificationItemView {
+fn row_to_item(row: InboxRow, deliveries: Vec<ChannelDeliveryStatusView>) -> NotificationItemView {
     let topic = NotificationTopic::parse(&row.topic).unwrap_or(NotificationTopic::TaskCompleted);
     let severity = NotificationSeverity::parse(&row.severity).unwrap_or(NotificationSeverity::Info);
     let source_kind = row
@@ -237,7 +232,9 @@ pub(super) async fn publish_to_store(
 ) -> Result<(NotificationItemView, bool), NotificationHubError> {
     let title = truncate_utf8(&input.content.title, 512);
     if title.is_empty() {
-        return Err(NotificationHubError::InvalidInput("empty_notification_title"));
+        return Err(NotificationHubError::InvalidInput(
+            "empty_notification_title",
+        ));
     }
     let body = truncate_utf8(&input.content.body, 8192);
     let dedup_key = input
@@ -437,14 +434,12 @@ pub(super) async fn mark_read_in_store(
 ) -> Result<MarkReadOutput, NotificationHubError> {
     let now_ms = now_millis();
     let updated = if mark_all {
-        sqlx::query(
-            "UPDATE notifications_inbox SET is_read = 1, read_at_ms = ? WHERE is_read = 0",
-        )
-        .bind(now_ms)
-        .execute(db.pool())
-        .await
-        .map_err(map_sqlx)?
-        .rows_affected()
+        sqlx::query("UPDATE notifications_inbox SET is_read = 1, read_at_ms = ? WHERE is_read = 0")
+            .bind(now_ms)
+            .execute(db.pool())
+            .await
+            .map_err(map_sqlx)?
+            .rows_affected()
     } else if ids.is_empty() {
         0
     } else {
@@ -462,7 +457,10 @@ pub(super) async fn mark_read_in_store(
         for id in ids {
             q = q.bind(id);
         }
-        q.execute(db.pool()).await.map_err(map_sqlx)?.rows_affected()
+        q.execute(db.pool())
+            .await
+            .map_err(map_sqlx)?
+            .rows_affected()
     };
 
     let unread_count = count_unread(db).await?;
@@ -501,10 +499,7 @@ pub(super) async fn delete_inbox_in_store(
     })
 }
 
-fn has_env_fallback(
-    secret_resolver: &dyn SecretResolver,
-    channel: ExternalChannelKind,
-) -> bool {
+fn has_env_fallback(secret_resolver: &dyn SecretResolver, channel: ExternalChannelKind) -> bool {
     let Some(env_name) = notification_channel_secret_env(channel.as_str()) else {
         return false;
     };
@@ -675,8 +670,7 @@ pub(super) async fn update_settings_in_store(
         if zalo_recipient_id.is_empty() {
             return Err(NotificationHubError::InvalidInput("missing_recipient_id"));
         }
-        if zalo_encrypted.is_none()
-            && !has_env_fallback(secret_resolver, ExternalChannelKind::Zalo)
+        if zalo_encrypted.is_none() && !has_env_fallback(secret_resolver, ExternalChannelKind::Zalo)
         {
             return Err(NotificationHubError::InvalidInput("missing_bot_token"));
         }
@@ -687,8 +681,9 @@ pub(super) async fn update_settings_in_store(
         thread_id: update.telegram.thread_id,
     })
     .map_err(|_| NotificationHubError::InvalidInput("invalid_target_config"))?;
-    let tg_topics_json = serde_json::to_string(&dedup_topics(&update.telegram.subscribed_topics))
-        .map_err(|_| NotificationHubError::InvalidInput("invalid_subscribed_topics"))?;
+    let tg_topics_json =
+        serde_json::to_string(&dedup_topics(&update.telegram.subscribed_topics))
+            .map_err(|_| NotificationHubError::InvalidInput("invalid_subscribed_topics"))?;
 
     let zalo_target_json = serde_json::to_string(&ZaloTargetConfig {
         recipient_id: zalo_recipient_id,
@@ -932,15 +927,16 @@ pub(super) async fn complete_outbox_failure(
     Ok(())
 }
 
-pub(super) async fn purge_expired_notifications(db: &Database) -> Result<u64, NotificationHubError> {
-    let retention_days: i64 = sqlx::query_scalar(
-        "SELECT retention_days FROM notification_settings_state WHERE id = 1",
-    )
-    .fetch_optional(db.pool())
-    .await
-    .map_err(map_sqlx)?
-    .unwrap_or(30)
-    .clamp(1, 365);
+pub(super) async fn purge_expired_notifications(
+    db: &Database,
+) -> Result<u64, NotificationHubError> {
+    let retention_days: i64 =
+        sqlx::query_scalar("SELECT retention_days FROM notification_settings_state WHERE id = 1")
+            .fetch_optional(db.pool())
+            .await
+            .map_err(map_sqlx)?
+            .unwrap_or(30)
+            .clamp(1, 365);
 
     let cutoff_ms = now_millis() - retention_days * 86_400_000;
     let deleted = sqlx::query("DELETE FROM notifications_inbox WHERE created_at_ms < ?")

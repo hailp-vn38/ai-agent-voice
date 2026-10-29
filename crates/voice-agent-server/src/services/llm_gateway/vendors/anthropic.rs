@@ -109,8 +109,7 @@ pub(crate) fn parse_anthropic_usage_payload(data: &Value) -> VendorQuotaSnapshot
                     })
                     .collect::<Vec<_>>()
                     .join(" ");
-                if let Some(w) =
-                    parse_utilization_window(format!("Weekly {label} (7d)"), Some(val))
+                if let Some(w) = parse_utilization_window(format!("Weekly {label} (7d)"), Some(val))
                 {
                     windows.push(w);
                 }
@@ -130,10 +129,9 @@ pub(crate) fn parse_anthropic_usage_payload(data: &Value) -> VendorQuotaSnapshot
                             .or_else(|| m.get("id").and_then(Value::as_str))
                     })
                     .unwrap_or("Model");
-                if let Some(w) = parse_utilization_window(
-                    format!("Weekly {model_name} (7d)"),
-                    Some(limit),
-                ) {
+                if let Some(w) =
+                    parse_utilization_window(format!("Weekly {model_name} (7d)"), Some(limit))
+                {
                     windows.push(w);
                 }
             }

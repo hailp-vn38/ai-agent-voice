@@ -139,7 +139,10 @@ pub fn from_task_terminal(task: &TaskView) -> Option<NotificationInput> {
     }
 }
 
-pub fn from_schedule_triggered(schedule: &ScheduleView, spawned_task_id: &str) -> NotificationInput {
+pub fn from_schedule_triggered(
+    schedule: &ScheduleView,
+    spawned_task_id: &str,
+) -> NotificationInput {
     NotificationInput {
         dedup_key: Some(format!(
             "schedule_triggered:{}:{}",
@@ -148,7 +151,10 @@ pub fn from_schedule_triggered(schedule: &ScheduleView, spawned_task_id: &str) -
         content: NotificationContent {
             topic: NotificationTopic::ScheduleTriggered,
             severity: NotificationSeverity::Info,
-            title: format!("Lịch định kỳ đã khởi chạy: {}", excerpt(&schedule.title, 120)),
+            title: format!(
+                "Lịch định kỳ đã khởi chạy: {}",
+                excerpt(&schedule.title, 120)
+            ),
             body: format!(
                 "Lịch '{}' đã khởi chạy tác vụ nền #{}.",
                 excerpt(&schedule.title, 120),
@@ -177,7 +183,11 @@ pub fn from_task_event(event: &TaskEvent) -> Option<NotificationInput> {
     }
 }
 
-pub fn from_wiki_lint_attention(issue_count: usize, fingerprint: &str, summary: &str) -> NotificationInput {
+pub fn from_wiki_lint_attention(
+    issue_count: usize,
+    fingerprint: &str,
+    summary: &str,
+) -> NotificationInput {
     NotificationInput {
         dedup_key: Some(format!("wiki_lint:{fingerprint}")),
         content: NotificationContent {

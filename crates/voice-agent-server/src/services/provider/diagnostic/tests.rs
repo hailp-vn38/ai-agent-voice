@@ -458,7 +458,11 @@ async fn non_chat_llm_capabilities_dispatch_matching_diagnostic_operations() {
 
     let vid_op = service
         .registry
-        .llm_diagnostic("llm-a", LlmRequest::text_turn("waves crashing".into()), 1024)
+        .llm_diagnostic(
+            "llm-a",
+            LlmRequest::text_turn("waves crashing".into()),
+            1024,
+        )
         .unwrap();
     let vid_media_slot = vid_op.media_slot();
     let (vid_summary, _) = service

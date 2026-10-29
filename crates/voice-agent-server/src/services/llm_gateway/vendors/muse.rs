@@ -9,6 +9,8 @@ use serde_json::Value;
 use tokio::sync::Mutex;
 use uuid::Uuid;
 
+#[cfg(not(test))]
+use crate::providers::llm::gateway::muse::cdp::CdpBrowserEngine;
 use crate::{
     database::unix_seconds,
     providers::llm::gateway::muse::{
@@ -22,8 +24,6 @@ use crate::{
         GatewayError, GatewayQuotaWindow, GatewayVendor, OAuthTokenBundle, VendorQuotaSnapshot,
     },
 };
-#[cfg(not(test))]
-use crate::providers::llm::gateway::muse::cdp::CdpBrowserEngine;
 
 use super::{ExchangedOAuthAccount, OAuthVendorDriver};
 
@@ -51,8 +51,10 @@ impl MuseOAuthDriver {
             .build()
             .unwrap_or_default();
         #[cfg(not(test))]
-        let login_engine: Option<Arc<dyn BrowserEngine>> =
-            Some(Arc::new(CdpBrowserEngine::new(INTERACTIVE_LOGIN_CDP_PORT, false)));
+        let login_engine: Option<Arc<dyn BrowserEngine>> = Some(Arc::new(CdpBrowserEngine::new(
+            INTERACTIVE_LOGIN_CDP_PORT,
+            false,
+        )));
         #[cfg(test)]
         let login_engine: Option<Arc<dyn BrowserEngine>> = None;
 
@@ -76,10 +78,7 @@ impl MuseOAuthDriver {
     }
 
     #[cfg(test)]
-    pub(crate) fn with_test_endpoints(
-        session_api_url: String,
-        vm_wake_api_url: String,
-    ) -> Self {
+    pub(crate) fn with_test_endpoints(session_api_url: String, vm_wake_api_url: String) -> Self {
         let mut drv = Self::new();
         drv.session_api_url = session_api_url;
         drv.vm_wake_api_url = vm_wake_api_url;
@@ -262,9 +261,7 @@ impl OAuthVendorDriver for MuseOAuthDriver {
         if let Some(page) = self.login_pages.lock().await.remove(state) {
             page.close().await;
             if let Some(engine) = &self.login_engine {
-                engine
-                    .dispose_context(&format!("muse-login-{state}"))
-                    .await;
+                engine.dispose_context(&format!("muse-login-{state}")).await;
             }
         }
 
@@ -335,9 +332,7 @@ impl OAuthVendorDriver for MuseOAuthDriver {
         if let Some(closed_page) = self.login_pages.lock().await.remove(state) {
             closed_page.close().await;
         }
-        engine
-            .dispose_context(&format!("muse-login-{state}"))
-            .await;
+        engine.dispose_context(&format!("muse-login-{state}")).await;
 
         let cred = MuseAccountCredential {
             label: "muse-cdp".to_owned(),
@@ -391,10 +386,7 @@ impl OAuthVendorDriver for MuseOAuthDriver {
                 unlimited: true,
                 unit: Some("CDP".to_owned()),
             }],
-            message: verified_cred
-                .vm_id
-                .as_ref()
-                .map(|vm| format!("VM: {vm}")),
+            message: verified_cred.vm_id.as_ref().map(|vm| format!("VM: {vm}")),
             discovered_account_context_id: verified_cred.vm_id,
         })
     }

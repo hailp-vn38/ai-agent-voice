@@ -14,12 +14,9 @@ pub use orchestrator_flow_rs::{
 
 pub const WIKI_TAXONOMY_SKILL: &str =
     include_str!("../../../builtin-skills/wiki-taxonomy/SKILL.md");
-pub const WIKI_INGEST_SKILL: &str =
-    include_str!("../../../builtin-skills/wiki-ingest/SKILL.md");
-pub const WIKI_QUERY_SKILL: &str =
-    include_str!("../../../builtin-skills/wiki-query/SKILL.md");
-pub const WIKI_LINT_SKILL: &str =
-    include_str!("../../../builtin-skills/wiki-lint/SKILL.md");
+pub const WIKI_INGEST_SKILL: &str = include_str!("../../../builtin-skills/wiki-ingest/SKILL.md");
+pub const WIKI_QUERY_SKILL: &str = include_str!("../../../builtin-skills/wiki-query/SKILL.md");
+pub const WIKI_LINT_SKILL: &str = include_str!("../../../builtin-skills/wiki-lint/SKILL.md");
 pub const DAILY_SYNTHESIS_STAGING_SKILL: &str =
     include_str!("../../../builtin-skills/daily-synthesis-staging/SKILL.md");
 pub const DAILY_TASK_REMINDER_SKILL: &str =

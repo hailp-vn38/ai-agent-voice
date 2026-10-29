@@ -611,9 +611,7 @@ impl LlmProvider for UnavailableLlm {
 
 pub(crate) use openai::provider::ConfiguredOpenAiLlm;
 
-pub(crate) async fn collect_chat_stream(
-    mut stream: LlmEventStream,
-) -> Result<LlmOutput, LlmError> {
+pub(crate) async fn collect_chat_stream(mut stream: LlmEventStream) -> Result<LlmOutput, LlmError> {
     use futures_util::StreamExt;
     let mut text = String::new();
     while let Some(item) = stream.next().await {

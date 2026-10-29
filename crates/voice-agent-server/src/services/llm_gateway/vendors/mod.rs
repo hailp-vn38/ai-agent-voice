@@ -145,7 +145,10 @@ pub trait OAuthVendorDriver: Send + Sync {
         ))
     }
 
-    async fn poll_device_flow(&self, _device_code: &str) -> Result<DevicePollOutcome, GatewayError> {
+    async fn poll_device_flow(
+        &self,
+        _device_code: &str,
+    ) -> Result<DevicePollOutcome, GatewayError> {
         Err(GatewayError::OAuthExchangeFailed(
             "device_flow_not_supported_for_vendor".to_owned(),
         ))
@@ -182,10 +185,7 @@ pub fn default_vendor_drivers() -> BTreeMap<GatewayVendor, Arc<dyn OAuthVendorDr
         GatewayVendor::GithubCopilot,
         Arc::new(github_copilot::GithubCopilotOAuthDriver::new()),
     );
-    map.insert(
-        GatewayVendor::Muse,
-        Arc::new(muse::MuseOAuthDriver::new()),
-    );
+    map.insert(GatewayVendor::Muse, Arc::new(muse::MuseOAuthDriver::new()));
     map
 }
 
@@ -283,7 +283,9 @@ impl OAuthVendorDriver for FakeOAuthVendorDriver {
         _redirect_uri: &str,
     ) -> Result<ExchangedOAuthAccount, GatewayError> {
         if code == "invalid_code" || code_verifier.is_empty() {
-            return Err(GatewayError::OAuthExchangeFailed("invalid_grant".to_owned()));
+            return Err(GatewayError::OAuthExchangeFailed(
+                "invalid_grant".to_owned(),
+            ));
         }
         let email = self.next_email.lock().expect("next_email").clone();
         let expires_at = *self.next_expires_at.lock().expect("next_expires_at");
@@ -408,7 +410,10 @@ impl OAuthVendorDriver for FakeOAuthVendorDriver {
             GatewayVendor::Gemini | GatewayVendor::Muse => Vec::new(),
             GatewayVendor::GithubCopilot => vec![
                 ("Editor-Version".to_owned(), "vscode/1.96.0".to_owned()),
-                ("Copilot-Integration-Id".to_owned(), "vscode-chat".to_owned()),
+                (
+                    "Copilot-Integration-Id".to_owned(),
+                    "vscode-chat".to_owned(),
+                ),
             ],
         }
     }

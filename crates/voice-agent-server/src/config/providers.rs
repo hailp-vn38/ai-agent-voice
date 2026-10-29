@@ -7,8 +7,7 @@ pub use crate::providers::{
         gipformer::config::GipformerSherpaOfflineConfig, zipformer::config::ZipformerSherpaConfig,
     },
     llm::{
-        gateway::LlmGatewayConfig, openai::config::OpenAiConfig,
-        opencode_free::OpenCodeFreeConfig,
+        gateway::LlmGatewayConfig, openai::config::OpenAiConfig, opencode_free::OpenCodeFreeConfig,
     },
     tts::{
         chillaudio::config::ChillAudioWsConfig,

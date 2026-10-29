@@ -90,7 +90,8 @@ pub struct AppState {
     pub llm_gateway_refresh_started: Arc<std::sync::atomic::AtomicBool>,
     pub notification_hub: Option<Arc<crate::services::notification_hub::NotificationHub>>,
     pub(crate) system_mcp: Option<Arc<crate::tools::system_mcp::SystemMcp>>,
-    pub(crate) knowledge_mcp: Arc<std::sync::OnceLock<Arc<crate::tools::knowledge_mcp::KnowledgeMcp>>>,
+    pub(crate) knowledge_mcp:
+        Arc<std::sync::OnceLock<Arc<crate::tools::knowledge_mcp::KnowledgeMcp>>>,
     pub system_metrics: Arc<crate::services::system_metrics::SystemMetrics>,
     pub system_logs: Arc<crate::services::system_logs::SystemLogHub>,
     pub(crate) web_assistant: Arc<super::assistant::WebAssistantAuth>,

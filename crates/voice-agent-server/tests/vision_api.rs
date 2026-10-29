@@ -248,16 +248,8 @@ async fn vision_api_falls_back_to_default_llm_with_vision_tag_when_vision_defaul
     .unwrap();
     config.vision.enabled = true;
     config.provider_defaults.vision = None;
-    let state = AppState::from_provider_set(
-        config,
-        Arc::new(ProviderSet::unavailable()),
-    )
-    .with_llm_runtime_for_test(
-        "test",
-        Arc::new(EchoVision),
-        1,
-        Duration::from_secs(1),
-    );
+    let state = AppState::from_provider_set(config, Arc::new(ProviderSet::unavailable()))
+        .with_llm_runtime_for_test("test", Arc::new(EchoVision), 1, Duration::from_secs(1));
     let (base, task) = spawn(router_with_state(state)).await;
     let response = explain(&base).await;
     assert_eq!(response.status(), reqwest::StatusCode::OK);

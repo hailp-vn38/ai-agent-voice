@@ -251,7 +251,11 @@ impl KnowledgeMcp {
 
     pub(crate) fn admin_snapshot(&self) -> Value {
         let guard = self.settings.read().expect("settings lock").clone();
-        let ro_names: Vec<&str> = self.read_only_tools.iter().map(|t| t.name.as_str()).collect();
+        let ro_names: Vec<&str> = self
+            .read_only_tools
+            .iter()
+            .map(|t| t.name.as_str())
+            .collect();
         let tools_view: Vec<Value> = self
             .read_write_tools
             .iter()
@@ -265,8 +269,11 @@ impl KnowledgeMcp {
             })
             .collect();
 
-        let token_summaries: Vec<KnowledgeMcpTokenSummary> =
-            guard.tokens.iter().map(KnowledgeMcpTokenEntry::to_summary).collect();
+        let token_summaries: Vec<KnowledgeMcpTokenSummary> = guard
+            .tokens
+            .iter()
+            .map(KnowledgeMcpTokenEntry::to_summary)
+            .collect();
 
         let wiki_status = self
             .engine
@@ -338,7 +345,11 @@ impl KnowledgeMcp {
         if clean_name.is_empty() || clean_name.len() > 128 {
             return Err(KnowledgeMcpAdminError::ValidationFailed);
         }
-        let token_str = match custom_token.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+        let token_str = match custom_token
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+        {
             Some(custom) => {
                 if custom.len() < 8 || custom.len() > 512 {
                     return Err(KnowledgeMcpAdminError::ValidationFailed);
@@ -425,23 +436,25 @@ impl KnowledgeMcp {
         let autoflow_notify = self.autoflow_notify.clone();
         let tool_name = name.to_owned();
 
-        let mut handle = tokio::task::spawn_blocking(move || -> Result<Value, KnowledgeToolError> {
-            if tool_name == "add_to_sources" {
-                execute_add_to_sources(&engine, autoflow_notify.as_ref(), arguments)
-            } else {
-                let budget = AdaptiveReadBudget {
-                    default_lines: 160,
-                    max_window_chars: max_chars.saturating_sub(1024).max(1024),
-                    compact_index_max_chars: max_chars.saturating_sub(1024).max(1024),
-                };
-                let outcome = engine.execute_llm_tool_with_budget(&tool_name, arguments, budget)?;
-                Ok(json!({
-                    "tool": tool_name,
-                    "content": outcome.content,
-                    "metadata": outcome.metadata,
-                }))
-            }
-        });
+        let mut handle =
+            tokio::task::spawn_blocking(move || -> Result<Value, KnowledgeToolError> {
+                if tool_name == "add_to_sources" {
+                    execute_add_to_sources(&engine, autoflow_notify.as_ref(), arguments)
+                } else {
+                    let budget = AdaptiveReadBudget {
+                        default_lines: 160,
+                        max_window_chars: max_chars.saturating_sub(1024).max(1024),
+                        compact_index_max_chars: max_chars.saturating_sub(1024).max(1024),
+                    };
+                    let outcome =
+                        engine.execute_llm_tool_with_budget(&tool_name, arguments, budget)?;
+                    Ok(json!({
+                        "tool": tool_name,
+                        "content": outcome.content,
+                        "metadata": outcome.metadata,
+                    }))
+                }
+            });
 
         let raw_value = tokio::select! {
             biased;

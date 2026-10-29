@@ -223,11 +223,7 @@ impl AppConfig {
     }
 }
 
-fn apply_provider_env_secret(
-    id: &str,
-    adapter: &str,
-    target: &mut crate::config::SecretString,
-) {
+fn apply_provider_env_secret(id: &str, adapter: &str, target: &mut crate::config::SecretString) {
     if let Some(env_name) = crate::database::secrets::provider_secret_env(id, adapter)
         && let Ok(val) = std::env::var(&env_name)
         && !val.trim().is_empty()
@@ -622,7 +618,12 @@ fn validate_providers(config: &AppConfig) -> Result<(), ConfigError> {
         || !(1..=120_000).contains(&config.runtime.chillaudio.timeout_ms)
         || config.runtime.edge_tts.ws_url.scheme() != "wss"
         || config.runtime.edge_tts.ws_url.host_str().is_none()
-        || config.runtime.edge_tts.trusted_client_token.trim().is_empty()
+        || config
+            .runtime
+            .edge_tts
+            .trusted_client_token
+            .trim()
+            .is_empty()
         || config.runtime.edge_tts.sec_ms_gec_version.trim().is_empty()
         || !(1..=120_000).contains(&config.runtime.edge_tts.timeout_ms)
     {
@@ -828,12 +829,14 @@ fn validate_vision(config: &AppConfig) -> Result<(), ConfigError> {
             )));
         }
     } else if vision.enabled {
-        let any_llm_supports_vision = config.providers.llm.instances.values().any(|instance| {
-            instance.supports_tag(crate::providers::llm::LlmCapabilityTag::Vision)
-        });
+        let any_llm_supports_vision =
+            config.providers.llm.instances.values().any(|instance| {
+                instance.supports_tag(crate::providers::llm::LlmCapabilityTag::Vision)
+            });
         if !any_llm_supports_vision {
             return Err(ConfigError::Validation(
-                "vision.enabled requires an LLM provider instance with capability tag `vision`".into(),
+                "vision.enabled requires an LLM provider instance with capability tag `vision`"
+                    .into(),
             ));
         }
     }

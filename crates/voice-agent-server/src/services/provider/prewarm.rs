@@ -193,7 +193,10 @@ impl IntentQueue {
     /// The intent reached a final outcome; forget it unless a newer intent replaced it.
     fn settle(&self, key: &PrewarmKey, epoch: u64) {
         let mut epochs = self.epochs.lock().expect("prewarm epochs poisoned");
-        if epochs.get(key).is_some_and(|(current, _)| *current == epoch) {
+        if epochs
+            .get(key)
+            .is_some_and(|(current, _)| *current == epoch)
+        {
             epochs.remove(key);
         }
     }

@@ -1039,4 +1039,3 @@ async fn admin_sse_streams_do_not_hold_graceful_shutdown_past_controlled_close_s
         }
     }
 }
-

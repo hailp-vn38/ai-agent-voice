@@ -58,7 +58,8 @@ pub(crate) fn normalize_codex_model(raw_model: &str) -> (String, Option<String>)
 
 fn normalize_tool_parameters(params: &Value) -> Value {
     if let Some(obj) = params.as_object() {
-        if obj.get("type").and_then(Value::as_str) == Some("object") && !obj.contains_key("properties")
+        if obj.get("type").and_then(Value::as_str) == Some("object")
+            && !obj.contains_key("properties")
         {
             let mut cloned = obj.clone();
             cloned.insert("properties".to_owned(), json!({}));
@@ -222,7 +223,10 @@ async fn send_codex_responses_request(
         builder.json(payload)
     };
 
-    let resp = build_req(&body).send().await.map_err(|_| WireError::Other)?;
+    let resp = build_req(&body)
+        .send()
+        .await
+        .map_err(|_| WireError::Other)?;
     let status = resp.status();
     if matches!(status.as_u16(), 400 | 404) {
         let current_model = body
@@ -234,7 +238,10 @@ async fn send_codex_responses_request(
             let err_text = resp.text().await.unwrap_or_default();
             if is_codex_model_unsupported_error(status, &err_text) {
                 body["model"] = json!(DEFAULT_CODEX_FALLBACK_MODEL);
-                let retry_resp = build_req(&body).send().await.map_err(|_| WireError::Other)?;
+                let retry_resp = build_req(&body)
+                    .send()
+                    .await
+                    .map_err(|_| WireError::Other)?;
                 return check_wire_status(retry_resp);
             }
         }
@@ -493,10 +500,18 @@ pub(crate) async fn execute_vision(
         ]
     })];
     let dummy_req = LlmRequest::text_turn(prompt.to_owned());
-    let stream =
-        open_sse_stream_internal(http, endpoint_base, lease, config, &dummy_req, Some(vision_input))
-            .await?;
-    let out = collect_chat_stream(stream).await.map_err(|_| WireError::Other)?;
+    let stream = open_sse_stream_internal(
+        http,
+        endpoint_base,
+        lease,
+        config,
+        &dummy_req,
+        Some(vision_input),
+    )
+    .await?;
+    let out = collect_chat_stream(stream)
+        .await
+        .map_err(|_| WireError::Other)?;
     if let LlmOutput::Text(ref t) = out
         && t.trim().is_empty()
     {

@@ -71,11 +71,8 @@ pub fn start_with_hub(
                     let input = bridge::from_due_device_reminder(&due);
                     let _ = hub.publish(input).await;
                 }
-                if !sessions.set_in_flight_reminder(
-                    device_row_id,
-                    &session_id,
-                    attempt_id.clone(),
-                ) {
+                if !sessions.set_in_flight_reminder(device_row_id, &session_id, attempt_id.clone())
+                {
                     let _ = coordinator
                         .repo()
                         .release_unstarted_attempt(&due.reminder_id, &attempt_id, &session_id)

@@ -1,6 +1,4 @@
-use super::types::{
-    CorrelationContext, LogFilter, LogLevel, RawLogRecord, StructuredLogEntry,
-};
+use super::types::{CorrelationContext, LogFilter, LogLevel, RawLogRecord, StructuredLogEntry};
 use serde_json::Value;
 use std::collections::BTreeMap;
 
@@ -130,10 +128,7 @@ pub(super) fn truncate_utf8(input: &str, max_bytes: usize) -> String {
 pub(super) fn scrub_string_value(raw: &str, max_bytes: usize) -> String {
     let trimmed = raw.trim();
     let lower = trimmed.to_ascii_lowercase();
-    if lower.starts_with("bearer ")
-        || lower.starts_with("sealed:")
-        || lower.starts_with("sk-")
-    {
+    if lower.starts_with("bearer ") || lower.starts_with("sealed:") || lower.starts_with("sk-") {
         return "[REDACTED]".to_owned();
     }
     truncate_utf8(raw, max_bytes)
@@ -154,11 +149,7 @@ pub(super) fn is_self_observation_noise(raw: &RawLogRecord) -> bool {
     if level >= LogLevel::Warn {
         return false;
     }
-    let path = raw
-        .fields
-        .get("path")
-        .and_then(Value::as_str)
-        .unwrap_or("");
+    let path = raw.fields.get("path").and_then(Value::as_str).unwrap_or("");
     matches!(
         path,
         "/health" | "/ready" | "/api/admin/system" | "/api/admin/system/resources"
@@ -331,10 +322,9 @@ impl ParsedFilter {
                 .error_code
                 .as_ref()
                 .is_some_and(|c| c.to_ascii_lowercase().contains(q));
-            let in_fields = entry
-                .fields
-                .iter()
-                .any(|(k, v)| k.to_ascii_lowercase().contains(q) || v.to_string().to_ascii_lowercase().contains(q));
+            let in_fields = entry.fields.iter().any(|(k, v)| {
+                k.to_ascii_lowercase().contains(q) || v.to_string().to_ascii_lowercase().contains(q)
+            });
             if !(in_msg || in_ev || in_target || in_err || in_fields) {
                 return false;
             }

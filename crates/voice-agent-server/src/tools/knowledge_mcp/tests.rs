@@ -1,7 +1,5 @@
 use super::*;
-use crate::tools::external_mcp::registry::{
-    ExternalToolCatalog, validate_external_tool_schema,
-};
+use crate::tools::external_mcp::registry::{ExternalToolCatalog, validate_external_tool_schema};
 
 struct TempVaultDir(PathBuf);
 
@@ -75,7 +73,10 @@ async fn read_only_caller_cannot_invoke_write_tools() {
         .call_tool(&ro_ctx, "wiki_status", json!({}))
         .await
         .expect("wiki_status should succeed for ReadOnly");
-    assert_eq!(status.get("tool").and_then(Value::as_str), Some("wiki_status"));
+    assert_eq!(
+        status.get("tool").and_then(Value::as_str),
+        Some("wiki_status")
+    );
 
     let write_err = mcp
         .call_tool(
@@ -196,7 +197,9 @@ fn runtime_token_lifecycle_redaction_and_dynamic_concurrency() {
     assert_eq!(conflict, KnowledgeMcpAdminError::RevisionConflict);
 
     // Dynamic concurrency limit = 1 permits 1 active request and rejects the 2nd until dropped
-    let p1 = mcp.try_acquire_permit().expect("first permit should succeed");
+    let p1 = mcp
+        .try_acquire_permit()
+        .expect("first permit should succeed");
     assert!(mcp.try_acquire_permit().is_none());
     drop(p1);
     let _p2 = mcp

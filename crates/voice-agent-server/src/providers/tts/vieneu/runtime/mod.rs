@@ -65,9 +65,7 @@ impl NativeState {
             VieneuModelAssets::Turbo(turbo) => {
                 Ok(Self::Turbo(Arc::new(TurboNativeState::load(turbo)?)))
             }
-            VieneuModelAssets::Nano(nano) => {
-                Ok(Self::Nano(Arc::new(NanoNativeState::load(nano)?)))
-            }
+            VieneuModelAssets::Nano(nano) => Ok(Self::Nano(Arc::new(NanoNativeState::load(nano)?))),
         }
     }
 

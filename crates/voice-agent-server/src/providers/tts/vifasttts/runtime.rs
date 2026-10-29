@@ -179,9 +179,8 @@ impl TtsWorker for VifastttsWorker {
             );
 
             if idx + 1 < chunks.len() {
-                let pause_samples = (frontend::pause_seconds(chunk)
-                    * (VIFASTTTS_SAMPLE_RATE_HZ as f32))
-                    as usize;
+                let pause_samples =
+                    (frontend::pause_seconds(chunk) * (VIFASTTTS_SAMPLE_RATE_HZ as f32)) as usize;
                 if pause_samples > 0 {
                     wav.resize(wav.len() + pause_samples, 0.0);
                 }

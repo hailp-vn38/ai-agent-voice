@@ -170,9 +170,9 @@ impl LlmProvider for OpenCodeFreeProvider {
                 let client = self.chat_client(&request, reasoning);
                 let placeholders = add_fingerprint_tools(&mut request);
                 let stream = stream_openai_request(&client, request, self.adapter()).await?;
-                let filtered = Box::pin(stream.map(move |event| {
-                    reject_placeholder_call(event, &placeholders)
-                }));
+                let filtered = Box::pin(
+                    stream.map(move |event| reject_placeholder_call(event, &placeholders)),
+                );
                 collect_chat_stream(filtered).await
             }
             _ => Err(LlmError::UnsupportedCapability(op.required_tag().as_str())),

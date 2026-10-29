@@ -232,8 +232,7 @@ impl SystemLogHub {
 /// Initializes the process-wide `tracing` subscriber combining `EnvFilter`, `fmt::Layer`
 /// (`VOICE_AGENT_LOG_FORMAT=json|pretty|compact`), and [`LogHubLayer`].
 pub fn init_tracing_subscriber(hub: Arc<SystemLogHub>) {
-    let env_filter =
-        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
+    let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
     let format = std::env::var("VOICE_AGENT_LOG_FORMAT")
         .unwrap_or_default()
         .trim()
@@ -246,7 +245,11 @@ pub fn init_tracing_subscriber(hub: Arc<SystemLogHub>) {
     match format.as_str() {
         "json" => {
             let _ = registry
-                .with(tracing_subscriber::fmt::layer().json().with_current_span(true))
+                .with(
+                    tracing_subscriber::fmt::layer()
+                        .json()
+                        .with_current_span(true),
+                )
                 .try_init();
         }
         "pretty" => {

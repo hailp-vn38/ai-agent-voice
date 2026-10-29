@@ -26,16 +26,12 @@ fn nano_model_defaults_to_nano_default_voice_when_omitted() {
 
 #[test]
 fn rejects_cross_model_voices_and_accepts_shared_voices() {
-    let turbo_with_nano_only: VieneuNativeConfig = serde_json::from_str(
-        r#"{"model":"vieneu_v3_turbo_fp32","voice":"minh_quan"}"#,
-    )
-    .unwrap();
+    let turbo_with_nano_only: VieneuNativeConfig =
+        serde_json::from_str(r#"{"model":"vieneu_v3_turbo_fp32","voice":"minh_quan"}"#).unwrap();
     assert!(!turbo_with_nano_only.valid_selection());
 
-    let nano_with_turbo_only: VieneuNativeConfig = serde_json::from_str(
-        r#"{"model":"vieneu_v3_nano_fp32","voice":"hai_dang"}"#,
-    )
-    .unwrap();
+    let nano_with_turbo_only: VieneuNativeConfig =
+        serde_json::from_str(r#"{"model":"vieneu_v3_nano_fp32","voice":"hai_dang"}"#).unwrap();
     assert!(!nano_with_turbo_only.valid_selection());
 
     for shared in ["adam", "my_duyen", "duc_tri", "mai_anh", "truc_ly"] {
@@ -44,14 +40,20 @@ fn rejects_cross_model_voices_and_accepts_shared_voices() {
             "voice": shared,
         }))
         .unwrap();
-        assert!(turbo.valid_selection(), "turbo must accept shared voice {shared}");
+        assert!(
+            turbo.valid_selection(),
+            "turbo must accept shared voice {shared}"
+        );
 
         let nano: VieneuNativeConfig = serde_json::from_value(serde_json::json!({
             "model": NANO_MODEL_ID,
             "voice": shared,
         }))
         .unwrap();
-        assert!(nano.valid_selection(), "nano must accept shared voice {shared}");
+        assert!(
+            nano.valid_selection(),
+            "nano must accept shared voice {shared}"
+        );
     }
 
     for voice in TURBO_VOICES {
@@ -113,13 +115,24 @@ fn speed_percent_defaults_to_natural_rate() {
 
 #[test]
 fn nano_accepts_bounded_speed_percent() {
-    for (speed, valid) in [(49, false), (50, true), (100, true), (150, true), (200, true), (201, false)] {
+    for (speed, valid) in [
+        (49, false),
+        (50, true),
+        (100, true),
+        (150, true),
+        (200, true),
+        (201, false),
+    ] {
         let config: VieneuNativeConfig = serde_json::from_value(serde_json::json!({
             "model": NANO_MODEL_ID,
             "speed_percent": speed,
         }))
         .unwrap();
-        assert_eq!(config.valid_selection(), valid, "nano speed_percent {speed}");
+        assert_eq!(
+            config.valid_selection(),
+            valid,
+            "nano speed_percent {speed}"
+        );
     }
 }
 
@@ -131,7 +144,11 @@ fn turbo_rejects_non_natural_speed_percent() {
             "speed_percent": speed,
         }))
         .unwrap();
-        assert_eq!(config.valid_selection(), valid, "turbo speed_percent {speed}");
+        assert_eq!(
+            config.valid_selection(),
+            valid,
+            "turbo speed_percent {speed}"
+        );
     }
 }
 

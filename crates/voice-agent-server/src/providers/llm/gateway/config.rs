@@ -55,7 +55,9 @@ impl LlmGatewayConfig {
             && !model_trimmed.is_empty()
             && model_trimmed.len() <= 256
             && (1_000..=600_000).contains(&self.timeout_ms)
-            && self.account_concurrency.is_none_or(|c| (1..=8).contains(&c))
+            && self
+                .account_concurrency
+                .is_none_or(|c| (1..=8).contains(&c))
             && self.cdp_port.is_none_or(|p| p >= 1024)
             && valid_generation_bounds(
                 self.max_tokens,

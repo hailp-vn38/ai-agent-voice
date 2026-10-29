@@ -19,8 +19,8 @@ pub struct ParsedSyllable {
 }
 
 const ONSET_SPELLINGS: &[&str] = &[
-    "ngh", "ng", "nh", "ch", "gh", "gi", "kh", "ph", "th", "tr", "b", "c", "d", "đ", "g", "h",
-    "k", "l", "m", "n", "p", "r", "s", "t", "v", "x",
+    "ngh", "ng", "nh", "ch", "gh", "gi", "kh", "ph", "th", "tr", "b", "c", "d", "đ", "g", "h", "k",
+    "l", "m", "n", "p", "r", "s", "t", "v", "x",
 ];
 
 fn onset_abstract(spelling: &str) -> Option<&'static str> {
@@ -383,12 +383,7 @@ pub fn parse_syllable(word: &str) -> Option<ParsedSyllable> {
         nucleus_a = "Ă";
     }
 
-    if medial == "W"
-        && !matches!(
-            nucleus_a,
-            "A" | "Ă" | "Â" | "E" | "Ê" | "I" | "Ơ" | "IÊ"
-        )
-    {
+    if medial == "W" && !matches!(nucleus_a, "A" | "Ă" | "Â" | "E" | "Ê" | "I" | "Ơ" | "IÊ") {
         return None;
     }
 

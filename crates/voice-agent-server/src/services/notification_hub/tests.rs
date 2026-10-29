@@ -180,7 +180,10 @@ async fn topic_routing_only_enqueues_subscribed_enabled_channels() {
         .await
         .expect("publish reminder_due");
     assert_eq!(reminder.deliveries.len(), 1);
-    assert_eq!(reminder.deliveries[0].channel, ExternalChannelKind::Telegram);
+    assert_eq!(
+        reminder.deliveries[0].channel,
+        ExternalChannelKind::Telegram
+    );
     assert_eq!(reminder.deliveries[0].status, OutboxDeliveryStatus::Pending);
 
     let processed = hub.process_due_outbox().await.expect("process outbox");
@@ -281,13 +284,18 @@ async fn fault_isolation_retries_transient_errors_and_stops_on_unauthorized() {
         .expect("zalo delivery");
     assert_eq!(zalo_status_1.status, OutboxDeliveryStatus::Failed);
     assert_eq!(zalo_status_1.attempts, 1);
-    assert_eq!(zalo_status_1.last_error_code.as_deref(), Some("unauthorized"));
+    assert_eq!(
+        zalo_status_1.last_error_code.as_deref(),
+        Some("unauthorized")
+    );
 
     // Fast-forward next_attempt_at_ms for Telegram in DB to simulate backoff elapsed.
-    sqlx::query("UPDATE notification_outbox SET next_attempt_at_ms = 0 WHERE channel_kind = 'telegram'")
-        .execute(db.pool())
-        .await
-        .expect("fast-forward retry timer");
+    sqlx::query(
+        "UPDATE notification_outbox SET next_attempt_at_ms = 0 WHERE channel_kind = 'telegram'",
+    )
+    .execute(db.pool())
+    .await
+    .expect("fast-forward retry timer");
 
     // Second outbox pass: only Telegram should be retried and succeed!
     let processed_2 = hub.process_due_outbox().await.expect("second pass");

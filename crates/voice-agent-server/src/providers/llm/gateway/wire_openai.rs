@@ -128,10 +128,8 @@ pub(crate) async fn open_sse_stream(
         body["tools"] = json!(tools);
     }
 
-    let req_builder = apply_lease_headers(
-        http.post(&url).header("Accept", "text/event-stream"),
-        lease,
-    );
+    let req_builder =
+        apply_lease_headers(http.post(&url).header("Accept", "text/event-stream"), lease);
     let resp = req_builder
         .json(&body)
         .send()

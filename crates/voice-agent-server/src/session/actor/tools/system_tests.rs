@@ -168,7 +168,8 @@ async fn reminder_builtin_tools_enforce_live_grant_and_target_scope() {
         .set_grant("studio", true, 1, "grant-req-1")
         .await
         .unwrap();
-    let sessions = Arc::new(crate::services::active_device_sessions::ActiveDeviceSessions::default());
+    let sessions =
+        Arc::new(crate::services::active_device_sessions::ActiveDeviceSessions::default());
     let coordinator = crate::services::notifications::ReminderCoordinator::new(
         notifications.clone(),
         Arc::clone(&sessions),
@@ -324,7 +325,8 @@ async fn web_assistant_reminder_tools_require_bound_physical_target() {
         .set_grant("studio", true, 1, "grant-req-1")
         .await
         .unwrap();
-    let sessions = Arc::new(crate::services::active_device_sessions::ActiveDeviceSessions::default());
+    let sessions =
+        Arc::new(crate::services::active_device_sessions::ActiveDeviceSessions::default());
     let coordinator = crate::services::notifications::ReminderCoordinator::new(
         notifications,
         Arc::clone(&sessions),

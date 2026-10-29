@@ -170,10 +170,7 @@ pub(crate) fn parse_github_copilot_usage_payload(data: &Value) -> VendorQuotaSna
                 .get("entitlement")
                 .and_then(Value::as_f64)
                 .unwrap_or(0.0);
-            let remaining = snap
-                .get("remaining")
-                .and_then(Value::as_f64)
-                .unwrap_or(0.0);
+            let remaining = snap.get("remaining").and_then(Value::as_f64).unwrap_or(0.0);
             let used = if unlimited {
                 0.0
             } else {
@@ -334,17 +331,17 @@ impl OAuthVendorDriver for GithubCopilotOAuthDriver {
             // Match 9router's `postExchange`: minting the short-lived Copilot bearer token is
             // best-effort during initial device-code completion so a transient error on
             // `copilot_internal/v2/token` never discards the one-shot GitHub OAuth token.
-            let (copilot_bearer, expires_at) = match self
-                .exchange_for_copilot_bearer(&github_oauth_token)
-                .await
-            {
-                Ok(pair) => pair,
-                Err(_) => {
-                    let fallback_exp = crate::database::unix_seconds().map(|now| now + 60);
-                    (github_oauth_token.clone(), fallback_exp)
-                }
-            };
-            let account_email = self.fetch_github_account_identity(&github_oauth_token).await;
+            let (copilot_bearer, expires_at) =
+                match self.exchange_for_copilot_bearer(&github_oauth_token).await {
+                    Ok(pair) => pair,
+                    Err(_) => {
+                        let fallback_exp = crate::database::unix_seconds().map(|now| now + 60);
+                        (github_oauth_token.clone(), fallback_exp)
+                    }
+                };
+            let account_email = self
+                .fetch_github_account_identity(&github_oauth_token)
+                .await;
             return Ok(DevicePollOutcome::Completed(ExchangedOAuthAccount {
                 bundle: OAuthTokenBundle {
                     access_token: copilot_bearer,
@@ -432,12 +429,18 @@ impl OAuthVendorDriver for GithubCopilotOAuthDriver {
     /// inference API rejects it with `400 bad request: error: invalid apiVersion`.
     fn extra_headers_for(&self, _bundle: &OAuthTokenBundle) -> Vec<(String, String)> {
         vec![
-            ("Editor-Version".to_owned(), COPILOT_EDITOR_VERSION.to_owned()),
+            (
+                "Editor-Version".to_owned(),
+                COPILOT_EDITOR_VERSION.to_owned(),
+            ),
             (
                 "Editor-Plugin-Version".to_owned(),
                 COPILOT_PLUGIN_VERSION.to_owned(),
             ),
-            ("Copilot-Integration-Id".to_owned(), "vscode-chat".to_owned()),
+            (
+                "Copilot-Integration-Id".to_owned(),
+                "vscode-chat".to_owned(),
+            ),
             ("User-Agent".to_owned(), COPILOT_USER_AGENT.to_owned()),
         ]
     }
