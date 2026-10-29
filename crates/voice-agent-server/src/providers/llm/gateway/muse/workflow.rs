@@ -2,26 +2,24 @@ use std::collections::VecDeque;
 use std::sync::Arc;
 use std::time::Duration;
 
-use base64::engine::general_purpose::STANDARD as BASE64;
 use base64::Engine;
+use base64::engine::general_purpose::STANDARD as BASE64;
 use serde::Deserialize;
 use serde_json::Value;
 use tokio::time::Instant;
 
-use crate::providers::llm::{
-    ChatMessage, LlmError, LlmOutput, LlmRequest, ReferenceImage,
-};
+use crate::providers::llm::{ChatMessage, LlmError, LlmOutput, LlmRequest, ReferenceImage};
 
 use super::cdp::{BrowserPage, CdpError};
 use super::config::NEW_THREAD_URL;
 use super::dom::{
-    attach_file_js, body_includes_js, fetch_as_base64_js, fill_input_js, is_glitch_reply,
     CHAT_STATE_JS, CLICK_SEND_JS, DENY_APPROVALS_JS, GLITCH_HINTS, INPUT_EMPTY_JS,
-    LAST_BUBBLE_MEDIA_JS, LOGIN_HINTS, PAGE_STATE_JS, QUOTA_HINTS, STALL_HINTS,
+    LAST_BUBBLE_MEDIA_JS, LOGIN_HINTS, PAGE_STATE_JS, QUOTA_HINTS, STALL_HINTS, attach_file_js,
+    body_includes_js, fetch_as_base64_js, fill_input_js, is_glitch_reply,
 };
 use super::pool::{
-    CheckoutMode, ConversationTurn, HotConversation, SharedMusePool, TabLease, UpstreamFailureKind,
-    HOT_BUBBLE_LIMIT,
+    CheckoutMode, ConversationTurn, HOT_BUBBLE_LIMIT, HotConversation, SharedMusePool, TabLease,
+    UpstreamFailureKind,
 };
 
 pub const POLL_INTERVAL: Duration = Duration::from_millis(150);
@@ -131,19 +129,19 @@ impl WorkflowFailure {
     pub(crate) fn into_llm_error(self) -> LlmError {
         match self {
             Self::Rejected(reason) => {
-                tracing::debug!(reason = %reason, "Muse request rejected");
+                tracing::warn!(reason = %reason, "Muse request rejected");
                 LlmError::Rejected
             }
             Self::Upstream(kind, reason) => {
-                tracing::debug!(?kind, reason = %reason, "Muse upstream failure");
+                tracing::warn!(?kind, reason = %reason, "Muse upstream failure");
                 LlmError::Failed
             }
             Self::Timeout(reason) => {
-                tracing::debug!(reason = %reason, "Muse operation timed out");
+                tracing::warn!(reason = %reason, "Muse operation timed out");
                 LlmError::Failed
             }
             Self::Cdp(err) => {
-                tracing::debug!(error = %err, "Muse CDP failure");
+                tracing::warn!(error = %err, "Muse CDP failure");
                 LlmError::Failed
             }
         }
@@ -177,7 +175,10 @@ pub fn format_image_prompt(
     transparent_background: bool,
 ) -> String {
     let ratio = aspect_ratio_hint(width, height);
-    let mut out = format!("Generate an image (aspect ratio {ratio}): {}", prompt.trim());
+    let mut out = format!(
+        "Generate an image (aspect ratio {ratio}): {}",
+        prompt.trim()
+    );
     if transparent_background {
         out.push_str(CUTOUT_HINT);
     }
@@ -290,10 +291,7 @@ pub(super) fn extract_prior_turns_and_last_user(
     Some((user_assistant_turns, last_user))
 }
 
-pub(super) fn followup_text(
-    extra_turns: &[ConversationTurn],
-    last_user_text: &str,
-) -> String {
+pub(super) fn followup_text(extra_turns: &[ConversationTurn], last_user_text: &str) -> String {
     if extra_turns.is_empty() {
         return last_user_text.to_string();
     }
@@ -354,10 +352,7 @@ async fn navigate_new_thread_and_wait_ready(
     ))
 }
 
-async fn verify_hot_tab_live(
-    page: &Arc<dyn BrowserPage>,
-    hot: &HotConversation,
-) -> bool {
+async fn verify_hot_tab_live(page: &Arc<dyn BrowserPage>, hot: &HotConversation) -> bool {
     let Ok(url) = page.current_url().await else {
         return false;
     };
@@ -453,8 +448,7 @@ async fn send_prompt_verified(
         let click_val = page
             .evaluate_json(CLICK_SEND_JS, false, Duration::from_secs(5))
             .await?;
-        let is_clicked = click_val.as_str() == Some("clicked")
-            || click_val.as_bool() == Some(true);
+        let is_clicked = click_val.as_str() == Some("clicked") || click_val.as_bool() == Some(true);
         if is_clicked {
             clicked = true;
             break;
@@ -551,7 +545,9 @@ where
 
     loop {
         if started.elapsed() >= timeout {
-            return Err(WorkflowFailure::Timeout("chat generation timed out".to_string()));
+            return Err(WorkflowFailure::Timeout(
+                "chat generation timed out".to_string(),
+            ));
         }
         tokio::time::sleep(POLL_INTERVAL).await;
         let state = poll_chat_state(&page).await?;
@@ -747,7 +743,8 @@ async fn wait_and_download_media(
         let elapsed = now.duration_since(started);
         let quiet = now.duration_since(changed_at);
 
-        if elapsed >= timeout && !(busy && elapsed < overrun_limit && (loading || quiet < stall_after))
+        if elapsed >= timeout
+            && !(busy && elapsed < overrun_limit && (loading || quiet < stall_after))
         {
             return Err(WorkflowFailure::Timeout(format!(
                 "{} generation timed out",
@@ -788,9 +785,7 @@ async fn wait_and_download_media(
             .map(str::trim)
             .filter(|s| !s.is_empty())
             .collect();
-        let has_done_marker = new_bubbles
-            .iter()
-            .any(|b| b.contains(MEDIA_DONE_MARKER))
+        let has_done_marker = new_bubbles.iter().any(|b| b.contains(MEDIA_DONE_MARKER))
             || state.last_text.contains(MEDIA_DONE_MARKER);
 
         let sig = (
@@ -837,12 +832,13 @@ async fn wait_and_download_media(
                 );
             }
             let assistant_message = format_clean_assistant_bubbles(&new_bubbles);
-            let output = LlmOutput::from_media_parts(parts, assistant_message).ok_or_else(|| {
-                WorkflowFailure::Upstream(
-                    UpstreamFailureKind::Transient,
-                    format!("no {} parts downloaded", kind.as_str()),
-                )
-            })?;
+            let output =
+                LlmOutput::from_media_parts(parts, assistant_message).ok_or_else(|| {
+                    WorkflowFailure::Upstream(
+                        UpstreamFailureKind::Transient,
+                        format!("no {} parts downloaded", kind.as_str()),
+                    )
+                })?;
             lease.finish_clean(None);
             return Ok(output);
         }
@@ -1112,11 +1108,20 @@ pub(super) fn remove_background_to_rgba_png(bytes: &[u8]) -> Result<Vec<u8>, Wor
         pixel_at(&rgba, w - 1, h - 1),
     ];
     let bg = [
-        ((corners[0][0] as u32 + corners[1][0] as u32 + corners[2][0] as u32 + corners[3][0] as u32)
+        ((corners[0][0] as u32
+            + corners[1][0] as u32
+            + corners[2][0] as u32
+            + corners[3][0] as u32)
             / 4) as u8,
-        ((corners[0][1] as u32 + corners[1][1] as u32 + corners[2][1] as u32 + corners[3][1] as u32)
+        ((corners[0][1] as u32
+            + corners[1][1] as u32
+            + corners[2][1] as u32
+            + corners[3][1] as u32)
             / 4) as u8,
-        ((corners[0][2] as u32 + corners[1][2] as u32 + corners[2][2] as u32 + corners[3][2] as u32)
+        ((corners[0][2] as u32
+            + corners[1][2] as u32
+            + corners[2][2] as u32
+            + corners[3][2] as u32)
             / 4) as u8,
     ];
 

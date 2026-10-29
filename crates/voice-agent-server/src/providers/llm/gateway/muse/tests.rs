@@ -3,10 +3,10 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use base64::engine::general_purpose::STANDARD as BASE64;
 use base64::Engine;
+use base64::engine::general_purpose::STANDARD as BASE64;
 use futures_util::StreamExt;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use crate::providers::llm::{
     ChatMessage, LlmEvent, LlmOperation, LlmOutput, LlmProvider, LlmRequest, ReferenceImage,
@@ -265,8 +265,7 @@ impl BrowserEngine for FakeBrowserEngine {
     }
 }
 
-const SINGLE_COOKIE: &str =
-    "hatch_sess=s1; hatch_gw=g1; hatch_vml=v1; hatch_native_auth_device=d1";
+const SINGLE_COOKIE: &str = "hatch_sess=s1; hatch_gw=g1; hatch_vml=v1; hatch_native_auth_device=d1";
 
 async fn build_gateway_muse_provider(
     cookie_headers: &[&str],
@@ -275,7 +274,9 @@ async fn build_gateway_muse_provider(
     let cipher: Arc<dyn crate::database::secrets::SecretResolver> = Arc::new(
         crate::database::credentials::CredentialCipher::new(1, &[0x42; 32]).expect("cipher"),
     );
-    let hub = Arc::new(crate::services::llm_gateway::LlmGatewayHub::new(None, cipher));
+    let hub = Arc::new(crate::services::llm_gateway::LlmGatewayHub::new(
+        None, cipher,
+    ));
     for (idx, cookie) in cookie_headers.iter().enumerate() {
         let ch = hub
             .start_oauth_login(crate::services::llm_gateway::StartOAuthLoginRequest {
@@ -626,7 +627,11 @@ async fn video_generation_waits_for_all_multi_clips_and_collects_all_agent_bubbl
     let (parts, assistant_message) = output
         .into_media_parts()
         .expect("expected LlmOutput::Media");
-    assert_eq!(parts.len(), 3, "must download all 3 clips in forward order when only one multi-clip container exists");
+    assert_eq!(
+        parts.len(),
+        3,
+        "must download all 3 clips in forward order when only one multi-clip container exists"
+    );
     assert_eq!(parts[0].bytes, clip1_bytes);
     assert_eq!(parts[1].bytes, clip2_bytes);
     assert_eq!(parts[2].bytes, clip3_bytes);
@@ -938,16 +943,14 @@ async fn quota_exhaustion_cools_down_first_account_and_fails_over_to_second_acco
         ],
     );
 
-    let mut acc2_states = vec![
-        json!({
-            "agentCount": 0,
-            "lastText": "",
-            "generating": false,
-            "approval": false,
-            "attachments": [],
-            "tail": ""
-        }),
-    ];
+    let mut acc2_states = vec![json!({
+        "agentCount": 0,
+        "lastText": "",
+        "generating": false,
+        "approval": false,
+        "attachments": [],
+        "tail": ""
+    })];
     for _ in 0..5 {
         acc2_states.push(json!({
             "agentCount": 1,
@@ -977,7 +980,9 @@ async fn quota_exhaustion_cools_down_first_account_and_fails_over_to_second_acco
             reasoning: false,
         })
         .await
-        .expect("should automatically fail over to second account on quota error within the same call");
+        .expect(
+            "should automatically fail over to second account on quota error within the same call",
+        );
 
     assert_eq!(
         output,
@@ -1116,7 +1121,8 @@ fn config_toml_includes_muse_primary_and_validates_cleanly() {
         panic!("expected LlmInstanceConfig::LlmGateway");
     }
 
-    let config_path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../config.toml");
+    let config_path =
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../config.toml");
     if !config_path.exists() {
         return;
     }
@@ -1251,7 +1257,11 @@ async fn real_chromium_cdp_launches_isolated_context_and_executes_dom_scripts() 
         .get("attachments")
         .and_then(Value::as_array)
         .expect("attachments array");
-    assert_eq!(atts.len(), 6, "must extract 5 loaded videos + 1 skeleton loading placeholder");
+    assert_eq!(
+        atts.len(),
+        6,
+        "must extract 5 loaded videos + 1 skeleton loading placeholder"
+    );
     for i in 0..5 {
         assert_eq!(atts[i]["kind"], "video");
         assert_eq!(atts[i]["src"], format!("blob:https://muse.ai/v-{}", i + 1));
@@ -1261,6 +1271,52 @@ async fn real_chromium_cdp_launches_isolated_context_and_executes_dom_scripts() 
 
     page.close().await;
     engine.dispose_context("real-cdp-test-ctx").await;
+}
+
+#[tokio::test]
+async fn real_chromium_cdp_downloads_large_multi_clip_video_blob_over_16mib() {
+    use super::cdp::{CdpBrowserEngine, CdpError};
+    use super::dom;
+
+    let engine = CdpBrowserEngine::new(19298, true);
+    let page = match engine.open_page("real-cdp-large-blob-ctx", &[]).await {
+        Ok(page) => page,
+        Err(CdpError::BrowserUnavailable(_)) => return,
+        Err(err) => panic!("unexpected CDP error: {err}"),
+    };
+
+    page.navigate("data:text/html,<!doctype html><html><body></body></html>")
+        .await
+        .expect("navigate to blank html should succeed");
+
+    // 18 MiB raw MP4 payload (~24 MiB base64 JSON response, matching 60s 720p Muse video ~17.5-18.7 MB)
+    let blob_url_val = page
+        .evaluate_json(
+            r#"(() => {
+                const bytes = new Uint8Array(18 * 1024 * 1024);
+                bytes.set([0x00, 0x00, 0x00, 0x18, 0x66, 0x74, 0x79, 0x70, 0x6d, 0x70, 0x34, 0x32], 0);
+                const blob = new Blob([bytes], { type: 'video/mp4' });
+                return URL.createObjectURL(blob);
+            })()"#,
+            false,
+            Duration::from_secs(10),
+        )
+        .await
+        .expect("creating 18 MiB blob URL in Chromium should succeed");
+    let blob_url = blob_url_val.as_str().expect("blob url string");
+
+    let fetch_res = page
+        .evaluate_json(&dom::fetch_as_base64_js(blob_url), true, Duration::from_secs(60))
+        .await;
+
+    page.close().await;
+    engine.dispose_context("real-cdp-large-blob-ctx").await;
+
+    let res = fetch_res.expect("fetching >16 MiB base64 video payload over CDP must succeed");
+    assert_eq!(res.get("ok").and_then(Value::as_bool), Some(true));
+    let b64 = res.get("b64").and_then(Value::as_str).unwrap_or_default();
+    let decoded = BASE64.decode(b64).expect("valid base64");
+    assert_eq!(decoded.len(), 18 * 1024 * 1024);
 }
 
 #[tokio::test]
@@ -1308,5 +1364,3 @@ async fn live_muse_primary_chat_smoke_test() {
         other => panic!("unexpected image output: {other:?}"),
     }
 }
-
-

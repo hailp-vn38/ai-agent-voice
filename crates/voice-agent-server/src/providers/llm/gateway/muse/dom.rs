@@ -85,7 +85,7 @@ pub const CHAT_STATE_JS: &str = r#"(() => {
       items.push({ tid: `${tid}-loading-${k}`, group, kind: loadingKind, src: '', w: 0, h: 0 });
     }
     if (items.length === 0) {
-      items.push({ tid, group, kind: 'unknown', src: '', w: 0, h: 0 });
+      items.push({ tid, group, kind: loadingKind, src: '', w: 0, h: 0 });
     }
     return items;
   });
@@ -142,8 +142,7 @@ pub const CLICK_SEND_JS: &str = r#"(() => {
   return 'clicked';
 })()"#;
 
-pub const INPUT_EMPTY_JS: &str =
-    r#"(() => { const el = document.querySelector("textarea"); return !el || !el.value.trim(); })()"#;
+pub const INPUT_EMPTY_JS: &str = r#"(() => { const el = document.querySelector("textarea"); return !el || !el.value.trim(); })()"#;
 
 pub fn fill_input_js(text: &str) -> String {
     let q_input = json_quote(INPUT_SELECTOR);

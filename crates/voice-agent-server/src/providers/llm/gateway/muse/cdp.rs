@@ -1,14 +1,19 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::Duration;
 
 use futures_util::{SinkExt, StreamExt};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use tokio::process::{Child, Command};
-use tokio::sync::{mpsc, oneshot, Mutex};
-use tokio_tungstenite::{connect_async, tungstenite::Message};
+use tokio::sync::{Mutex, mpsc, oneshot};
+use tokio_tungstenite::{
+    connect_async_with_config,
+    tungstenite::{Message, protocol::WebSocketConfig},
+};
+
+const CDP_MAX_WS_PAYLOAD_BYTES: usize = 256 * 1024 * 1024;
 
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct CookieParam {
@@ -71,9 +76,14 @@ pub(super) struct CdpSession {
 
 impl CdpSession {
     pub async fn connect(ws_url: &str) -> Result<Arc<Self>, CdpError> {
-        let (ws_stream, _) = connect_async(ws_url)
+        let mut ws_config = WebSocketConfig::default();
+        ws_config.max_message_size = Some(CDP_MAX_WS_PAYLOAD_BYTES);
+        ws_config.max_frame_size = Some(CDP_MAX_WS_PAYLOAD_BYTES);
+        let (ws_stream, _) = connect_async_with_config(ws_url, Some(ws_config), false)
             .await
-            .map_err(|err| CdpError::BrowserUnavailable(format!("websocket connect {ws_url}: {err}")))?;
+            .map_err(|err| {
+                CdpError::BrowserUnavailable(format!("websocket connect {ws_url}: {err}"))
+            })?;
         let (mut sink, mut stream) = ws_stream.split();
         let (tx, mut rx) = mpsc::unbounded_channel::<String>();
         let pending: Arc<Mutex<HashMap<u64, oneshot::Sender<Result<Value, CdpError>>>>> =
@@ -93,6 +103,7 @@ impl CdpSession {
         let pending_reader = Arc::clone(&pending);
         let closed_reader = Arc::clone(&closed);
         tokio::spawn(async move {
+            let mut close_reason = "cdp websocket closed".to_string();
             while let Some(frame) = stream.next().await {
                 match frame {
                     Ok(Message::Text(text)) => {
@@ -115,14 +126,18 @@ impl CdpSession {
                             }
                         }
                     }
-                    Ok(Message::Close(_)) | Err(_) => break,
+                    Ok(Message::Close(_)) => break,
+                    Err(err) => {
+                        close_reason = format!("cdp websocket closed: {err}");
+                        break;
+                    }
                     _ => {}
                 }
             }
             closed_reader.store(true, Ordering::SeqCst);
             let mut map = pending_reader.lock().await;
             for (_, sender) in map.drain() {
-                let _ = sender.send(Err(CdpError::Protocol("cdp websocket closed".to_string())));
+                let _ = sender.send(Err(CdpError::Protocol(close_reason.clone())));
             }
         });
 
