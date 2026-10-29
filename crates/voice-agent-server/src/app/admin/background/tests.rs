@@ -1,4 +1,4 @@
-use super::background::{
+use super::attachments::{
     JobAttachmentMediaKind, decode_attachment_base64, sanitize_job_attachment_name,
     sanitize_wav_attachment_name, valid_attachment_mime_for_kind, valid_mp4_mime, valid_wav_mime,
 };

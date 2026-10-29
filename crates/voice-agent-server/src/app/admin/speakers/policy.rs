@@ -1,7 +1,6 @@
 //! Speaker identification preferences and Agent-scoped candidates.
 //! Voice matches personalize a turn; they never grant authority or close a socket.
-use super::speakers::with_etag;
-use super::*;
+use super::{with_etag, *};
 use crate::database::agents::get_agent_by;
 
 const POLICY_MODES: [&str; 2] = ["off", "observe"];
@@ -24,7 +23,7 @@ fn policy_body(agent_key: &str, mode: &str, revision: i64) -> Value {
 }
 
 /// GET /agents/{key}/speaker-policy
-pub(super) async fn get_policy(
+pub(in crate::app::admin) async fn get_policy(
     State(state): State<AppState>,
     Path(key): Path<String>,
     request: Request,
@@ -54,7 +53,7 @@ struct PolicyPut {
 }
 
 /// PUT /agents/{key}/speaker-policy — independent ETag/CAS.
-pub(super) async fn put_policy(
+pub(in crate::app::admin) async fn put_policy(
     State(state): State<AppState>,
     Path(key): Path<String>,
     request: Request,
@@ -97,7 +96,7 @@ fn binding_body(agent: &str, speaker: &str, revision: i64) -> Value {
 }
 
 /// PUT /agents/{key}/speakers/{speaker_key} — body is {}, no Template grants.
-pub(super) async fn put_agent_speaker(
+pub(in crate::app::admin) async fn put_agent_speaker(
     State(state): State<AppState>,
     Path((agent_key, speaker_key)): Path<(String, String)>,
     request: Request,
@@ -137,7 +136,7 @@ pub(super) async fn put_agent_speaker(
 }
 
 /// DELETE /agents/{key}/speakers/{speaker_key}.
-pub(super) async fn delete_agent_speaker(
+pub(in crate::app::admin) async fn delete_agent_speaker(
     State(state): State<AppState>,
     Path((agent_key, speaker_key)): Path<(String, String)>,
     request: Request,
@@ -168,7 +167,7 @@ pub(super) async fn delete_agent_speaker(
 }
 
 /// GET /agents/{key}/speakers — direct Agent candidates, independent of Template.
-pub(super) async fn list_agent_speakers(
+pub(in crate::app::admin) async fn list_agent_speakers(
     State(state): State<AppState>,
     Path(key): Path<String>,
     Query(query): Query<PageQuery>,
@@ -212,7 +211,7 @@ pub(super) async fn list_agent_speakers(
 }
 
 /// GET /speakers/{key}/bindings — list Agents only.
-pub(super) async fn list_speaker_bindings(
+pub(in crate::app::admin) async fn list_speaker_bindings(
     State(state): State<AppState>,
     Path(key): Path<String>,
     Query(query): Query<PageQuery>,

@@ -1,6 +1,6 @@
 //! The two-operation Admin boundary for built-in Speaker enrollment.
 
-use super::*;
+use super::{speaker_resource_by_key, *};
 use crate::audio::enrollment::{self, QualityProfile, Reject, WavReject};
 use axum::{
     body::{Body, to_bytes},
@@ -22,7 +22,10 @@ struct CommitBody {
     description: Option<String>,
 }
 
-pub(super) async fn create_capture(State(state): State<AppState>, request: Request) -> Response {
+pub(in crate::app::admin) async fn create_capture(
+    State(state): State<AppState>,
+    request: Request,
+) -> Response {
     if request
         .headers()
         .get(header::CONTENT_TYPE)
@@ -174,7 +177,7 @@ pub(super) async fn create_capture(State(state): State<AppState>, request: Reque
     (StatusCode::CREATED, Json(json!({"status":"accepted","capture_id":id,"quality":{"duration_ms":analyzed.quality.duration_ms,"speech_ms":analyzed.quality.speech_ms},"expires_at":created_at + CAPTURE_TTL_SECONDS}))).into_response()
 }
 
-pub(super) async fn create_speaker_from_capture(
+pub(in crate::app::admin) async fn create_speaker_from_capture(
     State(state): State<AppState>,
     request: Request,
 ) -> Response {
@@ -216,7 +219,7 @@ pub(super) async fn create_speaker_from_capture(
         Err(cause) => return write_error(&request, cause),
     };
     if !committed.created {
-        return match super::speakers::speaker_resource_by_key(database, &committed.key).await {
+        return match speaker_resource_by_key(database, &committed.key).await {
             Ok(value) => (StatusCode::OK, Json(json!({"speaker": value}))).into_response(),
             Err(cause) => sql_error(&request, &cause),
         };
@@ -226,7 +229,7 @@ pub(super) async fn create_speaker_from_capture(
     if let Some(security) = security(&state) {
         security.invalidate_speaker(speaker_id);
     }
-    match super::speakers::speaker_resource_by_key(database, &key).await {
+    match speaker_resource_by_key(database, &key).await {
         Ok(value) => (StatusCode::CREATED, Json(json!({"speaker": value}))).into_response(),
         Err(cause) => sql_error(&request, &cause),
     }
@@ -240,7 +243,7 @@ struct ReplaceVoiceprintBody {
 
 /// PUT /speakers/{key}/voiceprint — one captured embedding replaces the current
 /// model-space vector without changing the Speaker identity or Agent links.
-pub(super) async fn replace_voiceprint(
+pub(in crate::app::admin) async fn replace_voiceprint(
     State(state): State<AppState>,
     Path(key): Path<String>,
     request: Request,
@@ -283,7 +286,7 @@ pub(super) async fn replace_voiceprint(
     {
         return write_error(&request, cause);
     }
-    match super::speakers::speaker_resource_by_key(database, &key).await {
+    match speaker_resource_by_key(database, &key).await {
         Ok(value) => (StatusCode::OK, Json(serde_json::json!({"speaker": value}))).into_response(),
         Err(cause) => sql_error(&request, &cause),
     }

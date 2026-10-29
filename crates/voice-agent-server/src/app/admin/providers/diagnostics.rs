@@ -11,7 +11,7 @@ const MAX_LLM_INPUT_BYTES: usize = 8 * 1024;
 const MAX_TTS_INPUT_BYTES: usize = 4 * 1024;
 const MAX_ASR_DURATION_SECONDS: u32 = 30;
 
-pub(super) async fn test_vad_provider(
+pub(in crate::app::admin) async fn test_vad_provider(
     State(state): State<AppState>,
     Path(key): Path<String>,
     request: Request,
@@ -52,7 +52,7 @@ struct TtsTestRequest {
     language: Option<String>,
 }
 
-pub(super) async fn test_llm_provider(
+pub(in crate::app::admin) async fn test_llm_provider(
     State(state): State<AppState>,
     Path(key): Path<String>,
     request: Request,
@@ -94,7 +94,7 @@ pub(super) async fn test_llm_provider(
     .into_response()
 }
 
-pub(super) async fn test_tts_provider(
+pub(in crate::app::admin) async fn test_tts_provider(
     State(state): State<AppState>,
     Path(key): Path<String>,
     request: Request,
@@ -182,7 +182,7 @@ pub(super) async fn test_tts_provider(
     response
 }
 
-pub(super) async fn test_asr_provider(
+pub(in crate::app::admin) async fn test_asr_provider(
     State(state): State<AppState>,
     Path(key): Path<String>,
     request: Request,
@@ -349,7 +349,7 @@ fn diagnostic_error_response(request: &Request, error_value: ProviderDiagnosticE
 #[serde(deny_unknown_fields)]
 struct PrepareRequest {}
 
-pub(super) async fn prepare_provider(
+pub(in crate::app::admin) async fn prepare_provider(
     State(state): State<AppState>,
     Path(key): Path<String>,
     request: Request,

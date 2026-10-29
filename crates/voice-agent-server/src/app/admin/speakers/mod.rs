@@ -1,5 +1,8 @@
 //! Admin Speaker profile CRUD and voiceprint metadata.
 
+pub(super) mod policy;
+pub(super) mod quick;
+
 use super::*;
 use axum::http::header;
 use serde_json::json;
@@ -9,6 +12,7 @@ const MAX_DESCRIPTION: usize = 2048;
 use crate::database::speakers::{
     SpeakerChanges, SpeakerInput, SpeakerRow, get_speaker_by, load_voiceprints,
 };
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct SpeakerCreateBody {
@@ -17,6 +21,7 @@ pub(super) struct SpeakerCreateBody {
     #[serde(default)]
     description: Option<String>,
 }
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct SpeakerPatchBody {
@@ -27,6 +32,7 @@ pub(super) struct SpeakerPatchBody {
     #[serde(default)]
     enabled: Patch<bool>,
 }
+
 #[derive(Deserialize)]
 pub(super) struct SpeakerListQuery {
     #[serde(default)]
@@ -40,6 +46,7 @@ pub(super) struct SpeakerListQuery {
     #[serde(default)]
     enrollment_status: Option<String>,
 }
+
 fn speaker_resource(row: &SpeakerRow, voiceprints: Vec<Value>) -> Value {
     json!({"key": row.key, "name": row.name, "description": row.description, "enabled": row.enabled != 0, "revision": row.revision, "voiceprints": voiceprints, "created_at": row.created_at, "updated_at": row.updated_at})
 }

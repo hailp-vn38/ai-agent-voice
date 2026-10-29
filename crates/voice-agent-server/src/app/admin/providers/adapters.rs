@@ -14,7 +14,7 @@ struct BootstrapRequest {
     saved_credential: Option<crate::services::test_credentials::SavedCredential>,
 }
 
-pub(super) async fn list_provider_adapters(
+pub(in crate::app::admin) async fn list_provider_adapters(
     RawQuery(query): RawQuery,
     request: Request,
 ) -> Response {
@@ -44,7 +44,7 @@ fn parse_type_filter(query: Option<&str>) -> Result<Option<ProviderType>, ()> {
     Ok(provider_type)
 }
 
-pub(super) async fn get_provider_adapter(
+pub(in crate::app::admin) async fn get_provider_adapter(
     Path(adapter): Path<String>,
     request: Request,
 ) -> Response {
@@ -54,7 +54,7 @@ pub(super) async fn get_provider_adapter(
     }
 }
 
-pub(super) async fn get_provider_capabilities(
+pub(in crate::app::admin) async fn get_provider_capabilities(
     State(state): State<AppState>,
     Path(key): Path<String>,
     request: Request,
@@ -164,7 +164,7 @@ pub(super) async fn get_provider_capabilities(
     .into_response()
 }
 
-pub(super) async fn discover_provider_capabilities(
+pub(in crate::app::admin) async fn discover_provider_capabilities(
     Path(adapter): Path<String>,
     request: Request,
 ) -> Response {

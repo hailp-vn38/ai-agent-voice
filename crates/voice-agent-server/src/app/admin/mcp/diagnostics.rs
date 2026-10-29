@@ -1,11 +1,13 @@
 //! HTTP adapters for manual MCP observations.
-use super::*;
+use super::super::*;
 use crate::tools::external_mcp::diagnostic::{McpDiagnosticRunner, McpProbeConfig, McpProbeSource};
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct DraftRequest {
     server: McpProbeConfig,
 }
+
 async fn run(
     state: AppState,
     request: Request,
@@ -30,21 +32,30 @@ async fn run(
         Err(e) => error(&request, e.status, e.code),
     }
 }
-pub(super) async fn draft_connection(State(state): State<AppState>, request: Request) -> Response {
+
+pub(in crate::app::admin) async fn draft_connection(
+    State(state): State<AppState>,
+    request: Request,
+) -> Response {
     let (request, body): (_, DraftRequest) = match json(request).await {
         Ok(v) => v,
         Err(e) => return e,
     };
     run(state, request, McpProbeSource::Draft(body.server), false).await
 }
-pub(super) async fn draft_discover(State(state): State<AppState>, request: Request) -> Response {
+
+pub(in crate::app::admin) async fn draft_discover(
+    State(state): State<AppState>,
+    request: Request,
+) -> Response {
     let (request, body): (_, DraftRequest) = match json(request).await {
         Ok(v) => v,
         Err(e) => return e,
     };
     run(state, request, McpProbeSource::Draft(body.server), true).await
 }
-pub(super) async fn saved_connection(
+
+pub(in crate::app::admin) async fn saved_connection(
     State(state): State<AppState>,
     Path(key): Path<String>,
     request: Request,
@@ -58,7 +69,8 @@ pub(super) async fn saved_connection(
     }
     run(state, request, McpProbeSource::Saved(key), false).await
 }
-pub(super) async fn saved_discover(
+
+pub(in crate::app::admin) async fn saved_discover(
     State(state): State<AppState>,
     Path(key): Path<String>,
     request: Request,

@@ -1,10 +1,11 @@
-use super::*;
+use super::super::*;
 use crate::{
     database::notifications::{
         CreateReminder, DeviceNotifications, MutationContext, NotificationError, ReminderSource,
     },
     services::notifications::ReminderCoordinator,
 };
+
 fn failure(request: &Request, cause: NotificationError) -> Response {
     let (status, code) = match cause {
         NotificationError::Invalid("unauthorized_target") => {
@@ -20,7 +21,8 @@ fn failure(request: &Request, cause: NotificationError) -> Response {
     };
     error(request, status, code)
 }
-pub(super) async fn create(
+
+pub(in crate::app::admin) async fn create(
     State(state): State<AppState>,
     Path(device): Path<String>,
     request: Request,
@@ -52,13 +54,15 @@ pub(super) async fn create(
         Err(e) => failure(&request, e),
     }
 }
+
 #[derive(Deserialize)]
-pub(super) struct ListQuery {
+pub(in crate::app::admin) struct ListQuery {
     page: Option<u32>,
     page_size: Option<u32>,
     status: Option<String>,
 }
-pub(super) async fn list(
+
+pub(in crate::app::admin) async fn list(
     State(state): State<AppState>,
     Path(device): Path<String>,
     Query(query): Query<ListQuery>,
@@ -81,7 +85,8 @@ pub(super) async fn list(
         Err(e) => failure(&request, e),
     }
 }
-pub(super) async fn grant(
+
+pub(in crate::app::admin) async fn grant(
     State(state): State<AppState>,
     Path(key): Path<String>,
     request: Request,
@@ -98,12 +103,14 @@ pub(super) async fn grant(
         Err(e) => failure(&request, e),
     }
 }
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct GrantPatch {
     reminders_enabled: bool,
 }
-pub(super) async fn patch_grant(
+
+pub(in crate::app::admin) async fn patch_grant(
     State(state): State<AppState>,
     Path(key): Path<String>,
     request: Request,
@@ -132,7 +139,7 @@ pub(super) async fn patch_grant(
     }
 }
 
-pub(super) async fn update(
+pub(in crate::app::admin) async fn update(
     State(state): State<AppState>,
     Path((device, reminder)): Path<(String, String)>,
     request: Request,
@@ -169,7 +176,8 @@ pub(super) async fn update(
         Err(e) => failure(&request, e),
     }
 }
-pub(super) async fn cancel(
+
+pub(in crate::app::admin) async fn cancel(
     State(state): State<AppState>,
     Path((device, reminder)): Path<(String, String)>,
     request: Request,
@@ -208,6 +216,7 @@ pub(super) async fn cancel(
         Err(e) => failure(&request, e),
     }
 }
+
 #[allow(clippy::result_large_err)]
 fn mutation_key(request: &Request) -> Result<&str, Response> {
     request
@@ -242,7 +251,7 @@ fn coordinator(
     }
 }
 
-pub(super) async fn agent_list(
+pub(in crate::app::admin) async fn agent_list(
     State(state): State<AppState>,
     Path(key): Path<String>,
     Query(query): Query<crate::database::notifications::AgentReminderQuery>,
@@ -263,7 +272,8 @@ pub(super) async fn agent_list(
         Err(e) => failure(&request, e),
     }
 }
-pub(super) async fn scoped_create(
+
+pub(in crate::app::admin) async fn scoped_create(
     state: State<AppState>,
     Path((agent, device)): Path<(String, String)>,
     mut request: Request,
@@ -271,7 +281,8 @@ pub(super) async fn scoped_create(
     request.extensions_mut().insert(AgentScope(agent));
     create(state, Path(device), request).await
 }
-pub(super) async fn scoped_list(
+
+pub(in crate::app::admin) async fn scoped_list(
     state: State<AppState>,
     Path((agent, device)): Path<(String, String)>,
     query: Query<ListQuery>,
@@ -280,7 +291,8 @@ pub(super) async fn scoped_list(
     request.extensions_mut().insert(AgentScope(agent));
     list(state, Path(device), query, request).await
 }
-pub(super) async fn scoped_update(
+
+pub(in crate::app::admin) async fn scoped_update(
     state: State<AppState>,
     Path((agent, device, reminder)): Path<(String, String, String)>,
     mut request: Request,
@@ -288,7 +300,8 @@ pub(super) async fn scoped_update(
     request.extensions_mut().insert(AgentScope(agent));
     update(state, Path((device, reminder)), request).await
 }
-pub(super) async fn scoped_cancel(
+
+pub(in crate::app::admin) async fn scoped_cancel(
     state: State<AppState>,
     Path((agent, device, reminder)): Path<(String, String, String)>,
     mut request: Request,

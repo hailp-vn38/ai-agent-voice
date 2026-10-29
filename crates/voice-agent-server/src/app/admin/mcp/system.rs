@@ -1,17 +1,29 @@
-use super::*;
+use super::super::*;
 use crate::app::assistant::trusted_origin;
 
-pub(super) async fn grants(State(state): State<AppState>, request: Request) -> Response {
+pub(in crate::app::admin) async fn grants(
+    State(state): State<AppState>,
+    request: Request,
+) -> Response {
     let db = match database(&state) {
         Ok(db) => db,
         Err(e) => return e,
     };
     match db.system_mcp_grants(state.config.system_mcp.enabled).await {
-        Ok(settings)=>Json(serde_json::json!({"enabled":state.config.system_mcp.enabled,"grants":settings.grants,"revision":settings.revision})).into_response(),
-        Err(e)=>sql_error(&request,&e),
+        Ok(settings) => Json(serde_json::json!({
+            "enabled": state.config.system_mcp.enabled,
+            "grants": settings.grants,
+            "revision": settings.revision
+        }))
+        .into_response(),
+        Err(e) => sql_error(&request, &e),
     }
 }
-pub(super) async fn save_grants(State(state): State<AppState>, request: Request) -> Response {
+
+pub(in crate::app::admin) async fn save_grants(
+    State(state): State<AppState>,
+    request: Request,
+) -> Response {
     if trusted_origin(&state, request.headers()).is_none() {
         return error(&request, StatusCode::FORBIDDEN, "untrusted_origin");
     }
@@ -41,7 +53,11 @@ pub(super) async fn save_grants(State(state): State<AppState>, request: Request)
         Err(e) => write_error(&request, e),
     }
 }
-pub(super) async fn requests(State(state): State<AppState>, request: Request) -> Response {
+
+pub(in crate::app::admin) async fn requests(
+    State(state): State<AppState>,
+    request: Request,
+) -> Response {
     let mut headers = request.headers().clone();
     if !headers.contains_key(header::ORIGIN)
         && let Some(origin) = headers
@@ -65,7 +81,8 @@ pub(super) async fn requests(State(state): State<AppState>, request: Request) ->
         ),
     }
 }
-pub(super) async fn confirm(
+
+pub(in crate::app::admin) async fn confirm(
     State(state): State<AppState>,
     Path(key): Path<String>,
     request: Request,
@@ -85,7 +102,8 @@ pub(super) async fn confirm(
         Err(_) => error(&request, StatusCode::CONFLICT, "proposal_unavailable"),
     }
 }
-pub(super) async fn reject(
+
+pub(in crate::app::admin) async fn reject(
     State(state): State<AppState>,
     Path(key): Path<String>,
     request: Request,
@@ -105,13 +123,18 @@ pub(super) async fn reject(
         Err(_) => error(&request, StatusCode::CONFLICT, "proposal_unavailable"),
     }
 }
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Revoke {
     jti: String,
     expires_at: i64,
 }
-pub(super) async fn revoke_token(State(state): State<AppState>, request: Request) -> Response {
+
+pub(in crate::app::admin) async fn revoke_token(
+    State(state): State<AppState>,
+    request: Request,
+) -> Response {
     if trusted_origin(&state, request.headers()).is_none() {
         return error(&request, StatusCode::FORBIDDEN, "untrusted_origin");
     }
@@ -182,7 +205,7 @@ fn attach_base_url(state: &AppState, headers: &HeaderMap, mut snap: Value) -> Va
     snap
 }
 
-pub(super) async fn knowledge_settings(
+pub(in crate::app::admin) async fn knowledge_settings(
     State(state): State<AppState>,
     request: Request,
 ) -> Response {
@@ -197,7 +220,7 @@ pub(super) async fn knowledge_settings(
     Json(snap).into_response()
 }
 
-pub(super) async fn save_knowledge_settings(
+pub(in crate::app::admin) async fn save_knowledge_settings(
     State(state): State<AppState>,
     request: Request,
 ) -> Response {
@@ -244,7 +267,7 @@ struct CreateKnowledgeTokenBody {
     custom_token: Option<String>,
 }
 
-pub(super) async fn create_knowledge_token(
+pub(in crate::app::admin) async fn create_knowledge_token(
     State(state): State<AppState>,
     request: Request,
 ) -> Response {
@@ -278,7 +301,7 @@ pub(super) async fn create_knowledge_token(
     }
 }
 
-pub(super) async fn delete_knowledge_token(
+pub(in crate::app::admin) async fn delete_knowledge_token(
     State(state): State<AppState>,
     Path(id): Path<String>,
     request: Request,

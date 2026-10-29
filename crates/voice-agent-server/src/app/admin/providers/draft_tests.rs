@@ -1,5 +1,5 @@
 //! HTTP codecs only; source, credential and runtime ownership belong to ProviderTestRunner.
-use super::*;
+use super::{diagnostics, *};
 use crate::services::provider_test::{
     ProviderTestDraft, ProviderTestError, ProviderTestInput, ProviderTestOutput, ProviderTestRunner,
 };
@@ -27,7 +27,8 @@ fn runner(state: &AppState) -> ProviderTestRunner<'_> {
         secrets: state.secret_resolver.clone(),
     }
 }
-pub(super) fn failure(request: &Request, cause: ProviderTestError) -> Response {
+
+pub(in crate::app::admin) fn failure(request: &Request, cause: ProviderTestError) -> Response {
     match cause {
         ProviderTestError::Config => {
             error(request, StatusCode::BAD_REQUEST, "provider_config_invalid")
@@ -35,11 +36,10 @@ pub(super) fn failure(request: &Request, cause: ProviderTestError) -> Response {
         ProviderTestError::Credential => {
             error(request, StatusCode::BAD_REQUEST, "credential_invalid")
         }
-        ProviderTestError::Diagnostic(cause) => {
-            provider_tests::request_error_response(request, cause)
-        }
+        ProviderTestError::Diagnostic(cause) => diagnostics::request_error_response(request, cause),
     }
 }
+
 fn response(
     output: ProviderTestOutput,
     kind: &str,
@@ -87,7 +87,11 @@ fn response(
         }
     }
 }
-pub(super) async fn llm(State(state): State<AppState>, request: Request) -> Response {
+
+pub(in crate::app::admin) async fn llm(
+    State(state): State<AppState>,
+    request: Request,
+) -> Response {
     let (request, body): (_, DraftRequest) = match json(request).await {
         Ok(v) => v,
         Err(e) => return e,
@@ -102,7 +106,11 @@ pub(super) async fn llm(State(state): State<AppState>, request: Request) -> Resp
         Err(e) => failure(&request, e),
     }
 }
-pub(super) async fn tts(State(state): State<AppState>, request: Request) -> Response {
+
+pub(in crate::app::admin) async fn tts(
+    State(state): State<AppState>,
+    request: Request,
+) -> Response {
     let (request, body): (_, DraftRequest) = match json(request).await {
         Ok(v) => v,
         Err(e) => return e,
@@ -121,7 +129,11 @@ pub(super) async fn tts(State(state): State<AppState>, request: Request) -> Resp
         Err(e) => failure(&request, e),
     }
 }
-pub(super) async fn asr(State(state): State<AppState>, request: Request) -> Response {
+
+pub(in crate::app::admin) async fn asr(
+    State(state): State<AppState>,
+    request: Request,
+) -> Response {
     let (parts, body) = request.into_parts();
     let request = Request::from_parts(parts.clone(), Body::empty());
     let mut multipart =
@@ -164,7 +176,7 @@ pub(super) async fn asr(State(state): State<AppState>, request: Request) -> Resp
                 return error(&request, StatusCode::BAD_REQUEST, "invalid_test_input");
             }
         } else {
-            audio = provider_tests::parse_asr_wav(&bytes);
+            audio = diagnostics::parse_asr_wav(&bytes);
             if audio.is_none() {
                 return error(&request, StatusCode::BAD_REQUEST, "invalid_test_input");
             }

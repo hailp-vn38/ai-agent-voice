@@ -1,9 +1,9 @@
 //! Admin mcp servers resources.
-use super::*;
+use super::super::*;
 use crate::database::agents::get_agent_by;
-
 use crate::database::mcp_servers::{McpChanges, McpInput, McpServerRow, mcp_by};
 use crate::tools::external_mcp::diagnostic::{McpAuth, auth_parts};
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct CreateMcpServer {
@@ -18,6 +18,7 @@ struct CreateMcpServer {
     #[serde(default = "default_request_timeout")]
     request_timeout_ms: u64,
 }
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct PatchMcpServer {
@@ -38,6 +39,7 @@ struct PatchMcpServer {
     #[serde(default)]
     enabled: Patch<bool>,
 }
+
 #[derive(Deserialize)]
 struct McpBinding {
     #[serde(default = "default_true")]
@@ -45,6 +47,7 @@ struct McpBinding {
     #[serde(default)]
     required: bool,
 }
+
 fn default_connect_timeout() -> u64 {
     5_000
 }
@@ -58,6 +61,7 @@ fn default_true() -> bool {
 fn valid_mcp_url(url: &str, state: &AppState) -> bool {
     external_mcp_policy::valid_desired_url(url, &state.config.mcp.external.network)
 }
+
 fn mcp_json(row: McpServerRow) -> Value {
     let auth = match row.auth_type.as_str() {
         "bearer" => serde_json::json!({"type":"bearer"}),
@@ -69,7 +73,11 @@ fn mcp_json(row: McpServerRow) -> Value {
     let credential_env = crate::database::secrets::mcp_secret_env(&row.key, &row.auth_type);
     serde_json::json!({"key":row.key,"name":row.name,"transport":"streamable_http","url":row.url,"headers":{},"auth":auth,"credential_env":credential_env,"credential":crate::database::credentials::metadata(row.credential_json.as_deref()),"connect_timeout_ms":row.connect_timeout_ms,"request_timeout_ms":row.request_timeout_ms,"enabled":row.enabled != 0,"revision":row.revision,"created_at":row.created_at,"updated_at":row.updated_at})
 }
-pub(super) async fn create_mcp_server(State(state): State<AppState>, request: Request) -> Response {
+
+pub(in crate::app::admin) async fn create_mcp_server(
+    State(state): State<AppState>,
+    request: Request,
+) -> Response {
     let (request, body): (_, CreateMcpServer) = match json(request).await {
         Ok(v) => v,
         Err(e) => return e,
@@ -133,7 +141,8 @@ pub(super) async fn create_mcp_server(State(state): State<AppState>, request: Re
         Err(e) => sql_error(&request, &e),
     }
 }
-pub(super) async fn get_mcp_server(
+
+pub(in crate::app::admin) async fn get_mcp_server(
     State(state): State<AppState>,
     Path(key): Path<String>,
     request: Request,
@@ -148,7 +157,8 @@ pub(super) async fn get_mcp_server(
         Err(e) => sql_error(&request, &e),
     }
 }
-pub(super) async fn list_mcp_servers(
+
+pub(in crate::app::admin) async fn list_mcp_servers(
     State(state): State<AppState>,
     Query(query): Query<PageQuery>,
     request: Request,
@@ -161,9 +171,19 @@ pub(super) async fn list_mcp_servers(
         Ok(v) => v,
         Err(e) => return e,
     };
-    match database.list_mcp_servers(page, size).await {Ok(rows)=>Json(serde_json::json!({"items":rows.into_iter().map(mcp_json).collect::<Vec<_>>(),"page":page,"page_size":size,"max_page_size":PAGE_MAX})).into_response(),Err(e)=>sql_error(&request,&e)}
+    match database.list_mcp_servers(page, size).await {
+        Ok(rows) => Json(serde_json::json!({
+            "items": rows.into_iter().map(mcp_json).collect::<Vec<_>>(),
+            "page": page,
+            "page_size": size,
+            "max_page_size": PAGE_MAX
+        }))
+        .into_response(),
+        Err(e) => sql_error(&request, &e),
+    }
 }
-pub(super) async fn patch_mcp_server(
+
+pub(in crate::app::admin) async fn patch_mcp_server(
     State(state): State<AppState>,
     Path(key): Path<String>,
     request: Request,
@@ -268,7 +288,8 @@ pub(super) async fn patch_mcp_server(
     }
     get_mcp_server(State(state), Path(key), request).await
 }
-pub(super) async fn list_agent_mcp_bindings(
+
+pub(in crate::app::admin) async fn list_agent_mcp_bindings(
     State(state): State<AppState>,
     Path(key): Path<String>,
     request: Request,
@@ -284,9 +305,20 @@ pub(super) async fn list_agent_mcp_bindings(
         }
         Err(e) => return sql_error(&request, &e),
     };
-    match database.agent_mcp_bindings(agent.id).await { Ok(rows)=>Json(serde_json::json!({"items":rows.into_iter().map(|(server_key,enabled,required)|serde_json::json!({"server_key":server_key,"enabled":enabled!=0,"required":required!=0})).collect::<Vec<_>>() })).into_response(),Err(e)=>sql_error(&request,&e) }
+    match database.agent_mcp_bindings(agent.id).await {
+        Ok(rows) => Json(serde_json::json!({
+            "items": rows.into_iter().map(|(server_key, enabled, required)| serde_json::json!({
+                "server_key": server_key,
+                "enabled": enabled != 0,
+                "required": required != 0
+            })).collect::<Vec<_>>()
+        }))
+        .into_response(),
+        Err(e) => sql_error(&request, &e),
+    }
 }
-pub(super) async fn put_agent_mcp_binding(
+
+pub(in crate::app::admin) async fn put_agent_mcp_binding(
     State(state): State<AppState>,
     Path((key, server_key)): Path<(String, String)>,
     request: Request,
@@ -318,7 +350,7 @@ pub(super) async fn put_agent_mcp_binding(
     }
 }
 
-pub(super) async fn unlink_agent_mcp_binding(
+pub(in crate::app::admin) async fn unlink_agent_mcp_binding(
     State(state): State<AppState>,
     Path((key, server_key)): Path<(String, String)>,
     request: Request,

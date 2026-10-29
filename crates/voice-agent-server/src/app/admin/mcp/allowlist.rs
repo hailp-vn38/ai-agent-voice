@@ -1,8 +1,9 @@
 //! Review exact observed contracts using observation and approval revisions.
-use super::*;
+use super::super::*;
 use crate::database::agents::get_agent_by;
 use crate::database::tool_allowlist::ToolReview;
-pub(super) async fn list(
+
+pub(in crate::app::admin) async fn list(
     State(state): State<AppState>,
     Path(key): Path<String>,
     request: Request,
@@ -16,11 +17,28 @@ pub(super) async fn list(
         Err(e) => return sql_error(&request, &e),
     };
     match database.external_tool_reviews(agent.id).await {
-        Ok(rows) => Json(serde_json::json!({"items":rows.into_iter().map(|(server_key,original_name,description,schema,fingerprint,observed_revision,observed_at,allowed,sensitive,revision,source)| serde_json::json!({"server_key":server_key,"original_name":original_name,"description":description,"input_schema":serde_json::from_str::<Value>(&schema).unwrap_or_default(),"fingerprint":fingerprint,"observed_revision":observed_revision,"observed_at":observed_at,"allowed":allowed!=0,"sensitive":sensitive!=0,"revision":revision,"source":serde_json::from_str::<Value>(&source).unwrap_or_default(),"presence":"observed_only"})).collect::<Vec<_>>()})).into_response(),
-        Err(e) => sql_error(&request,&e)
+        Ok(rows) => Json(serde_json::json!({
+            "items": rows.into_iter().map(|(server_key, original_name, description, schema, fingerprint, observed_revision, observed_at, allowed, sensitive, revision, source)| serde_json::json!({
+                "server_key": server_key,
+                "original_name": original_name,
+                "description": description,
+                "input_schema": serde_json::from_str::<Value>(&schema).unwrap_or_default(),
+                "fingerprint": fingerprint,
+                "observed_revision": observed_revision,
+                "observed_at": observed_at,
+                "allowed": allowed != 0,
+                "sensitive": sensitive != 0,
+                "revision": revision,
+                "source": serde_json::from_str::<Value>(&source).unwrap_or_default(),
+                "presence": "observed_only"
+            })).collect::<Vec<_>>()
+        }))
+        .into_response(),
+        Err(e) => sql_error(&request, &e),
     }
 }
-pub(super) async fn review(
+
+pub(in crate::app::admin) async fn review(
     State(state): State<AppState>,
     Path(key): Path<String>,
     request: Request,

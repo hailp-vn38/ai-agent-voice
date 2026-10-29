@@ -1,5 +1,5 @@
 //! Admin-side, authenticated consumption of an activation code.
-use super::*;
+use super::super::*;
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -12,7 +12,10 @@ struct ClaimEnrollment {
     template_key: Option<String>,
 }
 
-pub(super) async fn claim(State(state): State<AppState>, request: Request) -> Response {
+pub(in crate::app::admin) async fn claim(
+    State(state): State<AppState>,
+    request: Request,
+) -> Response {
     if !state.config.database.devices.enrollment.enabled {
         return error(&request, StatusCode::NOT_FOUND, "not_found");
     }

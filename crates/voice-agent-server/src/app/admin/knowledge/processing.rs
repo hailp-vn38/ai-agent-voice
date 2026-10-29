@@ -1,6 +1,5 @@
 //! Admin HTTP handlers for Knowledge Processing routes backed by `orchestrator-agent` and `llm-wiki-rs`.
-use super::knowledge::{wiki, wiki_error};
-use super::*;
+use super::{wiki, wiki_error, *};
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 
@@ -39,7 +38,7 @@ async fn publish_wiki_lint_if_needed(state: &AppState, lint: &llm_wiki::WikiLint
     let _ = hub.publish(input).await;
 }
 
-pub(super) async fn analyze(
+pub(in crate::app::admin) async fn analyze(
     State(state): State<AppState>,
     Path(source_id): Path<String>,
     req: Request,
@@ -68,12 +67,12 @@ pub(super) async fn analyze(
 }
 
 #[derive(Deserialize)]
-pub(super) struct ReviewsQuery {
+pub(in crate::app::admin) struct ReviewsQuery {
     #[serde(default)]
     limit: Option<usize>,
 }
 
-pub(super) async fn reviews(
+pub(in crate::app::admin) async fn reviews(
     State(state): State<AppState>,
     Query(query): Query<ReviewsQuery>,
     req: Request,
@@ -97,7 +96,7 @@ pub(super) async fn reviews(
     }
 }
 
-pub(super) async fn review(
+pub(in crate::app::admin) async fn review(
     State(state): State<AppState>,
     Path(id): Path<String>,
     req: Request,
@@ -120,7 +119,7 @@ pub(super) async fn review(
     }
 }
 
-pub(super) async fn approve(
+pub(in crate::app::admin) async fn approve(
     State(state): State<AppState>,
     Path(id): Path<String>,
     req: Request,
@@ -137,7 +136,7 @@ pub(super) async fn approve(
     .into_response()
 }
 
-pub(super) async fn reject(
+pub(in crate::app::admin) async fn reject(
     State(state): State<AppState>,
     Path(id): Path<String>,
     req: Request,
@@ -153,7 +152,7 @@ pub(super) async fn reject(
     .into_response()
 }
 
-pub(super) async fn resolve_draft(
+pub(in crate::app::admin) async fn resolve_draft(
     State(state): State<AppState>,
     Path(wiki_id): Path<String>,
     req: Request,

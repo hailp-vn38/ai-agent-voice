@@ -1,4 +1,4 @@
-use super::*;
+use super::super::*;
 use crate::app::assistant::trusted_origin;
 use crate::database::devices::Device;
 
@@ -12,7 +12,11 @@ fn settings(device: Option<Device>, active: usize) -> Value {
         }
     }
 }
-pub(super) async fn get(State(state): State<AppState>, request: Request) -> Response {
+
+pub(in crate::app::admin) async fn get(
+    State(state): State<AppState>,
+    request: Request,
+) -> Response {
     let db = match database(&state) {
         Ok(db) => db,
         Err(_) => {
@@ -28,6 +32,7 @@ pub(super) async fn get(State(state): State<AppState>, request: Request) -> Resp
         Err(e) => sql_error(&request, &e),
     }
 }
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Input {
@@ -36,7 +41,11 @@ struct Input {
     #[serde(default)]
     template_key: Option<String>,
 }
-pub(super) async fn put(State(state): State<AppState>, request: Request) -> Response {
+
+pub(in crate::app::admin) async fn put(
+    State(state): State<AppState>,
+    request: Request,
+) -> Response {
     let (request, input): (_, Input) = match json(request).await {
         Ok(v) => v,
         Err(e) => return e,
@@ -77,7 +86,11 @@ pub(super) async fn put(State(state): State<AppState>, request: Request) -> Resp
         Err(cause) => write_error(&request, cause),
     }
 }
-pub(super) async fn ticket(State(state): State<AppState>, request: Request) -> Response {
+
+pub(in crate::app::admin) async fn ticket(
+    State(state): State<AppState>,
+    request: Request,
+) -> Response {
     if !state.admission_gate().is_open() {
         return error(&request, StatusCode::SERVICE_UNAVAILABLE, "shutting_down");
     }
@@ -126,7 +139,7 @@ struct ReminderTargetInput {
     device_id: String,
 }
 
-pub(super) async fn put_reminder_target(
+pub(in crate::app::admin) async fn put_reminder_target(
     State(state): State<AppState>,
     request: Request,
 ) -> Response {

@@ -10,6 +10,7 @@ pub(super) use relationships::{
 };
 
 use crate::database::templates::{TemplateChanges, TemplateFilters, TemplateInput, template_by};
+
 #[derive(Deserialize)]
 struct CreateTemplate {
     key: String,
@@ -19,6 +20,7 @@ struct CreateTemplate {
     language: String,
     prompt: String,
 }
+
 #[derive(Deserialize)]
 struct PatchTemplate {
     #[serde(default)]
@@ -34,6 +36,7 @@ struct PatchTemplate {
     #[serde(default)]
     enabled: Patch<bool>,
 }
+
 #[derive(Deserialize)]
 struct ProviderBinding {
     provider_key: String,
@@ -79,6 +82,7 @@ pub(super) async fn create_template(State(state): State<AppState>, request: Requ
         Err(e) => sql_error(&request, &e),
     }
 }
+
 pub(super) async fn get_template(
     State(state): State<AppState>,
     Path(key): Path<String>,
@@ -141,9 +145,11 @@ pub(super) struct TemplateListQuery {
     #[serde(default)]
     sort: Option<String>,
 }
+
 fn template_total_pages(total: i64, page_size: u32) -> i64 {
     (total + i64::from(page_size) - 1) / i64::from(page_size)
 }
+
 pub(super) async fn patch_template(
     State(state): State<AppState>,
     Path(key): Path<String>,

@@ -1,4 +1,4 @@
-use super::*;
+use super::super::*;
 use crate::services::notification_hub::{
     ExternalChannelKind, InboxListQuery, NotificationHub, NotificationHubError,
     NotificationSettingsUpdate, NotificationSseEvent, TestChannelInput,
@@ -33,7 +33,7 @@ fn hub_error(req: &Request, err: NotificationHubError) -> Response {
     }
 }
 
-pub(super) async fn list_inbox(
+pub(in crate::app::admin) async fn list_inbox(
     State(state): State<AppState>,
     Query(query): Query<InboxListQuery>,
     req: Request,
@@ -50,14 +50,14 @@ pub(super) async fn list_inbox(
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(super) struct MarkReadInput {
+pub(in crate::app::admin) struct MarkReadInput {
     #[serde(default)]
     pub ids: Vec<String>,
     #[serde(default)]
     pub all: bool,
 }
 
-pub(super) async fn mark_read(State(state): State<AppState>, req: Request) -> Response {
+pub(in crate::app::admin) async fn mark_read(State(state): State<AppState>, req: Request) -> Response {
     let hub = match notification_hub(&state, &req) {
         Ok(h) => h,
         Err(resp) => return resp,
@@ -72,7 +72,7 @@ pub(super) async fn mark_read(State(state): State<AppState>, req: Request) -> Re
     }
 }
 
-pub(super) async fn delete_item(
+pub(in crate::app::admin) async fn delete_item(
     State(state): State<AppState>,
     Path(item_id): Path<String>,
     req: Request,
@@ -89,7 +89,7 @@ pub(super) async fn delete_item(
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(super) struct PurgeInput {
+pub(in crate::app::admin) struct PurgeInput {
     #[serde(default = "default_true")]
     pub read_only: bool,
 }
@@ -98,7 +98,10 @@ const fn default_true() -> bool {
     true
 }
 
-pub(super) async fn purge_inbox(State(state): State<AppState>, req: Request) -> Response {
+pub(in crate::app::admin) async fn purge_inbox(
+    State(state): State<AppState>,
+    req: Request,
+) -> Response {
     let hub = match notification_hub(&state, &req) {
         Ok(h) => h,
         Err(resp) => return resp,
@@ -113,7 +116,7 @@ pub(super) async fn purge_inbox(State(state): State<AppState>, req: Request) -> 
     }
 }
 
-pub(super) async fn settings(State(state): State<AppState>, req: Request) -> Response {
+pub(in crate::app::admin) async fn settings(State(state): State<AppState>, req: Request) -> Response {
     let hub = match notification_hub(&state, &req) {
         Ok(h) => h,
         Err(resp) => return resp,
@@ -124,7 +127,10 @@ pub(super) async fn settings(State(state): State<AppState>, req: Request) -> Res
     }
 }
 
-pub(super) async fn save_settings(State(state): State<AppState>, req: Request) -> Response {
+pub(in crate::app::admin) async fn save_settings(
+    State(state): State<AppState>,
+    req: Request,
+) -> Response {
     let hub = match notification_hub(&state, &req) {
         Ok(h) => h,
         Err(resp) => return resp,
@@ -144,7 +150,7 @@ pub(super) async fn save_settings(State(state): State<AppState>, req: Request) -
     }
 }
 
-pub(super) async fn test_channel(
+pub(in crate::app::admin) async fn test_channel(
     State(state): State<AppState>,
     Path(channel): Path<String>,
     req: Request,
@@ -166,7 +172,7 @@ pub(super) async fn test_channel(
     }
 }
 
-pub(super) async fn stream(State(state): State<AppState>, req: Request) -> Response {
+pub(in crate::app::admin) async fn stream(State(state): State<AppState>, req: Request) -> Response {
     let hub = match notification_hub(&state, &req) {
         Ok(h) => h,
         Err(resp) => return resp,

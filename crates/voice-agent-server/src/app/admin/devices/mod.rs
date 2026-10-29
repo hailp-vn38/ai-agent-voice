@@ -1,7 +1,11 @@
-//! Admin devices resources.
-use super::*;
+//! Admin devices, enrollments, and Studio web assistant device resources.
 
+pub(super) mod assistant;
+pub(super) mod enrollments;
+
+use super::*;
 use crate::database::devices::{DeviceChanges, DeviceInput, get_device_by};
+
 #[derive(Deserialize)]
 struct CreateDevice {
     #[serde(default)]
@@ -17,6 +21,7 @@ struct CreateDevice {
     #[serde(default)]
     template_key: Option<String>,
 }
+
 #[derive(Deserialize)]
 struct PatchDevice {
     #[serde(default)]
@@ -36,6 +41,7 @@ struct PatchDevice {
     #[serde(default)]
     template_key: Patch<String>,
 }
+
 pub(super) async fn create_device(State(state): State<AppState>, request: Request) -> Response {
     let (request, body): (_, CreateDevice) = match json(request).await {
         Ok(v) => v,
@@ -101,6 +107,7 @@ pub(super) async fn create_device(State(state): State<AppState>, request: Reques
             )
         })
 }
+
 pub(super) async fn get_device(
     State(state): State<AppState>,
     Path(device_id): Path<String>,
@@ -129,6 +136,7 @@ pub(super) async fn get_device(
         Err(error_value) => sql_error(&request, &error_value),
     }
 }
+
 pub(super) async fn list_devices(
     State(state): State<AppState>,
     Query(query): Query<PageQuery>,
@@ -158,8 +166,18 @@ pub(super) async fn list_devices(
     let rows = database
         .list_devices(query.enabled, query.sort.as_deref(), page, page_size)
         .await;
-    match rows{Ok(items)=>Json(serde_json::json!({"items":items,"page":page,"page_size":page_size,"max_page_size":PAGE_MAX})).into_response(),Err(error_value)=>sql_error(&request, &error_value)}
+    match rows {
+        Ok(items) => Json(serde_json::json!({
+            "items": items,
+            "page": page,
+            "page_size": page_size,
+            "max_page_size": PAGE_MAX
+        }))
+        .into_response(),
+        Err(error_value) => sql_error(&request, &error_value),
+    }
 }
+
 pub(super) async fn patch_device(
     State(state): State<AppState>,
     Path(device_id): Path<String>,
@@ -204,12 +222,10 @@ pub(super) async fn patch_device(
         );
     }
     if old.revision != expected {
-        {
-            database
-                .device_conflict(id(&request), old.id, expected)
-                .await;
-            return error(&request, StatusCode::CONFLICT, "revision_conflict");
-        }
+        database
+            .device_conflict(id(&request), old.id, expected)
+            .await;
+        return error(&request, StatusCode::CONFLICT, "revision_conflict");
     };
     let agent_key = match body.agent_key.value() {
         None => old.agent_key.clone(),
