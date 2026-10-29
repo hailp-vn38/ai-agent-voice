@@ -32,7 +32,7 @@ pub(super) const MAX_ASR_TEST_BODY: usize = 5 * 1024 * 1024;
 /// `speaker.max_audio_body_bytes` (512 KiB) and the 12s duration cap.
 pub(super) const MAX_SPEAKER_SAMPLE_BODY: usize = 512 * 1024;
 pub(super) const MAX_QUICK_CAPTURE_BODY: usize = 4 * 1024 * 1024;
-pub(super) const MAX_JOB_CREATE_BODY: usize = 16 * 1024 * 1024;
+pub(super) const MAX_JOB_CREATE_BODY: usize = 64 * 1024 * 1024;
 const PAGE_DEFAULT: u32 = 50;
 const PAGE_MAX: u32 = 200;
 

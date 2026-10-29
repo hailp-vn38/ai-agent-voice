@@ -428,7 +428,22 @@ pub(super) async fn delete_skill(
 }
 
 pub(super) const MAX_JOB_ATTACHMENTS: usize = 4;
-pub(super) const MAX_JOB_ATTACHMENT_BYTES: usize = 10 * 1024 * 1024;
+pub(super) const MAX_JOB_ATTACHMENT_BYTES: usize = 25 * 1024 * 1024;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum JobAttachmentMediaKind {
+    Wav,
+    Mp4,
+}
+
+impl JobAttachmentMediaKind {
+    pub(super) const fn canonical_mime(self) -> &'static str {
+        match self {
+            Self::Wav => "audio/wav",
+            Self::Mp4 => "video/mp4",
+        }
+    }
+}
 
 fn default_wav_mime() -> String {
     "audio/wav".to_owned()
@@ -455,12 +470,9 @@ pub(super) struct CreateJobInput {
     pub attachments: Vec<JobAttachmentInput>,
 }
 
-pub(super) fn sanitize_wav_attachment_name(raw: &str) -> Option<String> {
+pub(super) fn sanitize_job_attachment_name(raw: &str) -> Option<(String, JobAttachmentMediaKind)> {
     let base = raw.trim().rsplit(['/', '\\']).next().unwrap_or("").trim();
     if base.is_empty() || base.chars().count() > 128 {
-        return None;
-    }
-    if !base.to_ascii_lowercase().ends_with(".wav") {
         return None;
     }
     if base
@@ -469,7 +481,20 @@ pub(super) fn sanitize_wav_attachment_name(raw: &str) -> Option<String> {
     {
         return None;
     }
-    Some(base.to_owned())
+    let lower = base.to_ascii_lowercase();
+    if lower.ends_with(".wav") {
+        Some((base.to_owned(), JobAttachmentMediaKind::Wav))
+    } else if lower.ends_with(".mp4") {
+        Some((base.to_owned(), JobAttachmentMediaKind::Mp4))
+    } else {
+        None
+    }
+}
+
+pub(super) fn sanitize_wav_attachment_name(raw: &str) -> Option<String> {
+    sanitize_job_attachment_name(raw)
+        .filter(|(_, kind)| *kind == JobAttachmentMediaKind::Wav)
+        .map(|(name, _)| name)
 }
 
 pub(super) fn valid_wav_mime(raw: &str) -> bool {
@@ -477,6 +502,17 @@ pub(super) fn valid_wav_mime(raw: &str) -> bool {
         raw.trim().to_ascii_lowercase().as_str(),
         "audio/wav" | "audio/x-wav" | "audio/wave"
     )
+}
+
+pub(super) fn valid_mp4_mime(raw: &str) -> bool {
+    matches!(raw.trim().to_ascii_lowercase().as_str(), "video/mp4")
+}
+
+pub(super) fn valid_attachment_mime_for_kind(raw: &str, kind: JobAttachmentMediaKind) -> bool {
+    match kind {
+        JobAttachmentMediaKind::Wav => valid_wav_mime(raw),
+        JobAttachmentMediaKind::Mp4 => valid_mp4_mime(raw),
+    }
 }
 
 pub(super) fn decode_attachment_base64(raw: &str) -> Result<Vec<u8>, &'static str> {
@@ -573,10 +609,10 @@ pub(super) async fn create(State(state): State<AppState>, request: Request) -> R
     let mut artifact_inputs = Vec::with_capacity(input.attachments.len());
     let mut attachment_digests = Vec::with_capacity(input.attachments.len());
     for att in input.attachments {
-        let Some(clean_name) = sanitize_wav_attachment_name(&att.name) else {
+        let Some((clean_name, media_kind)) = sanitize_job_attachment_name(&att.name) else {
             return error(&request, StatusCode::BAD_REQUEST, "invalid_attachment");
         };
-        if !valid_wav_mime(&att.mime_type) {
+        if !valid_attachment_mime_for_kind(&att.mime_type, media_kind) {
             return error(&request, StatusCode::BAD_REQUEST, "invalid_attachment");
         }
         let bytes = match decode_attachment_base64(&att.data_base64) {
@@ -590,7 +626,11 @@ pub(super) async fn create(State(state): State<AppState>, request: Request) -> R
                 "attachment_too_large",
             );
         }
-        if orchestrator_flow_rs::inspect_wav_bytes(&bytes).is_err() {
+        let header_ok = match media_kind {
+            JobAttachmentMediaKind::Wav => orchestrator_flow_rs::inspect_wav_bytes(&bytes).is_ok(),
+            JobAttachmentMediaKind::Mp4 => orchestrator_flow_rs::inspect_mp4_bytes(&bytes).is_ok(),
+        };
+        if !header_ok {
             return error(&request, StatusCode::BAD_REQUEST, "invalid_attachment");
         }
         let mut hasher = Sha256::new();
@@ -603,7 +643,7 @@ pub(super) async fn create(State(state): State<AppState>, request: Request) -> R
         attachment_digests.push(format!("{clean_name}|{sha_hex}"));
         artifact_inputs.push(orchestrator_agent_rs::ArtifactInput::intermediate_bytes(
             clean_name,
-            "audio/wav",
+            media_kind.canonical_mime(),
             bytes,
         ));
     }

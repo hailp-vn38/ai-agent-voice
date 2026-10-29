@@ -1205,7 +1205,8 @@ async fn post_jobs_accepts_wav_attachment_over_256kib_validates_idempotency_and_
  {
     use base64::Engine as _;
 
-    let temp_root = std::env::temp_dir().join(format!("background-jobs-wav-{}", uuid::Uuid::new_v4()));
+    let temp_root =
+        std::env::temp_dir().join(format!("background-jobs-wav-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&temp_root).unwrap();
     let config: AppConfig = toml::from_str(&format!(
         r#"
@@ -1303,6 +1304,57 @@ vault_dir = "{}"
     assert_eq!(artifacts[0]["role"], "intermediate");
     assert!(artifacts[0]["producer_invocation_id"].is_null());
 
+    // 1b. Valid `.mp4` video attachment -> 201 Created, classified as `kind == "video"`, `role == "intermediate"`
+    let mp4_bytes = {
+        let mut out = Vec::with_capacity(128);
+        // Box 1: `ftyp` (24 bytes)
+        out.extend_from_slice(&24u32.to_be_bytes());
+        out.extend_from_slice(b"ftypisom");
+        out.extend_from_slice(&512u32.to_be_bytes());
+        out.extend_from_slice(b"isommp42");
+        // Box 2: `moov` (40 bytes) with `mvhd` (32 bytes)
+        out.extend_from_slice(&40u32.to_be_bytes());
+        out.extend_from_slice(b"moov");
+        out.extend_from_slice(&32u32.to_be_bytes());
+        out.extend_from_slice(b"mvhd");
+        out.extend_from_slice(&0u32.to_be_bytes());
+        out.extend_from_slice(&0u32.to_be_bytes());
+        out.extend_from_slice(&0u32.to_be_bytes());
+        out.extend_from_slice(&1000u32.to_be_bytes());
+        out.extend_from_slice(&3000u32.to_be_bytes());
+        // Box 3: `mdat`
+        let payload = b"MP4_STREAM|640x360|3s|prompt=demo";
+        let mdat_len = (8 + payload.len()) as u32;
+        out.extend_from_slice(&mdat_len.to_be_bytes());
+        out.extend_from_slice(b"mdat");
+        out.extend_from_slice(payload);
+        out
+    };
+    let mp4_b64 = base64::engine::general_purpose::STANDARD.encode(&mp4_bytes);
+    let mp4_resp = client
+        .post(format!("{base}/jobs"))
+        .bearer_auth("background-test-token")
+        .header("Idempotency-Key", "idem-mp4-1")
+        .json(&json!({
+            "goal": "Transcribe and summarize this attached MP4 video",
+            "attachments": [{
+                "name": "demo.mp4",
+                "mime_type": "video/mp4",
+                "data_base64": mp4_b64,
+            }]
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(mp4_resp.status(), StatusCode::CREATED);
+    let mp4_job: Value = mp4_resp.json().await.unwrap();
+    let mp4_artifacts = mp4_job["artifacts"].as_array().unwrap();
+    assert_eq!(mp4_artifacts.len(), 1);
+    assert_eq!(mp4_artifacts[0]["name"], "demo.mp4");
+    assert_eq!(mp4_artifacts[0]["kind"], "video");
+    assert_eq!(mp4_artifacts[0]["role"], "intermediate");
+    assert!(mp4_artifacts[0]["producer_invocation_id"].is_null());
+
     // 2. Same `Idempotency-Key` with a DIFFERENT `.wav` file -> 409 idempotency_key_conflict
     let wav_b = make_wav(16_000, 200);
     let wav_b_b64 = base64::engine::general_purpose::STANDARD.encode(&wav_b);
@@ -1327,7 +1379,7 @@ vault_dir = "{}"
         "idempotency_key_conflict"
     );
 
-    // 3. Non-`.wav` attachment -> 400 invalid_attachment
+    // 3. Non-`.wav`/`.mp4` attachment -> 400 invalid_attachment
     let bad_file = client
         .post(format!("{base}/jobs"))
         .bearer_auth("background-test-token")
@@ -1348,8 +1400,8 @@ vault_dir = "{}"
         "invalid_attachment"
     );
 
-    // 4. File > 10 MB -> 413 attachment_too_large
-    let oversized_bytes = vec![b'A'; 10 * 1024 * 1024 + 64];
+    // 4. File > 25 MB -> 413 attachment_too_large
+    let oversized_bytes = vec![b'A'; 25 * 1024 * 1024 + 64];
     let oversized_b64 = base64::engine::general_purpose::STANDARD.encode(&oversized_bytes);
     let too_large = client
         .post(format!("{base}/jobs"))

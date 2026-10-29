@@ -19,7 +19,7 @@ interface PendingWavAttachment extends JobAttachmentUpload {
 }
 
 const MAX_WAV_ATTACHMENTS = 4
-const MAX_WAV_BYTES = 10 * 1024 * 1024
+const MAX_WAV_BYTES = 25 * 1024 * 1024
 
 const router = useRouter()
 const { t } = useI18n()
@@ -123,6 +123,15 @@ function hasRiffMagic(base64Payload: string): boolean {
   }
 }
 
+function hasMp4FtypMagic(base64Payload: string): boolean {
+  try {
+    const head = atob(base64Payload.slice(0, 16))
+    return head.length >= 8 && head.slice(4, 8) === 'ftyp'
+  } catch {
+    return false
+  }
+}
+
 async function addWavFiles(fileList: FileList | File[]) {
   error.value = ''
   const files = Array.from(fileList)
@@ -133,10 +142,12 @@ async function addWavFiles(fileList: FileList | File[]) {
   }
   for (const file of files) {
     const lowerName = file.name.trim().toLowerCase()
-    const mime = (file.type || 'audio/wav').toLowerCase()
-    const validExt = lowerName.endsWith('.wav')
-    const validMime = !file.type || mime === 'audio/wav' || mime === 'audio/x-wav' || mime === 'audio/wave' || mime === 'audio/vnd.wave'
-    if (!validExt || !validMime) {
+    const isWav = lowerName.endsWith('.wav')
+    const isMp4 = lowerName.endsWith('.mp4')
+    const rawMime = (file.type || '').toLowerCase()
+    const validWavMime = !rawMime || rawMime === 'audio/wav' || rawMime === 'audio/x-wav' || rawMime === 'audio/wave' || rawMime === 'audio/vnd.wave'
+    const validMp4Mime = !rawMime || rawMime === 'video/mp4'
+    if ((!isWav || !validWavMime) && (!isMp4 || !validMp4Mime)) {
       error.value = t('jobUi.wavInvalidFormat')
       return
     }
@@ -147,8 +158,10 @@ async function addWavFiles(fileList: FileList | File[]) {
   }
   const staged: PendingWavAttachment[] = []
   for (const file of files) {
+    const lowerName = file.name.trim().toLowerCase()
+    const isMp4 = lowerName.endsWith('.mp4')
     const data_base64 = await readFileAsBase64(file)
-    if (!hasRiffMagic(data_base64)) {
+    if (isMp4 ? !hasMp4FtypMagic(data_base64) : !hasRiffMagic(data_base64)) {
       error.value = t('jobUi.wavInvalidFormat')
       return
     }
@@ -156,7 +169,7 @@ async function addWavFiles(fileList: FileList | File[]) {
     staged.push({
       id: crypto.randomUUID(),
       name: file.name.trim(),
-      mime_type: 'audio/wav',
+      mime_type: isMp4 ? 'video/mp4' : 'audio/wav',
       data_base64,
       sizeBytes: file.size,
       lastModified: file.lastModified || 0,
@@ -313,7 +326,7 @@ onBeforeUnmount(() => {
           <input
             ref="wavInputRef"
             type="file"
-            accept=".wav,audio/wav,audio/x-wav,audio/wave"
+            accept=".wav,.mp4,audio/wav,audio/x-wav,audio/wave,video/mp4"
             multiple
             class="sr-only"
             data-testid="job-wav-file-input"
@@ -358,8 +371,15 @@ onBeforeUnmount(() => {
                   <Trash2 class="size-3.5 text-danger" />
                 </Button>
               </div>
+              <video
+                v-if="att.previewUrl && att.mime_type === 'video/mp4'"
+                controls
+                preload="metadata"
+                :src="att.previewUrl"
+                class="mt-2 max-h-40 w-full rounded"
+              />
               <audio
-                v-if="att.previewUrl"
+                v-else-if="att.previewUrl"
                 controls
                 preload="metadata"
                 :src="att.previewUrl"

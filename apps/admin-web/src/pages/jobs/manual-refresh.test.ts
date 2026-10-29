@@ -377,13 +377,17 @@ it('attaches .wav audio in Create Job modal, auto-fills goal, and submits base64
     const wavFile = new File([new Uint8Array([82, 73, 70, 70, 36, 0, 0, 0, 87, 65, 86, 69])], 'cuoc-hop.wav', {
       type: 'audio/wav',
     })
+    const mp4File = new File([new Uint8Array([0, 0, 0, 24, 102, 116, 121, 112, 105, 115, 111, 109])], 'ban-ghi-hinh.mp4', {
+      type: 'video/mp4',
+    })
     await dropzone.trigger('drop', {
-      dataTransfer: { files: [wavFile] },
+      dataTransfer: { files: [wavFile, mp4File] },
     })
     await new Promise(resolve => setTimeout(resolve, 25))
     await flushPromises()
 
     expect(wrapper.text()).toContain('cuoc-hop.wav')
+    expect(wrapper.text()).toContain('ban-ghi-hinh.mp4')
     expect((wrapper.get('textarea').element as HTMLTextAreaElement).value).toBe(translate('jobUi.wavDefaultGoal'))
 
     await wrapper.get('[role="dialog"] form').trigger('submit')
@@ -397,6 +401,11 @@ it('attaches .wav audio in Create Job modal, auto-fills goal, and submits base64
       {
         name: 'cuoc-hop.wav',
         mime_type: 'audio/wav',
+        data_base64: expect.any(String),
+      },
+      {
+        name: 'ban-ghi-hinh.mp4',
+        mime_type: 'video/mp4',
         data_base64: expect.any(String),
       },
     ])
