@@ -76,7 +76,9 @@ fn decode_wav_to_16khz_mono_handles_formats_channels_rates_and_antialiasing() {
 
     // 2. 8 kHz mono 16-bit PCM -> 16 kHz mono
     let samples_8k: Vec<i16> = (0..8_000)
-        .map(|i| ((2.0 * std::f32::consts::PI * 440.0 * (i as f32) / 8_000.0).sin() * 16_000.0) as i16)
+        .map(|i| {
+            ((2.0 * std::f32::consts::PI * 440.0 * (i as f32) / 8_000.0).sin() * 16_000.0) as i16
+        })
         .collect();
     let pcm_from_8k = decode_wav_to_16khz_mono(&encode_pcm16_wav(8_000, 1, &samples_8k)).unwrap();
     assert_eq!(pcm_from_8k.samples().len(), 16_000);

@@ -328,7 +328,11 @@ impl CatalogMediaBackend {
         resolve_media_tool_provider(&guard, settings.as_ref(), tool_name, required_tag, true)
     }
 
-    fn resolve_bridge(&self, label: &str, provider_ref: &str) -> Result<ServerMediaRuntimeBridge, String> {
+    fn resolve_bridge(
+        &self,
+        label: &str,
+        provider_ref: &str,
+    ) -> Result<ServerMediaRuntimeBridge, String> {
         self.media_bridge
             .clone()
             .or_else(|| {

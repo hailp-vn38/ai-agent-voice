@@ -1306,7 +1306,11 @@ async fn real_chromium_cdp_downloads_large_multi_clip_video_blob_over_16mib() {
     let blob_url = blob_url_val.as_str().expect("blob url string");
 
     let fetch_res = page
-        .evaluate_json(&dom::fetch_as_base64_js(blob_url), true, Duration::from_secs(60))
+        .evaluate_json(
+            &dom::fetch_as_base64_js(blob_url),
+            true,
+            Duration::from_secs(60),
+        )
         .await;
 
     page.close().await;
