@@ -6,6 +6,7 @@ mod media_asr;
 #[cfg(test)]
 mod media_asr_tests;
 mod media_backend;
+mod media_runtime_bridge;
 mod persistence;
 mod provider_catalog;
 mod resolution;
@@ -32,8 +33,8 @@ pub use resolution::{build_agent_definitions, project_agents_json};
 pub use specs::{
     AGENT_SPECS, AgentSpec, CUSTOM_DAILY_SUBAGENT_TOOLS, CUSTOM_WIKI_SUBAGENT_TOOLS,
     DEFAULT_USER_ROOT_AGENT_ID, WIKI_AUTOFLOW_ROOT_AGENT_ID, custom_subagent_flow_policy,
-    find_agent_spec, is_user_routable_root_agent, normalize_user_target_agent,
-    valid_custom_subagent_id,
+    find_agent_spec, find_tool_owner_spec, is_user_routable_root_agent,
+    normalize_user_target_agent, valid_custom_subagent_id,
 };
 pub use validation::{
     CreateCustomSubagentInput, SubagentMutationError, create_custom_subagent,

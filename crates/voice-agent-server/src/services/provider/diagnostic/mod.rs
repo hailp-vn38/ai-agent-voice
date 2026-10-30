@@ -8,16 +8,14 @@ use std::{
     time::Duration,
 };
 
+#[cfg(test)]
+use crate::providers::ProviderType;
 use crate::{
     database::{Database, DesiredProvider},
-    providers::{
-        DatabaseRuntimeSnapshot, DatabaseRuntimeStatus, RuntimeCatalog,
-    },
+    providers::{DatabaseRuntimeSnapshot, DatabaseRuntimeStatus, RuntimeCatalog},
     services::provider_runtime::{ProviderRuntimeManager, ResourceLease, RuntimeError},
     workers::ProviderCapacityPermit,
 };
-#[cfg(test)]
-use crate::providers::ProviderType;
 
 mod execution;
 mod runners;

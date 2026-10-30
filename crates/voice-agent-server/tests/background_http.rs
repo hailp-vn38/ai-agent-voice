@@ -473,7 +473,7 @@ prompts_dir = "{}"
     let created_tts_provider: Value = created_tts_resp.json().await.unwrap();
     let db_tts_key = created_tts_provider["key"].as_str().unwrap().to_owned();
 
-    // 2. Fetch GET /api/admin/background/settings and verify provider catalog + 9 agents
+    // 2. Fetch GET /api/admin/background/settings and verify provider catalog + 10 agents
     let initial: Value = client
         .get(format!("{base}/background/settings"))
         .bearer_auth("background-test-token")
@@ -507,7 +507,7 @@ prompts_dir = "{}"
     assert_eq!(db_tts_entry["tags"], json!(["tts"]));
 
     let agents = initial["agents"].as_array().unwrap();
-    assert_eq!(agents.len(), 9);
+    assert_eq!(agents.len(), 10);
     let initial_collector = agents
         .iter()
         .find(|a| a["id"] == "source_collector")
@@ -540,7 +540,10 @@ prompts_dir = "{}"
                     "system_prompt": "Custom Vietnamese researcher prompt."
                 },
                 "media_creator": {
-                    "enabled": false,
+                    "enabled": false
+                },
+                "media_processor": {
+                    "enabled": true,
                     "tool_providers": {
                         "tts_synthesize": db_tts_key
                     }
@@ -556,20 +559,20 @@ prompts_dir = "{}"
     assert_eq!(updated["worker_llm_provider"], db_provider_key);
 
     let updated_agents = updated["agents"].as_array().unwrap();
-    let media_creator = updated_agents
+    let media_processor = updated_agents
         .iter()
-        .find(|a| a["id"] == "media_creator")
+        .find(|a| a["id"] == "media_processor")
         .unwrap();
     assert_eq!(
-        media_creator["tool_capability_tags"]["tts_synthesize"],
+        media_processor["tool_capability_tags"]["tts_synthesize"],
         "tts"
     );
     assert_eq!(
-        media_creator["tool_providers"]["tts_synthesize"],
+        media_processor["tool_providers"]["tts_synthesize"],
         db_tts_key
     );
     assert_eq!(
-        media_creator["effective_tool_providers"]["tts_synthesize"],
+        media_processor["effective_tool_providers"]["tts_synthesize"],
         db_tts_key
     );
     let researcher = updated_agents
@@ -1004,7 +1007,7 @@ skills_dir = "{}"
     let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
     let client = Client::new();
 
-    // 1. Initial settings has 9 built-in agents with `is_builtin: true`
+    // 1. Initial settings has 10 built-in agents with `is_builtin: true`
     let initial: Value = client
         .get(format!("{base}/background/settings"))
         .bearer_auth("background-test-token")
@@ -1016,7 +1019,7 @@ skills_dir = "{}"
         .unwrap();
     assert_eq!(initial["revision"], 1);
     let initial_agents = initial["agents"].as_array().unwrap();
-    assert_eq!(initial_agents.len(), 9);
+    assert_eq!(initial_agents.len(), 10);
     assert!(initial_agents.iter().all(|a| a["is_builtin"] == true));
 
     // 2. Create a Custom Sub-Agent in Flow 1 (`daily`) via POST /api/admin/background/agents
@@ -1041,7 +1044,7 @@ skills_dir = "{}"
     let after_create: Value = create_resp.json().await.unwrap();
     assert_eq!(after_create["revision"], 2);
     let agents = after_create["agents"].as_array().unwrap();
-    assert_eq!(agents.len(), 10);
+    assert_eq!(agents.len(), 11);
     let custom = agents
         .iter()
         .find(|a| a["id"] == "custom_arxiv_digest")
@@ -1194,7 +1197,7 @@ skills_dir = "{}"
     assert_eq!(del_custom.status(), StatusCode::OK);
     let after_del: Value = del_custom.json().await.unwrap();
     assert_eq!(after_del["revision"], 4);
-    assert_eq!(after_del["agents"].as_array().unwrap().len(), 9);
+    assert_eq!(after_del["agents"].as_array().unwrap().len(), 10);
     assert!(!prompts_dir.join("custom_arxiv_digest.md").exists());
 
     server.abort();

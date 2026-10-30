@@ -1,15 +1,15 @@
 //! Default agent system prompts and Built-in Job Skills seeded into the workspace if absent.
 //!
-//! Canonical prompt constants are shared from [`orchestrator_flow_rs::prompts`], while the 6
+//! Canonical prompt constants are shared from [`orchestrator_flow_rs::prompts`], while the 7
 //! Built-in Job Skills live in `crates/voice-agent-server/builtin-skills/<id>/SKILL.md` so the
 //! server can seed runtime `skills/` and restore defaults on demand.
 
 use std::path::Path;
 
 pub use orchestrator_flow_rs::{
-    DAILY_ROOT_PROMPT, MEDIA_CREATOR_PROMPT, REMINDER_PLANNER_PROMPT, REPORT_STAGER_PROMPT,
-    SOURCE_COLLECTOR_PROMPT, WIKI_CURATOR_PROMPT, WIKI_INGESTOR_PROMPT, WIKI_RESEARCHER_PROMPT,
-    WIKI_ROOT_PROMPT,
+    DAILY_ROOT_PROMPT, MEDIA_CREATOR_PROMPT, MEDIA_PROCESSOR_PROMPT, REMINDER_PLANNER_PROMPT,
+    REPORT_STAGER_PROMPT, SOURCE_COLLECTOR_PROMPT, WIKI_CURATOR_PROMPT, WIKI_INGESTOR_PROMPT,
+    WIKI_RESEARCHER_PROMPT, WIKI_ROOT_PROMPT,
 };
 
 pub const WIKI_TAXONOMY_SKILL: &str =
@@ -57,6 +57,7 @@ pub(crate) fn ensure_prompts_and_skills(
         ("wiki_researcher.md", WIKI_RESEARCHER_PROMPT),
         ("report_stager.md", REPORT_STAGER_PROMPT),
         ("media_creator.md", MEDIA_CREATOR_PROMPT),
+        ("media_processor.md", MEDIA_PROCESSOR_PROMPT),
         ("reminder_planner.md", REMINDER_PLANNER_PROMPT),
         ("wiki_root.md", WIKI_ROOT_PROMPT),
         ("source_collector.md", SOURCE_COLLECTOR_PROMPT),

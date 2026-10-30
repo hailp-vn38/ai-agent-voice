@@ -57,7 +57,10 @@ pub(in crate::app::admin) struct MarkReadInput {
     pub all: bool,
 }
 
-pub(in crate::app::admin) async fn mark_read(State(state): State<AppState>, req: Request) -> Response {
+pub(in crate::app::admin) async fn mark_read(
+    State(state): State<AppState>,
+    req: Request,
+) -> Response {
     let hub = match notification_hub(&state, &req) {
         Ok(h) => h,
         Err(resp) => return resp,
@@ -116,7 +119,10 @@ pub(in crate::app::admin) async fn purge_inbox(
     }
 }
 
-pub(in crate::app::admin) async fn settings(State(state): State<AppState>, req: Request) -> Response {
+pub(in crate::app::admin) async fn settings(
+    State(state): State<AppState>,
+    req: Request,
+) -> Response {
     let hub = match notification_hub(&state, &req) {
         Ok(h) => h,
         Err(resp) => return resp,

@@ -838,10 +838,8 @@ impl AsrFactory for SenseVoiceSherpaOfflineFactory {
         validate_threads(self.adapter(), runtime)?;
         let mut options = options.clone();
         options.num_threads = runtime.onnx.threads_for(self.adapter());
-        let recognizer = build_sensevoice_recognizer(
-            &options,
-            &resolve(sensevoice::assets::resolve_assets())?,
-        )?;
+        let recognizer =
+            build_sensevoice_recognizer(&options, &resolve(sensevoice::assets::resolve_assets())?)?;
         drop(recognizer.create_stream());
         Ok(Arc::new(SenseVoiceAsrProvider {
             recognizer: Arc::new(recognizer),

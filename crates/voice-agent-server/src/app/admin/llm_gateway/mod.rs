@@ -10,9 +10,7 @@ pub(super) use accounts::{
     clear_account_cooldown, delete_account, get_account_quota, list_accounts, list_quotas,
     patch_account, refresh_account, refresh_account_quota,
 };
-pub(super) use oauth::{
-    complete_oauth_session, oauth_callback, poll_oauth_session, start_oauth,
-};
+pub(super) use oauth::{complete_oauth_session, oauth_callback, poll_oauth_session, start_oauth};
 pub(super) use pools::{
     create_pool_model, delete_pool_model, get_pool_detail, list_vendors, patch_pool_model,
 };

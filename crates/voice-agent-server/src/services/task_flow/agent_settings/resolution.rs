@@ -87,9 +87,9 @@ fn resolve_effective_agents(
             });
             let resolved_provider = find_provider(spec.id, effective_ref);
             // Subagents in `Orchestrator` always run a chat/tool-calling loop over `/v1/chat/completions`.
-            // When `media_creator` is configured with a dedicated `image` or `video` provider (without `chat`),
-            // keep `resolved_provider` for UI projection & media backend selection, while using the worker
-            // `chat` provider for the Orchestrator's tool-calling session.
+            // When `media_creator` or `media_processor` is configured with a dedicated `image`, `video`,
+            // `tts`, or `asr` provider (without `chat`), keep `resolved_provider` for UI projection &
+            // media backend selection, while using the worker `chat` provider for the Orchestrator's tool-calling session.
             let execution_provider = if resolved_provider.supports_tag("chat") {
                 resolved_provider.clone()
             } else {
@@ -337,7 +337,7 @@ pub fn build_agent_definitions(
                 .map(|p| p.video_constraints())
                 .unwrap_or_default();
                 description = format!(
-                    "{description} [Active video_create provider: {}; max {}s/clip, up to {} clip(s) = {}s per call; merge multi-clip outputs with video_concat]",
+                    "{description} [Active video_create provider: {}; max {}s/clip, up to {} clip(s) = {}s per call; auto-merges multi-clip outputs into a single primary MP4]",
                     vc.provider_label,
                     vc.max_clip_duration_secs,
                     vc.max_clips_per_call,

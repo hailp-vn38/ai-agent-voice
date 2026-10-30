@@ -37,7 +37,7 @@ pub struct ValidCustomSubagentRef<'a> {
     pub system_prompt: &'a str,
 }
 
-#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct AgentConfigOverride {
     #[serde(default = "default_true")]
     pub enabled: bool,
@@ -58,6 +58,22 @@ pub struct AgentConfigOverride {
     pub description: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub system_prompt: Option<String>,
+}
+
+impl Default for AgentConfigOverride {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            flow_id: None,
+            provider_ref: None,
+            tool_providers: None,
+            steps: None,
+            allowed_tools: None,
+            allowed_skills: None,
+            description: None,
+            system_prompt: None,
+        }
+    }
 }
 
 impl AgentConfigOverride {
@@ -155,6 +171,32 @@ pub fn load_persisted_settings(store_dir: &Path) -> Option<PersistedBackgroundSe
     let path = store_dir.join(AGENT_SETTINGS_FILE);
     let raw = std::fs::read_to_string(path).ok()?;
     let mut settings: PersistedBackgroundSettings = serde_json::from_str(&raw).ok()?;
+
+    // Seamless migration: move legacy `tts_synthesize` / `asr_transcribe` `tool_providers`
+    // from `media_creator` to `media_processor` if not already set on `media_processor`.
+    let mut migrated_proc_tools = BTreeMap::new();
+    if let Some(creator_ovr) = settings.agents.get_mut("media_creator")
+        && let Some(ref mut tool_map) = creator_ovr.tool_providers
+    {
+        for moved_tool in ["tts_synthesize", "asr_transcribe"] {
+            if let Some(pref) = tool_map.remove(moved_tool)
+                && !pref.trim().is_empty()
+            {
+                migrated_proc_tools.insert(moved_tool.to_owned(), pref);
+            }
+        }
+    }
+    if !migrated_proc_tools.is_empty() {
+        let proc_ovr = settings
+            .agents
+            .entry("media_processor".to_owned())
+            .or_default();
+        let proc_map = proc_ovr.tool_providers.get_or_insert_with(BTreeMap::new);
+        for (tool, pref) in migrated_proc_tools {
+            proc_map.entry(tool).or_insert(pref);
+        }
+    }
+
     settings.agents.retain(|id, ovr| {
         if let Some(spec) = find_agent_spec(id) {
             ovr.flow_id = None;

@@ -663,7 +663,9 @@ fn validate_providers(config: &AppConfig) -> Result<(), ConfigError> {
             crate::config::AsrInstanceConfig::SenseVoiceSherpaOffline(asr)
                 if asr.model.trim().is_empty()
                     || asr.num_threads <= 0
-                    || !crate::providers::asr::sensevoice::config::valid_language(&asr.language) =>
+                    || !crate::providers::asr::sensevoice::config::valid_language(
+                        &asr.language,
+                    ) =>
             {
                 return Err(ConfigError::Validation(format!(
                     "SenseVoice ASR instance `{id}` has invalid model identity, language, or runtime options"

@@ -1,12 +1,12 @@
 //! Canonical defaults for Flow 1 (`daily_root`) & Flow 2 (`wiki_root`) Root Agents
-//! and their 7 specialist Subagents.
+//! and their 8 specialist Subagents.
 
 use orchestrator_agent_rs::AgentMode;
 
 use crate::services::task_flow::workspace_seed::{
-    DAILY_ROOT_PROMPT, MEDIA_CREATOR_PROMPT, REMINDER_PLANNER_PROMPT, REPORT_STAGER_PROMPT,
-    SOURCE_COLLECTOR_PROMPT, WIKI_CURATOR_PROMPT, WIKI_INGESTOR_PROMPT, WIKI_RESEARCHER_PROMPT,
-    WIKI_ROOT_PROMPT,
+    DAILY_ROOT_PROMPT, MEDIA_CREATOR_PROMPT, MEDIA_PROCESSOR_PROMPT, REMINDER_PLANNER_PROMPT,
+    REPORT_STAGER_PROMPT, SOURCE_COLLECTOR_PROMPT, WIKI_CURATOR_PROMPT, WIKI_INGESTOR_PROMPT,
+    WIKI_RESEARCHER_PROMPT, WIKI_ROOT_PROMPT,
 };
 
 /// Default user-facing Root Agent ID for Flow 1 (`daily_root`).
@@ -38,6 +38,7 @@ impl AgentSpec {
     pub const fn allowed_capability_tags(&self) -> &'static [&'static str] {
         match self.id.as_bytes() {
             b"media_creator" => &["chat", "reasoning", "image", "video"],
+            b"media_processor" => &["chat", "reasoning", "tts", "asr", "audio"],
             _ => &["chat", "reasoning"],
         }
     }
@@ -46,12 +47,8 @@ impl AgentSpec {
     /// (e.g. `"image_create"` -> `"image"`, `"video_create"` -> `"video"`, `"tts_synthesize"` -> `"tts"`, `"asr_transcribe"` -> `"asr"`).
     pub const fn tool_capability_tags(&self) -> &'static [(&'static str, &'static str)] {
         match self.id.as_bytes() {
-            b"media_creator" => &[
-                ("image_create", "image"),
-                ("video_create", "video"),
-                ("tts_synthesize", "tts"),
-                ("asr_transcribe", "asr"),
-            ],
+            b"media_creator" => &[("image_create", "image"), ("video_create", "video")],
+            b"media_processor" => &[("tts_synthesize", "tts"), ("asr_transcribe", "asr")],
             _ => &[],
         }
     }
@@ -153,7 +150,7 @@ pub const AGENT_SPECS: &[AgentSpec] = &[
         parent_id: None,
         mode: AgentMode::Primary,
         user_routable: true,
-        default_description: "Interactive & background multi-functional assistant: inspects and summarizes external sources (YouTube videos/playlists, PDFs, Web pages), researches the Wiki/Web, creates reports, generates images/TTS artifacts, manages reminders, and ONLY saves files into sources/ when explicitly requested by the user.",
+        default_description: "Interactive & background multi-functional assistant: inspects and summarizes external sources (YouTube videos/playlists, PDFs, Web pages), researches the Wiki/Web, creates reports, generates images/diagrams/videos via media_creator, processes ASR/TTS/video concatenation via media_processor, manages reminders, and ONLY saves files into sources/ when explicitly requested by the user.",
         default_prompt: DAILY_ROOT_PROMPT,
         default_steps: 20,
         default_allowed_tools: &["subagent"],
@@ -165,6 +162,7 @@ pub const AGENT_SPECS: &[AgentSpec] = &[
             "wiki_researcher",
             "report_stager",
             "media_creator",
+            "media_processor",
             "reminder_planner",
         ],
     },
@@ -224,24 +222,35 @@ pub const AGENT_SPECS: &[AgentSpec] = &[
         parent_id: Some("daily_root"),
         mode: AgentMode::Subagent,
         user_routable: false,
-        default_description: "Generates PNG illustrations and SVG vector diagrams/infographics via image_create (with agent-selected or default dimensions), MP4 videos with built-in voiceover audio and subtitles via video_create, concatenates multi-clip or user-attached MP4 videos into a continuous primary video via video_concat, synthesizes standalone TTS audio via tts_synthesize ONLY for audio-only requests, transcribes attached WAV audio or MP4 video artifacts via asr_transcribe, and publishes structured Task Artifacts via artifact_create.",
+        default_description: "Visual generation specialist: generates PNG illustrations and SVG vector diagrams/infographics via image_create (with agent-selected or default dimensions), and MP4 videos with built-in voiceover audio, burned-in subtitles, and automatic multi-clip merging via video_create.",
         default_prompt: MEDIA_CREATOR_PROMPT,
         default_steps: 12,
+        default_allowed_tools: &["image_create", "video_create"],
+        available_tools: &["skill", "image_create", "video_create"],
+        default_allowed_skills: &[],
+        suggested_skills: &["daily-synthesis-staging"],
+        default_subagents: &[],
+    },
+    AgentSpec {
+        id: "media_processor",
+        flow_id: "daily",
+        parent_id: Some("daily_root"),
+        mode: AgentMode::Subagent,
+        user_routable: false,
+        default_description: "Audio/Speech, Video Post-Processing & Structured Artifact specialist: transcribes attached WAV audio or MP4 video artifacts into text and SRT subtitles via asr_transcribe, synthesizes standalone TTS audio via tts_synthesize ONLY for audio-only requests, concatenates existing MP4 video artifacts into a continuous primary video via video_concat, and publishes structured Job Artifacts (JSON/CSV/HTML/SRT) via artifact_create.",
+        default_prompt: MEDIA_PROCESSOR_PROMPT,
+        default_steps: 12,
         default_allowed_tools: &[
-            "image_create",
-            "video_create",
-            "video_concat",
-            "tts_synthesize",
             "asr_transcribe",
+            "tts_synthesize",
+            "video_concat",
             "artifact_create",
         ],
         available_tools: &[
             "skill",
-            "image_create",
-            "video_create",
-            "video_concat",
-            "tts_synthesize",
             "asr_transcribe",
+            "tts_synthesize",
+            "video_concat",
             "artifact_create",
         ],
         default_allowed_skills: &[],
@@ -324,6 +333,14 @@ pub const AGENT_SPECS: &[AgentSpec] = &[
 
 pub fn find_agent_spec(id: &str) -> Option<&'static AgentSpec> {
     AGENT_SPECS.iter().find(|s| s.id == id)
+}
+
+/// Finds the Built-in Sub-Agent that owns a given specialized media/audio tool
+/// (`"image_create"` / `"video_create"` -> `media_creator`, `"tts_synthesize"` / `"asr_transcribe"` -> `media_processor`).
+pub fn find_tool_owner_spec(tool_name: &str) -> Option<&'static AgentSpec> {
+    AGENT_SPECS
+        .iter()
+        .find(|s| s.tool_required_tag(tool_name).is_some())
 }
 
 /// Tool pool available to Custom Sub-Agents assigned to Flow 1 (`daily_root`).

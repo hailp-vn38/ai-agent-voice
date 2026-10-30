@@ -41,8 +41,11 @@ impl AssetAcquirer for CatalogAcquirer {
 }
 
 fn temp_root(name: &str) -> PathBuf {
-    let root =
-        std::env::temp_dir().join(format!("voice-sensevoice-{}-{}", name, uuid::Uuid::new_v4()));
+    let root = std::env::temp_dir().join(format!(
+        "voice-sensevoice-{}-{}",
+        name,
+        uuid::Uuid::new_v4()
+    ));
     fs::create_dir_all(&root).unwrap();
     root
 }

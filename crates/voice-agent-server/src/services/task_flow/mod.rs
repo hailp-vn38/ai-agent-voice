@@ -10,6 +10,10 @@ mod workspace_seed;
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod tests_media;
+#[cfg(test)]
+mod tests_providers;
 
 pub(crate) use agent_settings::install_server_media_runtime;
 pub use agent_settings::{
@@ -20,7 +24,7 @@ pub use agent_settings::{
     PersistedBackgroundSettings, ResolvedLlmProvider, SubagentMutationError,
     WIKI_AUTOFLOW_ROOT_AGENT_ID, build_agent_definitions, create_custom_subagent,
     custom_subagent_flow_policy, default_orchestrator_provider, delete_custom_subagent,
-    find_agent_spec, is_user_routable_root_agent, load_persisted_settings,
+    find_agent_spec, find_tool_owner_spec, is_user_routable_root_agent, load_persisted_settings,
     normalize_user_target_agent, project_agents_json, resolve_llm_provider_catalog,
     save_persisted_settings, sync_orchestrator_from_state, valid_custom_subagent_id,
     validate_agent_overrides, validate_agent_overrides_with_skills, write_agent_prompts,
@@ -32,10 +36,10 @@ pub use projections::{
 pub use voice::{TASK_SUITE_TOOL_NAMES, VoiceTaskSubmit, is_task_suite_tool_name, voice_rejection};
 pub use workspace_seed::{
     BUILTIN_SKILLS, DAILY_ROOT_PROMPT, DAILY_SYNTHESIS_STAGING_SKILL, DAILY_TASK_REMINDER_SKILL,
-    MEDIA_CREATOR_PROMPT, REMINDER_PLANNER_PROMPT, REPORT_STAGER_PROMPT, SOURCE_COLLECTOR_PROMPT,
-    TRADING_CHART_SKILL, WIKI_CURATOR_PROMPT, WIKI_INGEST_SKILL, WIKI_INGESTOR_PROMPT,
-    WIKI_LINT_SKILL, WIKI_QUERY_SKILL, WIKI_RESEARCHER_PROMPT, WIKI_ROOT_PROMPT,
-    WIKI_TAXONOMY_SKILL,
+    MEDIA_CREATOR_PROMPT, MEDIA_PROCESSOR_PROMPT, REMINDER_PLANNER_PROMPT, REPORT_STAGER_PROMPT,
+    SOURCE_COLLECTOR_PROMPT, TRADING_CHART_SKILL, WIKI_CURATOR_PROMPT, WIKI_INGEST_SKILL,
+    WIKI_INGESTOR_PROMPT, WIKI_LINT_SKILL, WIKI_QUERY_SKILL, WIKI_RESEARCHER_PROMPT,
+    WIKI_ROOT_PROMPT, WIKI_TAXONOMY_SKILL,
 };
 
 use std::sync::Arc;

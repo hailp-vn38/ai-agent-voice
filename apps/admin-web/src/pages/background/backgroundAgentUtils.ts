@@ -30,14 +30,32 @@ export function chatProviderOptions(
   return providers.filter(option => providerSupportsAnyTag(option, ['chat', 'reasoning']))
 }
 
+const BUILTIN_CAPABILITY_FALLBACKS: Record<
+  string,
+  { allowedTags: string[]; toolTags: Array<[string, string]> }
+> = {
+  media_creator: {
+    allowedTags: ['chat', 'reasoning', 'image', 'video'],
+    toolTags: [
+      ['image_create', 'image'],
+      ['video_create', 'video'],
+    ],
+  },
+  media_processor: {
+    allowedTags: ['chat', 'reasoning', 'tts', 'asr', 'audio'],
+    toolTags: [
+      ['tts_synthesize', 'tts'],
+      ['asr_transcribe', 'asr'],
+    ],
+  },
+}
+
 export function allowedCapabilityTagsForAgent(agent: BackgroundAgentConfig | null): string[] {
   if (!agent) return ['chat', 'reasoning']
   if (agent.allowed_capability_tags && agent.allowed_capability_tags.length > 0) {
     return agent.allowed_capability_tags
   }
-  return agent.id === 'media_creator'
-    ? ['chat', 'reasoning', 'image', 'video']
-    : ['chat', 'reasoning']
+  return BUILTIN_CAPABILITY_FALLBACKS[agent.id]?.allowedTags ?? ['chat', 'reasoning']
 }
 
 export function providerOptionsForAgent(
@@ -56,15 +74,7 @@ export function toolCapabilityEntries(
   if (agent.tool_capability_tags && Object.keys(agent.tool_capability_tags).length > 0) {
     return Object.entries(agent.tool_capability_tags)
   }
-  if (agent.id === 'media_creator') {
-    return [
-      ['image_create', 'image'],
-      ['video_create', 'video'],
-      ['tts_synthesize', 'tts'],
-      ['asr_transcribe', 'asr'],
-    ]
-  }
-  return []
+  return BUILTIN_CAPABILITY_FALLBACKS[agent.id]?.toolTags ?? []
 }
 
 export function providerOptionsForTag(

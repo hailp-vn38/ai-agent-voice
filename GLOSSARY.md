@@ -83,7 +83,7 @@ Cấu hình quản trị có phiên bản quyết định việc bật/tắt th�
 _Avoid_: Agent Template, Voice Profile, Plugin Value Settings
 
 **Agent Configuration**:
-Định nghĩa chuyên môn do server sở hữu cho từng Root Orchestrator (`daily_root`, `wiki_root`) và các Sub-Agent chuyên biệt (`source_collector`, `wiki_researcher`, `report_stager`, `media_creator`, `reminder_planner`, `wiki_ingestor`, `wiki_curator`), bao gồm chỉ dẫn hệ thống, giới hạn bước và tập công cụ/kỹ năng hợp lệ.
+Định nghĩa chuyên môn do server sở hữu cho từng Root Orchestrator (`daily_root`, `wiki_root`) và các Sub-Agent chuyên biệt (`source_collector`, `wiki_researcher`, `report_stager`, `media_creator`, `media_processor`, `reminder_planner`, `wiki_ingestor`, `wiki_curator`), bao gồm chỉ dẫn hệ thống, giới hạn bước và tập công cụ/kỹ năng hợp lệ.
 _Avoid_: Agent Run, Voice Agent, requester-provided executable code
 
 **Root Orchestrator**:

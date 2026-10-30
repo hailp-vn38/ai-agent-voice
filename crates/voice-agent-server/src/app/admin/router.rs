@@ -42,7 +42,10 @@ fn knowledge_routes() -> Router<AppState> {
             axum::routing::post(knowledge::processing::analyze),
         )
         .route("/knowledge/reviews", get(knowledge::processing::reviews))
-        .route("/knowledge/reviews/{id}", get(knowledge::processing::review))
+        .route(
+            "/knowledge/reviews/{id}",
+            get(knowledge::processing::review),
+        )
         .route(
             "/knowledge/reviews/{id}/approve",
             axum::routing::post(knowledge::processing::approve),
@@ -322,7 +325,10 @@ fn system_routes() -> Router<AppState> {
 
 fn agent_and_template_routes() -> Router<AppState> {
     Router::new()
-        .route("/agents", get(agents::list_agents).post(agents::create_agent))
+        .route(
+            "/agents",
+            get(agents::list_agents).post(agents::create_agent),
+        )
         .route(
             "/agents/{key}",
             get(agents::get_agent)
@@ -351,7 +357,10 @@ fn agent_and_template_routes() -> Router<AppState> {
                 .patch(templates::patch_template)
                 .delete(deletion::delete_template),
         )
-        .route("/templates/{key}/agents", get(templates::list_template_agents))
+        .route(
+            "/templates/{key}/agents",
+            get(templates::list_template_agents),
+        )
         .route(
             "/templates/{key}/providers",
             get(templates::list_template_providers),
@@ -416,10 +425,7 @@ fn provider_and_gateway_routes() -> Router<AppState> {
             "/providers/{key}/capabilities",
             get(providers::get_provider_capabilities),
         )
-        .route(
-            "/provider-adapters",
-            get(providers::list_provider_adapters),
-        )
+        .route("/provider-adapters", get(providers::list_provider_adapters))
         .route(
             "/provider-adapters/{adapter}",
             get(providers::get_provider_adapter),
@@ -499,7 +505,10 @@ fn device_and_history_routes() -> Router<AppState> {
                 .delete(deletion::delete_device),
         )
         .route("/history", get(history::list_history))
-        .route("/history/purge", axum::routing::post(history::purge_history))
+        .route(
+            "/history/purge",
+            axum::routing::post(history::purge_history),
+        )
 }
 
 fn speaker_routes() -> Router<AppState> {
@@ -538,8 +547,7 @@ fn speaker_routes() -> Router<AppState> {
         )
         .route(
             "/agents/{key}/speakers/{speaker_key}",
-            put(speakers::policy::put_agent_speaker)
-                .delete(speakers::policy::delete_agent_speaker),
+            put(speakers::policy::put_agent_speaker).delete(speakers::policy::delete_agent_speaker),
         )
         .route(
             "/speakers/{key}/bindings",

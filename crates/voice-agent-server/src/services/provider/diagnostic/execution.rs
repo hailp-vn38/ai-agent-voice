@@ -4,9 +4,7 @@ use futures_util::FutureExt;
 use tokio_util::sync::CancellationToken;
 
 use super::*;
-use crate::providers::{
-    DatabaseRuntimeStatus, DiagnosticRuntimeError, DiagnosticRuntimeKind,
-};
+use crate::providers::{DatabaseRuntimeStatus, DiagnosticRuntimeError, DiagnosticRuntimeKind};
 
 impl ProviderDiagnosticService {
     /// Owns a diagnostic from execution through terminal acknowledgement. A timeout never drops

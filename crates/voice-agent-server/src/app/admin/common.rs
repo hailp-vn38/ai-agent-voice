@@ -248,7 +248,10 @@ pub(super) fn database(state: &AppState) -> Result<&crate::database::Database, R
     })
 }
 
-pub(super) fn write_error(request: &Request, cause: crate::database::writes::WriteError) -> Response {
+pub(super) fn write_error(
+    request: &Request,
+    cause: crate::database::writes::WriteError,
+) -> Response {
     use crate::database::writes::WriteError;
     match cause {
         WriteError::Sql(cause) => sql_error(request, &cause),

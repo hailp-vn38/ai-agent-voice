@@ -86,7 +86,7 @@ const fixtureSettings = () => ({
       available_tools: ['subagent'],
       allowed_skills: [],
       available_skills: [],
-      allowed_subagents: ['wiki_researcher', 'media_creator'],
+      allowed_subagents: ['wiki_researcher', 'media_creator', 'media_processor'],
       description: 'Daily root coordinator',
       default_description: 'Daily root coordinator',
       system_prompt: 'You are daily_root.',
@@ -126,25 +126,59 @@ const fixtureSettings = () => ({
       tool_capability_tags: {
         image_create: 'image',
         video_create: 'video',
-        tts_synthesize: 'tts',
       },
       tool_providers: {},
       effective_tool_providers: {
         image_create: 'llm_flux_image',
         video_create: null,
-        tts_synthesize: 'tts_vieneu',
       },
       steps: 12,
       default_steps: 12,
-      allowed_tools: ['image_create', 'video_create', 'tts_synthesize', 'artifact_create'],
-      available_tools: ['skill', 'image_create', 'video_create', 'tts_synthesize', 'artifact_create'],
+      allowed_tools: ['image_create', 'video_create'],
+      available_tools: ['skill', 'image_create', 'video_create'],
       allowed_skills: [],
       available_skills: ['daily-synthesis-staging'],
       allowed_subagents: [],
-      description: 'Generates PNG/SVG/MP4/TTS artifacts',
-      default_description: 'Generates PNG/SVG/MP4/TTS artifacts',
+      description: 'Generates PNG/SVG/MP4 media artifacts',
+      default_description: 'Generates PNG/SVG/MP4 media artifacts',
       system_prompt: 'You are media_creator.',
       default_system_prompt: 'You are media_creator.',
+    },
+    {
+      id: 'media_processor',
+      flow_id: 'daily',
+      parent_id: 'daily_root',
+      mode: 'subagent',
+      enabled: true,
+      provider_ref: null,
+      effective_provider_ref: 'orchestrator:default',
+      effective_model: 'gpt-4o-mini',
+      tool_capability_tags: {
+        tts_synthesize: 'tts',
+        asr_transcribe: 'asr',
+      },
+      tool_providers: {},
+      effective_tool_providers: {
+        tts_synthesize: 'tts_vieneu',
+        asr_transcribe: null,
+      },
+      steps: 12,
+      default_steps: 12,
+      allowed_tools: ['asr_transcribe', 'tts_synthesize', 'video_concat', 'artifact_create'],
+      available_tools: [
+        'skill',
+        'asr_transcribe',
+        'tts_synthesize',
+        'video_concat',
+        'artifact_create',
+      ],
+      allowed_skills: [],
+      available_skills: ['daily-synthesis-staging'],
+      allowed_subagents: [],
+      description: 'Processes ASR, TTS, video_concat, and binary artifacts',
+      default_description: 'Processes ASR, TTS, video_concat, and binary artifacts',
+      system_prompt: 'You are media_processor.',
+      default_system_prompt: 'You are media_processor.',
     },
   ],
   skills: [
@@ -202,7 +236,7 @@ describe('BackgroundPage & BackgroundAgentDetailPage subagent configuration', ()
     const configButtons = wrapper
       .findAll('button')
       .filter(b => b.text().includes('Configure'))
-    expect(configButtons.length).toBe(3)
+    expect(configButtons.length).toBe(4)
     await configButtons[1]!.trigger('click')
     expect(navigateMock).toHaveBeenCalledWith({
       name: 'jobs-settings-agent',
@@ -210,7 +244,7 @@ describe('BackgroundPage & BackgroundAgentDetailPage subagent configuration', ()
     })
   })
 
-  it('renders dedicated BackgroundAgentDetailPage for wiki_researcher and media_creator and saves overrides', async () => {
+  it('renders dedicated BackgroundAgentDetailPage for wiki_researcher, media_creator, and media_processor and saves overrides', async () => {
     reactiveAgentId.value = 'wiki_researcher'
     const wrapper = mount(BackgroundAgentDetailPage)
     await flushPromises()
@@ -271,11 +305,7 @@ describe('BackgroundPage & BackgroundAgentDetailPage subagent configuration', ()
     const imageToolSelect = mediaWrapper.get('select[data-tool-provider="image_create"]')
     expect(imageToolSelect.text()).toContain('Flux Image Gen')
     await imageToolSelect.setValue('llm_flux_image')
-
-    const ttsToolSelect = mediaWrapper.get('select[data-tool-provider="tts_synthesize"]')
-    expect(ttsToolSelect.text()).toContain('Auto-select by tag (tts)')
-    expect(ttsToolSelect.text()).toContain('VieNeu TTS')
-    await ttsToolSelect.setValue('tts_vieneu')
+    expect(mediaWrapper.find('select[data-tool-provider="tts_synthesize"]').exists()).toBe(false)
 
     requestMock.mockImplementationOnce(() =>
       Promise.resolve({
@@ -293,6 +323,33 @@ describe('BackgroundPage & BackgroundAgentDetailPage subagent configuration', ()
     const mediaBody = JSON.parse(String(mediaPutCalls[1]![1].body))
     expect(mediaBody.agents.media_creator.tool_providers).toEqual({
       image_create: 'llm_flux_image',
+    })
+
+    // Switch to media_processor and configure capability-routed tool provider
+    reactiveAgentId.value = 'media_processor'
+    const procWrapper = mount(BackgroundAgentDetailPage)
+    await flushPromises()
+
+    const ttsToolSelect = procWrapper.get('select[data-tool-provider="tts_synthesize"]')
+    expect(ttsToolSelect.text()).toContain('Auto-select by tag (tts)')
+    expect(ttsToolSelect.text()).toContain('VieNeu TTS')
+    await ttsToolSelect.setValue('tts_vieneu')
+
+    requestMock.mockImplementationOnce(() =>
+      Promise.resolve({
+        ...fixtureSettings(),
+        revision: 4,
+      }),
+    )
+    await procWrapper.get('[data-save-agent-config]').trigger('click')
+    await flushPromises()
+
+    const allPutCalls = requestMock.mock.calls.filter(
+      c => c[0] === '/api/admin/background/settings' && c[1]?.method === 'PUT',
+    )
+    expect(allPutCalls.length).toBe(3)
+    const procBody = JSON.parse(String(allPutCalls[2]![1].body))
+    expect(procBody.agents.media_processor.tool_providers).toEqual({
       tts_synthesize: 'tts_vieneu',
     })
   })

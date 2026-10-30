@@ -388,7 +388,10 @@ fn sensevoice_descriptor_and_desired_config_validation_cover_multilingual_option
     assert_eq!(descriptor.provider_type, ProviderType::Asr);
     assert_eq!(descriptor.capabilities.streaming, Some(false));
     assert_eq!(descriptor.capabilities.offline, Some(true));
-    assert_eq!(descriptor.capabilities.input_sample_rates, Some(&[16_000][..]));
+    assert_eq!(
+        descriptor.capabilities.input_sample_rates,
+        Some(&[16_000][..])
+    );
 
     let languages: Vec<&str> = descriptor
         .capabilities
@@ -411,7 +414,12 @@ fn sensevoice_descriptor_and_desired_config_validation_cover_multilingual_option
         );
     }
     assert!(validate_raw("sensevoice_sherpa_offline", r#"{"language":"fr"}"#).is_err());
-    assert!(validate_raw("sensevoice_sherpa_offline", r#"{"model":"sensevoice_small_int8"}"#).is_err());
+    assert!(
+        validate_raw(
+            "sensevoice_sherpa_offline",
+            r#"{"model":"sensevoice_small_int8"}"#
+        )
+        .is_err()
+    );
     assert!(validate_raw("sensevoice_sherpa_offline", r#"{"num_threads":4}"#).is_err());
 }
-

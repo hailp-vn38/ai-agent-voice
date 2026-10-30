@@ -238,10 +238,7 @@ fn is_vietnamese_vowel_char(ch: char) -> bool {
     )
 }
 
-fn parse_vowel(
-    vowel_part: &str,
-    qu_medial: bool,
-) -> Option<(&'static str, &str, &'static str)> {
+fn parse_vowel(vowel_part: &str, qu_medial: bool) -> Option<(&'static str, &str, &'static str)> {
     if qu_medial {
         if vowel_part == "yê" {
             return Some(("W", "yê", "IÊ"));

@@ -70,6 +70,7 @@ const RESERVED_IDS = new Set([
   'wiki_researcher',
   'report_stager',
   'media_creator',
+  'media_processor',
   'reminder_planner',
   'wiki_root',
   'wiki_ingestor',

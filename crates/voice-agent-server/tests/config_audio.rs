@@ -349,8 +349,8 @@ fn gipformer_config_defaults_are_qualification_defaults() {
 
 #[test]
 fn sensevoice_config_defaults_and_validation_work_across_multilingual_options() {
-    let config: SenseVoiceSherpaOfflineConfig = toml::from_str("")
-        .expect("SenseVoice default configuration should parse");
+    let config: SenseVoiceSherpaOfflineConfig =
+        toml::from_str("").expect("SenseVoice default configuration should parse");
     assert_eq!(config.model, "sensevoice_small_int8");
     assert_eq!(config.language, "auto");
     assert!(config.use_itn);

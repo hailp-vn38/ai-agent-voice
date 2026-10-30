@@ -156,8 +156,7 @@ pub(crate) struct WebsocketQuery {
 
 struct SocketRuntimes {
     job_submit: Option<crate::services::task_flow::VoiceTaskSubmit>,
-    active_device_sessions:
-        Arc<crate::services::active_device_sessions::ActiveDeviceSessions>,
+    active_device_sessions: Arc<crate::services::active_device_sessions::ActiveDeviceSessions>,
     database: Option<Arc<crate::database::Database>>,
     system_mcp: Option<crate::tools::system_mcp::SessionSystemMcp>,
     reminder_tools: Option<crate::services::notifications::SessionReminderTools>,
