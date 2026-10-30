@@ -54,7 +54,7 @@ impl GatewayVendor {
         match self {
             Self::Anthropic => "https://api.anthropic.com/v1",
             Self::OpenaiCodex => "https://chatgpt.com/backend-api/codex",
-            Self::Gemini => "https://generativelanguage.googleapis.com/v1beta/openai",
+            Self::Gemini => "https://daily-cloudcode-pa.googleapis.com/v1internal",
             Self::GithubCopilot => "https://api.githubcopilot.com",
             Self::Muse => "https://muse.ai",
         }
@@ -338,6 +338,50 @@ impl GatewayVendor {
                 },
             ],
             Self::Gemini => &[
+                GatewayVendorModelPreset {
+                    model: "gemini-3.8-flash",
+                    display_name: "Gemini 3.8 Flash (Antigravity)",
+                    tags: &["chat", "reasoning", "vision"],
+                    supports_reasoning_effort: true,
+                    default_max_tokens: Some(65_000),
+                    default_context_limit_tokens: Some(1_000_000),
+                    default_reasoning_effort: Some("medium"),
+                    default_temperature_percent: Some(70),
+                    default_timeout_ms: Some(60_000),
+                },
+                GatewayVendorModelPreset {
+                    model: "gemini-3.8-flash-high",
+                    display_name: "Gemini 3.8 Flash High (Antigravity)",
+                    tags: &["chat", "reasoning", "vision"],
+                    supports_reasoning_effort: true,
+                    default_max_tokens: Some(65_000),
+                    default_context_limit_tokens: Some(1_000_000),
+                    default_reasoning_effort: Some("high"),
+                    default_temperature_percent: Some(70),
+                    default_timeout_ms: Some(60_000),
+                },
+                GatewayVendorModelPreset {
+                    model: "gemini-4-argon-high",
+                    display_name: "Gemini 4 Argon High (Antigravity)",
+                    tags: &["chat", "reasoning", "vision"],
+                    supports_reasoning_effort: true,
+                    default_max_tokens: Some(65_000),
+                    default_context_limit_tokens: Some(1_000_000),
+                    default_reasoning_effort: Some("high"),
+                    default_temperature_percent: Some(70),
+                    default_timeout_ms: Some(90_000),
+                },
+                GatewayVendorModelPreset {
+                    model: "gemini-3.1-pro-high",
+                    display_name: "Gemini 3.1 Pro High (Antigravity)",
+                    tags: &["chat", "reasoning", "vision"],
+                    supports_reasoning_effort: true,
+                    default_max_tokens: Some(65_000),
+                    default_context_limit_tokens: Some(1_000_000),
+                    default_reasoning_effort: Some("high"),
+                    default_temperature_percent: Some(70),
+                    default_timeout_ms: Some(90_000),
+                },
                 GatewayVendorModelPreset {
                     model: "gemini-3.1-pro-preview",
                     display_name: "Gemini 3.1 Pro Preview",
@@ -778,6 +822,7 @@ pub struct GatewayLease {
     pub access_token: SecretString,
     pub base_url: String,
     pub extra_headers: Vec<(String, String)>,
+    pub account_context_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

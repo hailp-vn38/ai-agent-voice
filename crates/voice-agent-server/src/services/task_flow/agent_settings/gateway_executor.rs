@@ -178,7 +178,10 @@ impl CustomModelExecutor for GatewayOrchestratorExecutor {
             res = self.provider.open_chat_stream_with_config(&effective_cfg, &llm_request) => {
                 res.map_err(|err| match err {
                     WireError::Unauthorized => GatewayError::Auth,
-                    WireError::NoLease | WireError::RateLimited { .. } | WireError::Other => {
+                    WireError::NoLease
+                    | WireError::RateLimited { .. }
+                    | WireError::HttpRejected
+                    | WireError::Other => {
                         GatewayError::Provider
                     }
                 })?

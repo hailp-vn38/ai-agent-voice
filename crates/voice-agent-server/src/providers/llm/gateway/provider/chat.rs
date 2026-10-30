@@ -1,12 +1,42 @@
 use crate::{
     providers::llm::{LlmError, LlmEventStream, LlmRequest},
-    services::llm_gateway::{GatewayBinding, GatewayVendor},
+    services::llm_gateway::{GatewayBinding, GatewayLease, GatewayVendor},
 };
 
-use super::super::{config::LlmGatewayConfig, wire_anthropic, wire_codex, wire_openai};
+use super::super::{
+    config::LlmGatewayConfig, wire_anthropic, wire_codex, wire_gemini, wire_openai,
+};
 use super::{LlmGatewayProvider, MAX_POOL_FAILOVER_ATTEMPTS, WireError};
 
 impl LlmGatewayProvider {
+    async fn dispatch_chat_wire(
+        &self,
+        endpoint: &str,
+        lease: &GatewayLease,
+        effective_cfg: &LlmGatewayConfig,
+        request: &LlmRequest,
+    ) -> Result<LlmEventStream, WireError> {
+        match lease.vendor {
+            GatewayVendor::Anthropic => {
+                wire_anthropic::open_sse_stream(&self.http, endpoint, lease, effective_cfg, request)
+                    .await
+            }
+            GatewayVendor::OpenaiCodex => {
+                wire_codex::open_sse_stream(&self.http, endpoint, lease, effective_cfg, request)
+                    .await
+            }
+            GatewayVendor::Gemini => {
+                wire_gemini::open_sse_stream(&self.http, endpoint, lease, effective_cfg, request)
+                    .await
+            }
+            GatewayVendor::GithubCopilot => {
+                wire_openai::open_sse_stream(&self.http, endpoint, lease, effective_cfg, request)
+                    .await
+            }
+            GatewayVendor::Muse => unreachable!("handled above"),
+        }
+    }
+
     pub(crate) async fn open_chat_stream_with_config(
         &self,
         effective_cfg: &LlmGatewayConfig,
@@ -37,39 +67,25 @@ impl LlmGatewayProvider {
         let mut current_lease = lease;
         for attempt in 0..max_attempts {
             let endpoint = Self::resolve_endpoint_for(effective_cfg, &current_lease);
-            let response = match current_lease.vendor {
-                GatewayVendor::Anthropic => {
-                    wire_anthropic::open_sse_stream(
-                        &self.http,
-                        endpoint,
-                        &current_lease,
-                        effective_cfg,
-                        request,
+            let mut response = self
+                .dispatch_chat_wire(endpoint, &current_lease, effective_cfg, request)
+                .await;
+
+            if matches!(response, Err(WireError::Unauthorized))
+                && let Some(refreshed_lease) = self
+                    .hub
+                    .try_refresh_on_unauthorized(
+                        &current_lease.account_key,
+                        current_lease.access_token.expose(),
                     )
                     .await
-                }
-                GatewayVendor::OpenaiCodex => {
-                    wire_codex::open_sse_stream(
-                        &self.http,
-                        endpoint,
-                        &current_lease,
-                        effective_cfg,
-                        request,
-                    )
-                    .await
-                }
-                GatewayVendor::Gemini | GatewayVendor::GithubCopilot => {
-                    wire_openai::open_sse_stream(
-                        &self.http,
-                        endpoint,
-                        &current_lease,
-                        effective_cfg,
-                        request,
-                    )
-                    .await
-                }
-                GatewayVendor::Muse => unreachable!("handled above"),
-            };
+            {
+                current_lease = refreshed_lease;
+                let retry_endpoint = Self::resolve_endpoint_for(effective_cfg, &current_lease);
+                response = self
+                    .dispatch_chat_wire(retry_endpoint, &current_lease, effective_cfg, request)
+                    .await;
+            }
 
             let outcome = self.finalize_wire_result(&current_lease.account_key, response);
             match outcome {
@@ -100,9 +116,6 @@ impl LlmGatewayProvider {
         }
         self.open_chat_stream_with_config(&effective_cfg, &request)
             .await
-            .map_err(|err| match err {
-                WireError::NoLease => LlmError::Rejected,
-                _ => LlmError::Failed,
-            })
+            .map_err(WireError::into_llm_error)
     }
 }

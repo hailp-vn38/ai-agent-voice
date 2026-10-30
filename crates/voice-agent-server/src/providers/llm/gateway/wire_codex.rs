@@ -245,7 +245,7 @@ async fn send_codex_responses_request(
                 return check_wire_status(retry_resp);
             }
         }
-        return Err(WireError::Other);
+        return Err(WireError::HttpRejected);
     }
     check_wire_status(resp)
 }

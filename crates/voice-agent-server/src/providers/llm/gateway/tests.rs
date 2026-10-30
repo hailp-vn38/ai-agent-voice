@@ -960,3 +960,328 @@ async fn llm_gateway_provider_executes_muse_chat_vision_image_video_and_rotates_
         LlmOutput::single_media(MP4_BYTES.to_vec(), "video/mp4")
     );
 }
+
+#[tokio::test]
+async fn llm_gateway_rejection_does_not_leave_provider_test_busy() {
+    use std::collections::HashMap;
+    use std::time::Duration;
+
+    use crate::{
+        providers::{
+            DatabaseRuntimeSnapshot, DatabaseRuntimeState, DatabaseRuntimeStatus, ProviderType,
+            RuntimeCatalog,
+        },
+        services::provider_diagnostic::{
+            ProviderDiagnosticError, ProviderDiagnosticLimiter, ProviderDiagnosticService,
+            ProviderDiagnosticTarget,
+        },
+        workers::LlmRuntime,
+    };
+
+    let hub = create_test_hub().await;
+    let ch = hub
+        .start_oauth_login(StartOAuthLoginRequest {
+            vendor: GatewayVendor::Anthropic,
+            label: "Claude Reject Test".to_owned(),
+            redirect_uri: None,
+        })
+        .await
+        .expect("start oauth");
+    hub.complete_oauth_login(
+        &ch.session_id,
+        OAuthCallbackSubmission {
+            callback_url_or_code: "code_reject_test".to_owned(),
+            state: None,
+        },
+    )
+    .await
+    .expect("complete oauth");
+
+    let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+    let addr = listener.local_addr().expect("addr");
+    let server = tokio::spawn(async move {
+        let _ = axum::serve(
+            listener,
+            Router::new().route("/v1/messages", post(|| async { StatusCode::BAD_REQUEST })),
+        )
+        .await;
+    });
+
+    let cfg = LlmGatewayConfig {
+        gateway_binding: GatewayBinding::Pool(GatewayVendor::Anthropic),
+        model: "claude-sonnet-4-20250514".to_owned(),
+        base_url: Some(Url::parse(&format!("http://{addr}/v1")).expect("url")),
+        timeout_ms: 5_000,
+        max_tokens: Some(512),
+        context_limit_tokens: None,
+        reasoning_effort: None,
+        temperature_percent: None,
+        tags: Some(vec!["chat".to_owned()]),
+        account_concurrency: None,
+        cdp_port: None,
+        headless: None,
+    };
+    let provider =
+        Arc::new(LlmGatewayProvider::with_hub(&cfg, Arc::clone(&hub)).expect("provider"));
+
+    // With concurrency = 2, only 1 slot is available for Diagnostic workload (total - reserved_voice = 1).
+    let registry = Arc::new(RuntimeCatalog {
+        llm: HashMap::from([(
+            "gw-claude".into(),
+            Arc::new(LlmRuntime::new(provider, 2, Duration::from_secs(1))),
+        )]),
+        ..RuntimeCatalog::default()
+    });
+    let snapshot = DatabaseRuntimeSnapshot::from_states([(
+        "gw-claude".into(),
+        DatabaseRuntimeState {
+            provider_id: 14,
+            desired_revision: 1,
+            status: DatabaseRuntimeStatus::Loaded,
+            failure: None,
+        },
+    )]);
+    let service = ProviderDiagnosticService::new(
+        Arc::clone(&registry),
+        Some(Arc::new(snapshot)),
+        None,
+        ProviderDiagnosticLimiter::new(1),
+        Duration::from_secs(1),
+    );
+    let target = ProviderDiagnosticTarget {
+        key: "gw-claude".into(),
+        provider_type: ProviderType::Llm,
+        desired_revision: 1,
+    };
+
+    for _ in 0..2 {
+        let operation = registry
+            .llm_diagnostic("gw-claude", LlmRequest::text_turn("hello".into()), 1024)
+            .expect("llm_diagnostic");
+        assert_eq!(
+            service
+                .execute(target.clone(), operation, Duration::from_millis(500))
+                .await
+                .err(),
+            Some(ProviderDiagnosticError::Failed)
+        );
+    }
+    server.abort();
+}
+
+#[tokio::test]
+async fn llm_gateway_gemini_antigravity_streams_tools_vision_and_auto_refreshes_on_401() {
+    use serde_json::{Value, json};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    use crate::{
+        providers::llm::{ChatMessage, LlmOperation, LlmOutput, ToolDefinition},
+        services::llm_gateway::GatewayAccountStatus,
+    };
+
+    let hub = create_test_hub().await;
+    let ch = hub
+        .start_oauth_login(StartOAuthLoginRequest {
+            vendor: GatewayVendor::Gemini,
+            label: "LamPhucHai03".to_owned(),
+            redirect_uri: None,
+        })
+        .await
+        .expect("start gemini oauth");
+    let acc = hub
+        .complete_oauth_login(
+            &ch.session_id,
+            OAuthCallbackSubmission {
+                callback_url_or_code: "gemini_initial_code".to_owned(),
+                state: None,
+            },
+        )
+        .await
+        .expect("complete gemini oauth");
+
+    let stream_calls = Arc::new(AtomicUsize::new(0));
+    let stream_calls_clone = Arc::clone(&stream_calls);
+
+    let app = Router::new()
+        .route(
+            "/v1internal:streamGenerateContent",
+            post(move |headers: HeaderMap, body: axum::body::Bytes| {
+                let calls = Arc::clone(&stream_calls_clone);
+                async move {
+                    let call_no = calls.fetch_add(1, Ordering::SeqCst) + 1;
+                    let auth = headers
+                        .get("authorization")
+                        .and_then(|v| v.to_str().ok())
+                        .unwrap_or("");
+                    let ua = headers
+                        .get("user-agent")
+                        .and_then(|v| v.to_str().ok())
+                        .unwrap_or("");
+                    assert_eq!(ua, "antigravity/hub/2.24.0 darwin/arm64");
+                    assert!(
+                        headers.get("x-goog-cloud-project").is_none(),
+                        "internal project header must not be leaked to upstream"
+                    );
+
+                    // Simulate initial token expired (401) -> LlmGatewayProvider must auto-refresh via hub and retry!
+                    if auth == "Bearer tok_gemini_gemini_initial_code" {
+                        assert_eq!(call_no, 1);
+                        return (StatusCode::UNAUTHORIZED, "token expired").into_response();
+                    }
+                    assert_eq!(auth, "Bearer tok_refreshed_gemini_1");
+
+                    let payload: Value =
+                        serde_json::from_slice(&body).expect("antigravity envelope json");
+                    assert_eq!(
+                        payload.get("project").and_then(Value::as_str),
+                        Some("proj_gemini_test")
+                    );
+                    assert_eq!(
+                        payload.get("model").and_then(Value::as_str),
+                        Some("gemini-3.8-flash-medium(medium)")
+                    );
+                    assert_eq!(
+                        payload.get("userAgent").and_then(Value::as_str),
+                        Some("antigravity")
+                    );
+                    let req_obj = payload.get("request").expect("request object");
+                    assert!(
+                        req_obj
+                            .get("sessionId")
+                            .and_then(Value::as_str)
+                            .is_some_and(|s| s.starts_with('-'))
+                    );
+                    assert!(req_obj.get("systemInstruction").is_some());
+                    assert!(req_obj.get("tools").is_some());
+
+                    let sse = concat!(
+                        "data: {\"response\":{\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[{\"text\":\"internal thinking...\",\"thought\":true}]}}]}}\n\n",
+                        "data: {\"response\":{\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[{\"text\":\"Xin chào từ \"}]}}]}}\n\n",
+                        "data: {\"response\":{\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[{\"text\":\"Gemini 3.8 Flash!\"},{\"functionCall\":{\"id\":\"call_order_1\",\"name\":\"lookup_order\",\"args\":{\"order_id\":\"ORD-99\"}}}]}}]}}\n\n"
+                    );
+                    (
+                        StatusCode::OK,
+                        [("content-type", "text/event-stream")],
+                        sse,
+                    )
+                        .into_response()
+                }
+            }),
+        )
+        .route(
+            "/v1internal:generateContent",
+            post(|headers: HeaderMap, body: axum::body::Bytes| async move {
+                let auth = headers
+                    .get("authorization")
+                    .and_then(|v| v.to_str().ok())
+                    .unwrap_or("");
+                assert_eq!(auth, "Bearer tok_refreshed_gemini_1");
+                let payload: Value = serde_json::from_slice(&body).expect("vision json");
+                assert_eq!(
+                    payload.get("model").and_then(Value::as_str),
+                    Some("gemini-3.8-flash-medium(medium)")
+                );
+                axum::Json(json!({
+                    "response": {
+                        "candidates": [
+                            {
+                                "content": {
+                                    "role": "model",
+                                    "parts": [
+                                        { "text": "Ảnh hợp lệ từ Gemini Vision" }
+                                    ]
+                                }
+                            }
+                        ]
+                    }
+                }))
+            }),
+        );
+
+    let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+    let addr = listener.local_addr().expect("addr");
+    tokio::spawn(async move {
+        let _ = axum::serve(listener, app).await;
+    });
+
+    let cfg = LlmGatewayConfig {
+        gateway_binding: GatewayBinding::Pool(GatewayVendor::Gemini),
+        model: "Gemini-3.8-flash".to_owned(),
+        base_url: Some(Url::parse(&format!("http://{addr}/v1internal")).expect("url")),
+        timeout_ms: 5_000,
+        max_tokens: Some(65_000),
+        context_limit_tokens: Some(1_000_000),
+        reasoning_effort: None,
+        temperature_percent: Some(70),
+        tags: Some(vec![
+            "chat".to_owned(),
+            "reasoning".to_owned(),
+            "vision".to_owned(),
+        ]),
+        account_concurrency: None,
+        cdp_port: None,
+        headless: None,
+    };
+    let provider = LlmGatewayProvider::with_hub(&cfg, Arc::clone(&hub)).expect("provider");
+
+    let mut stream = provider
+        .stream(LlmRequest {
+            messages: vec![
+                ChatMessage::System {
+                    content: "Bạn là trợ lý AI.".to_owned(),
+                },
+                ChatMessage::User {
+                    content: "Kiểm tra đơn ORD-99".to_owned(),
+                },
+            ],
+            tools: vec![ToolDefinition {
+                name: "lookup_order".to_owned(),
+                description: "Tra cứu đơn hàng".to_owned(),
+                parameters: json!({"type": "object"}),
+            }],
+        })
+        .await
+        .expect("stream succeeds after reactive 401 token refresh");
+
+    let mut text = String::new();
+    let mut tool_calls = Vec::new();
+    while let Some(ev) = stream.next().await {
+        match ev.expect("stream event") {
+            LlmEvent::TextDelta(delta) => text.push_str(&delta),
+            LlmEvent::ToolCall(tc) => tool_calls.push(tc),
+            LlmEvent::Finished => break,
+        }
+    }
+    assert_eq!(text, "Xin chào từ Gemini 3.8 Flash!");
+    assert_eq!(tool_calls.len(), 1);
+    assert_eq!(tool_calls[0].id, "call_order_1");
+    assert_eq!(tool_calls[0].name, "lookup_order");
+    assert_eq!(tool_calls[0].arguments, json!({"order_id": "ORD-99"}));
+    assert_eq!(stream_calls.load(Ordering::SeqCst), 2);
+
+    // Account must remain Active (not ReauthRequired) after reactive token refresh succeeded
+    let views = hub
+        .list_accounts(Some(GatewayVendor::Gemini))
+        .await
+        .expect("list accounts");
+    let view = views
+        .iter()
+        .find(|a| a.account_key == acc.account_key)
+        .expect("gemini account");
+    assert_eq!(view.status, GatewayAccountStatus::Active);
+
+    // Verify Vision execution via v1internal:generateContent
+    let vision_out = provider
+        .execute_operation(LlmOperation::Vision {
+            prompt: "Mô tả ảnh".to_owned(),
+            image_bytes: vec![1, 2, 3, 4],
+            mime_type: "image/png".to_owned(),
+        })
+        .await
+        .expect("gemini vision");
+    assert_eq!(
+        vision_out,
+        LlmOutput::Text("Ảnh hợp lệ từ Gemini Vision".to_owned())
+    );
+}
+

@@ -1246,3 +1246,217 @@ async fn llm_gateway_pool_detail_and_model_crud_lifecycle() {
         .expect("detail after delete");
     assert!(detail_after.models.is_empty());
 }
+
+#[tokio::test]
+async fn gemini_antigravity_driver_oauth_onboard_user_and_dual_client_refresh() {
+    use axum::{
+        Router,
+        http::{HeaderMap, StatusCode},
+        response::IntoResponse,
+        routing::{get, post},
+    };
+    use serde_json::{Value, json};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use tokio::net::TcpListener;
+
+    use super::{
+        types::OAuthTokenBundle,
+        vendors::gemini::{ANTIGRAVITY_USER_AGENT, GeminiOAuthDriver},
+    };
+
+    let onboard_calls = Arc::new(AtomicUsize::new(0));
+    let onboard_calls_clone = Arc::clone(&onboard_calls);
+
+    let app = Router::new()
+        .route(
+            "/token",
+            post(|body: String| async move {
+                let pairs: BTreeMap<String, String> = url::form_urlencoded::parse(body.as_bytes())
+                    .into_owned()
+                    .collect();
+                let grant_type = pairs.get("grant_type").map(String::as_str).unwrap_or("");
+                let client_id = pairs.get("client_id").map(String::as_str).unwrap_or("");
+
+                match grant_type {
+                    "authorization_code" => {
+                        assert_eq!(
+                            client_id,
+                            "1071006060591-tmhssin2h21lcre235vtolojh4g403ep.apps.googleusercontent.com"
+                        );
+                        axum::Json(json!({
+                            "access_token": "ya29.antigravity_login_tok_1",
+                            "refresh_token": "1//antigravity_ref_1",
+                            "expires_in": 3600
+                        }))
+                        .into_response()
+                    }
+                    "refresh_token" => {
+                        let ref_tok = pairs.get("refresh_token").map(String::as_str).unwrap_or("");
+                        if ref_tok == "1//legacy_gemini_cli_ref" {
+                            // Reject Antigravity client_id for legacy token so driver falls back to GEMINI_CLI_CLIENT_ID
+                            if client_id
+                                != "681255809395-oo8ft2oprdrnp9e3aqf6av3hmdib135j.apps.googleusercontent.com"
+                            {
+                                return (
+                                    StatusCode::UNAUTHORIZED,
+                                    axum::Json(json!({"error": "unauthorized_client"})),
+                                )
+                                    .into_response();
+                            }
+                            return axum::Json(json!({
+                                "access_token": "ya29.refreshed_legacy_cli_tok",
+                                "expires_in": 3600
+                            }))
+                            .into_response();
+                        }
+                        assert_eq!(
+                            client_id,
+                            "1071006060591-tmhssin2h21lcre235vtolojh4g403ep.apps.googleusercontent.com"
+                        );
+                        axum::Json(json!({
+                            "access_token": "ya29.refreshed_antigravity_tok",
+                            "expires_in": 3600
+                        }))
+                        .into_response()
+                    }
+                    _ => StatusCode::BAD_REQUEST.into_response(),
+                }
+            }),
+        )
+        .route(
+            "/userinfo",
+            get(|| async move {
+                axum::Json(json!({
+                    "email": "lamphuchai03@gmail.com"
+                }))
+            }),
+        )
+        .route(
+            "/v1internal:loadCodeAssist",
+            post(|headers: HeaderMap, body: axum::body::Bytes| async move {
+                let ua = headers
+                    .get("user-agent")
+                    .and_then(|v| v.to_str().ok())
+                    .unwrap_or("");
+                assert_eq!(ua, ANTIGRAVITY_USER_AGENT);
+                assert!(headers.get("x-goog-api-client").is_none());
+                assert!(headers.get("client-metadata").is_none());
+
+                let payload: Value = serde_json::from_slice(&body).expect("loadCodeAssist json");
+                assert_eq!(
+                    payload
+                        .get("metadata")
+                        .and_then(|m| m.get("ideType"))
+                        .and_then(Value::as_i64),
+                    Some(9)
+                );
+
+                // Simulate account needing onboardUser to provision cloudaicompanionProject
+                axum::Json(json!({
+                    "currentTier": { "id": "free-tier", "name": "Antigravity Pro" },
+                    "allowedTiers": [
+                        { "id": "legacy-tier", "isDefault": false },
+                        { "id": "free-tier", "isDefault": true }
+                    ]
+                }))
+            }),
+        )
+        .route(
+            "/v1internal:onboardUser",
+            post(move |headers: HeaderMap, body: axum::body::Bytes| {
+                let counter = Arc::clone(&onboard_calls_clone);
+                async move {
+                    counter.fetch_add(1, Ordering::SeqCst);
+                    let ua = headers
+                        .get("user-agent")
+                        .and_then(|v| v.to_str().ok())
+                        .unwrap_or("");
+                    assert_eq!(ua, ANTIGRAVITY_USER_AGENT);
+                    let payload: Value = serde_json::from_slice(&body).expect("onboardUser json");
+                    assert_eq!(
+                        payload.get("tierId").and_then(Value::as_str),
+                        Some("free-tier")
+                    );
+                    axum::Json(json!({
+                        "done": true,
+                        "response": {
+                            "cloudaicompanionProject": {
+                                "id": "proj-antigravity-onboarded-01"
+                            }
+                        }
+                    }))
+                }
+            }),
+        );
+
+    let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+    let addr = listener.local_addr().expect("addr");
+    tokio::spawn(async move {
+        let _ = axum::serve(listener, app).await;
+    });
+
+    let driver = GeminiOAuthDriver::with_test_endpoints(&format!("http://{addr}"));
+
+    // 1. Verify authorize URL uses Antigravity client_id and scopes
+    let auth_url = driver
+        .build_pkce_authorize_url(
+            "st_123",
+            "chal_456",
+            "http://localhost:8085/oauth2callback",
+        )
+        .expect("authorize url");
+    assert!(
+        auth_url.contains(
+            "client_id=1071006060591-tmhssin2h21lcre235vtolojh4g403ep.apps.googleusercontent.com"
+        )
+    );
+    assert!(auth_url.contains("cclog"));
+    assert!(auth_url.contains("experimentsandconfigs"));
+
+    // 2. Verify PKCE code exchange runs loadCodeAssist -> onboardUser fallback and extracts project ID
+    let exchanged = driver
+        .exchange_pkce_code(
+            "auth_code_ag",
+            "st_123",
+            "verifier_456",
+            "http://localhost:8085/oauth2callback",
+        )
+        .await
+        .expect("exchange_pkce_code");
+    assert_eq!(
+        exchanged.account_email.as_deref(),
+        Some("lamphuchai03@gmail.com")
+    );
+    assert_eq!(
+        exchanged.bundle.account_context_id.as_deref(),
+        Some("proj-antigravity-onboarded-01")
+    );
+    assert_eq!(onboard_calls.load(Ordering::SeqCst), 1);
+
+    let extra_headers = driver.extra_headers_for(&exchanged.bundle);
+    assert!(extra_headers.contains(&(
+        "User-Agent".to_owned(),
+        ANTIGRAVITY_USER_AGENT.to_owned()
+    )));
+
+    // 3. Verify dual-client refresh fallback for legacy GEMINI_CLI_CLIENT_ID token + lazy project ID discovery
+    let legacy_bundle = OAuthTokenBundle {
+        access_token: "ya29.old_expired".to_owned(),
+        refresh_token: Some("1//legacy_gemini_cli_ref".to_owned()),
+        upstream_oauth_token: None,
+        account_context_id: None,
+    };
+    let refreshed_legacy = driver
+        .refresh_token(&legacy_bundle)
+        .await
+        .expect("refresh legacy Gemini CLI token via fallback client_id");
+    assert_eq!(
+        refreshed_legacy.bundle.access_token,
+        "ya29.refreshed_legacy_cli_tok"
+    );
+    assert_eq!(
+        refreshed_legacy.bundle.account_context_id.as_deref(),
+        Some("proj-antigravity-onboarded-01")
+    );
+}
+

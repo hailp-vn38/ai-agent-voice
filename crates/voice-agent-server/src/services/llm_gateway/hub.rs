@@ -317,6 +317,7 @@ impl LlmGatewayHub {
                     access_token: SecretString::new(bundle.access_token.clone()),
                     base_url: acc.vendor.default_base_url().to_owned(),
                     extra_headers: acc.extra_headers.clone(),
+                    account_context_id: bundle.account_context_id.clone(),
                 })
             }
             GatewayBinding::Pool(vendor) => {
@@ -360,6 +361,7 @@ impl LlmGatewayHub {
                     access_token: SecretString::new(bundle.access_token.clone()),
                     base_url: chosen.vendor.default_base_url().to_owned(),
                     extra_headers: chosen.extra_headers.clone(),
+                    account_context_id: bundle.account_context_id.clone(),
                 })
             }
         }
@@ -2026,7 +2028,7 @@ impl LlmGatewayHub {
     }
 
     async fn persist_discovered_context_id(&self, account_key: &str, context_id: &str) {
-        let updated_bundle = {
+        let (vendor, updated_bundle) = {
             let guard = self.snapshot.read().unwrap_or_else(|p| p.into_inner());
             let Some(acc) = guard.accounts.get(account_key) else {
                 return;
@@ -2035,12 +2037,17 @@ impl LlmGatewayHub {
                 return;
             };
             b.account_context_id = Some(context_id.to_owned());
-            b
+            (acc.vendor, b)
         };
         let Ok(credential_json) = updated_bundle.seal(self.secret_resolver.as_ref(), account_key)
         else {
             return;
         };
+        let extra_headers = self
+            .drivers
+            .get(&vendor)
+            .map(|drv| drv.extra_headers_for(&updated_bundle))
+            .unwrap_or_default();
         if let Some(pool) = &self.pool {
             let _ = sqlx::query(
                 "UPDATE llm_gateway_accounts SET credential_json = ? WHERE account_key = ?",
@@ -2054,6 +2061,48 @@ impl LlmGatewayHub {
         if let Some(acc) = guard.accounts.get_mut(account_key) {
             acc.credential_json = credential_json;
             acc.bundle = Some(updated_bundle);
+            acc.extra_headers = extra_headers;
+        }
+    }
+
+    pub(crate) async fn try_refresh_on_unauthorized(
+        &self,
+        account_key: &str,
+        rejected_token: &str,
+    ) -> Option<GatewayLease> {
+        let lock = self.refresh_lock_for(account_key);
+        let _single_flight = lock.lock().await;
+
+        let (vendor, current_bundle) = {
+            let guard = self.snapshot.read().unwrap_or_else(|p| p.into_inner());
+            let acc = guard.accounts.get(account_key)?;
+            let bundle = acc.bundle.clone()?;
+            if bundle.access_token != rejected_token {
+                drop(guard);
+                return self
+                    .acquire_lease(&GatewayBinding::Account(account_key.to_owned()))
+                    .ok();
+            }
+            if bundle.refresh_token.is_none() && bundle.upstream_oauth_token.is_none() {
+                return None;
+            }
+            (acc.vendor, bundle)
+        };
+
+        let driver = self.driver_for(vendor).ok()?;
+        match driver.refresh_token(&current_bundle).await {
+            Ok(exchanged) => {
+                self.persist_refreshed_bundle(account_key, vendor, exchanged)
+                    .await
+                    .ok()?;
+                self.acquire_lease(&GatewayBinding::Account(account_key.to_owned()))
+                    .ok()
+            }
+            Err(err) => {
+                self.mark_account_reauth_required(account_key, err.code())
+                    .await;
+                None
+            }
         }
     }
 

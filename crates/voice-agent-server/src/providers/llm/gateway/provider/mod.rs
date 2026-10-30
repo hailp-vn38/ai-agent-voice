@@ -149,10 +149,18 @@ impl LlmGatewayProvider {
                     trimmed,
                     "https://api.openai.com/v1" | "https://api.openai.com"
                 );
+            let is_legacy_gemini_url = lease.vendor == GatewayVendor::Gemini
+                && matches!(
+                    trimmed,
+                    "https://generativelanguage.googleapis.com/v1beta/openai"
+                        | "https://generativelanguage.googleapis.com/v1beta"
+                        | "https://api.openai.com/v1"
+                        | "https://api.openai.com"
+                );
             let is_other_vendor_default = GatewayVendor::ALL.iter().any(|v| {
                 *v != lease.vendor && v.default_base_url().trim_end_matches('/') == trimmed
             });
-            if !is_legacy_codex_openai_url && !is_other_vendor_default {
+            if !is_legacy_codex_openai_url && !is_legacy_gemini_url && !is_other_vendor_default {
                 return trimmed;
             }
         }
@@ -180,7 +188,7 @@ impl LlmGatewayProvider {
                 self.hub
                     .report_outcome(account_key, GatewayCallOutcome::Unauthorized);
             }
-            Err(WireError::NoLease | WireError::Other) => {}
+            Err(WireError::NoLease | WireError::HttpRejected | WireError::Other) => {}
         }
         result
     }

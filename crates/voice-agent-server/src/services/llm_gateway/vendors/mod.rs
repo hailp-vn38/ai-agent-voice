@@ -294,8 +294,11 @@ impl OAuthVendorDriver for FakeOAuthVendorDriver {
                 access_token: format!("tok_{}_{}", self.vendor.as_str(), code),
                 refresh_token: Some(format!("ref_{}_{}", self.vendor.as_str(), code)),
                 upstream_oauth_token: None,
-                account_context_id: (self.vendor == GatewayVendor::OpenaiCodex)
-                    .then(|| "acct_codex_test".to_owned()),
+                account_context_id: match self.vendor {
+                    GatewayVendor::OpenaiCodex => Some("acct_codex_test".to_owned()),
+                    GatewayVendor::Gemini => Some("proj_gemini_test".to_owned()),
+                    _ => None,
+                },
             },
             account_email: email,
             expires_at,
@@ -407,7 +410,11 @@ impl OAuthVendorDriver for FakeOAuthVendorDriver {
                 .as_ref()
                 .map(|id| vec![("ChatGPT-Account-Id".to_owned(), id.clone())])
                 .unwrap_or_default(),
-            GatewayVendor::Gemini | GatewayVendor::Muse => Vec::new(),
+            GatewayVendor::Gemini => vec![(
+                "User-Agent".to_owned(),
+                gemini::ANTIGRAVITY_USER_AGENT.to_owned(),
+            )],
+            GatewayVendor::Muse => Vec::new(),
             GatewayVendor::GithubCopilot => vec![
                 ("Editor-Version".to_owned(), "vscode/1.96.0".to_owned()),
                 (

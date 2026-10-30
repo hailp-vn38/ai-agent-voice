@@ -10,21 +10,37 @@ use crate::services::llm_gateway::types::{
     GatewayError, GatewayQuotaWindow, GatewayVendor, OAuthTokenBundle, VendorQuotaSnapshot,
 };
 
-const GEMINI_CLIENT_ID: &str =
+const ANTIGRAVITY_CLIENT_ID: &str =
+    "1071006060591-tmhssin2h21lcre235vtolojh4g403ep.apps.googleusercontent.com";
+const ANTIGRAVITY_CLIENT_SECRET: &str = "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";
+const GEMINI_CLI_CLIENT_ID: &str =
     "681255809395-oo8ft2oprdrnp9e3aqf6av3hmdib135j.apps.googleusercontent.com";
-const GEMINI_CLIENT_SECRET: &str = "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";
+const GEMINI_CLI_CLIENT_SECRET: &str = "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";
+const GEMINI_CLIENT_CANDIDATES: &[(&str, &str)] = &[
+    (ANTIGRAVITY_CLIENT_ID, ANTIGRAVITY_CLIENT_SECRET),
+    (GEMINI_CLI_CLIENT_ID, GEMINI_CLI_CLIENT_SECRET),
+];
+
+pub(crate) const ANTIGRAVITY_USER_AGENT: &str = "antigravity/hub/2.24.0 darwin/arm64";
+
 const GEMINI_AUTHORIZE_URL: &str = "https://accounts.google.com/o/oauth2/v2/auth";
 const GEMINI_TOKEN_URL: &str = "https://oauth2.googleapis.com/token";
 const GEMINI_USERINFO_URL: &str = "https://www.googleapis.com/oauth2/v1/userinfo?alt=json";
 const GEMINI_LOAD_CODE_ASSIST_URL: &str =
     "https://cloudcode-pa.googleapis.com/v1internal:loadCodeAssist";
+const GEMINI_ONBOARD_USER_URL: &str = "https://cloudcode-pa.googleapis.com/v1internal:onboardUser";
 const GEMINI_RETRIEVE_QUOTA_URL: &str =
     "https://cloudcode-pa.googleapis.com/v1internal:retrieveUserQuota";
 const GEMINI_REDIRECT_URI: &str = "http://localhost:8085/oauth2callback";
-const GEMINI_SCOPES: &str = "https://www.googleapis.com/auth/cloud-platform https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/userinfo.profile";
+const GEMINI_SCOPES: &str = "https://www.googleapis.com/auth/cloud-platform https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/userinfo.profile https://www.googleapis.com/auth/cclog https://www.googleapis.com/auth/experimentsandconfigs";
 
 pub struct GeminiOAuthDriver {
     http: reqwest::Client,
+    token_url: String,
+    userinfo_url: String,
+    load_code_assist_url: String,
+    onboard_user_url: String,
+    retrieve_quota_url: String,
 }
 
 impl Default for GeminiOAuthDriver {
@@ -39,7 +55,31 @@ impl GeminiOAuthDriver {
             .timeout(Duration::from_secs(20))
             .build()
             .unwrap_or_default();
-        Self { http }
+        Self {
+            http,
+            token_url: GEMINI_TOKEN_URL.to_owned(),
+            userinfo_url: GEMINI_USERINFO_URL.to_owned(),
+            load_code_assist_url: GEMINI_LOAD_CODE_ASSIST_URL.to_owned(),
+            onboard_user_url: GEMINI_ONBOARD_USER_URL.to_owned(),
+            retrieve_quota_url: GEMINI_RETRIEVE_QUOTA_URL.to_owned(),
+        }
+    }
+
+    #[cfg(test)]
+    pub fn with_test_endpoints(base_url: &str) -> Self {
+        let base = base_url.trim_end_matches('/');
+        let http = reqwest::Client::builder()
+            .timeout(Duration::from_secs(5))
+            .build()
+            .unwrap_or_default();
+        Self {
+            http,
+            token_url: format!("{base}/token"),
+            userinfo_url: format!("{base}/userinfo"),
+            load_code_assist_url: format!("{base}/v1internal:loadCodeAssist"),
+            onboard_user_url: format!("{base}/v1internal:onboardUser"),
+            retrieve_quota_url: format!("{base}/v1internal:retrieveUserQuota"),
+        }
     }
 
     async fn fetch_email(&self, access_token: &str) -> Option<String> {
@@ -49,7 +89,7 @@ impl GeminiOAuthDriver {
         }
         let resp = self
             .http
-            .get(GEMINI_USERINFO_URL)
+            .get(&self.userinfo_url)
             .bearer_auth(access_token)
             .send()
             .await
@@ -58,23 +98,113 @@ impl GeminiOAuthDriver {
         info.email
     }
 
+    async fn post_token_with_candidates(
+        &self,
+        grant_type: &str,
+        extra_params: &[(&str, &str)],
+    ) -> Result<(Option<GeminiTokenResponse>, u16), GatewayError> {
+        let mut last_status = 0u16;
+        for &(client_id, client_secret) in GEMINI_CLIENT_CANDIDATES {
+            let encoded = {
+                let mut serializer = url::form_urlencoded::Serializer::new(String::new());
+                serializer
+                    .append_pair("grant_type", grant_type)
+                    .append_pair("client_id", client_id)
+                    .append_pair("client_secret", client_secret);
+                serializer.extend_pairs(extra_params.iter().copied());
+                serializer.finish()
+            };
+            let resp = self
+                .http
+                .post(&self.token_url)
+                .header("Content-Type", "application/x-www-form-urlencoded")
+                .header("Accept", "application/json")
+                .body(encoded)
+                .send()
+                .await
+                .map_err(|e| GatewayError::OAuthExchangeFailed(e.to_string()))?;
+            last_status = resp.status().as_u16();
+            if resp.status().is_success() {
+                let parsed: GeminiTokenResponse = resp
+                    .json()
+                    .await
+                    .map_err(|e| GatewayError::OAuthExchangeFailed(e.to_string()))?;
+                return Ok((Some(parsed), last_status));
+            }
+        }
+        Ok((None, last_status))
+    }
+
+    fn extract_project_id(val: &Value) -> Option<String> {
+        val.get("cloudaicompanionProject")
+            .and_then(|p| p.as_str().or_else(|| p.get("id").and_then(Value::as_str)))
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_owned)
+    }
+
+    async fn onboard_user(&self, access_token: &str, tier_id: &str) -> Option<String> {
+        let body = json!({
+            "tierId": tier_id,
+            "metadata": {
+                "ideType": 9,
+                "platform": 2,
+                "pluginType": 2
+            }
+        });
+        for attempt in 0..3 {
+            let Ok(resp) = self
+                .http
+                .post(&self.onboard_user_url)
+                .bearer_auth(access_token)
+                .header("Accept", "application/json")
+                .header("User-Agent", ANTIGRAVITY_USER_AGENT)
+                .json(&body)
+                .send()
+                .await
+            else {
+                return None;
+            };
+            if !resp.status().is_success() {
+                return None;
+            }
+            let Ok(data) = resp.json::<Value>().await else {
+                return None;
+            };
+            if data.get("done").and_then(Value::as_bool) == Some(true) {
+                if let Some(resp_obj) = data.get("response")
+                    && let Some(pid) = Self::extract_project_id(resp_obj)
+                {
+                    return Some(pid);
+                }
+                return Self::extract_project_id(&data);
+            }
+            if attempt < 2 {
+                tokio::time::sleep(Duration::from_millis(200)).await;
+            }
+        }
+        None
+    }
+
     async fn fetch_code_assist_context(
         &self,
         access_token: &str,
     ) -> (Option<String>, Option<String>) {
+        // NOTE: Do NOT send `X-Goog-Api-Client` or `Client-Metadata` headers here;
+        // Google blocks `cloudaicompanionProject` provisioning when those are present on Antigravity.
         let body = json!({
             "metadata": {
                 "ideType": 9,
                 "platform": 2,
                 "pluginType": 2
-            },
-            "mode": 1
+            }
         });
         let Ok(resp) = self
             .http
-            .post(GEMINI_LOAD_CODE_ASSIST_URL)
+            .post(&self.load_code_assist_url)
             .bearer_auth(access_token)
             .header("Accept", "application/json")
+            .header("User-Agent", ANTIGRAVITY_USER_AGENT)
             .json(&body)
             .send()
             .await
@@ -87,17 +217,29 @@ impl GeminiOAuthDriver {
         let Ok(data) = resp.json::<Value>().await else {
             return (None, None);
         };
-        let project_id = data
-            .get("cloudaicompanionProject")
-            .and_then(|p| p.as_str().or_else(|| p.get("id").and_then(Value::as_str)))
-            .filter(|s| !s.trim().is_empty())
-            .map(str::to_owned);
+        let mut project_id = Self::extract_project_id(&data);
         let plan = data
             .get("currentTier")
-            .and_then(|t| t.get("name"))
+            .and_then(|t| t.get("name").or_else(|| t.get("id")))
             .and_then(Value::as_str)
-            .filter(|s| !s.trim().is_empty())
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
             .map(str::to_owned);
+        if project_id.is_none() {
+            let tier_id = data
+                .get("allowedTiers")
+                .and_then(Value::as_array)
+                .and_then(|tiers| {
+                    tiers.iter().find_map(|tier| {
+                        (tier.get("isDefault").and_then(Value::as_bool) == Some(true))
+                            .then(|| tier.get("id").and_then(Value::as_str))
+                            .flatten()
+                    })
+                })
+                .filter(|s| !s.trim().is_empty())
+                .unwrap_or("legacy-tier");
+            project_id = self.onboard_user(access_token, tier_id).await;
+        }
         (project_id, plan)
     }
 }
@@ -177,7 +319,7 @@ impl OAuthVendorDriver for GeminiOAuthDriver {
         let mut url =
             Url::parse(GEMINI_AUTHORIZE_URL).map_err(|_| GatewayError::OAuthCallbackInvalid)?;
         url.query_pairs_mut()
-            .append_pair("client_id", GEMINI_CLIENT_ID)
+            .append_pair("client_id", ANTIGRAVITY_CLIENT_ID)
             .append_pair("response_type", "code")
             .append_pair("redirect_uri", redirect_uri)
             .append_pair("scope", GEMINI_SCOPES)
@@ -196,36 +338,22 @@ impl OAuthVendorDriver for GeminiOAuthDriver {
         code_verifier: &str,
         redirect_uri: &str,
     ) -> Result<ExchangedOAuthAccount, GatewayError> {
-        let params = [
-            ("grant_type", "authorization_code"),
-            ("client_id", GEMINI_CLIENT_ID),
-            ("client_secret", GEMINI_CLIENT_SECRET),
-            ("code", code),
-            ("redirect_uri", redirect_uri),
-            ("code_verifier", code_verifier),
-        ];
-        let encoded = url::form_urlencoded::Serializer::new(String::new())
-            .extend_pairs(params)
-            .finish();
-        let resp = self
-            .http
-            .post(GEMINI_TOKEN_URL)
-            .header("Content-Type", "application/x-www-form-urlencoded")
-            .header("Accept", "application/json")
-            .body(encoded)
-            .send()
-            .await
-            .map_err(|e| GatewayError::OAuthExchangeFailed(e.to_string()))?;
-        if !resp.status().is_success() {
+        let (parsed_opt, last_status) = self
+            .post_token_with_candidates(
+                "authorization_code",
+                &[
+                    ("code", code),
+                    ("redirect_uri", redirect_uri),
+                    ("code_verifier", code_verifier),
+                ],
+            )
+            .await?;
+
+        let Some(parsed) = parsed_opt else {
             return Err(GatewayError::OAuthExchangeFailed(format!(
-                "gemini_token_http_{}",
-                resp.status().as_u16()
+                "gemini_token_http_{last_status}"
             )));
-        }
-        let parsed: GeminiTokenResponse = resp
-            .json()
-            .await
-            .map_err(|e| GatewayError::OAuthExchangeFailed(e.to_string()))?;
+        };
         let email = self.fetch_email(&parsed.access_token).await;
         let (project_id, _) = self.fetch_code_assist_context(&parsed.access_token).await;
         let now = crate::database::unix_seconds().unwrap_or(0);
@@ -251,31 +379,24 @@ impl OAuthVendorDriver for GeminiOAuthDriver {
             .as_deref()
             .filter(|s| !s.is_empty())
             .ok_or(GatewayError::AccountReauthRequired)?;
-        let params = [
-            ("grant_type", "refresh_token"),
-            ("client_id", GEMINI_CLIENT_ID),
-            ("client_secret", GEMINI_CLIENT_SECRET),
-            ("refresh_token", refresh_token),
-        ];
-        let encoded = url::form_urlencoded::Serializer::new(String::new())
-            .extend_pairs(params)
-            .finish();
-        let resp = self
-            .http
-            .post(GEMINI_TOKEN_URL)
-            .header("Content-Type", "application/x-www-form-urlencoded")
-            .header("Accept", "application/json")
-            .body(encoded)
-            .send()
-            .await
-            .map_err(|e| GatewayError::OAuthExchangeFailed(e.to_string()))?;
-        if !resp.status().is_success() {
+
+        let (parsed_opt, _) = self
+            .post_token_with_candidates("refresh_token", &[("refresh_token", refresh_token)])
+            .await?;
+
+        let Some(parsed) = parsed_opt else {
             return Err(GatewayError::AccountReauthRequired);
-        }
-        let parsed: GeminiTokenResponse = resp
-            .json()
-            .await
-            .map_err(|e| GatewayError::OAuthExchangeFailed(e.to_string()))?;
+        };
+        let existing_context = current
+            .account_context_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_owned);
+        let account_context_id = match existing_context {
+            Some(ctx) => Some(ctx),
+            None => self.fetch_code_assist_context(&parsed.access_token).await.0,
+        };
         let now = crate::database::unix_seconds().unwrap_or(0);
         let expires_at = parsed.expires_in.map(|ttl| now + ttl.max(60));
         Ok(ExchangedOAuthAccount {
@@ -285,7 +406,7 @@ impl OAuthVendorDriver for GeminiOAuthDriver {
                     .refresh_token
                     .or_else(|| current.refresh_token.clone()),
                 upstream_oauth_token: None,
-                account_context_id: current.account_context_id.clone(),
+                account_context_id,
             },
             account_email: None,
             expires_at,
@@ -320,9 +441,10 @@ impl OAuthVendorDriver for GeminiOAuthDriver {
 
         let resp = self
             .http
-            .post(GEMINI_RETRIEVE_QUOTA_URL)
+            .post(&self.retrieve_quota_url)
             .bearer_auth(&bundle.access_token)
             .header("Accept", "application/json")
+            .header("User-Agent", ANTIGRAVITY_USER_AGENT)
             .json(&json!({ "project": project_id }))
             .send()
             .await
@@ -353,6 +475,6 @@ impl OAuthVendorDriver for GeminiOAuthDriver {
     }
 
     fn extra_headers_for(&self, _bundle: &OAuthTokenBundle) -> Vec<(String, String)> {
-        Vec::new()
+        vec![("User-Agent".to_owned(), ANTIGRAVITY_USER_AGENT.to_owned())]
     }
 }

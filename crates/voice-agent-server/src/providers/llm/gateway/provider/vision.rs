@@ -2,14 +2,77 @@ use std::time::Duration;
 
 use crate::{
     providers::llm::{LlmError, LlmOutput, LlmRequest, ReferenceImage},
-    services::llm_gateway::{GatewayBinding, GatewayCallOutcome, GatewayVendor},
+    services::llm_gateway::{GatewayBinding, GatewayCallOutcome, GatewayLease, GatewayVendor},
 };
 
-use super::super::{muse::workflow::run_chat_turn_once, wire_anthropic, wire_codex, wire_openai};
+use super::super::{
+    muse::workflow::run_chat_turn_once, wire_anthropic, wire_codex, wire_gemini, wire_openai,
+};
 use super::muse_ops::{is_retryable_muse_failure, report_muse_failure_to_hub};
 use super::{LlmGatewayProvider, MAX_POOL_FAILOVER_ATTEMPTS, WireError};
 
 impl LlmGatewayProvider {
+    async fn dispatch_vision_wire(
+        &self,
+        endpoint: &str,
+        lease: &GatewayLease,
+        prompt: &str,
+        image_bytes: &[u8],
+        mime_type: &str,
+    ) -> Result<LlmOutput, WireError> {
+        match lease.vendor {
+            GatewayVendor::Anthropic => {
+                wire_anthropic::execute_vision(
+                    &self.http,
+                    endpoint,
+                    lease,
+                    &self.config,
+                    prompt,
+                    image_bytes,
+                    mime_type,
+                )
+                .await
+            }
+            GatewayVendor::OpenaiCodex => {
+                wire_codex::execute_vision(
+                    &self.http,
+                    endpoint,
+                    lease,
+                    &self.config,
+                    prompt,
+                    image_bytes,
+                    mime_type,
+                )
+                .await
+            }
+            GatewayVendor::Gemini => {
+                wire_gemini::execute_vision(
+                    &self.http,
+                    endpoint,
+                    lease,
+                    &self.config,
+                    prompt,
+                    image_bytes,
+                    mime_type,
+                )
+                .await
+            }
+            GatewayVendor::GithubCopilot => {
+                wire_openai::execute_vision(
+                    &self.http,
+                    endpoint,
+                    lease,
+                    &self.config,
+                    prompt,
+                    image_bytes,
+                    mime_type,
+                )
+                .await
+            }
+            GatewayVendor::Muse => unreachable!("handled above"),
+        }
+    }
+
     pub(super) async fn run_vision(
         &self,
         prompt: &str,
@@ -79,45 +142,31 @@ impl LlmGatewayProvider {
         let mut current_lease = lease;
         for attempt in 0..max_attempts {
             let endpoint = Self::resolve_endpoint_for(&self.config, &current_lease);
-            let result = match current_lease.vendor {
-                GatewayVendor::Anthropic => {
-                    wire_anthropic::execute_vision(
-                        &self.http,
-                        endpoint,
+            let mut result = self
+                .dispatch_vision_wire(endpoint, &current_lease, prompt, image_bytes, mime_type)
+                .await;
+
+            if matches!(result, Err(WireError::Unauthorized))
+                && let Some(refreshed_lease) = self
+                    .hub
+                    .try_refresh_on_unauthorized(
+                        &current_lease.account_key,
+                        current_lease.access_token.expose(),
+                    )
+                    .await
+            {
+                current_lease = refreshed_lease;
+                let retry_endpoint = Self::resolve_endpoint_for(&self.config, &current_lease);
+                result = self
+                    .dispatch_vision_wire(
+                        retry_endpoint,
                         &current_lease,
-                        &self.config,
                         prompt,
                         image_bytes,
                         mime_type,
                     )
-                    .await
-                }
-                GatewayVendor::OpenaiCodex => {
-                    wire_codex::execute_vision(
-                        &self.http,
-                        endpoint,
-                        &current_lease,
-                        &self.config,
-                        prompt,
-                        image_bytes,
-                        mime_type,
-                    )
-                    .await
-                }
-                GatewayVendor::Gemini | GatewayVendor::GithubCopilot => {
-                    wire_openai::execute_vision(
-                        &self.http,
-                        endpoint,
-                        &current_lease,
-                        &self.config,
-                        prompt,
-                        image_bytes,
-                        mime_type,
-                    )
-                    .await
-                }
-                GatewayVendor::Muse => unreachable!("handled above"),
-            };
+                    .await;
+            }
 
             match self.finalize_wire_result(&current_lease.account_key, result) {
                 Ok(out) => return Ok(out),
@@ -128,9 +177,9 @@ impl LlmGatewayProvider {
                         current_lease = next_lease;
                         continue;
                     }
-                    return Err(LlmError::Failed);
+                    return Err(LlmError::Rejected);
                 }
-                Err(_) => return Err(LlmError::Failed),
+                Err(err) => return Err(err.into_llm_error()),
             }
         }
         Err(LlmError::Failed)

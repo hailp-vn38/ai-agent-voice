@@ -235,7 +235,7 @@ impl GatewayVendor {
         match self {
             Self::Anthropic => "https://api.anthropic.com/v1",
             Self::OpenaiCodex => "https://api.openai.com/v1",
-            Self::Gemini => "https://generativelanguage.googleapis.com/v1beta/openai",
+            Self::Gemini => "https://daily-cloudcode-pa.googleapis.com/v1internal",
             Self::GithubCopilot => "https://api.githubcopilot.com",
         }
     }
@@ -285,7 +285,7 @@ Các phương thức trên **Interface** của `LlmGatewayHub`:
 | :--- | :--- | :--- | :--- |
 | **`anthropic`**<br>(Claude Pro/Max OAuth) | **Authorization Code + PKCE (`S256`)** | • Authorize: `https://claude.ai/oauth/authorize`<br>• Token: `https://console.anthropic.com/v1/oauth/token`<br>• Scopes: `user:inference user:profile` | • Base URL: `https://api.anthropic.com/v1`<br>• Header: `Authorization: Bearer <access_token>`<br>• Header: `anthropic-version: 2023-06-01`<br>• Header: `anthropic-beta: oauth-2025-04-20` |
 | **`openai_codex`**<br>(ChatGPT Plus/Pro Codex OAuth) | **Authorization Code + PKCE (`S256`)** | • Authorize: `https://auth.openai.com/oauth/authorize`<br>• Token: `https://auth.openai.com/oauth/token`<br>• Scopes: `openid profile email offline_access` | • Base URL: `https://api.openai.com/v1`<br>• Header: `Authorization: Bearer <access_token>`<br>• Nếu `account_context_id` có giá trị: đính kèm header `ChatGPT-Account-Id`. |
-| **`gemini`**<br>(Google Gemini OAuth) | **Authorization Code + PKCE (`S256`)** | • Authorize: `https://accounts.google.com/o/oauth2/v2/auth` (`access_type=offline&prompt=consent`)<br>• Token: `https://oauth2.googleapis.com/token`<br>• Scopes: `https://www.googleapis.com/auth/cloud-platform https://www.googleapis.com/auth/userinfo.email` | • Base URL OpenAI-compatible: `https://generativelanguage.googleapis.com/v1beta/openai`<br>• Header: `Authorization: Bearer <access_token>` |
+| **`gemini`**<br>(Google Gemini / Antigravity OAuth) | **Authorization Code + PKCE (`S256`)** | • Authorize: `https://accounts.google.com/o/oauth2/v2/auth` (`access_type=offline&prompt=consent`)<br>• Token: `https://oauth2.googleapis.com/token`<br>• Scopes: `cloud-platform`, `userinfo.email`, `userinfo.profile`, `cclog`, `experimentsandconfigs`<br>• Project discovery: `v1internal:loadCodeAssist` + fallback `v1internal:onboardUser` | • Base URL Cloud Code Assist: `https://daily-cloudcode-pa.googleapis.com/v1internal` (fallback `https://cloudcode-pa.googleapis.com/v1internal`)<br>• Wire: `:streamGenerateContent?alt=sse` / `:generateContent`<br>• Header: `Authorization: Bearer <access_token>`, `User-Agent: antigravity/hub/2.24.0 darwin/arm64` |
 | **`github_copilot`**<br>(GitHub Copilot) | **Device Authorization Grant (RFC 8628)** + **Token Exchange** | • Bước 1 (Device Code): `POST https://github.com/login/device/code` (`scope: read:user`)<br>• Bước 2 (Poll OAuth Token): `POST https://github.com/login/oauth/access_token`<br>• Bước 3 (Đổi sang Copilot Bearer Token ngắn hạn ~30 phút): `GET https://api.github.com/copilot_internal/v2/token` với `Authorization: token <github_oauth_token>` | • Base URL: `https://api.githubcopilot.com`<br>• Header: `Authorization: Bearer <copilot_bearer_token>`<br>• Header: `Editor-Version: vscode/1.96.0`<br>• Header: `Copilot-Integration-Id: vscode-chat` |
 
 ### 4.3. Proactive Out-of-Band Token Renewal & Pool Cooldown (`hub.rs`)

@@ -4,6 +4,7 @@ pub(crate) mod muse;
 pub mod provider;
 mod wire_anthropic;
 mod wire_codex;
+mod wire_gemini;
 mod wire_openai;
 
 #[cfg(test)]
