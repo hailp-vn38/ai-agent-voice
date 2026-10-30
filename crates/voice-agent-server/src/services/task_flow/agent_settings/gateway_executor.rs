@@ -103,7 +103,7 @@ impl CustomModelExecutor for GatewayOrchestratorExecutor {
             effective_cfg.model = request.model_id.trim().to_owned();
         }
         if let Some(max_tok) = request.params.max_output_tokens {
-            effective_cfg.max_tokens = Some(max_tok.clamp(1, 65_536));
+            effective_cfg.max_tokens = Some(max_tok.max(1));
         }
         if let Some(temp) = request.params.temperature {
             effective_cfg.temperature_percent = Some((temp.clamp(0.0, 2.0) * 100.0).round() as u16);

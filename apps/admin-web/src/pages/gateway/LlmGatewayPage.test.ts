@@ -291,8 +291,8 @@ describe('LlmGatewayPage', () => {
           display_name: 'GPT-5.6 Terra (Codex)',
           tags: ['chat', 'reasoning', 'vision'],
           supports_reasoning_effort: true,
-          default_max_tokens: 16384,
-          default_context_limit_tokens: 200000,
+          default_max_tokens: 128000,
+          default_context_limit_tokens: 1050000,
           default_reasoning_effort: 'high',
           default_timeout_ms: 90000,
         },
@@ -358,6 +358,9 @@ describe('LlmGatewayPage', () => {
     await flushPromises()
     const modelInput = wrapper.get('[data-testid="pool-model-id-input"]')
     expect((modelInput.element as HTMLInputElement).value).toBe('gpt-5.6-terra')
+    const maxTokensInput = wrapper.get('[data-testid="pool-model-max-tokens-input"]')
+    expect(maxTokensInput.attributes('max')).toBeUndefined()
+    expect((maxTokensInput.element as HTMLInputElement).value).toBe('128000')
 
     await wrapper.get('[data-testid="pool-model-form"]').trigger('submit.prevent')
     await flushPromises()
@@ -369,8 +372,8 @@ describe('LlmGatewayPage', () => {
         gateway_binding: 'pool:openai_codex',
         tags: ['chat', 'reasoning', 'vision'],
         reasoning_effort: 'high',
-        max_tokens: 16384,
-        context_limit_tokens: 200000,
+        max_tokens: 128000,
+        context_limit_tokens: 1050000,
         timeout_ms: 90000,
       }),
     )

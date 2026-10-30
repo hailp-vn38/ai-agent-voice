@@ -1065,6 +1065,26 @@ async fn llm_gateway_pool_detail_and_model_crud_lifecycle() {
             .iter()
             .any(|p| p.model == "gpt-5.3-codex" && p.supports_reasoning_effort)
     );
+    for expected_model in [
+        "gpt-6-astra",
+        "gpt-6.1-sol",
+        "gpt-6.1-terra",
+        "gpt-6-sol",
+        "gpt-6-luna",
+        "gpt-5.6-sol",
+        "gpt-5.6-terra",
+        "gpt-5.6-luna",
+        "gpt-5.5",
+        "gpt-5.4",
+    ] {
+        assert!(
+            detail_initial
+                .preset_models
+                .iter()
+                .any(|p| p.model == expected_model && p.default_max_tokens == Some(128_000)),
+            "missing or unexpected default_max_tokens for OpenAI preset {expected_model}"
+        );
+    }
 
     // 2. Add a model to the OpenAI Codex pool using preset defaults
     let created = hub
@@ -1135,7 +1155,7 @@ async fn llm_gateway_pool_detail_and_model_crud_lifecycle() {
                 base_url: Some(None),
                 tags: Some(vec!["chat".to_owned(), "reasoning".to_owned()]),
                 reasoning_effort: Some(Some("medium".to_owned())),
-                max_tokens: Some(Some(16384)),
+                max_tokens: Some(Some(128_000)),
                 enabled: Some(false),
                 ..Default::default()
             },
@@ -1152,7 +1172,7 @@ async fn llm_gateway_pool_detail_and_model_crud_lifecycle() {
         vec!["chat".to_owned(), "reasoning".to_owned()]
     );
     assert_eq!(updated.reasoning_effort.as_deref(), Some("medium"));
-    assert_eq!(updated.max_tokens, Some(16384));
+    assert_eq!(updated.max_tokens, Some(128_000));
     assert!(!updated.enabled);
     assert_eq!(updated.revision, 2);
 

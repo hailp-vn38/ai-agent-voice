@@ -2019,7 +2019,6 @@ void load()
               data-testid="pool-model-max-tokens-input"
               type="number"
               min="1"
-              max="65536"
               placeholder="4096"
               class="admin-input text-sm"
             />

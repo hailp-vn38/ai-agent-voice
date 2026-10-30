@@ -44,8 +44,8 @@ const FIELDS: &[ProviderConfigField] = &[
         ConfigFieldType::Integer,
         false,
         None,
-        Some(256),
-        Some(65_536),
+        Some(1),
+        None,
         None,
     ),
     field(

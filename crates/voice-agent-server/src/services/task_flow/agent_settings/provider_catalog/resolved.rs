@@ -211,7 +211,7 @@ impl ResolvedLlmProvider {
     }
 
     pub(crate) fn clamped_max_tokens(&self) -> u32 {
-        self.max_tokens.clamp(1, 65_536)
+        self.max_tokens.max(1)
     }
 
     pub(crate) fn clamped_context_limit_tokens(&self) -> u32 {
