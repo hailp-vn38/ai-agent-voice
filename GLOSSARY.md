@@ -275,12 +275,12 @@ _Avoid_: Job Change Signal, Voice Session WebSocket, unauthenticated tail
 ## Internal LLM Gateway & OAuth Accounts
 
 **Gateway Account**:
-Một tài khoản nhà cung cấp mô hình ngôn ngữ đã được xác thực qua OAuth 2.0 (như Claude, OpenAI Codex, Google Gemini, hoặc GitHub Copilot) do Admin quản lý độc lập với từng Provider Instance, có vòng đời làm mới phiên xác thực và trạng thái sẵn sàng riêng.
-_Avoid_: Provider Instance, static API key, Admin User
+Một tài khoản nhà cung cấp mô hình ngôn ngữ đã được xác thực qua OAuth 2.0 hoặc phiên máy ảo/cookie ủy quyền (như Claude, OpenAI Codex, Google Gemini, GitHub Copilot, hoặc Meta Muse AI) do Admin quản lý độc lập với từng Provider Instance, có vòng đời làm mới phiên xác thực và trạng thái sẵn sàng riêng.
+_Avoid_: Provider Instance, static API key, Admin User, OAuthAccount
 
 **Gateway Account Pool**:
 Tập hợp các Gateway Account đang bật và không nằm trong thời gian tạm nghỉ do giới hạn tốc độ của cùng một nhà cung cấp, cho phép phân phối lượt gọi luân phiên giữa nhiều tài khoản.
-_Avoid_: Provider Runtime Pool, fallback chain, retry loop
+_Avoid_: Provider Runtime Pool, fallback chain, retry loop, AccountPool
 
 **Gateway Binding**:
 Tham chiếu phi bí mật trên cấu hình của một Provider Instance liên kết nó với một Gateway Account cụ thể hoặc một Gateway Account Pool thay vì sử dụng khóa API tĩnh.
