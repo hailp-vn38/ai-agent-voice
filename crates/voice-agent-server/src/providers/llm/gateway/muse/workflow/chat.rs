@@ -18,7 +18,8 @@ use super::{
 };
 use crate::providers::llm::{LlmRequest, ReferenceImage};
 
-const CHAT_POLL_INTERVAL: Duration = Duration::from_millis(350);
+const CHAT_POLL_INTERVAL: Duration = Duration::from_millis(400);
+const ONLINE_IDLE_DEBOUNCE: Duration = Duration::from_millis(3500);
 
 pub(crate) async fn run_chat_turn_once<F>(
     pool: &Arc<SharedMusePool>,
@@ -129,19 +130,28 @@ where
     }
 
     let deadline = Instant::now() + timeout_duration;
-    let mut poll_interval = tokio::time::interval(CHAT_POLL_INTERVAL);
-    poll_interval.tick().await;
+    let mut poll_interval = tokio::time::interval_at(
+        Instant::now() + Duration::from_millis(300),
+        CHAT_POLL_INTERVAL,
+    );
 
     let mut emitted_text = String::new();
     let mut last_polled_text = String::new();
-    let mut latest_activity_code = String::new();
+    let mut latest_activity_code = String::from("unknown");
+    let mut session_running_seen = false;
     let mut session_completed = false;
     let mut message_done_seen = false;
     let mut unchanged_ticks = 0usize;
     let mut should_poll_history = false;
-    let prior_last_user = prior_turns.last().map(|t| t.user.trim());
+    let mut debounce_deadline: Option<Instant> = None;
+    let mut finish_after_poll = false;
+    let expected_user_turns = lease
+        .matched_hot()
+        .map(|hot| hot.turns.len() + 1)
+        .unwrap_or(1);
 
     while Instant::now() < deadline {
+        let debounce_sleep = debounce_deadline.unwrap_or(deadline);
         tokio::select! {
             recv_res = event_rx.recv() => {
                 if let Ok(ev) = recv_res {
@@ -155,10 +165,10 @@ where
                             || ev_name.contains("approval"))
                     {
                         unchanged_ticks = 0;
-                        if ev_name.contains("approval") {
+                        debounce_deadline = None;
+                        if ev_name == "approvals.snapshot" || ev_name.contains("approval") {
                             handle_chat_approval(lease, &ev).await;
                         }
-                        continue;
                     }
 
                     if let Some(status) = ev.session_update_status(lease.session_id()) {
@@ -166,8 +176,10 @@ where
                             session_completed = true;
                             should_poll_history = true;
                         } else if status == "running" {
+                            session_running_seen = true;
                             session_completed = false;
                             message_done_seen = false;
+                            debounce_deadline = None;
                             unchanged_ticks = 0;
                             should_poll_history = true;
                         }
@@ -188,7 +200,15 @@ where
                             emitted_text.push_str(chunk);
                             last_polled_text = emitted_text.clone();
                             unchanged_ticks = 0;
+                            debounce_deadline = None;
                             on_delta(chunk.to_string());
+                        }
+                    } else if ev_name == "delta.presentation" {
+                        let p = ev.payload();
+                        if p.get("kind").and_then(Value::as_str) != Some("browser_task")
+                            && p.get("data").and_then(|d| d.get("browser_task_id")).is_none()
+                        {
+                            unchanged_ticks = 0;
                         }
                     } else if ev_name == "agent.status" {
                         if let Some(code) = ev.activity_code() {
@@ -199,8 +219,12 @@ where
                             ) {
                                 unchanged_ticks = 0;
                                 message_done_seen = false;
-                            } else if matches!(code, "online" | "idle") && session_completed {
-                                should_poll_history = true;
+                                debounce_deadline = None;
+                            } else if matches!(code, "online" | "idle")
+                                && session_completed
+                                && !emitted_text.trim().is_empty()
+                            {
+                                debounce_deadline = Some(Instant::now() + ONLINE_IDLE_DEBOUNCE);
                             }
                         }
                     } else if ev_name == "delta.message_done" {
@@ -210,6 +234,7 @@ where
                         }
                         if reconcile_and_emit_history_text(&mut emitted_text, &done_text, on_delta) {
                             last_polled_text = emitted_text.clone();
+                            unchanged_ticks = 0;
                         }
                         message_done_seen = true;
                         should_poll_history = true;
@@ -229,6 +254,11 @@ where
                         ));
                     }
                 }
+            }
+            _ = tokio::time::sleep_until(debounce_sleep), if debounce_deadline.is_some() => {
+                debounce_deadline = None;
+                should_poll_history = true;
+                finish_after_poll = true;
             }
             _ = poll_interval.tick() => {
                 should_poll_history = true;
@@ -252,7 +282,12 @@ where
                 && resp.status == 200
                 && let Ok(history_json) = resp.json()
             {
-                if is_stale_followup_history(&history_json, prior_last_user, &effective_prompt) {
+                if is_stale_followup_history(
+                    &history_json,
+                    expected_user_turns,
+                    &effective_prompt,
+                ) {
+                    finish_after_poll = false;
                     continue;
                 }
                 let turn_events = extract_history_turn_events(&history_json);
@@ -269,32 +304,48 @@ where
                 }
 
                 let active_tools = has_active_tool_task(&turn_events);
+                let is_assistant_completed = is_last_assistant_completed(&turn_events);
+                let is_all_completed =
+                    (session_completed || is_assistant_completed) && !active_tools;
                 let is_agent_working = active_tools
+                    || (!turn_events.is_empty() && !is_all_completed)
                     || matches!(
                         latest_activity_code.as_str(),
                         "working" | "making_something" | "responding" | "thinking" | "running"
                     );
 
-                if !history_text.is_empty() {
-                    if history_text == last_polled_text && !is_agent_working {
+                if !emitted_text.is_empty() && history_text == last_polled_text {
+                    if !is_agent_working {
                         unchanged_ticks += 1;
-                    } else if is_agent_working {
-                        unchanged_ticks = 0;
                     } else {
-                        last_polled_text = history_text;
                         unchanged_ticks = 0;
+                        debounce_deadline = None;
                     }
                 }
 
-                let is_assistant_completed = is_last_assistant_completed(&turn_events);
-                let is_all_completed =
-                    (session_completed || is_assistant_completed) && !active_tools;
-
-                if !emitted_text.trim().is_empty() && !active_tools && !is_agent_working {
-                    if is_assistant_completed && (session_completed || message_done_seen) {
+                if finish_after_poll {
+                    finish_after_poll = false;
+                    if !emitted_text.trim().is_empty() && !active_tools && !is_agent_working {
                         break;
                     }
-                    let required_ticks = if is_all_completed { 6 } else { 20 };
+                }
+
+                if !emitted_text.trim().is_empty() && !active_tools && !is_agent_working {
+                    if session_completed && is_assistant_completed {
+                        break;
+                    }
+                    if !session_running_seen
+                        && is_assistant_completed
+                        && (message_done_seen
+                            || matches!(latest_activity_code.as_str(), "idle" | "online"))
+                    {
+                        break;
+                    }
+                    let required_ticks = if is_all_completed {
+                        if session_running_seen { 12 } else { 2 }
+                    } else {
+                        25
+                    };
                     if unchanged_ticks >= required_ticks {
                         break;
                     }
@@ -338,13 +389,10 @@ where
 
 fn is_stale_followup_history(
     history_json: &Value,
-    prior_last_user: Option<&str>,
+    expected_user_turns: usize,
     effective_prompt: &str,
 ) -> bool {
-    let Some(prev_u) = prior_last_user.filter(|s| !s.is_empty()) else {
-        return false;
-    };
-    if prev_u == effective_prompt.trim() {
+    if expected_user_turns <= 1 {
         return false;
     }
     let evs = history_json
@@ -355,15 +403,21 @@ fn is_stale_followup_history(
     let Some(evs) = evs else {
         return false;
     };
-    let last_user_ev = evs.iter().rev().find(|e| {
-        let p = e.get("payload").unwrap_or(e);
-        e.get("role").and_then(Value::as_str) == Some("user")
-            || p.get("role").and_then(Value::as_str) == Some("user")
-            || e.get("event_name").and_then(Value::as_str) == Some("message.user")
-            || e.get("event").and_then(Value::as_str) == Some("message.user")
-    });
-    let Some(ev) = last_user_ev else {
+    let user_evs: Vec<&Value> = evs
+        .iter()
+        .filter(|e| {
+            let p = e.get("payload").unwrap_or(e);
+            e.get("role").and_then(Value::as_str) == Some("user")
+                || p.get("role").and_then(Value::as_str) == Some("user")
+                || e.get("event_name").and_then(Value::as_str) == Some("message.user")
+                || e.get("event").and_then(Value::as_str) == Some("message.user")
+        })
+        .collect();
+    if user_evs.len() >= expected_user_turns {
         return false;
+    }
+    let Some(&ev) = user_evs.last() else {
+        return true;
     };
     let p = ev.get("payload").unwrap_or(ev);
     let last_u_text = ev
@@ -373,7 +427,7 @@ fn is_stale_followup_history(
         .or_else(|| p.get("content").and_then(extract_value_text))
         .or_else(|| ev.get("content").and_then(extract_value_text))
         .unwrap_or_default();
-    last_u_text.trim() == prev_u
+    last_u_text.trim() != effective_prompt.trim()
 }
 
 fn reconcile_and_emit_history_text<F>(

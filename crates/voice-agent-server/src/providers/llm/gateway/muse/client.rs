@@ -83,9 +83,9 @@ pub(crate) struct VmStreamEvent {
 impl VmStreamEvent {
     pub fn event_name(&self) -> &str {
         self.raw
-            .get("event_name")
+            .get("event")
+            .or_else(|| self.raw.get("event_name"))
             .or_else(|| self.raw.get("type"))
-            .or_else(|| self.raw.get("event"))
             .and_then(Value::as_str)
             .unwrap_or("")
     }

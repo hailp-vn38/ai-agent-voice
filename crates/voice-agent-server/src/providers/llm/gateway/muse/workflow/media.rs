@@ -170,6 +170,10 @@ async fn execute_media_turn_on_lease(
                         collect_presentations_from_payload(ev.payload(), &mut stream_presentations);
                         explicit_done = true;
                         should_poll_history = true;
+                    } else if ev.agent_activity_state() == Some(true)
+                        || ev.session_update_status(lease.session_id()) == Some("running")
+                    {
+                        explicit_done = false;
                     } else if ev.agent_activity_state() == Some(false)
                         || ev.is_session_completed_for(lease.session_id())
                     {
