@@ -1354,6 +1354,7 @@ async fn gemini_antigravity_driver_oauth_onboard_user_and_dual_client_refresh() 
                 // Simulate account needing onboardUser to provision cloudaicompanionProject
                 axum::Json(json!({
                     "currentTier": { "id": "free-tier", "name": "Antigravity Pro" },
+                    "paidTier": { "id": "g1-ultra-tier", "name": "Google AI Ultra" },
                     "allowedTiers": [
                         { "id": "legacy-tier", "isDefault": false },
                         { "id": "free-tier", "isDefault": true }
@@ -1386,6 +1387,67 @@ async fn gemini_antigravity_driver_oauth_onboard_user_and_dual_client_refresh() 
                         }
                     }))
                 }
+            }),
+        )
+        .route(
+            "/v1internal:fetchAvailableModels",
+            post(|headers: HeaderMap| async move {
+                let auth = headers
+                    .get("authorization")
+                    .and_then(|v| v.to_str().ok())
+                    .unwrap_or("");
+                assert_eq!(
+                    headers
+                        .get("x-client-name")
+                        .and_then(|v| v.to_str().ok())
+                        .unwrap_or(""),
+                    "antigravity"
+                );
+                if auth == "Bearer ya29.forbidden_quota_tok" {
+                    return (
+                        StatusCode::FORBIDDEN,
+                        axum::Json(json!({
+                            "error": {
+                                "code": 403,
+                                "message": "Your current account is not eligible for Antigravity. Verify your account to continue."
+                            }
+                        })),
+                    )
+                        .into_response();
+                }
+                axum::Json(json!({
+                    "models": {
+                        "gemini-3.8-flash-medium": {
+                            "displayName": "Gemini 3.8 Flash (Medium)",
+                            "quotaInfo": {
+                                "remainingFraction": 0.9,
+                                "resetTime": "2026-10-30T12:00:00Z"
+                            }
+                        }
+                    }
+                }))
+                .into_response()
+            }),
+        )
+        .route(
+            "/v1internal:retrieveUserQuotaSummary",
+            post(|| async move {
+                axum::Json(json!({
+                    "groups": [
+                        {
+                            "displayName": "Gemini Models",
+                            "buckets": [
+                                {
+                                    "bucketId": "gemini-weekly",
+                                    "displayName": "Weekly Limit Remaining",
+                                    "window": "weekly",
+                                    "remainingFraction": 0.8,
+                                    "resetTime": "2026-11-06T00:00:00Z"
+                                }
+                            ]
+                        }
+                    ]
+                }))
             }),
         );
 
@@ -1457,6 +1519,37 @@ async fn gemini_antigravity_driver_oauth_onboard_user_and_dual_client_refresh() 
     assert_eq!(
         refreshed_legacy.bundle.account_context_id.as_deref(),
         Some("proj-antigravity-onboarded-01")
+    );
+
+    // 4. Verify Antigravity quota uses fetchAvailableModels + retrieveUserQuotaSummary
+    let quota_ok = driver
+        .fetch_quota(&exchanged.bundle)
+        .await
+        .expect("fetch_quota 200 OK");
+    assert_eq!(quota_ok.plan.as_deref(), Some("Google AI Ultra"));
+    assert_eq!(quota_ok.windows.len(), 2);
+    assert_eq!(quota_ok.windows[0].name, "gemini-3.8-flash-medium");
+    assert_eq!(quota_ok.windows[0].remaining_percentage, 90.0);
+    assert_eq!(quota_ok.windows[1].name, "Gemini (Weekly)");
+    assert_eq!(quota_ok.windows[1].remaining_percentage, 80.0);
+
+    // 5. Verify HTTP 403 on quota endpoint returns graceful snapshot with message (9router parity, no gemini_quota_http_403 error)
+    let forbidden_bundle = OAuthTokenBundle {
+        access_token: "ya29.forbidden_quota_tok".to_owned(),
+        refresh_token: Some("1//antigravity_ref_1".to_owned()),
+        upstream_oauth_token: None,
+        account_context_id: Some("proj-antigravity-onboarded-01".to_owned()),
+    };
+    let quota_403 = driver
+        .fetch_quota(&forbidden_bundle)
+        .await
+        .expect("fetch_quota 403 must not fail with gemini_quota_http_403");
+    assert!(quota_403.windows.is_empty());
+    assert!(
+        quota_403
+            .message
+            .as_deref()
+            .is_some_and(|m| m.contains("not eligible for Antigravity"))
     );
 }
 
