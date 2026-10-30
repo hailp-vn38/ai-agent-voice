@@ -130,6 +130,10 @@ export interface AgentRunView {
   output_tokens: number | null
   started_at: string | null
   finished_at: string | null
+  error_code?: string | null
+  error_message?: string | null
+  provider_id?: string | null
+  model_id?: string | null
 }
 export interface CoverageView {
   basis: 'structured_provenance' | 'goal_only_unverified'

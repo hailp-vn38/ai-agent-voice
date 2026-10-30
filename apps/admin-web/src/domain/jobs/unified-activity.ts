@@ -33,6 +33,8 @@ export interface UnifiedActivity {
   childRuns?: AgentRunView[]
   title: string
   note: string
+  errorCode?: string | null
+  errorMessage?: string | null
   assistantMessage?: string | null
   artifacts?: JobArtifact[]
   mediaEmbeds?: JobMediaEmbed[]
@@ -124,14 +126,19 @@ export function projectUnifiedActivity(job: AdminJob, events: JobEvent[]): Unifi
       )?.text,
     )
     const fallbackGoal = text(agentRun?.goal_excerpt)
+    const errCode = run.errorCode ?? text(agentRun?.error_code)
+    const errMsg = run.errorMessage ?? text(agentRun?.error_message)
+    const errNote = errCode
+      ? errCode + (run.validationPath ? ' · ' + run.validationPath : '') + (errMsg && errMsg !== errCode ? ' — ' + errMsg : '')
+      : errMsg
     return {
       id: 'llm:' + run.id, sequence: run.startSequence, time: run.startedAt,
       kind: 'llm', status: run.status, agentRunId,
       role: agentRunId ? roles.get(agentRunId) ?? null : null,
       title: 'LLM Run ' + String(run.number).padStart(2, '0'),
-      note: run.errorCode
-        ? run.errorCode + (run.validationPath ? ' · ' + run.validationPath : '')
-        : initialAssistantMessage ?? fallbackGoal ?? run.phase,
+      note: errNote ?? initialAssistantMessage ?? fallbackGoal ?? run.phase,
+      errorCode: errCode,
+      errorMessage: errMsg,
       assistantMessage: initialAssistantMessage,
       llm: run,
       step: run.stepKey ? steps.get(run.stepKey) : undefined,
@@ -217,6 +224,9 @@ export function projectUnifiedActivity(job: AdminJob, events: JobEvent[]): Unifi
           : payload.status === 'cancelled'
             ? 'cancelled'
             : 'failed'
+      const errCode = text(payload.error_code) ?? text(agentRun?.error_code)
+      const errMsg = text(payload.error_message) ?? text(agentRun?.error_message)
+      const errNote = errCode && errMsg && errMsg !== errCode ? `${errCode} — ${errMsg}` : errCode ?? errMsg
       items.push({
         id: 'agent:' + (agentRunId ?? event.sequence),
         sequence: event.sequence,
@@ -226,7 +236,9 @@ export function projectUnifiedActivity(job: AdminJob, events: JobEvent[]): Unifi
         agentRunId,
         role,
         title: 'Agent finished',
-        note: text(payload.error_code) ?? finalAssistantMessage ?? 'Run checkpoint',
+        note: errNote ?? finalAssistantMessage ?? 'Run checkpoint',
+        errorCode: errCode,
+        errorMessage: errMsg,
         assistantMessage: finalAssistantMessage,
         artifacts: sessionArtifacts && sessionArtifacts.length > 0 ? sessionArtifacts : undefined,
         event,
@@ -246,6 +258,9 @@ export function projectUnifiedActivity(job: AdminJob, events: JobEvent[]): Unifi
           : payload.status === 'cancelled'
             ? 'cancelled'
             : 'failed'
+      const errCode = text(payload.error_code) ?? text(job.error_code)
+      const errMsg = text(payload.error_message) ?? text(job.error_message)
+      const errNote = errCode && errMsg && errMsg !== errCode ? `${errCode} — ${errMsg}` : errCode ?? errMsg
       items.push({
         id: 'job:terminal',
         sequence: event.sequence,
@@ -255,7 +270,9 @@ export function projectUnifiedActivity(job: AdminJob, events: JobEvent[]): Unifi
         agentRunId,
         role,
         title: 'Job finished',
-        note: text(payload.error_code) ?? text(payload.status) ?? 'Terminal checkpoint',
+        note: errNote ?? text(payload.status) ?? 'Terminal checkpoint',
+        errorCode: errCode,
+        errorMessage: errMsg,
         assistantMessage: resultText,
         jobResult: job.result ?? null,
         artifacts: allArtifacts,

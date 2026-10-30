@@ -1456,9 +1456,15 @@ function hasObjectKeys(value: unknown): boolean {
                   </div>
                 </div>
               </div>
-              <p v-if="selectedNode.errorCode" class="error-code-box">
-                {{ selectedNode.errorCode }}
-              </p>
+              <div v-if="selectedNode.errorCode || selectedNode.errorMessage" class="error-code-box space-y-1">
+                <div v-if="selectedNode.errorCode" class="font-semibold">{{ selectedNode.errorCode }}</div>
+                <div
+                  v-if="selectedNode.errorMessage && selectedNode.errorMessage !== selectedNode.errorCode"
+                  class="whitespace-pre-wrap break-words opacity-90"
+                >
+                  {{ selectedNode.errorMessage }}
+                </div>
+              </div>
 
               <!-- Child Execution List -->
               <template

@@ -39,6 +39,7 @@ export interface ExecutionTreeNode {
   llm?: LlmRun
   step?: JobStep
   errorCode?: string | null
+  errorMessage?: string | null
   sortOrder: number
   events: ExecutionEventItem[]
 }
@@ -217,13 +218,15 @@ function buildLlmEvents(run: LlmRun): ExecutionEventItem[] {
       case 'llm_run_finished':
       case 'agent_run_finished': {
         const status = safeStr(ev.payload.status) ?? run.status
-        const err = safeStr(ev.payload.error_code) ?? safeStr(ev.payload.validation_code)
-        const isErr = status === 'failed' || Boolean(err)
+        const err = safeStr(ev.payload.error_code) ?? safeStr(ev.payload.validation_code) ?? run.errorCode
+        const errMsg = safeStr(ev.payload.error_message) ?? run.errorMessage
+        const isErr = status === 'failed' || Boolean(err) || Boolean(errMsg)
+        const errDetail = err && errMsg && errMsg !== err ? `${err} — ${errMsg}` : err ?? errMsg
         return {
           time,
           kind: isErr ? 'error' : 'output',
           title: 'Run finished',
-          detail: err ?? `Status: ${status}`,
+          detail: errDetail ?? `Status: ${status}`,
           validationPath: safeStr(ev.payload.validation_path),
           rawEvent: ev,
         }
@@ -397,7 +400,8 @@ export function buildExecutionTree(
       safeStr(job?.result?.summary),
     artifacts: rootFinishAct?.artifacts ?? [],
     mediaEmbeds: [],
-    errorCode: job?.error_code ?? null,
+    errorCode: job?.error_code ?? rootRun?.error_code ?? rootFinishAct?.errorCode ?? null,
+    errorMessage: job?.error_message ?? rootRun?.error_message ?? rootFinishAct?.errorMessage ?? null,
     sortOrder: 0,
     events: rootEvents,
   }
@@ -504,6 +508,8 @@ export function buildExecutionTree(
         safeStr(sub.result?.summary),
       artifacts: finishAct?.artifacts ?? [],
       mediaEmbeds: [],
+      errorCode: sub.error_code ?? finishAct?.errorCode ?? null,
+      errorMessage: sub.error_message ?? finishAct?.errorMessage ?? null,
       sortOrder: earliestSeq,
       events: subEvents,
     })
@@ -564,7 +570,8 @@ export function buildExecutionTree(
         mediaEmbeds: act.mediaEmbeds ?? [],
         llm,
         step: act.step,
-        errorCode: llm?.errorCode ?? act.step?.error_code ?? null,
+        errorCode: llm?.errorCode ?? act.errorCode ?? act.step?.error_code ?? act.agentRun?.error_code ?? null,
+        errorMessage: llm?.errorMessage ?? act.errorMessage ?? act.agentRun?.error_message ?? null,
         sortOrder: act.sequence,
         events,
       })
@@ -727,6 +734,8 @@ export function buildExecutionTree(
       assistantMessage: act.assistantMessage,
       artifacts: act.artifacts ?? [],
       mediaEmbeds: act.mediaEmbeds ?? [],
+      errorCode: act.errorCode ?? (act.kind === 'job' ? job?.error_code ?? null : null),
+      errorMessage: act.errorMessage ?? (act.kind === 'job' ? job?.error_message ?? null : null),
       sortOrder: act.kind === 'job' ? act.sequence + 9_000 : act.sequence,
       events: [
         {

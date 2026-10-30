@@ -22,7 +22,7 @@ use super::super::{
         workflow::{MediaKind, WorkflowFailure, run_chat_turn_once, run_media_turn_once},
     },
 };
-use super::{LlmGatewayProvider, MAX_POOL_FAILOVER_ATTEMPTS};
+use super::{LlmGatewayProvider, MAX_POOL_FAILOVER_ATTEMPTS, record_wire_detail};
 
 pub(super) fn is_retryable_muse_failure(failure: &WorkflowFailure) -> bool {
     matches!(
@@ -95,6 +95,7 @@ impl LlmGatewayProvider {
         let hub = Arc::clone(&self.hub);
         let cfg_clone = effective_cfg.clone();
         let muse_engine = self.muse_engine.clone();
+        let err_slot = Arc::clone(&self.last_error_detail);
         let (tx, mut rx) = mpsc::unbounded_channel::<Result<LlmEvent, LlmError>>();
 
         tokio::spawn(async move {
@@ -124,6 +125,10 @@ impl LlmGatewayProvider {
                         return;
                     }
                     Err(failure) => {
+                        let failure_summary = format!(
+                            "Muse workflow failure on account '{}': {:?}",
+                            current_lease.account_key, failure
+                        );
                         let can_failover = is_pool
                             && !emitted_delta.load(Ordering::Relaxed)
                             && is_retryable_muse_failure(&failure)
@@ -136,6 +141,7 @@ impl LlmGatewayProvider {
                             current_lease = next_lease;
                             continue;
                         }
+                        record_wire_detail(&err_slot, failure_summary);
                         let _ = tx.send(Err(err));
                         return;
                     }

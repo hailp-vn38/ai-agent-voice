@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use crate::{
     providers::llm::{LlmError, LlmEventStream, LlmRequest},
     services::llm_gateway::{GatewayBinding, GatewayLease, GatewayVendor},
@@ -6,7 +8,7 @@ use crate::{
 use super::super::{
     config::LlmGatewayConfig, wire_anthropic, wire_codex, wire_gemini, wire_openai,
 };
-use super::{LlmGatewayProvider, MAX_POOL_FAILOVER_ATTEMPTS, WireError};
+use super::{LlmGatewayProvider, MAX_POOL_FAILOVER_ATTEMPTS, WireError, record_wire_detail};
 
 impl LlmGatewayProvider {
     async fn dispatch_chat_wire(
@@ -22,8 +24,15 @@ impl LlmGatewayProvider {
                     .await
             }
             GatewayVendor::OpenaiCodex => {
-                wire_codex::open_sse_stream(&self.http, endpoint, lease, effective_cfg, request)
-                    .await
+                wire_codex::open_sse_stream_with_detail(
+                    &self.http,
+                    endpoint,
+                    lease,
+                    effective_cfg,
+                    request,
+                    Arc::clone(&self.last_error_detail),
+                )
+                .await
             }
             GatewayVendor::Gemini => {
                 wire_gemini::open_sse_stream(&self.http, endpoint, lease, effective_cfg, request)
@@ -42,11 +51,21 @@ impl LlmGatewayProvider {
         effective_cfg: &LlmGatewayConfig,
         request: &LlmRequest,
     ) -> Result<LlmEventStream, WireError> {
+        self.clear_last_error_detail();
         // 1. Synchronous 0ms lease acquisition from in-RAM GatewayRuntimeSnapshot (ADR-0083 / ADR-0130)
         let lease = self
             .hub
             .acquire_lease(&effective_cfg.gateway_binding)
-            .map_err(|_| WireError::NoLease)?;
+            .map_err(|_| {
+                record_wire_detail(
+                    &self.last_error_detail,
+                    format!(
+                        "no active OAuth account lease available for gateway binding '{}'",
+                        effective_cfg.gateway_binding.as_config_string()
+                    ),
+                );
+                WireError::NoLease
+            })?;
         let is_pool = matches!(effective_cfg.gateway_binding, GatewayBinding::Pool(_));
         let max_attempts = if is_pool {
             MAX_POOL_FAILOVER_ATTEMPTS

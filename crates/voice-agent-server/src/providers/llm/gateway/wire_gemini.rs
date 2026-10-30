@@ -15,7 +15,7 @@ use crate::{
 
 use super::{
     config::LlmGatewayConfig,
-    provider::{WireError, apply_lease_headers, check_wire_status},
+    provider::{WireError, apply_lease_headers, check_wire_status, drain_next_sse_line},
 };
 
 const DAILY_CLOUDCODE_BASE: &str = "https://daily-cloudcode-pa.googleapis.com/v1internal";
@@ -457,27 +457,24 @@ pub(crate) async fn open_sse_stream(
 
     let (tx, mut rx) = mpsc::unbounded_channel::<Result<LlmEvent, LlmError>>();
     tokio::spawn(async move {
-        let mut buffer = String::new();
+        let mut raw_buf: Vec<u8> = Vec::new();
         let mut tool_seq = 0u64;
 
         loop {
-            let chunk = match resp.chunk().await {
-                Ok(Some(c)) => c,
-                Ok(None) => break,
+            let chunk_opt = match resp.chunk().await {
+                Ok(Some(c)) => Some(c),
+                Ok(None) => None,
                 Err(_) => {
                     let _ = tx.send(Err(LlmError::Failed));
                     return;
                 }
             };
-            let Ok(text) = std::str::from_utf8(&chunk) else {
-                let _ = tx.send(Err(LlmError::Failed));
-                return;
-            };
-            buffer.push_str(text);
+            let is_eof = chunk_opt.is_none();
+            if let Some(chunk) = chunk_opt {
+                raw_buf.extend_from_slice(&chunk);
+            }
 
-            while let Some(newline_pos) = buffer.find('\n') {
-                let line = buffer[..newline_pos].trim().to_owned();
-                buffer.drain(..=newline_pos);
+            while let Some(line) = drain_next_sse_line(&mut raw_buf) {
                 if line.is_empty() || line.starts_with(':') || line.starts_with("event:") {
                     continue;
                 }
@@ -493,9 +490,13 @@ pub(crate) async fn open_sse_stream(
                     emit_gemini_response_parts(&val, &mut tool_seq, &tx);
                 }
             }
+            if is_eof {
+                break;
+            }
         }
 
-        let trailing = buffer.trim();
+        let trailing_str = String::from_utf8_lossy(&raw_buf);
+        let trailing = trailing_str.trim();
         if let Some(data) = trailing.strip_prefix("data:") {
             let payload = data.trim();
             if payload != "[DONE]"

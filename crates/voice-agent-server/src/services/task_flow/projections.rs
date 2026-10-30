@@ -142,6 +142,8 @@ pub fn project_task_to_admin_job(task: &TaskView, detail: Option<&TaskDetailView
                 "output_tokens": output_tokens,
                 "started_at": started_at_str,
                 "finished_at": finished_at_str,
+                "error_code": session.latest_run.as_ref().and_then(|r| r.error_code.as_deref()),
+                "error_message": session.latest_run.as_ref().and_then(|r| r.error_message.as_deref()),
             }));
 
             for (inv_idx, inv) in session.invocations.iter().enumerate() {
@@ -376,6 +378,7 @@ fn push_session_events<'a>(
             "input_tokens": run.input_tokens,
             "output_tokens": run.output_tokens,
             "error_code": run.error_code,
+            "error_message": run.error_message,
         });
         insert_optional_str(
             &mut finish_payload,
@@ -427,6 +430,7 @@ pub fn project_task_events(detail: &TaskDetailView, after: i64, limit: u32) -> V
                 "payload": {
                     "status": map_task_status_to_admin_job_status(detail.task.status),
                     "error_code": detail.task.error_code,
+                    "error_message": detail.task.error_message,
                 }
             }),
         ));

@@ -1,7 +1,7 @@
 //! Dynamic [`orchestrator_agent_rs::CustomModelExecutor`] bridge for OAuth-backed
 //! [`ResolvedLlmProvider`] instances (`llm_gateway` or `openai` with `gateway_binding`).
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use futures_util::StreamExt;
 use orchestrator_agent_rs::{
@@ -30,9 +30,21 @@ pub struct GatewayOrchestratorExecutor {
     fingerprint: String,
     base_config: LlmGatewayConfig,
     provider: LlmGatewayProvider,
+    last_error_detail: Mutex<Option<String>>,
 }
 
 impl GatewayOrchestratorExecutor {
+    fn set_error_detail(&self, detail: impl Into<String>) {
+        let text = detail.into();
+        let trimmed = text.trim();
+        if !trimmed.is_empty() {
+            *self
+                .last_error_detail
+                .lock()
+                .unwrap_or_else(|p| p.into_inner()) = Some(trimmed.to_owned());
+        }
+    }
+
     pub fn from_resolved(resolved: &ResolvedLlmProvider) -> Result<Self, LlmError> {
         Self::with_hub(resolved, SharedGatewayHub::global())
     }
@@ -82,6 +94,7 @@ impl GatewayOrchestratorExecutor {
             fingerprint,
             base_config,
             provider,
+            last_error_detail: Mutex::new(None),
         })
     }
 }
@@ -92,12 +105,26 @@ impl CustomModelExecutor for GatewayOrchestratorExecutor {
         self.fingerprint.clone()
     }
 
+    fn take_last_error_detail(&self) -> Option<String> {
+        self.last_error_detail
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .take()
+            .or_else(|| self.provider.take_last_error_detail())
+    }
+
     async fn complete(
         &self,
         request: &ModelRequest,
         cancel: &CancellationToken,
         sink: StreamSink<'_>,
     ) -> Result<ModelResponse, GatewayError> {
+        *self
+            .last_error_detail
+            .lock()
+            .unwrap_or_else(|p| p.into_inner()) = None;
+        self.provider.clear_last_error_detail();
+
         let mut effective_cfg = self.base_config.clone();
         if !request.model_id.trim().is_empty() {
             effective_cfg.model = request.model_id.trim().to_owned();
@@ -116,6 +143,9 @@ impl CustomModelExecutor for GatewayOrchestratorExecutor {
             };
             effective_cfg.reasoning_effort = Some(mapped.to_owned());
         }
+
+        let binding_label = effective_cfg.gateway_binding.as_config_string();
+        let model_label = effective_cfg.model.clone();
 
         let mut messages = Vec::with_capacity(request.messages.len() + 1);
         if !request.system.trim().is_empty() {
@@ -176,13 +206,34 @@ impl CustomModelExecutor for GatewayOrchestratorExecutor {
         let mut stream = tokio::select! {
             () = cancel.cancelled() => return Err(GatewayError::Cancelled),
             res = self.provider.open_chat_stream_with_config(&effective_cfg, &llm_request) => {
-                res.map_err(|err| match err {
-                    WireError::Unauthorized => GatewayError::Auth,
-                    WireError::NoLease
-                    | WireError::RateLimited { .. }
-                    | WireError::HttpRejected
-                    | WireError::Other => {
-                        GatewayError::Provider
+                res.map_err(|err| {
+                    let wire_detail = self.provider.take_last_error_detail();
+                    let fallback = match err {
+                        WireError::Unauthorized => format!(
+                            "OAuth gateway HTTP 401/403 unauthorized (binding='{binding_label}', model='{model_label}')"
+                        ),
+                        WireError::NoLease => format!(
+                            "no active OAuth account lease available (binding='{binding_label}', model='{model_label}')"
+                        ),
+                        WireError::RateLimited { retry_after_secs } => format!(
+                            "upstream HTTP 429 rate limited (binding='{binding_label}', model='{model_label}', retry_after={retry_after_secs:?}s)"
+                        ),
+                        WireError::HttpRejected => format!(
+                            "upstream HTTP request rejected (binding='{binding_label}', model='{model_label}')"
+                        ),
+                        WireError::Other => format!(
+                            "upstream HTTP transport/gateway failure (binding='{binding_label}', model='{model_label}')"
+                        ),
+                    };
+                    self.set_error_detail(wire_detail.unwrap_or(fallback));
+                    match err {
+                        WireError::Unauthorized => GatewayError::Auth,
+                        WireError::NoLease
+                        | WireError::RateLimited { .. }
+                        | WireError::HttpRejected
+                        | WireError::Other => {
+                            GatewayError::Provider
+                        }
                     }
                 })?
             }
@@ -200,7 +251,21 @@ impl CustomModelExecutor for GatewayOrchestratorExecutor {
             let Some(item) = next_item else {
                 break;
             };
-            match item.map_err(|_| GatewayError::Protocol)? {
+            let event = match item {
+                Ok(ev) => ev,
+                Err(_) => {
+                    let detail = self.provider.take_last_error_detail().unwrap_or_else(|| {
+                        format!(
+                            "SSE stream failed mid-response after {} chars and {} tool calls (binding='{binding_label}', model='{model_label}')",
+                            raw_text.len(),
+                            tool_calls.len()
+                        )
+                    });
+                    self.set_error_detail(detail);
+                    return Err(GatewayError::Protocol);
+                }
+            };
+            match event {
                 LlmEvent::TextDelta(delta) => {
                     if !delta.is_empty() {
                         sink(StreamEvent::TextDelta(delta.clone()));
@@ -226,10 +291,31 @@ impl CustomModelExecutor for GatewayOrchestratorExecutor {
         }
 
         if !finished {
+            let detail = self.provider.take_last_error_detail().unwrap_or_else(|| {
+                format!(
+                    "SSE stream closed before completion signal after {} chars and {} tool calls (binding='{binding_label}', model='{model_label}')",
+                    raw_text.len(),
+                    tool_calls.len()
+                )
+            });
+            self.set_error_detail(detail);
             return Err(GatewayError::Protocol);
         }
         let clean_text = strip_thinking_blocks(&raw_text);
         if clean_text.trim().is_empty() && tool_calls.is_empty() {
+            let detail = self.provider.take_last_error_detail().unwrap_or_else(|| {
+                if !raw_text.trim().is_empty() {
+                    format!(
+                        "model returned only <think> reasoning ({} chars) with no final text or tool calls (binding='{binding_label}', model='{model_label}')",
+                        raw_text.len()
+                    )
+                } else {
+                    format!(
+                        "model finished with empty text and no tool calls (binding='{binding_label}', model='{model_label}')"
+                    )
+                }
+            });
+            self.set_error_detail(detail);
             return Err(GatewayError::Protocol);
         }
         let finish_reason = if tool_calls.is_empty() {

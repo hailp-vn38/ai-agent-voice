@@ -268,9 +268,10 @@ onBeforeUnmount(() => {
 
     <template v-if="job && !loading">
       <KnowledgeJobState v-if="job.execution_mode === 'knowledge_ingest_v3'" :job="job" @changed="load()" />
-      <div v-if="job.error_code || unknownOutcome" role="alert" class="rounded-xl border border-danger/30 bg-danger/5 p-4">
+      <div v-if="job.error_code || job.error_message || unknownOutcome" role="alert" class="rounded-xl border border-danger/30 bg-danger/5 p-4">
         <div class="flex items-center gap-2 font-semibold text-danger"><AlertTriangle class="size-4" />{{ t('jobUi.executionWarning') }}</div>
-        <p v-if="job.error_code" class="mt-2 break-all font-mono text-xs text-danger">{{ job.error_code }}</p>
+        <p v-if="job.error_code" class="mt-2 break-all font-mono text-xs font-semibold text-danger">{{ job.error_code }}</p>
+        <p v-if="job.error_message && job.error_message !== job.error_code" class="mt-1.5 break-words font-mono text-xs text-danger/90">{{ job.error_message }}</p>
         <p v-if="unknownOutcome" class="mt-2 text-sm text-danger">{{ t('jobUi.unknownOutcomeWarning') }}</p>
       </div>
       <p v-if="eventsError" role="alert" class="text-xs text-danger">{{ eventsError }}</p>

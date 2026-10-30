@@ -16,6 +16,7 @@ export interface LlmRun {
   transport: string | null
   status: 'running' | 'completed' | 'failed' | 'cancelled' | 'interrupted'
   errorCode: string | null
+  errorMessage: string | null
   validationPath: string | null
   requestDurationMs: number | null
   totalDurationMs: number | null
@@ -83,13 +84,14 @@ export function projectLlmRuns(
         phase: roleName ?? (isRoot ? 'orchestrator' : 'worker'),
         attempt: int(event.payload?.attempt) ?? int(event.payload?.attempt_no) ?? 1,
         stepKey: event.step_key,
-        provider: roleName ?? 'orchestrator_agent',
+        provider: text(agentRun?.provider_id) ?? roleName ?? 'orchestrator_agent',
         providerSource: 'orchestrator',
-        model: null,
+        model: text(agentRun?.model_id),
         adapter: null,
         transport: null,
         status: mappedStatus,
-        errorCode: null,
+        errorCode: text(agentRun?.error_code),
+        errorMessage: text(agentRun?.error_message),
         validationPath: null,
         requestDurationMs: null,
         totalDurationMs: null,
@@ -114,6 +116,7 @@ export function projectLlmRuns(
       run.inputTokens = int(event.payload.input_tokens) ?? run.inputTokens
       run.outputTokens = int(event.payload.output_tokens) ?? run.outputTokens
       run.errorCode = text(event.payload.error_code) ?? run.errorCode
+      run.errorMessage = text(event.payload.error_message) ?? run.errorMessage
       continue
     }
     const id = text(event.payload?.run_id)
@@ -128,7 +131,7 @@ export function projectLlmRuns(
         stepKey: event.step_key, provider: text(event.payload.provider_ref) ?? '—',
         providerSource: text(event.payload.provider_source) ?? '—',
         model: null, adapter: null, transport: null, status: 'running',
-        errorCode: null, validationPath: null, requestDurationMs: null, totalDurationMs: null,
+        errorCode: null, errorMessage: null, validationPath: null, requestDurationMs: null, totalDurationMs: null,
         inputTokens: null, outputTokens: null, events: [event],
       })
       continue
@@ -139,6 +142,7 @@ export function projectLlmRuns(
     if (event.event_type === 'agent_decision_rejected') {
       run.status = 'failed'
       run.errorCode = text(event.payload.validation_code) ?? 'invalid_plan'
+      run.errorMessage = text(event.payload.error_message) ?? run.errorMessage
       run.validationPath = text(event.payload.validation_path)
     } else if (event.event_type === 'agent_decision_accepted') {
       run.status = 'completed'
@@ -155,6 +159,7 @@ export function projectLlmRuns(
       run.status = state === 'completed' || state === 'cancelled' ? state : 'failed'
       run.totalDurationMs = int(event.payload.duration_ms)
       run.errorCode = text(event.payload.error_code) ?? text(event.payload.validation_code)
+      run.errorMessage = text(event.payload.error_message) ?? run.errorMessage
       run.validationPath = text(event.payload.validation_path)
     }
   }

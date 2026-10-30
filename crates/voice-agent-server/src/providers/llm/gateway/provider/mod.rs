@@ -31,7 +31,11 @@ use super::{
     },
 };
 
-pub(crate) use wire::{WireError, apply_lease_headers, check_wire_status, parse_tool_arguments};
+pub(crate) use wire::{
+    ErrorDetailSlot, WireError, apply_lease_headers, check_wire_status, drain_next_sse_line,
+    extract_sse_error_detail, new_error_detail_slot, parse_tool_arguments, record_wire_detail,
+    summarize_error_body,
+};
 
 fn default_tags_for_config(config: &LlmGatewayConfig) -> Vec<LlmCapabilityTag> {
     if let Some(ref tags) = config.tags
@@ -61,6 +65,7 @@ pub struct LlmGatewayProvider {
     pub(super) http: reqwest::Client,
     pub(super) tags: Vec<LlmCapabilityTag>,
     pub(super) muse_engine: Option<Arc<dyn BrowserEngine>>,
+    pub(crate) last_error_detail: ErrorDetailSlot,
 }
 
 impl std::fmt::Debug for LlmGatewayProvider {
@@ -110,7 +115,22 @@ impl LlmGatewayProvider {
             http,
             tags: default_tags_for_config(config),
             muse_engine,
+            last_error_detail: new_error_detail_slot(),
         })
+    }
+
+    pub(crate) fn clear_last_error_detail(&self) {
+        *self
+            .last_error_detail
+            .lock()
+            .unwrap_or_else(|p| p.into_inner()) = None;
+    }
+
+    pub(crate) fn take_last_error_detail(&self) -> Option<String> {
+        self.last_error_detail
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .take()
     }
 
     /// Constructs a `LlmGatewayProvider` from an `OpenAiConfig` that specifies `gateway_binding`,

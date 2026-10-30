@@ -15,7 +15,11 @@ use crate::{
 
 use super::{
     config::LlmGatewayConfig,
-    provider::{WireError, apply_lease_headers, check_wire_status, parse_tool_arguments},
+    provider::{
+        ErrorDetailSlot, WireError, apply_lease_headers, drain_next_sse_line,
+        extract_sse_error_detail, new_error_detail_slot, parse_tool_arguments, record_wire_detail,
+        summarize_error_body,
+    },
 };
 
 const DEFAULT_CODEX_INSTRUCTIONS: &str = "You are a helpful assistant.";
@@ -203,11 +207,53 @@ fn is_codex_model_unsupported_error(status: reqwest::StatusCode, body_text: &str
         || lower.contains("does not exist")
 }
 
+async fn check_codex_response_status(
+    resp: reqwest::Response,
+    account_key: &str,
+    model: &str,
+    err_slot: &ErrorDetailSlot,
+) -> Result<reqwest::Response, WireError> {
+    let status = resp.status();
+    if status.is_success() {
+        return Ok(resp);
+    }
+    let retry_after = resp
+        .headers()
+        .get("retry-after")
+        .and_then(|h| h.to_str().ok())
+        .and_then(|s| s.trim().parse::<u64>().ok());
+    let body_text = resp.text().await.unwrap_or_default();
+    let summary = summarize_error_body(&body_text);
+    record_wire_detail(
+        err_slot,
+        format!(
+            "Codex HTTP {} on account '{}' (model '{}'): {}",
+            status.as_u16(),
+            account_key,
+            model,
+            summary
+        ),
+    );
+    if status.as_u16() == 429 {
+        return Err(WireError::RateLimited {
+            retry_after_secs: retry_after,
+        });
+    }
+    if matches!(status.as_u16(), 401 | 403) {
+        return Err(WireError::Unauthorized);
+    }
+    if matches!(status.as_u16(), 408 | 504) {
+        return Err(WireError::Other);
+    }
+    Err(WireError::HttpRejected)
+}
+
 async fn send_codex_responses_request(
     http: &reqwest::Client,
     url: &str,
     lease: &GatewayLease,
     mut body: Value,
+    err_slot: &ErrorDetailSlot,
 ) -> Result<reqwest::Response, WireError> {
     let has_originator = lease
         .extra_headers
@@ -223,40 +269,82 @@ async fn send_codex_responses_request(
         builder.json(payload)
     };
 
-    let resp = build_req(&body)
-        .send()
-        .await
-        .map_err(|_| WireError::Other)?;
+    let current_model = body
+        .get("model")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_owned();
+    let resp = build_req(&body).send().await.map_err(|e| {
+        record_wire_detail(
+            err_slot,
+            format!(
+                "Codex HTTP request failed on account '{}' (model '{}', timeout={}, connect={})",
+                lease.account_key,
+                current_model,
+                e.is_timeout(),
+                e.is_connect()
+            ),
+        );
+        WireError::Other
+    })?;
     let status = resp.status();
     if matches!(status.as_u16(), 400 | 404) {
-        let current_model = body
-            .get("model")
-            .and_then(Value::as_str)
-            .unwrap_or("")
-            .to_owned();
-        if current_model != DEFAULT_CODEX_FALLBACK_MODEL {
-            let err_text = resp.text().await.unwrap_or_default();
-            if is_codex_model_unsupported_error(status, &err_text) {
-                body["model"] = json!(DEFAULT_CODEX_FALLBACK_MODEL);
-                let retry_resp = build_req(&body)
-                    .send()
-                    .await
-                    .map_err(|_| WireError::Other)?;
-                return check_wire_status(retry_resp);
-            }
+        let err_text = resp.text().await.unwrap_or_default();
+        if current_model != DEFAULT_CODEX_FALLBACK_MODEL
+            && is_codex_model_unsupported_error(status, &err_text)
+        {
+            body["model"] = json!(DEFAULT_CODEX_FALLBACK_MODEL);
+            let retry_resp = build_req(&body).send().await.map_err(|e| {
+                record_wire_detail(
+                    err_slot,
+                    format!(
+                        "Codex fallback HTTP request failed on account '{}' (model '{}', timeout={}, connect={})",
+                        lease.account_key,
+                        DEFAULT_CODEX_FALLBACK_MODEL,
+                        e.is_timeout(),
+                        e.is_connect()
+                    ),
+                );
+                WireError::Other
+            })?;
+            return check_codex_response_status(
+                retry_resp,
+                &lease.account_key,
+                DEFAULT_CODEX_FALLBACK_MODEL,
+                err_slot,
+            )
+            .await;
         }
+        record_wire_detail(
+            err_slot,
+            format!(
+                "Codex HTTP {} on account '{}' (model '{}'): {}",
+                status.as_u16(),
+                lease.account_key,
+                current_model,
+                summarize_error_body(&err_text)
+            ),
+        );
         return Err(WireError::HttpRejected);
     }
-    check_wire_status(resp)
+    check_codex_response_status(resp, &lease.account_key, &current_model, err_slot).await
 }
 
 fn flush_pending_tools(
     pending_tools: BTreeMap<u64, (String, String, String)>,
     tx: &mpsc::UnboundedSender<Result<LlmEvent, LlmError>>,
+    account_key: &str,
+    err_slot: &ErrorDetailSlot,
 ) -> bool {
     for (_idx, (id, name, args)) in pending_tools {
         if !name.is_empty() {
             let Ok(arguments) = parse_tool_arguments(&args) else {
+                record_wire_detail(
+                    err_slot,
+                    format!(
+                        "Codex tool '{name}' returned malformed JSON arguments on account '{account_key}'"
+                    ),
+                );
                 let _ = tx.send(Err(LlmError::Failed));
                 return false;
             };
@@ -274,14 +362,42 @@ fn flush_pending_tools(
     true
 }
 
-pub(crate) async fn open_sse_stream(
+fn extract_message_item_text(item: &Value) -> String {
+    let mut out = String::new();
+    if let Some(content_arr) = item.get("content").and_then(Value::as_array) {
+        for part in content_arr {
+            let part_type = part.get("type").and_then(Value::as_str).unwrap_or("");
+            if matches!(part_type, "output_text" | "text" | "")
+                && let Some(t) = part.get("text").and_then(Value::as_str)
+                && !t.is_empty()
+            {
+                out.push_str(t);
+            }
+        }
+    } else if let Some(t) = item.get("text").and_then(Value::as_str) {
+        out.push_str(t);
+    }
+    out
+}
+
+pub(crate) async fn open_sse_stream_with_detail(
     http: &reqwest::Client,
     endpoint_base: &str,
     lease: &GatewayLease,
     config: &LlmGatewayConfig,
     request: &LlmRequest,
+    err_slot: ErrorDetailSlot,
 ) -> Result<LlmEventStream, WireError> {
-    open_sse_stream_internal(http, endpoint_base, lease, config, request, None).await
+    open_sse_stream_internal(
+        http,
+        endpoint_base,
+        lease,
+        config,
+        request,
+        None,
+        err_slot,
+    )
+    .await
 }
 
 async fn open_sse_stream_internal(
@@ -291,6 +407,7 @@ async fn open_sse_stream_internal(
     config: &LlmGatewayConfig,
     request: &LlmRequest,
     override_input: Option<Vec<Value>>,
+    err_slot: ErrorDetailSlot,
 ) -> Result<LlmEventStream, WireError> {
     let url = responses_url(endpoint_base);
     let (model, model_effort) = normalize_codex_model(&config.model);
@@ -301,33 +418,45 @@ async fn open_sse_stream_internal(
         request,
         override_input,
     );
-    let mut resp = send_codex_responses_request(http, &url, lease, body).await?;
+    let mut resp = send_codex_responses_request(http, &url, lease, body, &err_slot).await?;
+    let account_key = lease.account_key.clone();
 
     let (tx, mut rx) = mpsc::unbounded_channel::<Result<LlmEvent, LlmError>>();
     tokio::spawn(async move {
-        let mut buffer = String::new();
+        let mut raw_buf: Vec<u8> = Vec::new();
         let mut pending_tools: BTreeMap<u64, (String, String, String)> = BTreeMap::new();
         let mut item_id_to_index: HashMap<String, u64> = HashMap::new();
         let mut next_tool_index: u64 = 0;
+        let mut emitted_text = false;
+        let mut seen_events: Vec<String> = Vec::new();
 
         loop {
-            let chunk = match resp.chunk().await {
-                Ok(Some(c)) => c,
-                Ok(None) => break,
-                Err(_) => {
+            let chunk_opt = match resp.chunk().await {
+                Ok(Some(c)) => Some(c),
+                Ok(None) => None,
+                Err(e) => {
+                    record_wire_detail(
+                        &err_slot,
+                        format!(
+                            "Codex SSE stream read failed on account '{}' (model '{}', timeout={}, events_seen={:?})",
+                            account_key,
+                            model,
+                            e.is_timeout(),
+                            seen_events
+                        ),
+                    );
                     let _ = tx.send(Err(LlmError::Failed));
                     return;
                 }
             };
-            let Ok(text) = std::str::from_utf8(&chunk) else {
-                let _ = tx.send(Err(LlmError::Failed));
-                return;
-            };
-            buffer.push_str(text);
+            let is_eof = chunk_opt.is_none();
+            if let Some(chunk) = chunk_opt {
+                raw_buf.extend_from_slice(&chunk);
+            } else if !raw_buf.is_empty() && !raw_buf.ends_with(b"\n") {
+                raw_buf.push(b'\n');
+            }
 
-            while let Some(newline_pos) = buffer.find('\n') {
-                let line = buffer[..newline_pos].trim().to_owned();
-                buffer.drain(..=newline_pos);
+            while let Some(line) = drain_next_sse_line(&mut raw_buf) {
                 if line.is_empty() || line.starts_with(':') || line.starts_with("event:") {
                     continue;
                 }
@@ -336,7 +465,21 @@ async fn open_sse_stream_internal(
                 };
                 let payload = data.trim();
                 if payload == "[DONE]" {
-                    if flush_pending_tools(std::mem::take(&mut pending_tools), &tx) {
+                    if !emitted_text && pending_tools.is_empty() {
+                        record_wire_detail(
+                            &err_slot,
+                            format!(
+                                "Codex SSE finished at [DONE] with empty output on account '{}' (model '{}', events_seen={:?})",
+                                account_key, model, seen_events
+                            ),
+                        );
+                    }
+                    if flush_pending_tools(
+                        std::mem::take(&mut pending_tools),
+                        &tx,
+                        &account_key,
+                        &err_slot,
+                    ) {
                         let _ = tx.send(Ok(LlmEvent::Finished));
                     }
                     return;
@@ -346,12 +489,25 @@ async fn open_sse_stream_internal(
                 };
 
                 if let Some(event_type) = val.get("type").and_then(Value::as_str) {
+                    if seen_events.len() < 16 && !seen_events.iter().any(|s| s == event_type) {
+                        seen_events.push(event_type.to_owned());
+                    }
                     match event_type {
                         "response.output_text.delta" => {
                             if let Some(delta) = val.get("delta").and_then(Value::as_str)
                                 && !delta.is_empty()
                             {
+                                emitted_text = true;
                                 let _ = tx.send(Ok(LlmEvent::TextDelta(delta.to_owned())));
+                            }
+                        }
+                        "response.output_text.done" => {
+                            if !emitted_text
+                                && let Some(text) = val.get("text").and_then(Value::as_str)
+                                && !text.is_empty()
+                            {
+                                emitted_text = true;
+                                let _ = tx.send(Ok(LlmEvent::TextDelta(text.to_owned())));
                             }
                         }
                         "response.output_item.added" => {
@@ -408,52 +564,183 @@ async fn open_sse_stream_internal(
                             }
                         }
                         "response.output_item.done" => {
-                            if let Some(item) = val.get("item")
-                                && matches!(
-                                    item.get("type").and_then(Value::as_str),
-                                    Some("function_call" | "custom_tool_call")
-                                )
-                            {
-                                let idx = item
-                                    .get("id")
-                                    .and_then(Value::as_str)
-                                    .and_then(|id| item_id_to_index.get(id).copied())
-                                    .or_else(|| val.get("output_index").and_then(Value::as_u64))
-                                    .unwrap_or(0);
-                                let entry = pending_tools.entry(idx).or_default();
-                                if entry.0.is_empty()
-                                    && let Some(call_id) =
-                                        item.get("call_id").and_then(Value::as_str)
-                                {
-                                    entry.0 = call_id.to_owned();
-                                }
-                                if entry.1.is_empty()
-                                    && let Some(name) = item.get("name").and_then(Value::as_str)
-                                {
-                                    entry.1 = name.to_owned();
-                                }
-                                if entry.2.is_empty()
-                                    && let Some(args) =
-                                        item.get("arguments").and_then(Value::as_str)
-                                    && !args.is_empty()
-                                {
-                                    entry.2 = args.to_owned();
+                            if let Some(item) = val.get("item") {
+                                let item_type = item.get("type").and_then(Value::as_str);
+                                if matches!(item_type, Some("function_call" | "custom_tool_call")) {
+                                    let idx = item
+                                        .get("id")
+                                        .and_then(Value::as_str)
+                                        .and_then(|id| item_id_to_index.get(id).copied())
+                                        .or_else(|| val.get("output_index").and_then(Value::as_u64))
+                                        .unwrap_or(0);
+                                    let entry = pending_tools.entry(idx).or_default();
+                                    if entry.0.is_empty()
+                                        && let Some(call_id) =
+                                            item.get("call_id").and_then(Value::as_str)
+                                    {
+                                        entry.0 = call_id.to_owned();
+                                    }
+                                    if entry.1.is_empty()
+                                        && let Some(name) = item.get("name").and_then(Value::as_str)
+                                    {
+                                        entry.1 = name.to_owned();
+                                    }
+                                    if entry.2.is_empty()
+                                        && let Some(args) =
+                                            item.get("arguments").and_then(Value::as_str)
+                                        && !args.is_empty()
+                                    {
+                                        entry.2 = args.to_owned();
+                                    }
+                                } else if item_type == Some("message") && !emitted_text {
+                                    let fallback_text = extract_message_item_text(item);
+                                    if !fallback_text.is_empty() {
+                                        emitted_text = true;
+                                        let _ = tx.send(Ok(LlmEvent::TextDelta(fallback_text)));
+                                    }
                                 }
                             }
                         }
                         "response.completed" | "response.done" => {
-                            if flush_pending_tools(std::mem::take(&mut pending_tools), &tx) {
+                            let resp_obj = val.get("response");
+                            let resp_status = resp_obj
+                                .and_then(|r| r.get("status"))
+                                .and_then(Value::as_str)
+                                .unwrap_or("completed");
+                            if resp_status == "failed"
+                                || resp_obj
+                                    .and_then(|r| r.get("error"))
+                                    .is_some_and(|e| !e.is_null())
+                            {
+                                let detail = extract_sse_error_detail(&val)
+                                    .unwrap_or_else(|| format!("response status='{resp_status}'"));
+                                record_wire_detail(
+                                    &err_slot,
+                                    format!(
+                                        "Codex {event_type} reported failure on account '{}' (model '{}'): {}",
+                                        account_key, model, detail
+                                    ),
+                                );
+                                let _ = tx.send(Err(LlmError::Failed));
+                                return;
+                            }
+                            let mut output_types = Vec::new();
+                            if let Some(output_arr) = resp_obj
+                                .and_then(|r| r.get("output"))
+                                .and_then(Value::as_array)
+                            {
+                                for (idx_pos, item) in output_arr.iter().enumerate() {
+                                    let itype = item
+                                        .get("type")
+                                        .and_then(Value::as_str)
+                                        .unwrap_or("unknown");
+                                    output_types.push(itype.to_owned());
+                                    if itype == "message" && !emitted_text {
+                                        let fallback_text = extract_message_item_text(item);
+                                        if !fallback_text.is_empty() {
+                                            emitted_text = true;
+                                            let _ =
+                                                tx.send(Ok(LlmEvent::TextDelta(fallback_text)));
+                                        }
+                                    } else if matches!(itype, "function_call" | "custom_tool_call")
+                                        && pending_tools.is_empty()
+                                    {
+                                        let call_id = item
+                                            .get("call_id")
+                                            .and_then(Value::as_str)
+                                            .unwrap_or("")
+                                            .to_owned();
+                                        let name = item
+                                            .get("name")
+                                            .and_then(Value::as_str)
+                                            .unwrap_or("")
+                                            .to_owned();
+                                        let args = item
+                                            .get("arguments")
+                                            .and_then(Value::as_str)
+                                            .unwrap_or("")
+                                            .to_owned();
+                                        if !name.is_empty() {
+                                            pending_tools
+                                                .insert(idx_pos as u64, (call_id, name, args));
+                                        }
+                                    }
+                                }
+                            }
+                            if !emitted_text && pending_tools.is_empty() {
+                                let inc = extract_sse_error_detail(&val);
+                                record_wire_detail(
+                                    &err_slot,
+                                    format!(
+                                        "Codex {event_type} produced no text or tool_calls on account '{}' (model '{}', status='{}', output_items={:?}, detail={:?})",
+                                        account_key, model, resp_status, output_types, inc
+                                    ),
+                                );
+                            }
+                            if flush_pending_tools(
+                                std::mem::take(&mut pending_tools),
+                                &tx,
+                                &account_key,
+                                &err_slot,
+                            ) {
+                                let _ = tx.send(Ok(LlmEvent::Finished));
+                            }
+                            return;
+                        }
+                        "response.incomplete" => {
+                            let detail = extract_sse_error_detail(&val)
+                                .unwrap_or_else(|| "response.incomplete".to_owned());
+                            record_wire_detail(
+                                &err_slot,
+                                format!(
+                                    "Codex response.incomplete on account '{}' (model '{}'): {}",
+                                    account_key, model, detail
+                                ),
+                            );
+                            if !emitted_text && pending_tools.is_empty() {
+                                let _ = tx.send(Err(LlmError::Failed));
+                                return;
+                            }
+                            if flush_pending_tools(
+                                std::mem::take(&mut pending_tools),
+                                &tx,
+                                &account_key,
+                                &err_slot,
+                            ) {
                                 let _ = tx.send(Ok(LlmEvent::Finished));
                             }
                             return;
                         }
                         "error" | "response.failed" => {
+                            let detail = extract_sse_error_detail(&val)
+                                .unwrap_or_else(|| summarize_error_body(payload));
+                            record_wire_detail(
+                                &err_slot,
+                                format!(
+                                    "Codex SSE {event_type} on account '{}' (model '{}'): {}",
+                                    account_key, model, detail
+                                ),
+                            );
                             let _ = tx.send(Err(LlmError::Failed));
                             return;
                         }
                         _ => {}
                     }
                     continue;
+                }
+
+                if val.get("error").is_some_and(|e| !e.is_null()) {
+                    let detail = extract_sse_error_detail(&val)
+                        .unwrap_or_else(|| summarize_error_body(payload));
+                    record_wire_detail(
+                        &err_slot,
+                        format!(
+                            "Codex SSE error payload on account '{}' (model '{}'): {}",
+                            account_key, model, detail
+                        ),
+                    );
+                    let _ = tx.send(Err(LlmError::Failed));
+                    return;
                 }
 
                 // Fallback support for standard Chat Completions SSE chunks if returned by a custom proxy
@@ -463,14 +750,28 @@ async fn open_sse_stream_internal(
                             && let Some(content) = delta.get("content").and_then(Value::as_str)
                             && !content.is_empty()
                         {
+                            emitted_text = true;
                             let _ = tx.send(Ok(LlmEvent::TextDelta(content.to_owned())));
                         }
                     }
                 }
             }
+
+            if is_eof {
+                break;
+            }
         }
 
-        if flush_pending_tools(pending_tools, &tx) {
+        if !emitted_text && pending_tools.is_empty() {
+            record_wire_detail(
+                &err_slot,
+                format!(
+                    "Codex SSE stream closed without response.completed or output on account '{}' (model '{}', events_seen={:?})",
+                    account_key, model, seen_events
+                ),
+            );
+        }
+        if flush_pending_tools(pending_tools, &tx, &account_key, &err_slot) {
             let _ = tx.send(Ok(LlmEvent::Finished));
         }
     });
@@ -507,6 +808,7 @@ pub(crate) async fn execute_vision(
         config,
         &dummy_req,
         Some(vision_input),
+        new_error_detail_slot(),
     )
     .await?;
     let out = collect_chat_stream(stream)
@@ -518,4 +820,44 @@ pub(crate) async fn execute_vision(
         return Err(WireError::Other);
     }
     Ok(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn drain_next_sse_line_reassembles_multibyte_utf8_across_chunks() {
+        let full_line = "data: {\"type\":\"response.output_text.delta\",\"delta\":\"Mesut Özil — Đội tuyển Đức\"}\n";
+        let bytes = full_line.as_bytes();
+        // Split right inside the 2-byte UTF-8 sequence for 'Ö' (0xC3 0x96) and 3-byte 'Đ' / 'ệ'
+        let mut raw_buf = Vec::new();
+        for b in bytes {
+            raw_buf.push(*b);
+            if *b != b'\n' {
+                assert!(drain_next_sse_line(&mut raw_buf).is_none());
+            }
+        }
+        let line = drain_next_sse_line(&mut raw_buf).expect("complete SSE line");
+        assert!(raw_buf.is_empty());
+        assert_eq!(
+            line,
+            "data: {\"type\":\"response.output_text.delta\",\"delta\":\"Mesut Özil — Đội tuyển Đức\"}"
+        );
+    }
+
+    #[test]
+    fn extract_message_item_text_reads_done_item_content() {
+        let item = json!({
+            "type": "message",
+            "role": "assistant",
+            "content": [
+                { "type": "output_text", "text": "Mesut Özil sinh ngày 15/10/1988." }
+            ]
+        });
+        assert_eq!(
+            extract_message_item_text(&item),
+            "Mesut Özil sinh ngày 15/10/1988."
+        );
+    }
 }

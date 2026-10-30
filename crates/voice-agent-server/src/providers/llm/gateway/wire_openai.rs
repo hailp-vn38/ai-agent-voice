@@ -14,7 +14,10 @@ use crate::{
 
 use super::{
     config::LlmGatewayConfig,
-    provider::{WireError, apply_lease_headers, check_wire_status, parse_tool_arguments},
+    provider::{
+        WireError, apply_lease_headers, check_wire_status, drain_next_sse_line,
+        parse_tool_arguments,
+    },
 };
 
 fn flush_pending_tools(
@@ -139,27 +142,26 @@ pub(crate) async fn open_sse_stream(
 
     let (tx, mut rx) = mpsc::unbounded_channel::<Result<LlmEvent, LlmError>>();
     tokio::spawn(async move {
-        let mut buffer = String::new();
+        let mut raw_buf: Vec<u8> = Vec::new();
         let mut pending_tools: BTreeMap<u64, (String, String, String)> = BTreeMap::new();
 
         loop {
-            let chunk = match resp.chunk().await {
-                Ok(Some(c)) => c,
-                Ok(None) => break,
+            let chunk_opt = match resp.chunk().await {
+                Ok(Some(c)) => Some(c),
+                Ok(None) => None,
                 Err(_) => {
                     let _ = tx.send(Err(LlmError::Failed));
                     return;
                 }
             };
-            let Ok(text) = std::str::from_utf8(&chunk) else {
-                let _ = tx.send(Err(LlmError::Failed));
-                return;
-            };
-            buffer.push_str(text);
+            let is_eof = chunk_opt.is_none();
+            if let Some(chunk) = chunk_opt {
+                raw_buf.extend_from_slice(&chunk);
+            } else if !raw_buf.is_empty() && !raw_buf.ends_with(b"\n") {
+                raw_buf.push(b'\n');
+            }
 
-            while let Some(newline_pos) = buffer.find('\n') {
-                let line = buffer[..newline_pos].trim().to_owned();
-                buffer.drain(..=newline_pos);
+            while let Some(line) = drain_next_sse_line(&mut raw_buf) {
                 if line.is_empty() || line.starts_with(':') {
                     continue;
                 }
@@ -211,6 +213,9 @@ pub(crate) async fn open_sse_stream(
                         }
                     }
                 }
+            }
+            if is_eof {
+                break;
             }
         }
 
