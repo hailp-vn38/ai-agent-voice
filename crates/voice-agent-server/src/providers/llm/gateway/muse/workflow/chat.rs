@@ -1,186 +1,344 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use base64::Engine as _;
+use serde_json::{Value, json};
 use tokio::time::Instant;
 
+use super::super::client::VmStreamEvent;
+use super::super::pool::{
+    ConversationTurn, HotConversation, SharedMusePool, UpstreamFailureKind, VmOperationLease,
+};
+use super::super::proto::SERVICE_DAEMON;
+use super::prompt::{extract_prior_turns_and_last_user, flatten_messages, followup_text};
+use super::{
+    WorkflowFailure, classify_assistant_error, extract_history_turn_events,
+    extract_turn_assistant_messages, handle_approval_event, has_active_tool_task,
+};
 use crate::providers::llm::{LlmRequest, ReferenceImage};
 
-use super::super::dom::{DENY_APPROVALS_JS, QUOTA_HINTS, STALL_HINTS, is_glitch_reply};
-use super::super::pool::{
-    CheckoutMode, ConversationTurn, HotConversation, SharedMusePool, UpstreamFailureKind,
-};
-use super::page::{
-    attach_images, navigate_new_thread_and_wait_ready, poll_chat_state, send_prompt_verified,
-    verify_hot_tab_live,
-};
-use super::prompt::{
-    extract_prior_turns_and_last_user, flatten_messages, followup_text, is_thread_url,
-};
-use super::{POLL_INTERVAL, STABLE_POLLS_DONE, STABLE_POLLS_FORCE, WorkflowFailure};
+const CHAT_POLL_INTERVAL: Duration = Duration::from_millis(350);
 
 pub(crate) async fn run_chat_turn_once<F>(
     pool: &Arc<SharedMusePool>,
     request: &LlmRequest,
     images: &[ReferenceImage],
-    timeout: Duration,
+    timeout_duration: Duration,
     mut on_delta: F,
 ) -> Result<String, WorkflowFailure>
 where
-    F: FnMut(String),
+    F: FnMut(String) + Send,
 {
-    let turn_info = extract_prior_turns_and_last_user(request);
-    let checkout_mode = match &turn_info {
-        Some((prior_turns, _)) if !prior_turns.is_empty() => CheckoutMode::Continuation {
-            prior_turns: prior_turns.clone(),
-            image_count: images.len(),
-        },
-        _ => CheckoutMode::Stateless,
+    let flattened = flatten_messages(request);
+    if flattened.trim().is_empty() {
+        return Err(WorkflowFailure::Rejected("empty chat prompt".to_string()));
+    }
+    let (prior_turns, last_user) = match extract_prior_turns_and_last_user(request) {
+        Some((turns, last)) => (turns, Some(last)),
+        None => (Vec::new(), None),
     };
 
-    let mut lease = pool.checkout(checkout_mode).await?;
-    let page = Arc::clone(lease.page());
+    let mut lease = pool
+        .acquire_for_chat(&prior_turns)
+        .await
+        .map_err(|(kind, reason)| WorkflowFailure::Upstream(kind, reason))?;
 
-    let matched_hot = lease.matched_hot().cloned();
-    let on_thread = if let Some(ref hot) = matched_hot {
-        verify_hot_tab_live(&page, hot).await
-    } else {
-        false
-    };
+    let res = execute_chat_turn_on_lease(
+        &mut lease,
+        &flattened,
+        images,
+        &prior_turns,
+        last_user.as_deref(),
+        &mut on_delta,
+        timeout_duration,
+    )
+    .await;
 
-    let prompt_to_send = if on_thread {
-        let hot = matched_hot.as_ref().expect("checked above");
-        let (prior_turns, last_user) = turn_info.as_ref().expect("checked above");
-        followup_text(&prior_turns[hot.turns.len()..], last_user)
-    } else {
-        if let Err(err) = navigate_new_thread_and_wait_ready(&page, Duration::from_secs(30)).await {
-            if let WorkflowFailure::Upstream(kind, _) = &err {
-                lease.fail_account(*kind);
-            }
-            return Err(err);
-        }
-        flatten_messages(request)
-    };
+    if let Err(WorkflowFailure::Upstream(kind, _)) = &res {
+        lease.fail_account(*kind).await;
+    }
+    res
+}
 
-    let base_state = poll_chat_state(&page).await?;
-    if !on_thread
-        && !images.is_empty()
-        && let Err(err) = attach_images(&page, images).await
+async fn execute_chat_turn_on_lease<F>(
+    lease: &mut VmOperationLease,
+    prompt: &str,
+    images: &[ReferenceImage],
+    prior_turns: &[ConversationTurn],
+    last_user: Option<&str>,
+    on_delta: &mut F,
+    timeout_duration: Duration,
+) -> Result<String, WorkflowFailure>
+where
+    F: FnMut(String) + Send,
+{
+    let (effective_prompt, images_to_send) = if let Some(hot) = lease.matched_hot()
+        && let Some(lu) = last_user
+        && !lu.is_empty()
+        && prior_turns.len() >= hot.turns.len()
+        && images.len() >= hot.image_count
     {
-        if let WorkflowFailure::Upstream(kind, _) = &err {
-            lease.fail_account(*kind);
-        }
-        return Err(err);
+        (
+            followup_text(&prior_turns[hot.turns.len()..], lu),
+            &images[hot.image_count..],
+        )
+    } else {
+        (prompt.to_string(), images)
+    };
+
+    let mut items = Vec::with_capacity(images_to_send.len() + 1);
+    for img in images_to_send {
+        items.push(json!({
+            "type": "image",
+            "data_base64": base64::engine::general_purpose::STANDARD.encode(&img.bytes),
+            "mime_type": img.mime_type,
+        }));
+    }
+    items.push(json!({
+        "type": "text",
+        "text": effective_prompt,
+    }));
+
+    let mut event_rx = lease.client().subscribe_events();
+    let stream_body = json!({
+        "items": items,
+        "node_id": "root",
+        "session_id": lease.session_id(),
+        "capabilities": ["chat_cancel", "delta_stream"],
+    });
+    let init_resp = lease
+        .client()
+        .send_request(
+            "POST",
+            "/chat/stream",
+            Some(stream_body.to_string().as_bytes()),
+            SERVICE_DAEMON,
+            Duration::from_secs(30),
+            true,
+        )
+        .await?;
+    if let Ok(init_json) = init_resp.json()
+        && let Some(assigned_id) = init_json
+            .get("session_id")
+            .or_else(|| init_json.get("result").and_then(|r| r.get("session_id")))
+            .and_then(Value::as_str)
+            .filter(|s| !s.is_empty())
+    {
+        lease.set_session_id(assigned_id.to_string());
     }
 
-    if let Err(err) = send_prompt_verified(&page, &prompt_to_send).await {
-        if let WorkflowFailure::Upstream(kind, _) = &err {
-            lease.fail_account(*kind);
-        }
-        return Err(err);
-    }
+    let deadline = Instant::now() + timeout_duration;
+    let mut poll_interval = tokio::time::interval(CHAT_POLL_INTERVAL);
+    poll_interval.tick().await;
 
-    let base_agent_count = base_state.agent_count;
-    let base_text = base_state.last_text;
-    let started = Instant::now();
     let mut emitted_text = String::new();
-    let mut last_seen_text = String::new();
-    let mut stable_polls = 0usize;
+    let mut explicit_done = false;
+    let mut should_poll_history = false;
 
-    loop {
-        if started.elapsed() >= timeout {
-            return Err(WorkflowFailure::Timeout(
-                "chat generation timed out".to_string(),
-            ));
-        }
-        tokio::time::sleep(POLL_INTERVAL).await;
-        let state = poll_chat_state(&page).await?;
-        if state.approval {
-            let _ = page
-                .evaluate_json(DENY_APPROVALS_JS, false, Duration::from_secs(5))
-                .await;
-            continue;
-        }
-
-        let is_new = state.agent_count > base_agent_count
-            || (!state.last_text.is_empty() && state.last_text != base_text);
-        if !is_new || state.last_text.is_empty() {
-            if started.elapsed() > Duration::from_secs(15)
-                && STALL_HINTS.iter().any(|h| state.tail.contains(h))
-            {
-                lease.fail_account(UpstreamFailureKind::Transient);
-                return Err(WorkflowFailure::Upstream(
-                    UpstreamFailureKind::Transient,
-                    "upstream workspace is stuck connecting".to_string(),
-                ));
+    while Instant::now() < deadline {
+        tokio::select! {
+            recv_res = event_rx.recv() => {
+                if let Ok(ev) = recv_res {
+                    let sid_matches = ev
+                        .session_id()
+                        .is_none_or(|sid| sid == lease.session_id());
+                    if !sid_matches {
+                        continue;
+                    }
+                    let ev_name = ev.event_name();
+                    if ev_name == "delta.text_append" {
+                        if let Some(chunk) = ev.payload().get("text").and_then(Value::as_str)
+                            && !chunk.is_empty()
+                        {
+                            if let Some((kind, reason)) = classify_assistant_error(chunk) {
+                                return Err(WorkflowFailure::Upstream(kind, reason));
+                            }
+                            emitted_text.push_str(chunk);
+                            on_delta(chunk.to_string());
+                        }
+                    } else if ev_name.contains("approval") {
+                        handle_chat_approval(lease, &ev).await;
+                    } else if ev_name == "delta.message_done" {
+                        let done_text = extract_message_done_text(ev.payload());
+                        if let Some((kind, reason)) = classify_assistant_error(&done_text) {
+                            return Err(WorkflowFailure::Upstream(kind, reason));
+                        }
+                        append_and_emit_missing_suffix(&mut emitted_text, &done_text, on_delta);
+                        explicit_done = true;
+                        should_poll_history = true;
+                    } else if ev.agent_activity_state() == Some(false)
+                        || ev.is_session_completed_for(lease.session_id())
+                    {
+                        explicit_done = true;
+                        should_poll_history = true;
+                    } else if ev_name == "error" || ev_name == "chat.error" {
+                        let msg = ev
+                            .payload()
+                            .get("message")
+                            .or_else(|| ev.payload().get("error"))
+                            .and_then(Value::as_str)
+                            .unwrap_or("upstream chat error");
+                        if let Some((kind, reason)) = classify_assistant_error(msg) {
+                            return Err(WorkflowFailure::Upstream(kind, reason));
+                        }
+                        return Err(WorkflowFailure::Upstream(
+                            UpstreamFailureKind::Transient,
+                            msg.to_string(),
+                        ));
+                    }
+                }
             }
-            continue;
-        }
-
-        let lower_reply = state.last_text.to_ascii_lowercase();
-        if QUOTA_HINTS.iter().any(|h| lower_reply.contains(h)) {
-            lease.fail_account(UpstreamFailureKind::QuotaExceeded);
-            return Err(WorkflowFailure::Upstream(
-                UpstreamFailureKind::QuotaExceeded,
-                format!("muse.ai account quota exceeded: {}", state.last_text),
-            ));
-        }
-
-        if is_glitch_reply(&state.last_text) {
-            lease.fail_account(UpstreamFailureKind::Transient);
-            return Err(WorkflowFailure::Upstream(
-                UpstreamFailureKind::Transient,
-                format!("muse.ai glitch reply: {}", state.last_text),
-            ));
-        }
-
-        if state.last_text != last_seen_text {
-            let delta = if let Some(suffix) = state.last_text.strip_prefix(&emitted_text) {
-                suffix.to_string()
-            } else if state.last_text.len() > emitted_text.len() {
-                let boundary = state.last_text.floor_char_boundary(emitted_text.len());
-                state.last_text[boundary..].to_string()
-            } else {
-                String::new()
-            };
-            if !delta.is_empty() {
-                emitted_text = state.last_text.clone();
-                on_delta(delta);
+            _ = poll_interval.tick() => {
+                should_poll_history = true;
             }
-            last_seen_text = state.last_text.clone();
-            stable_polls = 0;
-        } else {
-            stable_polls += 1;
-            if (!state.generating && stable_polls >= STABLE_POLLS_DONE)
-                || stable_polls >= STABLE_POLLS_FORCE
+        }
+
+        if should_poll_history {
+            should_poll_history = false;
+            let history_path = format!("/chat/history?session_id={}", lease.session_id());
+            if let Ok(resp) = lease
+                .client()
+                .send_request(
+                    "GET",
+                    &history_path,
+                    None,
+                    SERVICE_DAEMON,
+                    Duration::from_secs(15),
+                    false,
+                )
+                .await
+                && resp.status == 200
+                && let Ok(history_json) = resp.json()
             {
+                let turn_events = extract_history_turn_events(&history_json);
+                let assistant_blocks = extract_turn_assistant_messages(&turn_events);
+                let history_text = assistant_blocks.join("\n\n");
+                if !history_text.is_empty() {
+                    if let Some((kind, reason)) = classify_assistant_error(&history_text) {
+                        return Err(WorkflowFailure::Upstream(kind, reason));
+                    }
+                    append_and_emit_missing_suffix(&mut emitted_text, &history_text, on_delta);
+                }
+                let active_tools = has_active_tool_task(&turn_events);
+                if !active_tools
+                    && !emitted_text.trim().is_empty()
+                    && (explicit_done || is_last_assistant_completed(&turn_events))
+                {
+                    break;
+                }
+            } else if explicit_done && !emitted_text.trim().is_empty() {
                 break;
             }
         }
     }
 
-    let current_url = page.current_url().await.unwrap_or_default();
-    let updated_hot = if is_thread_url(&current_url) {
-        let mut turns = turn_info
-            .as_ref()
-            .map(|(t, _)| t.clone())
-            .unwrap_or_default();
-        let last_u = turn_info
-            .map(|(_, u)| u)
-            .unwrap_or_else(|| prompt_to_send.clone());
-        turns.push(ConversationTurn {
-            user: last_u,
-            assistant: last_seen_text.clone(),
+    let final_text = emitted_text.trim().to_string();
+    if final_text.is_empty() {
+        return Err(WorkflowFailure::Timeout(
+            "Muse chat stream timed out before producing assistant text".to_string(),
+        ));
+    }
+
+    if let Some((kind, reason)) = classify_assistant_error(&final_text) {
+        return Err(WorkflowFailure::Upstream(kind, reason));
+    }
+
+    let updated_hot = if let Some(lu) = last_user
+        && !lu.is_empty()
+    {
+        let mut next_turns = prior_turns.to_vec();
+        next_turns.push(ConversationTurn {
+            user: lu.to_string(),
+            assistant: final_text.clone(),
         });
         Some(HotConversation {
-            hint: String::new(),
-            turns,
+            turns: next_turns,
             image_count: images.len(),
-            thread_url: current_url,
+            session_id: lease.session_id().to_string(),
         })
     } else {
         None
     };
-
     lease.finish_clean(updated_hot);
-    Ok(last_seen_text)
+    Ok(final_text)
+}
+
+fn append_and_emit_missing_suffix<F>(
+    emitted_text: &mut String,
+    candidate_full: &str,
+    on_delta: &mut F,
+) where
+    F: FnMut(String) + Send,
+{
+    if candidate_full.is_empty() {
+        return;
+    }
+    let delta = if emitted_text.is_empty() {
+        candidate_full.to_string()
+    } else if candidate_full.len() > emitted_text.len() && candidate_full.starts_with(&*emitted_text)
+    {
+        candidate_full[emitted_text.len()..].to_string()
+    } else {
+        String::new()
+    };
+    if !delta.is_empty() {
+        emitted_text.push_str(&delta);
+        on_delta(delta);
+    }
+}
+
+fn extract_message_done_text(payload: &Value) -> String {
+    if let Some(msgs) = payload
+        .get("transcript")
+        .and_then(|t| t.get("messages"))
+        .and_then(Value::as_array)
+    {
+        let mut blocks = Vec::new();
+        for m in msgs {
+            if m.get("role").and_then(Value::as_str) == Some("assistant")
+                && let Some(t) = m
+                    .get("content")
+                    .or_else(|| m.get("text"))
+                    .or_else(|| m.get("display_text"))
+                    .and_then(Value::as_str)
+            {
+                let trimmed = t.trim();
+                if !trimmed.is_empty() {
+                    blocks.push(trimmed.to_string());
+                }
+            }
+        }
+        if !blocks.is_empty() {
+            return blocks.join("\n\n");
+        }
+    }
+    payload
+        .get("content")
+        .or_else(|| payload.get("text"))
+        .or_else(|| payload.get("display_text"))
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string()
+}
+
+fn is_last_assistant_completed(turn_events: &[Value]) -> bool {
+    turn_events
+        .iter()
+        .rev()
+        .find(|ev| {
+            let p = ev.get("payload").unwrap_or(ev);
+            ev.get("role").and_then(Value::as_str) == Some("assistant")
+                || p.get("role").and_then(Value::as_str) == Some("assistant")
+                || ev.get("event_name").and_then(Value::as_str) == Some("message.assistant")
+        })
+        .is_some_and(|ev| {
+            let p = ev.get("payload").unwrap_or(ev);
+            ev.get("status").and_then(Value::as_str) == Some("completed")
+                || p.get("status").and_then(Value::as_str) == Some("completed")
+                || ev.get("event_name").and_then(Value::as_str) == Some("message.assistant")
+        })
+}
+
+async fn handle_chat_approval(lease: &VmOperationLease, ev: &VmStreamEvent) {
+    handle_approval_event(lease, ev, |_| false).await;
 }

@@ -61,7 +61,7 @@ pub(super) fn report_muse_failure_to_hub(
                 },
             );
         }
-        WorkflowFailure::Rejected(_) | WorkflowFailure::Timeout(_) | WorkflowFailure::Cdp(_) => {}
+        WorkflowFailure::Rejected(_) | WorkflowFailure::Timeout(_) => {}
     }
     failure.into_llm_error()
 }
@@ -69,16 +69,14 @@ pub(super) fn report_muse_failure_to_hub(
 impl LlmGatewayProvider {
     pub(super) fn muse_pool_for_lease(
         &self,
-        cfg: &LlmGatewayConfig,
+        _cfg: &LlmGatewayConfig,
         lease: &GatewayLease,
     ) -> Arc<SharedMusePool> {
         SharedMusePool::for_gateway_lease(
-            cfg.effective_cdp_port(),
-            cfg.effective_headless(),
-            cfg.effective_account_concurrency(),
+            &self.http,
             &lease.account_key,
             lease.access_token.expose(),
-            self.muse_engine.clone(),
+            self.muse_transport.clone(),
         )
     }
 
@@ -93,8 +91,9 @@ impl LlmGatewayProvider {
         let timeout = Duration::from_millis(effective_cfg.timeout_ms.max(1_000));
         let req_clone = request.clone();
         let hub = Arc::clone(&self.hub);
+        let http = self.http.clone();
         let cfg_clone = effective_cfg.clone();
-        let muse_engine = self.muse_engine.clone();
+        let muse_transport = self.muse_transport.clone();
         let err_slot = Arc::clone(&self.last_error_detail);
         let (tx, mut rx) = mpsc::unbounded_channel::<Result<LlmEvent, LlmError>>();
 
@@ -102,12 +101,10 @@ impl LlmGatewayProvider {
             let mut current_lease = lease;
             for attempt in 0..max_attempts {
                 let pool = SharedMusePool::for_gateway_lease(
-                    cfg_clone.effective_cdp_port(),
-                    cfg_clone.effective_headless(),
-                    cfg_clone.effective_account_concurrency(),
+                    &http,
                     &current_lease.account_key,
                     current_lease.access_token.expose(),
-                    muse_engine.clone(),
+                    muse_transport.clone(),
                 );
                 let emitted_delta = Arc::new(AtomicBool::new(false));
                 let emitted_flag = Arc::clone(&emitted_delta);

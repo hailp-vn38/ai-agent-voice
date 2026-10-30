@@ -1,6 +1,5 @@
 use crate::providers::llm::{ChatMessage, LlmRequest};
 
-use super::super::config::NEW_THREAD_URL;
 use super::super::pool::ConversationTurn;
 use super::{CUTOUT_HINT, MEDIA_DONE_MARKER, MUSE_MAX_CLIPS_PER_TURN, MUSE_SINGLE_CLIP_LIMIT_SECS};
 
@@ -60,11 +59,6 @@ pub fn format_video_prompt(prompt: &str, width: u32, height: u32, duration_secs:
             prompt.trim()
         )
     }
-}
-
-pub fn is_thread_url(url: &str) -> bool {
-    let trimmed = url.trim().trim_end_matches('/');
-    trimmed.starts_with("https://muse.ai/thread/") && trimmed != NEW_THREAD_URL
 }
 
 pub fn flatten_messages(request: &LlmRequest) -> String {

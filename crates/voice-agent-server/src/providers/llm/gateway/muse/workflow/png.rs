@@ -105,7 +105,7 @@ pub(crate) fn remove_background_to_rgba_png(bytes: &[u8]) -> Result<Vec<u8>, Wor
     Ok(encode_rgba_png(w, h, &rgba))
 }
 
-fn decode_uncompressed_or_simple_png(bytes: &[u8]) -> Option<(u32, u32, Vec<u8>)> {
+pub(crate) fn decode_uncompressed_or_simple_png(bytes: &[u8]) -> Option<(u32, u32, Vec<u8>)> {
     if !bytes.starts_with(b"\x89PNG\r\n\x1a\n") || bytes.len() < 33 {
         return None;
     }

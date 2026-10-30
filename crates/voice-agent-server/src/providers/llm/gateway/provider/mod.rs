@@ -26,7 +26,7 @@ use crate::{
 use super::{
     config::{ADAPTER_NAME, LlmGatewayConfig},
     muse::{
-        cdp::BrowserEngine,
+        client::MuseVmTransport,
         workflow::{MediaKind, format_image_prompt, format_video_prompt},
     },
 };
@@ -64,7 +64,7 @@ pub struct LlmGatewayProvider {
     pub(super) hub: Arc<LlmGatewayHub>,
     pub(super) http: reqwest::Client,
     pub(super) tags: Vec<LlmCapabilityTag>,
-    pub(super) muse_engine: Option<Arc<dyn BrowserEngine>>,
+    pub(super) muse_transport: Option<Arc<dyn MuseVmTransport>>,
     pub(crate) last_error_detail: ErrorDetailSlot,
 }
 
@@ -87,19 +87,19 @@ impl LlmGatewayProvider {
     }
 
     #[cfg(test)]
-    pub(crate) fn with_hub_and_muse_engine(
+    pub(crate) fn with_hub_and_muse_transport(
         config: &LlmGatewayConfig,
         hub: Arc<LlmGatewayHub>,
-        muse_engine: Arc<dyn BrowserEngine>,
+        muse_transport: Arc<dyn MuseVmTransport>,
     ) -> Result<Self, LlmError> {
-        Self::with_hub_and_adapter(config, hub, ADAPTER_NAME, Some(muse_engine))
+        Self::with_hub_and_adapter(config, hub, ADAPTER_NAME, Some(muse_transport))
     }
 
     fn with_hub_and_adapter(
         config: &LlmGatewayConfig,
         hub: Arc<LlmGatewayHub>,
         adapter_name: &'static str,
-        muse_engine: Option<Arc<dyn BrowserEngine>>,
+        muse_transport: Option<Arc<dyn MuseVmTransport>>,
     ) -> Result<Self, LlmError> {
         if !config.valid() {
             return Err(LlmError::Failed);
@@ -114,7 +114,7 @@ impl LlmGatewayProvider {
             hub,
             http,
             tags: default_tags_for_config(config),
-            muse_engine,
+            muse_transport,
             last_error_detail: new_error_detail_slot(),
         })
     }

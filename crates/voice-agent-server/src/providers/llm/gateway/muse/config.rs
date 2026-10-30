@@ -2,6 +2,10 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
+use super::credentials::{
+    ParsedMuseCredential, extract_vm_id_from_wss_url, get_wss_expiry_unix_secs,
+};
+
 pub const SITE_URL: &str = "https://muse.ai";
 pub const COOKIE_DOMAIN: &str = ".muse.ai";
 pub const NEW_THREAD_URL: &str = "https://muse.ai/thread/new";
@@ -15,16 +19,21 @@ pub const REQUIRED_COOKIES: &[&str] = &[
     "hatch_native_auth_device",
 ];
 
-/// Structured credential for each Muse account parsed from `api_key`.
+/// Structured credential for each Muse account parsed from `api_key` or OAuth token bundle.
 #[derive(Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub struct MuseAccountCredential {
     #[serde(default = "default_account_label", alias = "id")]
     pub label: String,
+    #[serde(default)]
     pub cookies: BTreeMap<String, String>,
     #[serde(default)]
     pub cookie_expires: Option<u64>,
     #[serde(default)]
     pub vm_id: Option<String>,
+    #[serde(default)]
+    pub wss_url: Option<String>,
+    #[serde(default)]
+    pub wss_expires: Option<u64>,
 }
 
 impl std::fmt::Debug for MuseAccountCredential {
@@ -34,6 +43,8 @@ impl std::fmt::Debug for MuseAccountCredential {
             .field("cookies", &"[REDACTED]")
             .field("cookie_expires", &self.cookie_expires)
             .field("vm_id", &self.vm_id)
+            .field("wss_url", &self.wss_url.as_ref().map(|_| "[REDACTED]"))
+            .field("wss_expires", &self.wss_expires)
             .finish()
     }
 }
@@ -56,10 +67,28 @@ fn sanitize_account_label(raw: &str, idx: usize) -> String {
     }
 }
 
+/// Checks whether a cookie map has the minimum required session cookie (`hatch_sess`).
 pub fn has_required_cookies(cookies: &BTreeMap<String, String>) -> bool {
-    REQUIRED_COOKIES
+    cookies
+        .get("hatch_sess")
+        .is_some_and(|v| !v.trim().is_empty())
+}
+
+/// Checks whether a [`MuseAccountCredential`] has either a valid `hatch_sess` cookie or a direct Hatch VM `wss://` URL.
+pub fn has_valid_muse_credential(cred: &MuseAccountCredential) -> bool {
+    has_required_cookies(&cred.cookies)
+        || cred
+            .wss_url
+            .as_deref()
+            .is_some_and(|u| u.starts_with("wss://") || u.starts_with("ws://"))
+}
+
+pub fn format_cookie_header(cookies: &BTreeMap<String, String>) -> String {
+    cookies
         .iter()
-        .all(|name| cookies.get(*name).is_some_and(|v| !v.trim().is_empty()))
+        .map(|(k, v)| format!("{k}={v}"))
+        .collect::<Vec<_>>()
+        .join("; ")
 }
 
 #[derive(Deserialize)]
@@ -113,7 +142,9 @@ fn clean_pasted_cookie_payload(raw: &str) -> &str {
             .unwrap_or(rest);
         s = rest.trim_start().strip_suffix("```").unwrap_or(rest).trim();
     }
-    if let Some((lhs, rhs)) = s.split_once('=')
+    if !s.starts_with("wss://")
+        && !s.starts_with("ws://")
+        && let Some((lhs, rhs)) = s.split_once('=')
         && lhs.trim().eq_ignore_ascii_case("api_key")
     {
         s = rhs.trim();
@@ -122,6 +153,9 @@ fn clean_pasted_cookie_payload(raw: &str) -> &str {
         || (s.starts_with('"') && s.ends_with('"') && s.len() >= 2)
     {
         s = s[1..s.len() - 1].trim();
+    }
+    if let Some(rest) = s.strip_prefix("tok_muse_") {
+        s = rest.trim();
     }
     s
 }
@@ -156,6 +190,8 @@ fn account_from_browser_cookies(
             cookies,
             cookie_expires: min_expires,
             vm_id: None,
+            wss_url: None,
+            wss_expires: None,
         })
     } else {
         None
@@ -172,9 +208,21 @@ pub fn parse_accounts(raw: &str) -> Vec<MuseAccountCredential> {
             let valid: Vec<MuseAccountCredential> = accounts
                 .into_iter()
                 .enumerate()
-                .filter(|(_, acc)| has_required_cookies(&acc.cookies))
+                .filter(|(_, acc)| has_valid_muse_credential(acc))
                 .map(|(idx, mut acc)| {
                     acc.label = sanitize_account_label(&acc.label, idx);
+                    if acc.wss_expires.is_none() {
+                        acc.wss_expires = acc
+                            .wss_url
+                            .as_deref()
+                            .and_then(get_wss_expiry_unix_secs);
+                    }
+                    if acc.vm_id.is_none() {
+                        acc.vm_id = acc
+                            .wss_url
+                            .as_deref()
+                            .and_then(extract_vm_id_from_wss_url);
+                    }
                     acc
                 })
                 .collect();
@@ -202,9 +250,15 @@ pub fn parse_accounts(raw: &str) -> Vec<MuseAccountCredential> {
     }
     if trimmed.starts_with('{') {
         if let Ok(mut acc) = serde_json::from_str::<MuseAccountCredential>(trimmed)
-            && has_required_cookies(&acc.cookies)
+            && has_valid_muse_credential(&acc)
         {
             acc.label = sanitize_account_label(&acc.label, 0);
+            if acc.wss_expires.is_none() {
+                acc.wss_expires = acc.wss_url.as_deref().and_then(get_wss_expiry_unix_secs);
+            }
+            if acc.vm_id.is_none() {
+                acc.vm_id = acc.wss_url.as_deref().and_then(extract_vm_id_from_wss_url);
+            }
             return vec![acc];
         }
         if let Ok(export) = serde_json::from_str::<BrowserCookieExport>(trimmed)
@@ -219,18 +273,34 @@ pub fn parse_accounts(raw: &str) -> Vec<MuseAccountCredential> {
         .map(str::trim)
         .filter(|part| !part.is_empty())
         .enumerate()
-        .filter_map(|(idx, cookie_str)| {
-            let cookies = parse_cookie_header(cookie_str);
-            if has_required_cookies(&cookies) {
-                Some(MuseAccountCredential {
+        .filter_map(|(idx, part)| {
+            if let Ok(parsed) = ParsedMuseCredential::parse(part) {
+                let cookies = parsed
+                    .cookie_header
+                    .as_deref()
+                    .map(parse_cookie_header)
+                    .unwrap_or_default();
+                let wss_expires = parsed
+                    .wss_url
+                    .as_deref()
+                    .and_then(get_wss_expiry_unix_secs);
+                let vm_id = parsed
+                    .wss_url
+                    .as_deref()
+                    .and_then(extract_vm_id_from_wss_url);
+                let cred = MuseAccountCredential {
                     label: format!("account-{idx}"),
                     cookies,
                     cookie_expires: None,
-                    vm_id: None,
-                })
-            } else {
-                None
+                    vm_id,
+                    wss_url: parsed.wss_url,
+                    wss_expires,
+                };
+                if has_valid_muse_credential(&cred) {
+                    return Some(cred);
+                }
             }
+            None
         })
         .collect()
 }
@@ -248,7 +318,7 @@ pub fn parse_cookie_header(raw: &str) -> BTreeMap<String, String> {
         if let Some((k, v)) = pair.split_once('=') {
             let k = k.trim();
             let v = v.trim();
-            if !k.is_empty() && !v.is_empty() {
+            if !k.is_empty() && !v.is_empty() && !IGNORED_UI_COOKIES.contains(&k) {
                 map.insert(k.to_string(), v.to_string());
             }
         }

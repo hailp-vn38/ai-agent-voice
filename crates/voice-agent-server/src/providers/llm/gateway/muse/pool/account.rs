@@ -1,91 +1,126 @@
-use std::collections::BTreeMap;
-use std::time::{Instant, SystemTime, UNIX_EPOCH};
+use std::sync::Arc;
+use std::time::{Duration, Instant};
 
-use super::super::cdp::CookieParam;
-use super::super::config::{COOKIE_DOMAIN, MuseAccountCredential};
-use super::types::{AccountHealth, PooledTab};
+use super::super::client::MuseVmClient;
+use super::super::config::MuseAccountCredential;
+use super::types::{
+    ConversationTurn, HOT_SESSION_IDLE_TTL, HotConversation, MAX_CONCURRENT_OPS_PER_ACCOUNT,
+    MAX_HOT_SESSIONS_PER_ACCOUNT, QUOTA_COOLDOWN, TRANSIENT_COOLDOWN, UpstreamFailureKind,
+};
 
-pub(super) struct MuseAccountState {
-    pub(super) credential: MuseAccountCredential,
-    pub(super) in_memory_cookies: BTreeMap<String, String>,
-    pub(super) cookie_expires: Option<u64>,
-    pub(super) vm_id: Option<String>,
-    pub(super) warmed: bool,
-    pub(super) generation: u64,
-    pub(super) health: AccountHealth,
-    pub(super) active_tabs: usize,
-    pub(super) idle_tabs: Vec<PooledTab>,
+#[derive(Debug, Clone)]
+pub(crate) enum AccountStatus {
+    Healthy,
+    Cooldown {
+        until: Instant,
+        reason: UpstreamFailureKind,
+    },
+    AuthFailed,
+}
+
+pub(crate) struct MuseAccountState {
+    pub credential: MuseAccountCredential,
+    pub status: AccountStatus,
+    pub vm_client: Option<Arc<MuseVmClient>>,
+    pub active_ops: usize,
+    pub hot_sessions: Vec<(HotConversation, Instant)>,
+    pub warmup_started: bool,
 }
 
 impl MuseAccountState {
-    pub(super) fn new(credential: MuseAccountCredential) -> Self {
-        let in_memory_cookies = credential.cookies.clone();
-        let cookie_expires = credential.cookie_expires;
-        let vm_id = credential.vm_id.clone();
+    pub fn new(credential: MuseAccountCredential) -> Self {
         Self {
             credential,
-            in_memory_cookies,
-            cookie_expires,
-            vm_id,
-            warmed: false,
-            generation: 0,
-            health: AccountHealth::Healthy,
-            active_tabs: 0,
-            idle_tabs: Vec::new(),
+            status: AccountStatus::Healthy,
+            vm_client: None,
+            active_ops: 0,
+            hot_sessions: Vec::new(),
+            warmup_started: false,
         }
     }
 
-    pub(super) fn is_available(&self, now: Instant) -> bool {
-        match self.health {
-            AccountHealth::Healthy => true,
-            AccountHealth::Cooldown(until) => now >= until,
-            AccountHealth::Invalid => false,
-        }
-    }
-
-    pub(super) fn refresh_health(&mut self, now: Instant) {
-        if let AccountHealth::Cooldown(until) = self.health
+    pub fn refresh_status(&mut self, now: Instant) {
+        if let AccountStatus::Cooldown { until, .. } = self.status
             && now >= until
         {
-            self.health = AccountHealth::Healthy;
+            self.status = AccountStatus::Healthy;
+        }
+        self.hot_sessions
+            .retain(|(_, updated_at)| now.duration_since(*updated_at) < HOT_SESSION_IDLE_TTL);
+    }
+
+    pub fn is_healthy(&mut self, now: Instant) -> bool {
+        self.refresh_status(now);
+        matches!(self.status, AccountStatus::Healthy)
+    }
+
+    pub fn has_capacity(&self) -> bool {
+        self.active_ops < MAX_CONCURRENT_OPS_PER_ACCOUNT
+    }
+
+    pub fn take_matching_hot_session(
+        &mut self,
+        prior_turns: &[ConversationTurn],
+        now: Instant,
+    ) -> Option<HotConversation> {
+        if prior_turns.is_empty() {
+            return None;
+        }
+        self.refresh_status(now);
+        let pos = self
+            .hot_sessions
+            .iter()
+            .position(|(hot, _)| {
+                !hot.turns.is_empty()
+                    && prior_turns.len() >= hot.turns.len()
+                    && prior_turns[..hot.turns.len()] == hot.turns[..]
+            })?;
+        Some(self.hot_sessions.remove(pos).0)
+    }
+
+    pub fn save_hot_session(&mut self, hot: HotConversation, now: Instant) {
+        self.refresh_status(now);
+        self.hot_sessions
+            .retain(|(existing, _)| existing.session_id != hot.session_id);
+        self.hot_sessions.push((hot, now));
+        if self.hot_sessions.len() > MAX_HOT_SESSIONS_PER_ACCOUNT {
+            self.hot_sessions.remove(0);
         }
     }
 
-    pub(super) fn context_key(&self, fingerprint: &[u8; 32]) -> String {
-        let prefix = hex_prefix(&fingerprint[..8]);
-        format!("{prefix}:{}:{}", self.credential.label, self.generation)
-    }
-
-    pub(super) fn cookie_params(&self) -> Vec<CookieParam> {
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs_f64();
-        let floor = now + 3600.0;
-        let expires = match self.cookie_expires.map(|e| e as f64) {
-            Some(exp) if exp > floor => exp,
-            _ => now + 7.0 * 86400.0,
+    pub fn mark_failure(
+        &mut self,
+        kind: UpstreamFailureKind,
+        now: Instant,
+    ) -> Option<Arc<MuseVmClient>> {
+        self.status = match kind {
+            UpstreamFailureKind::AuthInvalid => AccountStatus::AuthFailed,
+            UpstreamFailureKind::QuotaExceeded => AccountStatus::Cooldown {
+                until: now + QUOTA_COOLDOWN,
+                reason: kind,
+            },
+            UpstreamFailureKind::Transient => AccountStatus::Cooldown {
+                until: now + TRANSIENT_COOLDOWN,
+                reason: kind,
+            },
         };
-        self.in_memory_cookies
-            .iter()
-            .filter(|(_, v)| !v.is_empty())
-            .map(|(k, v)| CookieParam {
-                name: k.clone(),
-                value: v.clone(),
-                domain: COOKIE_DOMAIN.to_string(),
-                path: "/".to_string(),
-                secure: true,
-                expires,
-            })
-            .collect()
+        if matches!(
+            kind,
+            UpstreamFailureKind::AuthInvalid | UpstreamFailureKind::Transient
+        ) {
+            self.hot_sessions.clear();
+            self.vm_client.take()
+        } else {
+            None
+        }
     }
-}
 
-fn hex_prefix(bytes: &[u8]) -> String {
-    let mut out = String::with_capacity(bytes.len() * 2);
-    for b in bytes {
-        use std::fmt::Write;
-        let _ = write!(&mut out, "{b:02x}");
+    pub fn cooldown_remaining(&self, now: Instant) -> Option<(UpstreamFailureKind, Duration)> {
+        match self.status {
+            AccountStatus::Cooldown { until, reason } if until > now => {
+                Some((reason, until.duration_since(now)))
+            }
+            _ => None,
+        }
     }
-    out
 }

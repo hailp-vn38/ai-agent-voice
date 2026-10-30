@@ -771,9 +771,6 @@ async fn llm_gateway_muse_cookie_paste_interactive_cdp_capture_and_session_renew
         async fn navigate(&self, _url: &str) -> Result<(), CdpError> {
             Ok(())
         }
-        async fn current_url(&self) -> Result<String, CdpError> {
-            Ok("https://muse.ai/thread/new".to_owned())
-        }
         async fn evaluate_json(
             &self,
             _expression: &str,
@@ -781,9 +778,6 @@ async fn llm_gateway_muse_cookie_paste_interactive_cdp_capture_and_session_renew
             _timeout: Duration,
         ) -> Result<Value, CdpError> {
             Ok(Value::Null)
-        }
-        async fn press_enter(&self) -> Result<(), CdpError> {
-            Ok(())
         }
         async fn get_cookies(&self, _urls: &[&str]) -> Result<BTreeMap<String, String>, CdpError> {
             Ok(self.cookies.lock().unwrap().clone())

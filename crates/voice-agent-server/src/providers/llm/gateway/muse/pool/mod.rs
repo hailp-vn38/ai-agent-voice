@@ -3,390 +3,414 @@ mod lease;
 mod types;
 mod warmup;
 
-use std::collections::{BTreeMap, HashMap};
-use std::sync::{Arc, Mutex as StdMutex, OnceLock};
-use std::time::{Duration, Instant};
+use std::collections::HashMap;
+use std::sync::{Arc, LazyLock, Mutex};
+use std::time::Instant;
 
-use sha2::{Digest, Sha256};
 use tokio::sync::Notify;
+use uuid::Uuid;
 
-use super::cdp::{BrowserEngine, BrowserPage, CdpBrowserEngine, CdpError};
-use super::config::MuseAccountCredential;
-
-use account::MuseAccountState;
-pub(crate) use lease::TabLease;
-pub use types::HOT_BUBBLE_LIMIT;
-#[allow(unused_imports)]
-pub(crate) use types::{
-    AccountHealth, CheckoutMode, ConversationTurn, HotConversation, MusePoolKey, PooledTab,
-    UpstreamFailureKind,
+use self::account::{AccountStatus, MuseAccountState};
+pub(crate) use self::lease::VmOperationLease;
+pub(crate) use self::types::{ConversationTurn, HotConversation, UpstreamFailureKind};
+use super::cdp::{BrowserEngine, extract_wss_via_chromium};
+use super::client::{MuseVmClient, MuseVmTransport, VmError, WsNoiseVmTransport};
+use super::config::{
+    MuseAccountCredential, SITE_URL, format_cookie_header, parse_accounts, parse_cookie_header,
+};
+use super::credentials::{
+    WSS_EXPIRY_BUFFER_SECS, fetch_wss_from_cookie_http, get_wss_expiry_unix_secs, is_wss_valid,
 };
 
-struct PoolInner {
-    accounts: Vec<MuseAccountState>,
-    rr_cursor: usize,
+pub(super) struct PoolState {
+    pub(super) accounts: Vec<MuseAccountState>,
+    pub(super) rr_cursor: usize,
 }
 
+pub(super) struct MusePoolInner {
+    pub http: reqwest::Client,
+    pub transport: Arc<dyn MuseVmTransport>,
+    pub has_custom_transport: bool,
+    pub fallback_browser: Option<Arc<dyn BrowserEngine>>,
+    pub state: Mutex<PoolState>,
+    pub notify: Notify,
+}
+
+#[derive(Clone)]
 pub(crate) struct SharedMusePool {
-    key: MusePoolKey,
-    engine: Arc<dyn BrowserEngine>,
-    http_session_warmup: bool,
-    http_client: reqwest::Client,
-    inner: Arc<StdMutex<PoolInner>>,
-    notify: Arc<Notify>,
+    pub(super) inner: Arc<MusePoolInner>,
 }
 
-fn spawn_page_close(page: Arc<dyn BrowserPage>) {
-    if let Ok(handle) = tokio::runtime::Handle::try_current() {
-        handle.spawn(async move {
-            page.close().await;
-        });
-    }
-}
-
-type GlobalPoolMap = HashMap<(MusePoolKey, usize), Arc<SharedMusePool>>;
-type GlobalCdpEngineMap = HashMap<(u16, bool), Arc<dyn BrowserEngine>>;
-
-static GLOBAL_POOLS: OnceLock<StdMutex<GlobalPoolMap>> = OnceLock::new();
-static GLOBAL_CDP_ENGINES: OnceLock<StdMutex<GlobalCdpEngineMap>> = OnceLock::new();
-
-fn shared_cdp_engine(cdp_port: u16, headless: bool) -> Arc<dyn BrowserEngine> {
-    let map_mutex = GLOBAL_CDP_ENGINES.get_or_init(|| StdMutex::new(HashMap::new()));
-    let mut map = map_mutex.lock().unwrap_or_else(|e| e.into_inner());
-    if let Some(existing) = map.get(&(cdp_port, headless)) {
-        return Arc::clone(existing);
-    }
-    let engine: Arc<dyn BrowserEngine> = Arc::new(CdpBrowserEngine::new(cdp_port, headless));
-    map.insert((cdp_port, headless), Arc::clone(&engine));
-    engine
-}
-
-enum CheckoutPlan {
-    Reuse {
-        account_idx: usize,
-        tab: PooledTab,
-        matched_hot: Option<HotConversation>,
-    },
-    OpenNew {
-        account_idx: usize,
-    },
-}
+static GLOBAL_POOLS: LazyLock<Mutex<HashMap<String, Arc<SharedMusePool>>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
 
 impl SharedMusePool {
-    pub(crate) fn for_gateway_lease(
-        cdp_port: u16,
-        headless: bool,
-        account_concurrency: usize,
-        account_key: &str,
-        raw_credential: &str,
-        custom_engine: Option<Arc<dyn BrowserEngine>>,
+    pub fn for_gateway_lease(
+        http: &reqwest::Client,
+        account_id: &str,
+        credential_json: &str,
+        custom_transport: Option<Arc<dyn MuseVmTransport>>,
     ) -> Arc<Self> {
-        let mut hasher = Sha256::new();
-        hasher.update(account_key.as_bytes());
-        hasher.update(b":");
-        hasher.update(raw_credential.as_bytes());
-        let credential_fingerprint: [u8; 32] = hasher.finalize().into();
+        let mut credentials = parse_accounts(credential_json);
+        if !credentials.is_empty() {
+            credentials.truncate(1);
+            credentials[0].label = account_id.to_string();
+        }
 
-        let key = MusePoolKey {
-            cdp_port,
-            headless,
-            account_concurrency: account_concurrency.clamp(1, 8),
-            credential_fingerprint,
-        };
-        let engine_id = custom_engine
+        let transport_id = custom_transport
             .as_ref()
-            .map(|e| Arc::as_ptr(e) as *const () as usize)
+            .map(|t| Arc::as_ptr(t) as *const () as usize)
             .unwrap_or(0);
-
-        let map_mutex = GLOBAL_POOLS.get_or_init(|| StdMutex::new(HashMap::new()));
-        let mut map = map_mutex.lock().unwrap_or_else(|e| e.into_inner());
-        if let Some(existing) = map.get(&(key.clone(), engine_id)) {
-            existing.reset_health_for_gateway_lease();
+        let cache_key = format!("gw:{account_id}:{transport_id}:{credential_json}");
+        let mut map = GLOBAL_POOLS.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(existing) = map.get(&cache_key) {
             return Arc::clone(existing);
         }
-
-        let mut accounts = super::config::parse_accounts(raw_credential);
-        if accounts.is_empty() && !raw_credential.trim().is_empty() {
-            let mut cookies = BTreeMap::new();
-            for &name in super::config::REQUIRED_COOKIES {
-                cookies.insert(name.to_owned(), raw_credential.trim().to_owned());
-            }
-            accounts.push(MuseAccountCredential {
-                label: account_key.to_owned(),
-                cookies,
-                cookie_expires: None,
-                vm_id: None,
-            });
-        } else {
-            for acc in &mut accounts {
-                acc.label = account_key.to_owned();
-            }
-        }
-
-        let (engine, warmup) = match custom_engine {
-            Some(eng) => (eng, false),
-            None => (shared_cdp_engine(cdp_port, headless), true),
-        };
-        let pool = Self::new_with_engine(key.clone(), accounts, engine, warmup);
-        map.insert((key, engine_id), Arc::clone(&pool));
+        map.retain(|k, _| !k.starts_with(&format!("gw:{account_id}:{transport_id}:")));
+        let has_custom = custom_transport.is_some();
+        let transport: Arc<dyn MuseVmTransport> =
+            custom_transport.unwrap_or_else(|| Arc::new(WsNoiseVmTransport));
+        let pool = Arc::new(Self::new_with_options(
+            http.clone(),
+            transport,
+            has_custom,
+            None,
+            credentials,
+        ));
+        map.insert(cache_key, Arc::clone(&pool));
         pool
     }
 
-    fn reset_health_for_gateway_lease(&self) {
-        let mut guard = self.inner.lock().unwrap_or_else(|e| e.into_inner());
-        for acc in &mut guard.accounts {
-            acc.health = AccountHealth::Healthy;
-        }
-    }
-
-    pub fn new_with_engine(
-        key: MusePoolKey,
+    fn new_with_options(
+        http: reqwest::Client,
+        transport: Arc<dyn MuseVmTransport>,
+        has_custom_transport: bool,
+        fallback_browser: Option<Arc<dyn BrowserEngine>>,
         credentials: Vec<MuseAccountCredential>,
-        engine: Arc<dyn BrowserEngine>,
-        http_session_warmup: bool,
-    ) -> Arc<Self> {
-        let accounts = credentials
+    ) -> Self {
+        let accounts: Vec<MuseAccountState> = credentials
             .into_iter()
             .map(MuseAccountState::new)
-            .collect::<Vec<_>>();
-        let inner = Arc::new(StdMutex::new(PoolInner {
-            accounts,
-            rr_cursor: 0,
-        }));
-        let notify = Arc::new(Notify::new());
-
-        let http_client = reqwest::Client::builder()
-            .timeout(Duration::from_secs(15))
-            .build()
-            .unwrap_or_default();
-
-        Arc::new(Self {
-            key,
-            engine,
-            http_session_warmup,
-            http_client,
-            inner,
-            notify,
-        })
+            .collect();
+        let has_accounts = !accounts.is_empty();
+        let pool = Self {
+            inner: Arc::new(MusePoolInner {
+                http,
+                transport,
+                has_custom_transport,
+                fallback_browser,
+                state: Mutex::new(PoolState {
+                    accounts,
+                    rr_cursor: 0,
+                }),
+                notify: Notify::new(),
+            }),
+        };
+        if has_accounts && !has_custom_transport {
+            pool.trigger_account_warmup(0);
+        }
+        pool
     }
 
-    pub async fn checkout(&self, mode: CheckoutMode) -> Result<TabLease, CdpError> {
+    pub async fn acquire_for_chat(
+        &self,
+        prior_turns: &[ConversationTurn],
+    ) -> Result<VmOperationLease, (UpstreamFailureKind, String)> {
+        self.acquire_internal(prior_turns, true).await
+    }
+
+    pub async fn acquire_fresh(&self) -> Result<VmOperationLease, (UpstreamFailureKind, String)> {
+        self.acquire_internal(&[], false).await
+    }
+
+    async fn acquire_internal(
+        &self,
+        prior_turns: &[ConversationTurn],
+        prefer_hot: bool,
+    ) -> Result<VmOperationLease, (UpstreamFailureKind, String)> {
         loop {
-            let mut stale_to_close: Vec<Arc<dyn BrowserPage>> = Vec::new();
-            let selection = {
-                let mut guard = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+            let candidate = {
+                let mut state = self.inner.state.lock().unwrap_or_else(|e| e.into_inner());
                 let now = Instant::now();
-                let total = guard.accounts.len();
-                if total == 0 {
-                    return Err(CdpError::BrowserUnavailable(
-                        "no valid Muse account credentials configured".to_string(),
+                let count = state.accounts.len();
+                if count == 0 {
+                    return Err((
+                        UpstreamFailureKind::AuthInvalid,
+                        "gateway muse account is missing a valid hatch_sess cookie or wss:// URL"
+                            .to_string(),
                     ));
                 }
 
-                for acc in &mut guard.accounts {
-                    acc.refresh_health(now);
-                    let mut keep = Vec::with_capacity(acc.idle_tabs.len());
-                    for tab in acc.idle_tabs.drain(..) {
-                        if tab.stale {
-                            acc.active_tabs = acc.active_tabs.saturating_sub(1);
-                            stale_to_close.push(tab.page);
-                        } else {
-                            keep.push(tab);
-                        }
-                    }
-                    acc.idle_tabs = keep;
-                }
+                let mut all_auth_failed = true;
+                let mut any_healthy = false;
+                let mut shortest_cooldown: Option<(UpstreamFailureKind, std::time::Duration)> =
+                    None;
 
-                if !guard
-                    .accounts
-                    .iter()
-                    .any(|a| !matches!(a.health, AccountHealth::Invalid))
-                {
-                    return Err(CdpError::Protocol(
-                        "all Muse accounts have invalid authentication cookies".to_string(),
-                    ));
-                }
-
-                // 1. If Continuation mode, look for a hot tab matching the conversation prefix.
-                let mut hot_found = None;
-                if let CheckoutMode::Continuation {
-                    ref prior_turns,
-                    image_count,
-                } = mode
-                    && !prior_turns.is_empty()
-                    && (prior_turns.len() * 2 + 2) <= HOT_BUBBLE_LIMIT
-                {
-                    'outer: for (acc_idx, acc) in guard.accounts.iter_mut().enumerate() {
-                        if !acc.is_available(now) {
-                            continue;
+                for acc in &mut state.accounts {
+                    if acc.is_healthy(now) {
+                        any_healthy = true;
+                        all_auth_failed = false;
+                    } else {
+                        if !matches!(acc.status, AccountStatus::AuthFailed) {
+                            all_auth_failed = false;
                         }
-                        if let Some(pos) = acc.idle_tabs.iter().position(|t| {
-                            t.hot.as_ref().is_some_and(|h| {
-                                !h.turns.is_empty()
-                                    && h.turns.len() <= prior_turns.len()
-                                    && prior_turns.starts_with(&h.turns)
-                                    && h.image_count == image_count
-                            })
-                        }) {
-                            let tab = acc.idle_tabs.remove(pos);
-                            let matched_hot = tab.hot.clone();
-                            hot_found = Some((acc_idx, tab, matched_hot));
-                            break 'outer;
-                        }
-                    }
-                }
-
-                if let Some((acc_idx, tab, matched_hot)) = hot_found {
-                    Some(CheckoutPlan::Reuse {
-                        account_idx: acc_idx,
-                        tab,
-                        matched_hot,
-                    })
-                } else {
-                    // 2. Round-robin across available accounts.
-                    let start = guard.rr_cursor % total;
-                    let mut chosen = None;
-                    for offset in 0..total {
-                        let idx = (start + offset) % total;
-                        let acc = &mut guard.accounts[idx];
-                        if !acc.is_available(now) {
-                            continue;
-                        }
-                        if let Some(pos) = acc.idle_tabs.iter().position(|t| t.hot.is_none()) {
-                            let tab = acc.idle_tabs.remove(pos);
-                            guard.rr_cursor = idx + 1;
-                            chosen = Some(CheckoutPlan::Reuse {
-                                account_idx: idx,
-                                tab,
-                                matched_hot: None,
-                            });
-                            break;
-                        }
-                        if acc.active_tabs < self.key.account_concurrency {
-                            acc.active_tabs += 1;
-                            guard.rr_cursor = idx + 1;
-                            chosen = Some(CheckoutPlan::OpenNew { account_idx: idx });
-                            break;
-                        }
-                        if let Some(mut tab) = acc.idle_tabs.pop() {
-                            tab.hot = None;
-                            guard.rr_cursor = idx + 1;
-                            chosen = Some(CheckoutPlan::Reuse {
-                                account_idx: idx,
-                                tab,
-                                matched_hot: None,
-                            });
-                            break;
-                        }
-                    }
-                    chosen
-                }
-            };
-
-            for page in stale_to_close {
-                spawn_page_close(page);
-            }
-
-            match selection {
-                Some(CheckoutPlan::Reuse {
-                    account_idx,
-                    tab,
-                    matched_hot,
-                }) => {
-                    return Ok(TabLease {
-                        account_idx,
-                        tab: Some(tab),
-                        matched_hot,
-                        clean_return: false,
-                        inner: Arc::clone(&self.inner),
-                        notify: Arc::clone(&self.notify),
-                    });
-                }
-                Some(CheckoutPlan::OpenNew { account_idx }) => {
-                    if let Err(kind) = self.ensure_account_warm(account_idx).await {
+                        if let Some((reason, rem)) = acc.cooldown_remaining(now)
+                            && shortest_cooldown.is_none_or(|(_, best)| rem < best)
                         {
-                            let mut guard = self.inner.lock().unwrap_or_else(|e| e.into_inner());
-                            if let Some(acc) = guard.accounts.get_mut(account_idx) {
-                                acc.active_tabs = acc.active_tabs.saturating_sub(1);
-                            }
-                        }
-                        self.apply_account_failure(account_idx, kind);
-                        continue;
-                    }
-
-                    let (context_key, cookie_params) = {
-                        let guard = self.inner.lock().unwrap_or_else(|e| e.into_inner());
-                        let acc = &guard.accounts[account_idx];
-                        (
-                            acc.context_key(&self.key.credential_fingerprint),
-                            acc.cookie_params(),
-                        )
-                    };
-
-                    match self.engine.open_page(&context_key, &cookie_params).await {
-                        Ok(page) => {
-                            return Ok(TabLease {
-                                account_idx,
-                                tab: Some(PooledTab {
-                                    page,
-                                    hot: None,
-                                    stale: false,
-                                }),
-                                matched_hot: None,
-                                clean_return: false,
-                                inner: Arc::clone(&self.inner),
-                                notify: Arc::clone(&self.notify),
-                            });
-                        }
-                        Err(err) => {
-                            {
-                                let mut guard =
-                                    self.inner.lock().unwrap_or_else(|e| e.into_inner());
-                                if let Some(acc) = guard.accounts.get_mut(account_idx) {
-                                    acc.active_tabs = acc.active_tabs.saturating_sub(1);
-                                }
-                            }
-                            self.notify.notify_waiters();
-                            return Err(err);
+                            shortest_cooldown = Some((reason, rem));
                         }
                     }
                 }
-                None => {
-                    let all_cooling = {
-                        let guard = self.inner.lock().unwrap_or_else(|e| e.into_inner());
-                        let now = Instant::now();
-                        !guard.accounts.iter().any(|a| a.is_available(now))
-                    };
-                    if all_cooling {
-                        return Err(CdpError::Protocol(
-                            "all Muse accounts are currently in quota/transient cooldown"
+
+                if !any_healthy {
+                    if all_auth_failed {
+                        return Err((
+                            UpstreamFailureKind::AuthInvalid,
+                            "all Muse accounts failed authentication (session expired or invalid)"
                                 .to_string(),
                         ));
                     }
-                    self.notify.notified().await;
+                    if let Some((reason, rem)) = shortest_cooldown {
+                        return Err((
+                            reason,
+                            format!(
+                                "all Muse accounts are in cooldown ({reason:?}, retry in {}s)",
+                                rem.as_secs().max(1)
+                            ),
+                        ));
+                    }
+                    return Err((
+                        UpstreamFailureKind::Transient,
+                        "no healthy Muse accounts available".to_string(),
+                    ));
+                }
+
+                let mut chosen: Option<(usize, Option<HotConversation>)> = None;
+
+                if prefer_hot && !prior_turns.is_empty() {
+                    for idx in 0..count {
+                        let acc = &mut state.accounts[idx];
+                        if acc.is_healthy(now)
+                            && acc.has_capacity()
+                            && let Some(hot) = acc.take_matching_hot_session(prior_turns, now)
+                        {
+                            acc.active_ops += 1;
+                            chosen = Some((idx, Some(hot)));
+                            break;
+                        }
+                    }
+                }
+
+                if chosen.is_none() {
+                    let start = state.rr_cursor % count;
+                    for offset in 0..count {
+                        let idx = (start + offset) % count;
+                        let acc = &mut state.accounts[idx];
+                        if acc.is_healthy(now) && acc.has_capacity() {
+                            acc.active_ops += 1;
+                            state.rr_cursor = (idx + 1) % count;
+                            chosen = Some((idx, None));
+                            break;
+                        }
+                    }
+                }
+
+                chosen
+            };
+
+            if let Some((acc_idx, matched_hot)) = candidate {
+                match self.ensure_account_client(acc_idx).await {
+                    Ok(client) => {
+                        let session_id = matched_hot
+                            .as_ref()
+                            .map(|h| h.session_id.clone())
+                            .unwrap_or_else(|| Uuid::new_v4().to_string());
+                        return Ok(VmOperationLease {
+                            pool: self.clone(),
+                            account_index: acc_idx,
+                            client,
+                            session_id,
+                            matched_hot,
+                            saved_as_hot: false,
+                            cleaned: false,
+                        });
+                    }
+                    Err((kind, _reason)) => {
+                        {
+                            let mut state =
+                                self.inner.state.lock().unwrap_or_else(|e| e.into_inner());
+                            if let Some(acc) = state.accounts.get_mut(acc_idx) {
+                                acc.active_ops = acc.active_ops.saturating_sub(1);
+                            }
+                        }
+                        self.fail_account(acc_idx, kind).await;
+                        continue;
+                    }
+                }
+            }
+
+            self.inner.notify.notified().await;
+        }
+    }
+
+    pub(super) async fn ensure_account_client(
+        &self,
+        account_index: usize,
+    ) -> Result<Arc<MuseVmClient>, (UpstreamFailureKind, String)> {
+        let cred = {
+            let state = self.inner.state.lock().unwrap_or_else(|e| e.into_inner());
+            let acc = state.accounts.get(account_index).ok_or_else(|| {
+                (
+                    UpstreamFailureKind::Transient,
+                    "invalid Muse account index".to_string(),
+                )
+            })?;
+            if let Some(existing) = &acc.vm_client
+                && existing.is_connected()
+                && acc
+                    .credential
+                    .wss_url
+                    .as_deref()
+                    .is_none_or(|u| is_wss_valid(u, WSS_EXPIRY_BUFFER_SECS))
+            {
+                return Ok(Arc::clone(existing));
+            }
+            acc.credential.clone()
+        };
+
+        if let Some(existing_wss) = cred
+            .wss_url
+            .as_deref()
+            .filter(|u| is_wss_valid(u, WSS_EXPIRY_BUFFER_SECS))
+        {
+            match connect_and_init_client(&*self.inner.transport, existing_wss).await {
+                Ok(client) => {
+                    let mut state = self.inner.state.lock().unwrap_or_else(|e| e.into_inner());
+                    if let Some(acc) = state.accounts.get_mut(account_index) {
+                        acc.vm_client = Some(Arc::clone(&client));
+                    }
+                    return Ok(client);
+                }
+                Err(VmError::AuthInvalid(msg)) if cred.cookies.is_empty() => {
+                    return Err((UpstreamFailureKind::AuthInvalid, msg));
+                }
+                Err(_) if !cred.cookies.is_empty() => {
+                    // Fall through to bootstrap a fresh WSS URL from cookies
+                }
+                Err(err) => {
+                    return Err(vm_error_to_pool_failure(err));
                 }
             }
         }
+
+        if cred.cookies.is_empty() {
+            return Err((
+                UpstreamFailureKind::AuthInvalid,
+                "Muse WSS URL expired and no session cookie is available for renewal".to_string(),
+            ));
+        }
+
+        let wss_url = if self.inner.has_custom_transport {
+            let vm_name = cred.vm_id.as_deref().unwrap_or(&cred.label);
+            format!("wss://hatch.metaaivm.com/v1/noise?vm_id={vm_name}&app_id=hatch-web")
+        } else {
+            let cookie_header = format_cookie_header(&cred.cookies);
+            let bootstrapped =
+                match fetch_wss_from_cookie_http(&self.inner.http, &cookie_header, SITE_URL).await {
+                    Ok(session) => session,
+                    Err((UpstreamFailureKind::Transient, _))
+                        if self.inner.fallback_browser.is_some() =>
+                    {
+                        let engine = self
+                            .inner
+                            .fallback_browser
+                            .as_ref()
+                            .expect("fallback_browser checked");
+                        let ctx_key = format!("muse-bootstrap-{account_index}");
+                        extract_wss_via_chromium(&**engine, &ctx_key, &cred.cookies).await?
+                    }
+                    Err(err) => return Err(err),
+                };
+
+            let mut state = self.inner.state.lock().unwrap_or_else(|e| e.into_inner());
+            if let Some(acc) = state.accounts.get_mut(account_index) {
+                acc.credential.wss_url = Some(bootstrapped.wss_url.clone());
+                acc.credential.wss_expires = get_wss_expiry_unix_secs(&bootstrapped.wss_url);
+                acc.credential.cookies = parse_cookie_header(&bootstrapped.cookie_header);
+                if bootstrapped.vm_id.is_some() {
+                    acc.credential.vm_id = bootstrapped.vm_id;
+                }
+            }
+            bootstrapped.wss_url
+        };
+
+        let client = connect_and_init_client(&*self.inner.transport, &wss_url)
+            .await
+            .map_err(vm_error_to_pool_failure)?;
+
+        {
+            let mut state = self.inner.state.lock().unwrap_or_else(|e| e.into_inner());
+            if let Some(acc) = state.accounts.get_mut(account_index) {
+                if acc.credential.wss_url.is_none() {
+                    acc.credential.wss_url = Some(wss_url);
+                }
+                acc.vm_client = Some(Arc::clone(&client));
+            }
+        }
+        Ok(client)
+    }
+
+    pub(super) fn release_op_clean(
+        &self,
+        account_index: usize,
+        updated_hot: Option<HotConversation>,
+    ) {
+        {
+            let mut state = self.inner.state.lock().unwrap_or_else(|e| e.into_inner());
+            if let Some(acc) = state.accounts.get_mut(account_index) {
+                acc.active_ops = acc.active_ops.saturating_sub(1);
+                if let Some(hot) = updated_hot {
+                    acc.save_hot_session(hot, Instant::now());
+                }
+            }
+        }
+        self.inner.notify.notify_waiters();
+    }
+
+    pub(super) async fn fail_account(&self, account_index: usize, kind: UpstreamFailureKind) {
+        let stale_client = {
+            let mut state = self.inner.state.lock().unwrap_or_else(|e| e.into_inner());
+            let mut client_to_close = None;
+            if let Some(acc) = state.accounts.get_mut(account_index) {
+                acc.active_ops = acc.active_ops.saturating_sub(1);
+                client_to_close = acc.mark_failure(kind, Instant::now());
+            }
+            client_to_close
+        };
+        if let Some(client) = stale_client {
+            client.close().await;
+        }
+        self.inner.notify.notify_waiters();
     }
 }
 
-impl Drop for SharedMusePool {
-    fn drop(&mut self) {
-        let engine = Arc::clone(&self.engine);
-        let context_keys = {
-            let guard = self.inner.lock().unwrap_or_else(|e| e.into_inner());
-            guard
-                .accounts
-                .iter()
-                .map(|acc| acc.context_key(&self.key.credential_fingerprint))
-                .collect::<Vec<_>>()
-        };
-        if let Ok(handle) = tokio::runtime::Handle::try_current() {
-            handle.spawn(async move {
-                for key in context_keys {
-                    engine.dispose_context(&key).await;
-                }
-            });
-        }
+async fn connect_and_init_client(
+    transport: &dyn MuseVmTransport,
+    wss_url: &str,
+) -> Result<Arc<MuseVmClient>, VmError> {
+    let client = MuseVmClient::connect(transport, wss_url).await?;
+    if let Err(err) = client.subscribe().await {
+        client.close().await;
+        return Err(err);
+    }
+    client.ensure_isolation_policy().await;
+    Ok(client)
+}
+
+fn vm_error_to_pool_failure(err: VmError) -> (UpstreamFailureKind, String) {
+    match err {
+        VmError::AuthInvalid(msg) => (UpstreamFailureKind::AuthInvalid, msg),
+        VmError::QuotaExceeded(msg) => (UpstreamFailureKind::QuotaExceeded, msg),
+        VmError::Timeout(msg) | VmError::Transport(msg) => (UpstreamFailureKind::Transient, msg),
     }
 }

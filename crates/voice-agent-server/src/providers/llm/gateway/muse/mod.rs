@@ -1,8 +1,11 @@
-pub(crate) mod cdp;
-pub(crate) mod config;
-pub(crate) mod dom;
-pub(crate) mod pool;
-pub(crate) mod workflow;
+pub mod cdp;
+pub mod client;
+pub mod config;
+pub mod credentials;
+pub mod noise;
+pub mod pool;
+pub mod proto;
+pub mod workflow;
 
 #[cfg(test)]
-mod tests;
+pub(super) mod tests;

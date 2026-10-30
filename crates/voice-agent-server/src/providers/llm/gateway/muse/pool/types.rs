@@ -1,30 +1,15 @@
-use std::sync::Arc;
-use std::time::Instant;
+use std::time::Duration;
 
-use super::super::cdp::BrowserPage;
-
-pub const HOT_BUBBLE_LIMIT: usize = 16;
-
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub(crate) struct MusePoolKey {
-    pub cdp_port: u16,
-    pub headless: bool,
-    pub account_concurrency: usize,
-    /// SHA-256 digest of credential ensuring secret rotation creates isolated contexts.
-    pub credential_fingerprint: [u8; 32],
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum AccountHealth {
-    Healthy,
-    Cooldown(Instant),
-    Invalid,
-}
+pub(super) const MAX_CONCURRENT_OPS_PER_ACCOUNT: usize = 8;
+pub(super) const MAX_HOT_SESSIONS_PER_ACCOUNT: usize = 16;
+pub(super) const HOT_SESSION_IDLE_TTL: Duration = Duration::from_secs(15 * 60);
+pub(super) const QUOTA_COOLDOWN: Duration = Duration::from_secs(30 * 60);
+pub(super) const TRANSIENT_COOLDOWN: Duration = Duration::from_secs(15);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum UpstreamFailureKind {
-    AuthInvalid,
     QuotaExceeded,
+    AuthInvalid,
     Transient,
 }
 
@@ -36,23 +21,7 @@ pub(crate) struct ConversationTurn {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct HotConversation {
-    pub hint: String,
     pub turns: Vec<ConversationTurn>,
     pub image_count: usize,
-    pub thread_url: String,
-}
-
-pub(crate) struct PooledTab {
-    pub page: Arc<dyn BrowserPage>,
-    pub hot: Option<HotConversation>,
-    pub stale: bool,
-}
-
-#[derive(Debug, Clone)]
-pub(crate) enum CheckoutMode {
-    Stateless,
-    Continuation {
-        prior_turns: Vec<ConversationTurn>,
-        image_count: usize,
-    },
+    pub session_id: String,
 }

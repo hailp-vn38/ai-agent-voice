@@ -1,152 +1,216 @@
 mod chat;
 mod media;
-mod page;
 mod png;
 mod prompt;
 
-use std::time::Duration;
+use serde_json::Value;
 
-use serde::Deserialize;
+use super::client::VmStreamEvent;
+use super::pool::{UpstreamFailureKind, VmOperationLease};
 
-use crate::providers::llm::LlmError;
+#[derive(Debug, Clone)]
+pub(crate) enum WorkflowFailure {
+    Rejected(String),
+    Upstream(UpstreamFailureKind, String),
+    Timeout(String),
+}
 
-use super::cdp::CdpError;
-use super::pool::UpstreamFailureKind;
+impl WorkflowFailure {
+    pub fn into_llm_error(self) -> crate::providers::llm::LlmError {
+        match self {
+            WorkflowFailure::Rejected(reason) => {
+                tracing::debug!(reason = %reason, "Muse workflow rejected request");
+                crate::providers::llm::LlmError::Rejected
+            }
+            WorkflowFailure::Upstream(kind, reason) => {
+                tracing::debug!(?kind, reason = %reason, "Muse workflow upstream failure");
+                crate::providers::llm::LlmError::Failed
+            }
+            WorkflowFailure::Timeout(reason) => {
+                tracing::debug!(reason = %reason, "Muse workflow timed out");
+                crate::providers::llm::LlmError::Failed
+            }
+        }
+    }
+}
 
-pub(crate) use chat::run_chat_turn_once;
-pub(crate) use media::run_media_turn_once;
-#[allow(unused_imports)]
-pub use media::{pick_media_urls, sniff_media_mime_type};
-#[allow(unused_imports)]
-pub(crate) use png::{encode_rgba_png, remove_background_to_rgba_png};
-#[allow(unused_imports)]
-pub use prompt::{aspect_ratio_hint, flatten_messages, is_thread_url};
-#[allow(unused_imports)]
-pub(crate) use prompt::{extract_prior_turns_and_last_user, followup_text};
-pub use prompt::{format_image_prompt, format_video_prompt};
-
-pub const POLL_INTERVAL: Duration = Duration::from_millis(150);
-pub const MEDIA_POLL_INTERVAL: Duration = Duration::from_millis(600);
-pub const STABLE_POLLS_DONE: usize = 4;
-pub const STABLE_POLLS_FORCE: usize = 12;
-pub const VIDEO_UNMARKED_STABLE_POLLS: usize = 100;
-pub const CUTOUT_HINT: &str = " Isolated subject on a plain, uncluttered studio background.";
-pub const MEDIA_DONE_MARKER: &str = "[ALL_MEDIA_ATTACHED]";
-pub const MUSE_SINGLE_CLIP_LIMIT_SECS: u32 = 10;
-pub const MUSE_MAX_CLIPS_PER_TURN: u32 = 6;
+pub(crate) const MEDIA_DONE_MARKER: &str = "[ALL_MEDIA_ATTACHED]";
+pub(crate) const MUSE_SINGLE_CLIP_LIMIT_SECS: u32 = 10;
+pub(crate) const MUSE_MAX_CLIPS_PER_TURN: u32 = 6;
+pub(crate) const CUTOUT_HINT: &str = "\n\nBackground requirement: Render the subject isolated on a solid, uniform, flat pure-white (#FFFFFF) studio background with clean, crisp edges and no background shadows or gradients so it can be cleanly cut out.";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum MediaKind {
+pub(crate) enum MediaKind {
     Image,
     Video,
 }
 
-impl MediaKind {
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Image => "image",
-            Self::Video => "video",
+pub(crate) const QUOTA_HINTS: &[&str] = &[
+    "rate limit",
+    "quota exceeded",
+    "too many requests",
+    "reached your limit",
+    "daily limit",
+    "usage limit",
+    "try again tomorrow",
+];
+
+pub(crate) const GLITCH_HINTS: &[&str] = &[
+    "hit a glitch",
+    "try again in a moment",
+    "something went wrong",
+    "temporarily unavailable",
+];
+
+pub(crate) fn is_glitch_reply(text: &str) -> bool {
+    let lower = text.trim().to_ascii_lowercase();
+    lower.len() <= 240 && GLITCH_HINTS.iter().any(|h| lower.contains(h))
+}
+
+pub(crate) fn is_quota_reply(text: &str) -> bool {
+    let lower = text.trim().to_ascii_lowercase();
+    lower.len() <= 320 && QUOTA_HINTS.iter().any(|h| lower.contains(h))
+}
+
+pub(crate) fn classify_assistant_error(text: &str) -> Option<(UpstreamFailureKind, String)> {
+    if is_quota_reply(text) {
+        return Some((
+            UpstreamFailureKind::QuotaExceeded,
+            format!("Muse quota exceeded: {}", text.trim()),
+        ));
+    }
+    if is_glitch_reply(text) {
+        return Some((
+            UpstreamFailureKind::Transient,
+            format!("Muse upstream glitch reply: {}", text.trim()),
+        ));
+    }
+    None
+}
+
+pub(crate) fn extract_history_turn_events(history_json: &Value) -> Vec<Value> {
+    let evs = history_json
+        .get("result")
+        .and_then(|r| r.get("chat_events"))
+        .or_else(|| history_json.get("chat_events"))
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+
+    let last_user_idx = evs.iter().rposition(|e| {
+        let p = e.get("payload").unwrap_or(e);
+        e.get("role").and_then(Value::as_str) == Some("user")
+            || p.get("role").and_then(Value::as_str) == Some("user")
+            || e.get("event_name").and_then(Value::as_str) == Some("message.user")
+            || e.get("event").and_then(Value::as_str) == Some("message.user")
+    });
+
+    match last_user_idx {
+        Some(idx) if idx + 1 <= evs.len() => evs[idx + 1..].to_vec(),
+        _ => evs,
+    }
+}
+
+pub(crate) fn has_active_tool_task(turn_events: &[Value]) -> bool {
+    turn_events.iter().any(|ev| {
+        let p = ev.get("payload").unwrap_or(ev);
+        let d = p.get("data").or_else(|| ev.get("data"));
+        let s = d
+            .and_then(|x| x.get("status"))
+            .or_else(|| p.get("status"))
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_ascii_lowercase();
+        let ds = d
+            .and_then(|x| x.get("display_state").or_else(|| x.get("display_status")))
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_ascii_lowercase();
+        matches!(s.as_str(), "running" | "queued" | "in_progress" | "pending")
+            || matches!(ds.as_str(), "working" | "starting")
+    })
+}
+
+pub(crate) fn extract_turn_assistant_messages(turn_events: &[Value]) -> Vec<String> {
+    let mut blocks = Vec::new();
+    for ev in turn_events {
+        let ev_name = ev
+            .get("event_name")
+            .or_else(|| ev.get("event"))
+            .and_then(Value::as_str)
+            .unwrap_or("");
+        if ev_name == "delta.presentation" {
+            continue;
+        }
+        let p = ev.get("payload").unwrap_or(ev);
+        if ev.get("kind").and_then(Value::as_str) == Some("browser_task")
+            || p.get("kind").and_then(Value::as_str) == Some("browser_task")
+        {
+            continue;
+        }
+        let is_assistant = ev.get("role").and_then(Value::as_str) == Some("assistant")
+            || p.get("role").and_then(Value::as_str) == Some("assistant")
+            || ev_name == "message.assistant";
+        if !is_assistant {
+            continue;
+        }
+        let text = ev
+            .get("display_text")
+            .or_else(|| ev.get("text"))
+            .or_else(|| ev.get("content"))
+            .or_else(|| p.get("display_text"))
+            .or_else(|| p.get("content"))
+            .or_else(|| p.get("text"))
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .trim();
+        if !text.is_empty() && !blocks.iter().any(|b| b == text) {
+            blocks.push(text.to_string());
         }
     }
+    blocks
+}
 
-    pub const fn grace_duration(self, denied_approval: bool, has_done_marker: bool) -> Duration {
-        match self {
-            Self::Image => Duration::from_secs(8),
-            Self::Video => {
-                if denied_approval || has_done_marker {
-                    Duration::from_secs(90)
-                } else {
-                    Duration::from_secs(180)
-                }
-            }
-        }
+pub(crate) async fn handle_approval_event<F>(
+    lease: &VmOperationLease,
+    ev: &VmStreamEvent,
+    mut should_approve: F,
+) where
+    F: FnMut(&Value) -> bool,
+{
+    let p = ev.payload();
+    if let Some(app_id) = p
+        .get("approval_id")
+        .or_else(|| p.get("approvalId"))
+        .and_then(Value::as_str)
+    {
+        let allow = should_approve(p);
+        let _ = lease.client().decide_approval(app_id, allow).await;
     }
-
-    pub const fn stall_after(self) -> Duration {
-        match self {
-            Self::Image => Duration::from_secs(120),
-            Self::Video => Duration::from_secs(240),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Deserialize, Default)]
-pub(crate) struct PageState {
-    #[serde(default)]
-    pub ready: bool,
-    #[serde(default, rename = "hasInput")]
-    pub has_input: bool,
-    #[serde(default)]
-    pub head: String,
-}
-
-#[derive(Debug, Clone, Deserialize, Default, PartialEq, Eq)]
-pub(crate) struct AttachmentNode {
-    #[serde(default)]
-    pub tid: String,
-    #[serde(default)]
-    pub kind: String,
-    #[serde(default)]
-    pub src: String,
-    #[serde(default)]
-    pub w: u32,
-    #[serde(default)]
-    pub h: u32,
-    #[serde(default)]
-    pub group: usize,
-}
-
-#[derive(Debug, Clone, Deserialize, Default)]
-pub(crate) struct ChatState {
-    #[serde(default, rename = "agentCount")]
-    pub agent_count: usize,
-    #[serde(default, rename = "lastText")]
-    pub last_text: String,
-    #[serde(default)]
-    pub bubbles: Vec<String>,
-    #[serde(default)]
-    pub generating: bool,
-    #[serde(default)]
-    pub approval: bool,
-    #[serde(default)]
-    pub attachments: Vec<AttachmentNode>,
-    #[serde(default)]
-    pub tail: String,
-}
-
-#[derive(Debug)]
-pub(crate) enum WorkflowFailure {
-    Upstream(UpstreamFailureKind, String),
-    Rejected(String),
-    Timeout(String),
-    Cdp(CdpError),
-}
-
-impl From<CdpError> for WorkflowFailure {
-    fn from(value: CdpError) -> Self {
-        Self::Cdp(value)
-    }
-}
-
-impl WorkflowFailure {
-    pub(crate) fn into_llm_error(self) -> LlmError {
-        match self {
-            Self::Rejected(reason) => {
-                tracing::warn!(reason = %reason, "Muse request rejected");
-                LlmError::Rejected
-            }
-            Self::Upstream(kind, reason) => {
-                tracing::warn!(?kind, reason = %reason, "Muse upstream failure");
-                LlmError::Failed
-            }
-            Self::Timeout(reason) => {
-                tracing::warn!(reason = %reason, "Muse operation timed out");
-                LlmError::Failed
-            }
-            Self::Cdp(err) => {
-                tracing::warn!(error = %err, "Muse CDP failure");
-                LlmError::Failed
+    if let Some(arr) = p
+        .get("pending_approvals")
+        .or_else(|| p.get("pending"))
+        .and_then(Value::as_array)
+    {
+        for item in arr {
+            if let Some(app_id) = item
+                .get("approval_id")
+                .or_else(|| item.get("approvalId"))
+                .and_then(Value::as_str)
+            {
+                let allow = should_approve(item);
+                let _ = lease.client().decide_approval(app_id, allow).await;
             }
         }
     }
 }
+
+pub(crate) use self::chat::run_chat_turn_once;
+pub(crate) use self::media::run_media_turn_once;
+#[cfg(test)]
+pub(crate) use self::png::{
+    decode_uncompressed_or_simple_png, encode_rgba_png, remove_background_to_rgba_png,
+};
+#[cfg(test)]
+pub(crate) use self::prompt::flatten_messages;
+pub(crate) use self::prompt::{format_image_prompt, format_video_prompt};

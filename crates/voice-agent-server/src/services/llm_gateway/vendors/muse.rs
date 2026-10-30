@@ -1,5 +1,5 @@
 use std::{
-    collections::{BTreeMap, HashMap, HashSet},
+    collections::{HashMap, HashSet},
     sync::Arc,
     time::Duration,
 };
@@ -17,7 +17,11 @@ use crate::{
         cdp::{BrowserEngine, BrowserPage},
         config::{
             MuseAccountCredential, NEW_THREAD_URL, SESSION_API_URL, SITE_URL, VM_WAKE_API_URL,
-            has_required_cookies, parse_accounts,
+            format_cookie_header, has_required_cookies, parse_accounts, parse_cookie_header,
+        },
+        credentials::{
+            build_wss_url, build_wss_url_from_init_json, fetch_wss_from_cookie_http,
+            get_wss_expiry_unix_secs, merge_set_cookies,
         },
     },
     services::llm_gateway::types::{
@@ -91,7 +95,7 @@ impl MuseOAuthDriver {
         mut cred: MuseAccountCredential,
         strict_network: bool,
     ) -> Result<(MuseAccountCredential, Option<String>), GatewayError> {
-        if !self.verify_online {
+        if !self.verify_online || cred.cookies.is_empty() {
             return Ok((cred, None));
         }
 
@@ -135,29 +139,37 @@ impl MuseOAuthDriver {
             return Ok((cred, None));
         }
 
-        for header_val in resp.headers().get_all(reqwest::header::SET_COOKIE) {
-            if let Ok(raw) = header_val.to_str()
-                && let Some(first_part) = raw.split(';').next()
-                && let Some((k, v)) = first_part.split_once('=')
-            {
-                let k = k.trim();
-                let v = v.trim();
-                if !k.is_empty() && !v.is_empty() {
-                    cred.cookies.insert(k.to_owned(), v.to_owned());
-                }
-            }
+        let merged_header = merge_set_cookies(&cookie_header, resp.headers());
+        for (k, v) in parse_cookie_header(&merged_header) {
+            cred.cookies.insert(k, v);
         }
 
+        let site_base_url = self
+            .session_api_url
+            .split("/api/")
+            .next()
+            .unwrap_or(SITE_URL)
+            .trim_end_matches('/');
+
         let mut discovered_email: Option<String> = None;
+        let mut endpoint_url: Option<String> = None;
         if let Ok(body) = resp.json::<Value>().await {
             if cred.vm_id.is_none() {
                 cred.vm_id = body
                     .get("vm_id")
+                    .or_else(|| body.get("vmId"))
                     .and_then(Value::as_str)
                     .map(str::trim)
                     .filter(|s| !s.is_empty())
                     .map(ToOwned::to_owned);
             }
+            endpoint_url = body
+                .get("endpointUrl")
+                .or_else(|| body.get("endpoint_url"))
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(ToOwned::to_owned);
             discovered_email = body
                 .get("email")
                 .and_then(Value::as_str)
@@ -169,6 +181,66 @@ impl MuseOAuthDriver {
                 .map(str::trim)
                 .filter(|s| !s.is_empty())
                 .map(ToOwned::to_owned);
+        }
+
+        if let (Some(vm), Some(ep)) = (cred.vm_id.clone(), endpoint_url) {
+            let updated_cookie_header = format_cookie_header(&cred.cookies);
+            if let Ok(t_resp) = self
+                .http
+                .post(format!("{site_base_url}/api/hatch/token"))
+                .header("Origin", site_base_url)
+                .header("Referer", NEW_THREAD_URL)
+                .header("Cookie", &updated_cookie_header)
+                .json(&serde_json::json!({
+                    "vmAddress": ep,
+                    "vmName": vm,
+                }))
+                .send()
+                .await
+            {
+                let token_merged_cookies =
+                    merge_set_cookies(&updated_cookie_header, t_resp.headers());
+                for (k, v) in parse_cookie_header(&token_merged_cookies) {
+                    cred.cookies.insert(k, v);
+                }
+                if t_resp.status().is_success()
+                    && let Ok(t_body) = t_resp.json::<Value>().await
+                    && let Some(auth_token) = t_body
+                        .get("token")
+                        .or_else(|| t_body.get("authToken"))
+                        .and_then(Value::as_str)
+                        .filter(|s| !s.is_empty())
+                {
+                    let notary_token = t_body
+                        .get("notary_token")
+                        .or_else(|| t_body.get("noiseNotaryToken"))
+                        .or_else(|| t_body.get("notaryToken"))
+                        .and_then(Value::as_str)
+                        .unwrap_or("");
+                    let wss = build_wss_url(&vm, auth_token, notary_token);
+                    cred.wss_expires = get_wss_expiry_unix_secs(&wss);
+                    cred.wss_url = Some(wss);
+                }
+            }
+        }
+
+        if cred.wss_url.is_none() {
+            let current_cookie_header = format_cookie_header(&cred.cookies);
+            if let Ok(bootstrapped) =
+                fetch_wss_from_cookie_http(&self.http, &current_cookie_header, site_base_url).await
+            {
+                for (k, v) in parse_cookie_header(&bootstrapped.cookie_header) {
+                    cred.cookies.insert(k, v);
+                }
+                if cred.vm_id.is_none() {
+                    cred.vm_id = bootstrapped.vm_id;
+                }
+                if discovered_email.is_none() {
+                    discovered_email = bootstrapped.discovered_email;
+                }
+                cred.wss_expires = get_wss_expiry_unix_secs(&bootstrapped.wss_url);
+                cred.wss_url = Some(bootstrapped.wss_url);
+            }
         }
 
         if let Some(vm) = &cred.vm_id {
@@ -196,10 +268,15 @@ impl MuseOAuthDriver {
         discovered_email: Option<String>,
     ) -> Result<ExchangedOAuthAccount, GatewayError> {
         let now_epoch = unix_seconds().unwrap_or(0);
-        let expires_at = cred
-            .cookie_expires
+        let candidate_exp = match (cred.cookie_expires, cred.wss_expires) {
+            (Some(c), Some(w)) => Some(c.min(w)),
+            (Some(c), None) => Some(c),
+            (None, Some(w)) => Some(w),
+            (None, None) => None,
+        };
+        let expires_at = candidate_exp
             .map(|exp| exp as i64)
-            .filter(|&exp| exp > now_epoch)
+            .filter(|&exp| exp > 0)
             .or(Some(now_epoch + DEFAULT_MUSE_RENEWAL_INTERVAL_SECS));
         let vm_id = cred.vm_id.clone();
         let serialized_cred =
@@ -221,15 +298,6 @@ impl Default for MuseOAuthDriver {
     fn default() -> Self {
         Self::new()
     }
-}
-
-fn format_cookie_header(cookies: &BTreeMap<String, String>) -> String {
-    cookies
-        .iter()
-        .filter(|(_, v)| !v.is_empty())
-        .map(|(k, v)| format!("{k}={v}"))
-        .collect::<Vec<_>>()
-        .join("; ")
 }
 
 #[async_trait]
@@ -329,16 +397,42 @@ impl OAuthVendorDriver for MuseOAuthDriver {
             return Ok(None);
         }
 
+        let mut init_wss_url = None;
+        let mut init_vm_id = None;
+        if let Ok(val) = page
+            .evaluate_json(
+                "window.__HATCH_GATEWAY_INIT__ || null",
+                false,
+                Duration::from_secs(3),
+            )
+            .await
+            && val.is_object()
+            && let Ok(wss) = build_wss_url_from_init_json(&val)
+        {
+            init_vm_id = val
+                .get("vmName")
+                .or_else(|| val.get("vmId"))
+                .or_else(|| val.get("vm_id"))
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(ToOwned::to_owned);
+            init_wss_url = Some(wss);
+        }
+
         if let Some(closed_page) = self.login_pages.lock().await.remove(state) {
             closed_page.close().await;
         }
         engine.dispose_context(&format!("muse-login-{state}")).await;
 
+        let wss_expires = init_wss_url.as_deref().and_then(get_wss_expiry_unix_secs);
         let cred = MuseAccountCredential {
             label: "muse-cdp".to_owned(),
             cookies,
             cookie_expires: None,
-            vm_id: None,
+            vm_id: init_vm_id,
+            wss_url: init_wss_url,
+            wss_expires,
         };
         let (verified_cred, email) = self.verify_and_renew_session(cred, false).await?;
         let exchanged = Self::build_exchanged_account(verified_cred, email)?;
