@@ -764,3 +764,155 @@ it('renders YAML frontmatter as a collapsible Obsidian-style Properties section 
   }
 })
 
+it('renders a Recent section below the tree-folder panel and lists recently opened notes in most-recent-first order without duplicates', async () => {
+  const fallback = requestJsonMock.getMockImplementation()!
+  requestJsonMock.mockImplementation(async (url: string) => {
+    if (url === '/api/admin/knowledge/tree?space=wiki') {
+      return {
+        items: [
+          { type: 'folder', space: 'wiki', path: 'wiki', name: 'wiki', editable: true },
+          { type: 'file', space: 'wiki', path: 'wiki/wiki-file.md', name: 'wiki-file.md', id: 'wiki_demo', revision: 1, status: 'verified', editable: true },
+          { type: 'file', space: 'wiki', path: 'wiki/llm.md', name: 'llm.md', id: 'wiki_llm', revision: 1, status: 'verified', editable: true },
+        ],
+      }
+    }
+    if (url === '/api/admin/knowledge/pages/wiki_llm') {
+      return {
+        id: 'wiki_llm',
+        title: 'LLM Guide',
+        body: '# LLM Guide\n\nTransformer details.',
+        status: 'verified',
+        revision: 1,
+        source_ref: null,
+      }
+    }
+    return fallback(url)
+  })
+
+  const wrapper = mount(KnowledgePage)
+  try {
+    await flushPromises()
+    const explorer = wrapper.get('aside.a-explorer')
+    const explorerChildren = Array.from(explorer.element.children)
+    const treeIndex = explorerChildren.findIndex(el => el.classList.contains('tree-holder'))
+    const recentIndex = explorerChildren.findIndex(el => el.classList.contains('a-recent'))
+    expect(treeIndex).toBeGreaterThanOrEqual(0)
+    expect(recentIndex).toBe(treeIndex + 1)
+
+    const recentSection = explorer.get('section.a-recent')
+    expect(recentSection.text()).toContain('Recent')
+    expect(recentSection.findAll('button.a-recent-item').map(btn => btn.get('.a-recent-title').text())).toEqual([
+      'Wiki Demo',
+    ])
+
+    // Open LLM Guide -> moves to top of Recent
+    const llmLeaf = wrapper.findAll('button.tree-leaf').find(btn => btn.text().includes('llm'))!
+    await llmLeaf.trigger('click')
+    await flushPromises()
+    expect(recentSection.findAll('button.a-recent-item').map(btn => btn.get('.a-recent-title').text())).toEqual([
+      'LLM Guide',
+      'Wiki Demo',
+    ])
+
+    // Re-open Wiki Demo -> deduplicates and moves Wiki Demo back to top
+    const demoLeaf = wrapper.findAll('button.tree-leaf').find(btn => btn.text().includes('wiki-file'))!
+    await demoLeaf.trigger('click')
+    await flushPromises()
+    expect(recentSection.findAll('button.a-recent-item').map(btn => btn.get('.a-recent-title').text())).toEqual([
+      'Wiki Demo',
+      'LLM Guide',
+    ])
+  } finally {
+    wrapper.unmount()
+  }
+})
+
+it('collapses and expands the Recent panel and persists its collapsed state in localStorage', async () => {
+  const first = mount(KnowledgePage)
+  try {
+    await flushPromises()
+    const recentSection = first.get('section.a-recent')
+    const toggleBtn = recentSection.get('button.a-recent-toggle')
+    expect(recentSection.classes()).not.toContain('is-collapsed')
+    expect(toggleBtn.attributes('aria-expanded')).toBe('true')
+    expect(recentSection.find('.a-recent-list').exists()).toBe(true)
+
+    await toggleBtn.trigger('click')
+    expect(recentSection.classes()).toContain('is-collapsed')
+    expect(toggleBtn.attributes('aria-expanded')).toBe('false')
+    expect(recentSection.find('.a-recent-list').exists()).toBe(false)
+    expect(window.localStorage.getItem('voice-agent-knowledge-recent-collapsed')).toBe('true')
+  } finally {
+    first.unmount()
+  }
+
+  const second = mount(KnowledgePage)
+  try {
+    await flushPromises()
+    const recentSection = second.get('section.a-recent')
+    const toggleBtn = recentSection.get('button.a-recent-toggle')
+    expect(recentSection.classes()).toContain('is-collapsed')
+    expect(toggleBtn.attributes('aria-expanded')).toBe('false')
+    expect(recentSection.find('.a-recent-list').exists()).toBe(false)
+
+    await toggleBtn.trigger('click')
+    expect(recentSection.classes()).not.toContain('is-collapsed')
+    expect(toggleBtn.attributes('aria-expanded')).toBe('true')
+    expect(recentSection.find('.a-recent-list').exists()).toBe(true)
+    expect(window.localStorage.getItem('voice-agent-knowledge-recent-collapsed')).toBe('false')
+  } finally {
+    second.unmount()
+  }
+})
+
+it('persists Recent items across reloads and switches space when clicking a Recent item from another tab', async () => {
+  const first = mount(KnowledgePage)
+  try {
+    await flushPromises()
+    // Initial load opened Wiki Demo in Knowledge (wiki) space
+    const fileTab = first.findAll('[role="tablist"][aria-label="Knowledge source"] [role="tab"]')
+      .find(tab => tab.text() === 'File')!
+    await fileTab.trigger('click')
+    await flushPromises()
+    const rawLeaf = first.findAll('button.tree-leaf').find(btn => btn.text().includes('raw-file'))!
+    await rawLeaf.trigger('click')
+    await flushPromises()
+    expect(first.findAll('button.a-recent-item').map(btn => btn.get('.a-recent-title').text())).toEqual([
+      'raw-file',
+      'Wiki Demo',
+    ])
+  } finally {
+    first.unmount()
+  }
+
+  const second = mount(KnowledgePage)
+  try {
+    await flushPromises()
+    // Reloaded in File (raw) space: both raw-file and Wiki Demo remain in Recent
+    const recentItems = second.findAll('button.a-recent-item')
+    expect(recentItems.map(btn => btn.get('.a-recent-title').text())).toEqual([
+      'raw-file',
+      'Wiki Demo',
+    ])
+
+    // Click Wiki Demo in Recent while currently on File tab -> switches to Knowledge tab and opens Wiki Demo
+    const wikiRecentBtn = recentItems.find(btn => btn.text().includes('Wiki Demo'))!
+    await wikiRecentBtn.trigger('click')
+    await flushPromises()
+
+    const knowledgeTab = second.findAll('[role="tablist"][aria-label="Knowledge source"] [role="tab"]')
+      .find(tab => tab.text() === 'Knowledge')!
+    expect(knowledgeTab.attributes('aria-selected')).toBe('true')
+    expect(second.get('.doc h1').text()).toBe('Wiki Demo')
+    expect(second.findAll('button.a-recent-item').map(btn => btn.get('.a-recent-title').text())).toEqual([
+      'Wiki Demo',
+      'raw-file',
+    ])
+  } finally {
+    second.unmount()
+  }
+})
+
+
+
+

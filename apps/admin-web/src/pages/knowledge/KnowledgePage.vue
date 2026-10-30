@@ -29,6 +29,7 @@ type Hit = {
 }
 type TreeSpace = 'raw' | 'wiki' | 'drafts'
 type TreeNode = { type: 'file' | 'folder'; space: TreeSpace; path: string; name: string; editable: boolean; id?: string; revision?: number; status?: string; has_staged_draft?: boolean }
+type RecentItem = { space: TreeSpace; path: string; title: string; id?: string }
 type RawFile = { path: string; body: string; sha256: string }
 type Page = { id: string; title: string; body: string; revision: number; status: string; source_ref: string | null }
 type Health = { health: string; document_count: number; last_complete_scan_at: number | null }
@@ -43,6 +44,8 @@ const EXPLORER_STATE_KEY = 'voice-agent-knowledge-explorer-state-v1'
 const EXPLORER_COLLAPSED_KEY = 'voice-agent-knowledge-explorer-collapsed'
 const OUTLINE_COLLAPSED_KEY = 'voice-agent-knowledge-outline-collapsed'
 const PROPERTIES_COLLAPSED_KEY = 'voice-agent-knowledge-properties-collapsed'
+const RECENT_COLLAPSED_KEY = 'voice-agent-knowledge-recent-collapsed'
+const RECENT_ITEMS_KEY = 'voice-agent-knowledge-recent-v1'
 function restoredExplorerCollapsed(): boolean {
   try {
     return window.localStorage.getItem(EXPLORER_COLLAPSED_KEY) === 'true'
@@ -64,9 +67,61 @@ function restoredPropertiesCollapsed(): boolean {
     return false
   }
 }
+function restoredRecentCollapsed(): boolean {
+  try {
+    return window.localStorage.getItem(RECENT_COLLAPSED_KEY) === 'true'
+  } catch {
+    return false
+  }
+}
 const explorerCollapsed = ref(restoredExplorerCollapsed())
 const outlineCollapsed = ref(restoredOutlineCollapsed())
 const propertiesCollapsed = ref(restoredPropertiesCollapsed())
+const recentCollapsed = ref(restoredRecentCollapsed())
+function restoredRecentItems(): RecentItem[] {
+  try {
+    const raw = window.localStorage.getItem(RECENT_ITEMS_KEY)
+    if (!raw || raw.length > 16_384) return []
+    const parsed: unknown = JSON.parse(raw)
+    if (!Array.isArray(parsed)) return []
+    const items: RecentItem[] = []
+    for (const candidate of parsed.slice(0, 20)) {
+      if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) continue
+      const entry = candidate as Record<string, unknown>
+      const space = entry.space
+      if (space !== 'wiki' && space !== 'raw' && space !== 'drafts') continue
+      if (!validExplorerPath(entry.path, space) || typeof entry.title !== 'string' || !entry.title.trim()) continue
+      items.push({
+        space,
+        path: entry.path,
+        title: entry.title.trim(),
+        ...(typeof entry.id === 'string' && entry.id.trim() ? { id: entry.id.trim() } : {}),
+      })
+    }
+    return items
+  } catch {
+    return []
+  }
+}
+const recentItems = ref<RecentItem[]>(restoredRecentItems())
+function recordRecentItem(item: RecentItem) {
+  const nextTitle = item.title.trim() || item.path.split('/').pop()?.replace(/\.md$/i, '') || item.path
+  const normalized: RecentItem = {
+    space: item.space,
+    path: item.path,
+    title: nextTitle,
+    ...(item.id ? { id: item.id } : {}),
+  }
+  recentItems.value = [
+    normalized,
+    ...recentItems.value.filter(entry =>
+      !(entry.space === normalized.space && (normalized.id && entry.id ? entry.id === normalized.id : entry.path === normalized.path)),
+    ),
+  ].slice(0, 20)
+  try {
+    window.localStorage.setItem(RECENT_ITEMS_KEY, JSON.stringify(recentItems.value))
+  } catch { /* Storage can be disabled; keep in-memory recent items. */ }
+}
 function toggleExplorer() {
   explorerCollapsed.value = !explorerCollapsed.value
   try {
@@ -83,6 +138,12 @@ function toggleProperties() {
   propertiesCollapsed.value = !propertiesCollapsed.value
   try {
     window.localStorage.setItem(PROPERTIES_COLLAPSED_KEY, String(propertiesCollapsed.value))
+  } catch { /* Storage can be disabled; keep the default. */ }
+}
+function toggleRecent() {
+  recentCollapsed.value = !recentCollapsed.value
+  try {
+    window.localStorage.setItem(RECENT_COLLAPSED_KEY, String(recentCollapsed.value))
   } catch { /* Storage can be disabled; keep the default. */ }
 }
 type ExplorerPreference = { openFolders: string[]; selectedPath: string }
@@ -252,6 +313,7 @@ async function confirmInlineNote() {
     composeBaseFolder.value = folder
     folderPath.value = folder
     selectedPath.value = path
+    recordRecentItem({ space: 'raw', path, title: heading })
     composeOpen.value = true
     viewMode.value = 'compose'
     cancelInlineNote()
@@ -383,6 +445,11 @@ async function onFileDrop(event: DragEvent, targetFolderPath?: string) {
       folderPath.value = folder
       openFolders.value = new Set([...openFolders.value, folder])
       selectedPath.value = lastCreated.path || (folder + '/' + lastFileName)
+      recordRecentItem({
+        space: 'raw',
+        path: selectedPath.value,
+        title: title.value,
+      })
       notice.value = t('knowledgeV3.rawSaved')
       await refreshTree()
       await refreshHealth()
@@ -574,10 +641,15 @@ async function openRawNote(path: string, displayTitle: string) {
   try {
     const result = await requestJson<RawFile>(withQuery('/api/admin/knowledge/raw/files', { path }))
     rawFile.value = result
-    title.value = displayTitle
+    title.value = displayTitle.replace(/\.md$/i, '')
     body.value = result.body
     sourceRef.value = ''
     selectedPath.value = result.path || path
+    recordRecentItem({
+      space: 'raw',
+      path: selectedPath.value,
+      title: title.value,
+    })
   } catch (cause) { error.value = formatApiError(cause) }
   finally {
     busy.value = false
@@ -631,11 +703,18 @@ async function openPage(id: string, nodePath?: string) {
     )
     selected.value = page
     const physical = tree.value.find(n => n.space === activeSpace.value && n.id === page.id)
+    const resolvedPath = nodePath || physical?.path || ('wiki/' + page.id.replace(/^wiki\//, ''))
     if (nodePath) selectedPath.value = nodePath
     else if (physical) selectedPath.value = physical.path
     title.value = page.title
     body.value = page.body
     sourceRef.value = page.source_ref ?? ''
+    recordRecentItem({
+      space: 'wiki',
+      path: resolvedPath,
+      title: page.title,
+      id: page.id,
+    })
   } catch (cause) { error.value = formatApiError(cause) }
   finally {
     busy.value = false
@@ -819,6 +898,32 @@ async function chooseNode(node: TreeNode) {
     return
   }
   await openRawNote(node.path, node.name)
+}
+async function openRecentItem(item: RecentItem) {
+  if (busy.value || !leaveComposeForNavigation()) return
+  viewMode.value = 'read'
+  if (activeSpace.value !== item.space) {
+    const shouldRerunSearch = searchOpen.value && Boolean(q.value.trim())
+    resetExplorer(item.space, searchOpen.value)
+    composeOpen.value = false
+    await refreshTree()
+    if (shouldRerunSearch) await search()
+  }
+  const segments = item.path.split('/')
+  const parentFolders = segments.slice(0, -1).map((_, index) =>
+    segments.slice(0, index + 1).join('/'))
+  openFolders.value = new Set([...openFolders.value, ...parentFolders])
+  const node = tree.value.find(n =>
+    n.space === item.space && n.type === 'file' && (n.path === item.path || (item.id && n.id === item.id)))
+  if (node) {
+    await chooseNode(node)
+    return
+  }
+  if (item.space === 'raw') {
+    await openRawNote(item.path, item.title)
+    return
+  }
+  await openPage(item.id || item.path, item.path)
 }
 function segmentsOfPath(value: string, file: boolean): string[] {
   const parts = value.split('/')
@@ -1196,6 +1301,28 @@ onMounted(() => {
         </form>
         </template>
       </div>
+      <section class="a-recent" :class="{ 'is-collapsed': recentCollapsed }" :aria-label="t('knowledgeV3.recent')">
+        <button type="button" class="a-recent-toggle"
+          :aria-expanded="!recentCollapsed"
+          aria-controls="knowledge-recent-list"
+          @click="toggleRecent">
+          <ChevronRight v-if="recentCollapsed" :size="14" class="shrink-0 opacity-70" />
+          <ChevronDown v-else :size="14" class="shrink-0 opacity-70" />
+          <span class="a-recent-heading">{{ t('knowledgeV3.recent') }}</span>
+          <span class="a-recent-count">{{ recentItems.length }}</span>
+        </button>
+        <div v-if="!recentCollapsed" id="knowledge-recent-list" class="a-recent-list">
+          <p v-if="!recentItems.length" class="a-recent-empty">{{ t('knowledgeV3.recentEmpty') }}</p>
+          <button v-for="item in recentItems" :key="item.space + ':' + (item.id || item.path)"
+            type="button" class="a-recent-item"
+            :class="{ active: activeSpace === item.space && (selectedPath === item.path || (item.id && selected?.id === item.id)) }"
+            :title="item.path"
+            @click="openRecentItem(item)">
+            <FileText :size="14" class="shrink-0 opacity-60" />
+            <span class="a-recent-title">{{ item.title }}</span>
+          </button>
+        </div>
+      </section>
       <div class="a-vault-footer">
         <span class="dot"></span>
         <span class="min-w-0 truncate">Local Markdown vault</span>

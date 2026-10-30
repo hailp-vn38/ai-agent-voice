@@ -69,6 +69,93 @@
 .knowledge-a .tree-leaf:hover { background: var(--sidebar-accent); }
 .knowledge-a .tree-leaf.active { background: var(--sidebar-accent); color: var(--studio-violet); font-weight: 680; }
 .knowledge-a .tree-leaf.active svg { opacity: 1; }
+.knowledge-a .a-recent {
+  flex: 0 0 25%;
+  height: 25%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  border-top: 1px solid var(--border);
+  background: var(--sidebar);
+}
+.knowledge-a .a-recent.is-collapsed {
+  flex: none;
+  height: auto;
+}
+.knowledge-a .a-recent-toggle {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 12px;
+  border: 0;
+  background: transparent;
+  font-size: 11px;
+  font-weight: 680;
+  color: var(--muted-foreground);
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  text-align: left;
+  flex: none;
+  transition: background-color 120ms ease, color 120ms ease;
+}
+.knowledge-a .a-recent-toggle:hover {
+  background: var(--sidebar-accent);
+  color: var(--sidebar-foreground);
+}
+.knowledge-a .a-recent-count {
+  margin-left: auto;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--muted);
+  color: var(--muted-foreground);
+  font-size: 10px;
+  font-weight: 650;
+  line-height: 1.6;
+}
+.knowledge-a .a-recent-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 2px 9px 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.knowledge-a .a-recent-empty {
+  margin: 0;
+  padding: 10px 8px;
+  font-size: 11.5px;
+  color: var(--muted-foreground);
+}
+.knowledge-a .a-recent-item {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  text-align: left;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  min-height: 30px;
+  padding: 5px 10px;
+  border-radius: 6px;
+  font-size: 12px;
+  line-height: 1.35;
+}
+.knowledge-a .a-recent-item:hover { background: var(--sidebar-accent); }
+.knowledge-a .a-recent-item.active {
+  background: var(--sidebar-accent);
+  color: var(--studio-violet);
+  font-weight: 650;
+}
+.knowledge-a .a-recent-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .knowledge-a .a-vault-footer { margin: 0 18px 24px; border-top: 1px solid var(--border); padding: 13px 0; color: var(--muted-foreground); font-size: 11px; display: flex; align-items: center; gap: 9px; }
 .knowledge-a .a-vault-footer .dot { height: 6px; width: 6px; background: var(--success); border-radius: 50%; }
 .knowledge-a .a-workspace { background: var(--background); flex: 1; display: flex; flex-direction: column; min-width: 0; }
