@@ -654,6 +654,11 @@ async fn server_tts_runtime_synthesizes_with_female_voice_override_when_bound_to
             _cancelled: &std::sync::atomic::AtomicBool,
             on_pcm: &mut dyn FnMut(crate::audio::PcmF32Mono) -> Result<(), crate::providers::TtsError>,
         ) -> Result<(), crate::providers::TtsError> {
+            if request.selection.voice != "__readiness__" && request.selection.language == "und" {
+                return Err(crate::providers::TtsError::UnsupportedLanguage(
+                    request.selection.language.clone(),
+                ));
+            }
             self.seen_voices
                 .lock()
                 .unwrap()
@@ -732,6 +737,10 @@ async fn server_tts_runtime_synthesizes_with_female_voice_override_when_bound_to
 
     let turbo_backend = CatalogMediaBackend::from_catalog(vec![turbo_prov])
         .with_tts_runtime("tts_vieneu_turbo", turbo_runtime.clone());
+    assert_eq!(
+        turbo_backend.tts_constraints().provider_label,
+        "VieNeu Turbo (model: vieneu_v3_turbo_fp32)"
+    );
 
     let out_female = turbo_backend
         .synthesize_tts(&TtsSynthesisRequest {
@@ -770,7 +779,7 @@ async fn server_tts_runtime_synthesizes_with_female_voice_override_when_bound_to
             supported: &["adam", "minh_quan", "my_duyen", "mai_anh", "ai_han"],
             seen_voices: nano_seen.clone(),
         }),
-        worker_cfg,
+        worker_cfg.clone(),
         crate::providers::TtsBinding {
             voice: "adam".into(),
             language: "vi-VN".into(),
@@ -820,6 +829,53 @@ async fn server_tts_runtime_synthesizes_with_female_voice_override_when_bound_to
         &["my_duyen".to_string()]
     );
     let _ = nano_runtime.shutdown_acknowledged();
+
+    // C. Readiness-bound runtime (`__readiness__` / `language = "und"`) with `:mai_anh` suffix in `ResolvedLlmProvider.model`
+    let readiness_seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let readiness_runtime = std::sync::Arc::new(crate::workers::TtsWorkerRuntime::new(
+        std::sync::Arc::new(RecordingVieneuTts {
+            model: "vieneu_v3_turbo_fp32",
+            supported: &["hai_dang", "ngoc_huyen", "mai_anh"],
+            seen_voices: readiness_seen.clone(),
+        }),
+        worker_cfg,
+    ));
+    let readiness_prov = ResolvedLlmProvider {
+        provider_ref: "tts_vieneu_readiness".into(),
+        name: "VieNeu Readiness".into(),
+        source: "database",
+        adapter: "vieneu".into(),
+        model: "vieneu_v3_turbo_fp32:mai_anh".into(),
+        base_url: String::new(),
+        api_key: None,
+        gateway_binding: None,
+        timeout_ms: 15_000,
+        max_tokens: 4_096,
+        context_limit_tokens: 64_000,
+        reasoning_effort: None,
+        temperature_percent: None,
+        tags: vec!["tts".into()],
+        muse_options: None,
+    };
+    let readiness_backend = CatalogMediaBackend::from_catalog(vec![readiness_prov])
+        .with_tts_runtime("tts_vieneu_readiness", readiness_runtime.clone());
+    assert_eq!(readiness_backend.tts_constraints().default_voice, "mai_anh");
+    let readiness_out = readiness_backend
+        .synthesize_tts(&TtsSynthesisRequest {
+            text: "Xin chào từ runtime readiness".into(),
+            filename: "readiness-default.wav".into(),
+            voice: String::new(),
+            language: "vi-VN".into(),
+            speed: 1.0,
+        })
+        .await
+        .unwrap();
+    assert_eq!(readiness_out.voice, "mai_anh");
+    assert_eq!(
+        readiness_seen.lock().unwrap().as_slice(),
+        &["mai_anh".to_string()]
+    );
+    let _ = readiness_runtime.shutdown_acknowledged();
 }
 
 #[test]
@@ -831,7 +887,7 @@ fn chillaudio_validate_and_synthesize_diagnostic_accept_supported_voices() {
         token: crate::config::SecretString::new("token"),
         voice: "BV075_streaming".into(),
         language: "vi".into(),
-        timeout_ms: 5_000,
+        timeout_ms: 500,
         preload: false,
     });
     for valid_voice in [
@@ -860,4 +916,46 @@ fn chillaudio_validate_and_synthesize_diagnostic_accept_supported_voices() {
         bad,
         Err(crate::providers::TtsError::UnsupportedVoice(_))
     ));
+    let cancelled = std::sync::atomic::AtomicBool::new(true);
+    let bad_synth = provider.synthesize_diagnostic(
+        &crate::providers::TtsDiagnosticRequest {
+            text: "Xin chào".into(),
+            voice: Some("unknown_voice".into()),
+            language: Some("vi".into()),
+        },
+        &cancelled,
+        &mut |_| Ok(()),
+    );
+    assert!(matches!(
+        bad_synth,
+        Err(crate::providers::TtsError::UnsupportedVoice(_))
+    ));
+    let cancelled_synth = provider.synthesize_diagnostic(
+        &crate::providers::TtsDiagnosticRequest {
+            text: "Xin chào".into(),
+            voice: Some("BV421_vivn_streaming".into()),
+            language: Some("vi".into()),
+        },
+        &cancelled,
+        &mut |_| Ok(()),
+    );
+    assert!(matches!(
+        cancelled_synth,
+        Err(crate::providers::TtsError::Failed)
+    ));
+
+    assert_eq!(
+        crate::providers::tts::voice_catalog::split_adapter_model_and_voice(
+            "openai",
+            "tts-1:onyx"
+        ),
+        ("tts-1", Some("onyx"))
+    );
+    assert_eq!(
+        crate::providers::tts::voice_catalog::split_adapter_model_and_voice(
+            "openai",
+            "deepseek/deepseek-r1:free"
+        ),
+        ("deepseek/deepseek-r1:free", None)
+    );
 }

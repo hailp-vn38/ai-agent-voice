@@ -39,20 +39,25 @@ impl ServerMediaRuntimeBridge {
             .insert(provider_ref, runtime);
     }
 
-    pub(crate) fn inspect_runtime_model_and_voice(
+    fn resident_tts_runtime(
         &self,
         provider_ref: &str,
-    ) -> (Option<String>, Option<String>) {
+    ) -> Option<&std::sync::Arc<crate::workers::TtsWorkerRuntime>> {
         let bare_key = provider_ref
             .strip_prefix("config:tts:")
             .unwrap_or(provider_ref);
-        let Some(runtime) = self
-            .runtimes
+        self.runtimes
             .tts
             .get(provider_ref)
             .or_else(|| self.runtimes.tts.get(bare_key))
             .filter(|r| r.provider().adapter() != "unavailable")
-        else {
+    }
+
+    pub(crate) fn inspect_runtime_model_and_voice(
+        &self,
+        provider_ref: &str,
+    ) -> (Option<String>, Option<String>) {
+        let Some(runtime) = self.resident_tts_runtime(provider_ref) else {
             return (None, None);
         };
         let voice = runtime.binding().voice.trim();
@@ -162,18 +167,8 @@ impl ServerMediaRuntimeBridge {
         text: &str,
         voice: Option<&str>,
     ) -> Result<Vec<u8>, String> {
-        let bare_key = provider_ref
-            .strip_prefix("config:tts:")
-            .unwrap_or(provider_ref);
-
         // 1. Resident TTS runtime in `self.runtimes.tts`
-        if let Some(runtime) = self
-            .runtimes
-            .tts
-            .get(provider_ref)
-            .or_else(|| self.runtimes.tts.get(bare_key))
-            && runtime.provider().adapter() != "unavailable"
-        {
+        if let Some(runtime) = self.resident_tts_runtime(provider_ref) {
             return runtime
                 .synthesize_background_wav(text, voice)
                 .await

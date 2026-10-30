@@ -125,14 +125,20 @@ impl ResolvedLlmProvider {
         runtime_model_id: Option<&str>,
         runtime_default_voice: Option<&str>,
     ) -> orchestrator_flow_rs::TtsProviderConstraints {
-        let spec = runtime_model_id.unwrap_or(&self.model);
+        let (configured_model, configured_voice) =
+            crate::providers::tts::voice_catalog::split_adapter_model_and_voice(
+                &self.adapter,
+                &self.model,
+            );
+        let effective_model = runtime_model_id.unwrap_or(configured_model);
+        let effective_default_voice = runtime_default_voice.or(configured_voice);
         let cat = crate::providers::tts::voice_catalog::catalog_for_adapter(
             &self.adapter,
-            Some(spec),
-            runtime_default_voice,
+            Some(effective_model),
+            effective_default_voice,
         );
         orchestrator_flow_rs::TtsProviderConstraints {
-            provider_label: format!("{} (model: {})", self.name, self.model),
+            provider_label: format!("{} (model: {})", self.name, effective_model),
             default_voice: cat.default_voice,
             female_voices: cat.female_voices,
             male_voices: cat.male_voices,
@@ -154,11 +160,17 @@ impl ResolvedLlmProvider {
         runtime_default_voice: Option<&str>,
         requested_voice: Option<&str>,
     ) -> String {
-        let spec = runtime_model_id.unwrap_or(&self.model);
+        let (configured_model, configured_voice) =
+            crate::providers::tts::voice_catalog::split_adapter_model_and_voice(
+                &self.adapter,
+                &self.model,
+            );
+        let effective_model = runtime_model_id.unwrap_or(configured_model);
+        let effective_default_voice = runtime_default_voice.or(configured_voice);
         crate::providers::tts::voice_catalog::resolve_tts_voice(
             &self.adapter,
-            Some(spec),
-            runtime_default_voice,
+            Some(effective_model),
+            effective_default_voice,
             requested_voice,
         )
     }
@@ -226,10 +238,15 @@ impl ResolvedLlmProvider {
                         .map(|k| crate::config::SecretString::new(k.expose()))
                         .unwrap_or_default()
                 };
+                let (bare_model, _) =
+                    crate::providers::tts::voice_catalog::split_adapter_model_and_voice(
+                        &self.adapter,
+                        &self.model,
+                    );
                 let cfg = crate::config::OpenAiConfig {
                     api_key,
                     base_url,
-                    model: self.model.clone(),
+                    model: bare_model.to_owned(),
                     timeout_ms: self.timeout_ms.max(1_000),
                     max_tokens,
                     context_limit_tokens,

@@ -62,14 +62,19 @@ impl TtsWorkerRuntime {
             .voice
             .clone()
             .unwrap_or_else(|| self.binding.voice.clone());
+        let fallback_lang = if self.binding.language.is_empty() || self.binding.language == "und" {
+            "vi-VN"
+        } else {
+            self.binding.language.as_str()
+        };
         let language = match &request.language {
             Some(lang) => lang.clone(),
             None if self.provider.adapter() == "edge_tts" && request.voice.is_some() => {
                 crate::providers::tts::edge_tts::voices::voice_locale(&voice)
-                    .unwrap_or(&self.binding.language)
+                    .unwrap_or(fallback_lang)
                     .to_string()
             }
-            None => self.binding.language.clone(),
+            None => fallback_lang.to_owned(),
         };
         let selection = TtsBinding { voice, language };
         if self.provider.adapter() == "zerotts_onnx" {

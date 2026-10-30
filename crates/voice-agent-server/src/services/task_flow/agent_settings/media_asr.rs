@@ -395,3 +395,72 @@ impl ServerMediaRuntimeBridge {
         })
     }
 }
+
+#[async_trait::async_trait]
+impl orchestrator_flow_rs::AsrTranscriberBackend for super::media_backend::CatalogMediaBackend {
+    async fn transcribe_asr(
+        &self,
+        req: &orchestrator_flow_rs::AsrTranscriptionRequest,
+    ) -> Result<orchestrator_flow_rs::TranscribedAudioPayload, String> {
+        let Some(resolved) = self.select_provider("asr_transcribe", "asr") else {
+            return self.default_asr.transcribe_asr(req).await;
+        };
+        let lang = req
+            .language
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_owned);
+
+        if resolved.is_asr_adapter() {
+            let wav_bytes = req.wav_bytes.clone();
+            let pcm = tokio::task::spawn_blocking(move || decode_wav_to_16khz_mono(&wav_bytes))
+                .await
+                .map_err(|e| format!("WAV decode worker join error: {e}"))??;
+            let transcript = self
+                .transcribe_via_server_asr(&resolved.provider_ref, pcm)
+                .await?;
+            let segments = transcript
+                .segments
+                .into_iter()
+                .map(|seg| orchestrator_flow_rs::TranscribedAudioSegment {
+                    start_ms: seg.start_ms,
+                    end_ms: seg.end_ms,
+                    text: seg.text,
+                })
+                .collect();
+            return Ok(orchestrator_flow_rs::TranscribedAudioPayload {
+                text: transcript.text,
+                language: lang,
+                duration_ms: req.header.duration_ms,
+                sample_rate: req.header.sample_rate,
+                channels: req.header.channels,
+                provider_id: Some(resolved.provider_ref.clone()),
+                model: Some(resolved.model.clone()),
+                segments,
+            });
+        }
+
+        let provider = resolved.to_llm_provider().map_err(|e| e.to_string())?;
+        let output = provider
+            .invoke(crate::providers::LlmOperation::AudioTranscription {
+                wav_bytes: req.wav_bytes.clone(),
+                language: lang.clone(),
+            })
+            .await
+            .map_err(|e| e.to_string())?;
+        let crate::providers::LlmOutput::Text(text) = output else {
+            return Err("ASR audio provider returned non-text output".to_owned());
+        };
+        Ok(orchestrator_flow_rs::TranscribedAudioPayload {
+            text,
+            language: lang,
+            duration_ms: req.header.duration_ms,
+            sample_rate: req.header.sample_rate,
+            channels: req.header.channels,
+            provider_id: Some(resolved.provider_ref.clone()),
+            model: Some(resolved.model.clone()),
+            segments: Vec::new(),
+        })
+    }
+}

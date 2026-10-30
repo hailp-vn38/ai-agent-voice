@@ -165,6 +165,33 @@ fn split_model_and_voice_spec(spec: Option<&str>) -> (Option<&str>, Option<&str>
     }
 }
 
+/// Tách `raw_model` dạng `{model}:{voice}` thành `(bare_model, Some(voice))` cho các TTS/OpenAI audio adapter,
+/// nhưng giữ nguyên các model LLM có hậu tố kiểu `:free` (OpenRouter).
+pub(crate) fn split_adapter_model_and_voice<'a>(
+    adapter: &str,
+    raw_model: &'a str,
+) -> (&'a str, Option<&'a str>) {
+    let trimmed = raw_model.trim();
+    let Some((left, right)) = trimmed.split_once(':') else {
+        return (trimmed, None);
+    };
+    let model = left.trim();
+    let voice = right.trim();
+    if model.is_empty() || voice.is_empty() {
+        return (trimmed, None);
+    }
+    if adapter.eq_ignore_ascii_case("openai") {
+        let model_lower = model.to_ascii_lowercase();
+        let is_tts_model = model_lower.starts_with("tts-") || model_lower.contains("tts");
+        let is_openai_voice = match_canonical(voice, OPENAI_FEMALE_VOICES).is_some()
+            || match_canonical(voice, OPENAI_MALE_VOICES).is_some();
+        if !is_tts_model && !is_openai_voice {
+            return (trimmed, None);
+        }
+    }
+    (model, Some(voice))
+}
+
 /// Xác định biến thể `VieneuModel` (`V3TurboFp32` vs `V3NanoFp32`) từ `model_or_voice_spec`
 /// và `runtime_default_voice`.
 pub fn resolve_vieneu_model(
