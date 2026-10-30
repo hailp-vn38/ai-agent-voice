@@ -309,6 +309,23 @@ fn system_routes() -> Router<AppState> {
         .route("/system/logs", get(system::get_logs))
         .route("/system/logs/stream", get(system::stream_logs))
         .route("/system/audit-logs", get(system::get_audit_logs))
+        .route("/system/backup/export", get(system::export_backup))
+        .route(
+            "/system/backup/inspect",
+            axum::routing::post(system::inspect_backup).layer(
+                axum::extract::DefaultBodyLimit::max(
+                    crate::database::backup::MAX_BACKUP_BODY_BYTES + 80 * 1024,
+                ),
+            ),
+        )
+        .route(
+            "/system/backup/import",
+            axum::routing::post(system::import_backup).layer(
+                axum::extract::DefaultBodyLimit::max(
+                    crate::database::backup::MAX_BACKUP_BODY_BYTES + 80 * 1024,
+                ),
+            ),
+        )
         .route(
             "/system/assistant-device",
             get(devices::assistant::get).put(devices::assistant::put),

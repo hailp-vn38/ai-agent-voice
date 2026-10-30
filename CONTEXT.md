@@ -466,7 +466,7 @@ _Avoid_: deep JSON allocation, separate Admin/startup validity rules, semantic a
 
 **Forward-only Schema Migration**:
 Monotonic SQLx migration history in which a binary may migrate only forward; an older binary encountering a newer schema must fail before the listener starts.
-_Avoid_: automatic downgrade, unknown-schema best effort, application-owned backup restore
+_Avoid_: automatic downgrade, unknown-schema best effort, schema downgrade via backup import
 
 **SQLite Lock Contention**:
 A SQLite lock persisting beyond the busy timeout, distinct from SQLx pool exhaustion and unavailable storage; it must not be retried at the application layer.
@@ -760,6 +760,11 @@ For Structured Log Entry, Correlation Context, Log Ring Buffer, and Live Log Str
 ## Internal LLM Gateway & OAuth Accounts
 
 See [ADR 0130](docs/adr/0130-internal-llm-gateway-oauth-account-pools.md). For Gateway Account, Gateway Account Pool, Gateway Binding, and OAuth Login Session, use the definitions in [GLOSSARY.md](GLOSSARY.md#internal-llm-gateway--oauth-accounts). The runtime hub lives in `services::llm_gateway`, the LLM adapter in `providers::llm::gateway`, and the Admin HTTP surface in `app::admin::llm_gateway` (`/api/admin/llm-gateway/*`).
+
+## Database Backup & Transactional Restore
+
+See [ADR 0131](docs/adr/0131-database-backup-export-and-transactional-import.md). For Database Backup Bundle, Database Snapshot, and Backup Inspection, use the definitions in [GLOSSARY.md](GLOSSARY.md#database-backup--transactional-restore). The backup engine lives in `database::backup` and the Admin HTTP surface in `app::admin::system` (`/api/admin/system/backup/*`).
+
 
 
 

@@ -8,6 +8,7 @@ import { isApiError } from '@/api/errors'
 import { systemApi } from '@/api/system'
 import type { SystemResources } from '@/api/types/system'
 import AssistantDeviceSettings from '@/components/system/AssistantDeviceSettings.vue'
+import DatabaseBackupCard from '@/components/system/DatabaseBackupCard.vue'
 import ResourceStatCard from '@/components/system/ResourceStatCard.vue'
 import PageHeader from '@/components/admin/PageHeader.vue'
 import { Badge } from '@/components/ui/badge'
@@ -142,6 +143,7 @@ onBeforeUnmount(() => {
       </CardContent>
     </Card>
     <AssistantDeviceSettings />
+    <DatabaseBackupCard />
     <Card>
       <CardHeader class="flex flex-row flex-wrap items-center justify-between gap-3">
         <div class="flex items-center gap-3">

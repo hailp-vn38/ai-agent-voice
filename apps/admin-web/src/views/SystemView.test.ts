@@ -8,14 +8,28 @@ import type { SystemResources } from '@/api/types/system'
 import { useServerStore } from '@/stores/server'
 import ResourceStatCard from '@/components/system/ResourceStatCard.vue'
 import AssistantDeviceSettings from '@/components/system/AssistantDeviceSettings.vue'
+import DatabaseBackupCard from '@/components/system/DatabaseBackupCard.vue'
 import SystemView from './SystemView.vue'
 
-vi.mock('@/api/system', () => ({ systemApi: { health: vi.fn(), ready: vi.fn(), status: vi.fn(), resources: vi.fn() } }))
+const mockLoadAll = vi.fn()
+
+vi.mock('@/api/system', () => ({
+  systemApi: {
+    health: vi.fn(),
+    ready: vi.fn(),
+    status: vi.fn(),
+    resources: vi.fn(),
+    exportBackup: vi.fn(),
+    inspectBackup: vi.fn(),
+    importBackup: vi.fn(),
+  },
+}))
 vi.mock('@/api/assistant', () => ({ assistantApi: { settings: vi.fn(), save: vi.fn(), ticket: vi.fn() } }))
 vi.mock('@/stores/assistant', () => ({ useAssistantStore: () => ({ open: vi.fn() }) }))
 vi.mock('@/stores/admin', () => ({ useAdminStore: () => ({
   agents: [{ id: 'agent-one', name: 'One' }, { id: 'agent-two', name: 'Two' }],
   getTemplatesForAgent: () => [], getDefaultTemplate: () => undefined,
+  loadAll: mockLoadAll,
 }) }))
 
 function snapshot(): SystemResources {
@@ -143,5 +157,77 @@ describe('System resource monitoring', () => {
     const invalid = mount(ResourceStatCard, { props: { title: 'CPU', value: '—', percentage: NaN } })
     expect(invalid.find('[role="progressbar"]').exists()).toBe(false)
     invalid.unmount()
+  })
+
+  it('exports backup and inspects + imports a backup file with admin store reload', async () => {
+    vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:mock')
+    vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {})
+    vi.mocked(systemApi.exportBackup).mockResolvedValue({
+      blob: new Blob(['{}'], { type: 'application/json' }),
+      filename: 'voice-agent-backup.json',
+    })
+    const sampleInspection = {
+      detected_format: 'json' as const,
+      bundle_scope: 'full' as const,
+      effective_scope: 'full' as const,
+      mode: 'merge' as const,
+      created_at: 1700000000000,
+      server_version: '0.1.0',
+      includes_background_settings: true,
+      includes_knowledge_mcp_settings: true,
+      resources: [
+        { resource: 'agents', in_backup: 2, to_create: 1, to_update: 1, to_delete: 0 },
+      ],
+      totals: { to_create: 1, to_update: 1, to_delete: 0, unchanged: 0 },
+      credentials: {
+        total_encrypted: 1,
+        decryptable: 0,
+        unreadable: 1,
+        unreadable_items: [{ resource_type: 'provider', resource_key: 'llm-1', action: 'clear_to_null' }],
+      },
+      warnings: ['1 credential could not be decrypted and will be scrubbed on import.'],
+    }
+    vi.mocked(systemApi.inspectBackup).mockResolvedValue(sampleInspection)
+    vi.mocked(systemApi.importBackup).mockResolvedValue({
+      detected_format: 'json',
+      effective_scope: 'full',
+      mode: 'merge',
+      created_at: 1700000000000,
+      server_version: '0.1.0',
+      applied_background_settings: true,
+      applied_knowledge_mcp_settings: true,
+      resources: sampleInspection.resources,
+      totals: sampleInspection.totals,
+      credentials: sampleInspection.credentials,
+      warnings: sampleInspection.warnings,
+    })
+
+    const wrapper = mount(DatabaseBackupCard, { global: { plugins: [createPinia()] } })
+    await wrapper.get('[data-testid="backup-export-format"]').setValue('sqlite')
+    await wrapper.get('[data-testid="backup-export-scope"]').setValue('config_only')
+    await wrapper.get('[data-testid="backup-export-button"]').trigger('click')
+    await flushPromises()
+    expect(systemApi.exportBackup).toHaveBeenCalledWith('sqlite', 'config_only')
+
+    const file = new File(['{"format":"voice-agent-backup"}'], 'backup.json', { type: 'application/json' })
+    const input = wrapper.get('[data-testid="backup-file-input"]')
+    Object.defineProperty(input.element, 'files', { value: [file], configurable: true })
+    await input.trigger('change')
+    await flushPromises()
+
+    expect(systemApi.inspectBackup).toHaveBeenCalledTimes(1)
+    expect(wrapper.get('[data-testid="backup-inspection-summary"]').text()).toContain('agents')
+    expect(wrapper.get('[data-testid="backup-inspection-warnings"]').text()).toContain('1 credential')
+
+    await wrapper.get('[data-testid="backup-import-button"]').trigger('click')
+    await flushPromises()
+    const confirmDialog = wrapper.findComponent({ name: 'ConfirmDialog' })
+    confirmDialog.vm.$emit('confirm')
+    await flushPromises()
+
+    expect(systemApi.importBackup).toHaveBeenCalledTimes(1)
+    expect(mockLoadAll).toHaveBeenCalledTimes(1)
+    expect(wrapper.find('[data-testid="backup-import-success"]').exists()).toBe(true)
+    wrapper.unmount()
   })
 })

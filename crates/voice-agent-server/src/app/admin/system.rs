@@ -1,4 +1,11 @@
 //! Safe aggregate Admin status; it deliberately excludes paths, configs, secrets and failures.
+
+mod backup;
+#[cfg(test)]
+mod tests;
+
+pub(super) use backup::{export_backup, import_backup, inspect_backup};
+
 use super::*;
 use crate::{
     database::AuditLogFilter,

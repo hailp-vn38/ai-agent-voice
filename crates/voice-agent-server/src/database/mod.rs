@@ -7,6 +7,7 @@ use sqlx::{
 use std::{str::FromStr, time::Duration};
 use thiserror::Error;
 
+pub mod backup;
 pub mod history;
 mod identity;
 mod mcp;

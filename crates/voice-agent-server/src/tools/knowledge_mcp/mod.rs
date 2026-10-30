@@ -159,6 +159,12 @@ impl KnowledgeMcp {
         self.settings.read().expect("settings lock").enabled
     }
 
+    pub(crate) fn reload_from_disk(&self, cfg: &WikiMcpConfig) {
+        let refreshed = load_or_seed_settings(cfg, self.store_path.as_ref());
+        let mut guard = self.settings.write().expect("settings lock");
+        *guard = refreshed;
+    }
+
     pub(crate) fn max_concurrency(&self) -> usize {
         self.settings
             .read()

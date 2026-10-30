@@ -290,5 +290,20 @@ _Avoid_: Secret Reference, inline credential, OAuth token
 Phiên đăng nhập tạm thời được khởi tạo khi Admin bắt đầu luồng ủy quyền OAuth trên trình duyệt (qua mã PKCE hoặc mã thiết bị), tồn tại cho đến khi đổi thành công thành một Gateway Account hoặc hết hạn.
 _Avoid_: Admin Session, Voice Session, Gateway Account
 
+## Database Backup & Transactional Restore
+
+**Database Backup Bundle**:
+Gói sao lưu khả chuyển chứa cấu hình mong muốn, danh mục thiết bị và giọng nói, bí mật đã niêm phong và dữ liệu lưu trữ theo phạm vi đã chọn, định danh tài nguyên bằng khóa nghiệp vụ bất biến thay vì khóa nguyên nội bộ của cơ sở dữ liệu.
+_Avoid_: raw database dump, migration journal, plaintext credential export
+
+**Database Snapshot**:
+Bản chụp tệp vật lý nhất quán tại một thời điểm của cơ sở dữ liệu điều khiển chính, được xuất thành một tệp độc lập mà không làm gián đoạn các phiên đang hoạt động.
+_Avoid_: live WAL file copy, filesystem volume clone, partial table dump
+
+**Backup Inspection**:
+Bước đánh giá chỉ đọc trên một bản sao lưu ứng viên để báo cáo số lượng tài nguyên, các thay đổi thêm mới, cập nhật hoặc xóa bỏ dự kiến, cùng khả năng tương thích của khóa giải mã bí mật trước khi áp dụng.
+_Avoid_: dry-run migration, schema diff, live import
+
+
 
 

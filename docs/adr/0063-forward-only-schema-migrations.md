@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted
+Accepted; clause "Backup/restore không thuộc application V1" đã được supersede bởi [ADR-0131](0131-database-backup-export-and-transactional-import.md) (bất biến forward-only schema migration giữ nguyên).
 
 SQLx migration history là authoritative và schema version monotonic forward-only. Startup kiểm tra DB version không mới hơn migration embedded của binary, rồi mới apply pending forward migrations. DB schema mới hơn binary trả `database_schema_incompatible`; migration failure cũng fail trước listener. `migrate_on_start=false` chỉ cho boot nếu schema đã current. Không reverse migration, drop schema để rollback, ignore unknown schema hoặc best-effort startup.
 

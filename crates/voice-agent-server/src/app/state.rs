@@ -170,6 +170,83 @@ impl AppState {
         self.knowledge_mcp.get().cloned().or(Some(built))
     }
 
+    pub(crate) fn load_backup_companion_settings(
+        &self,
+        scope: crate::database::backup::BackupScope,
+    ) -> crate::database::backup::BackupCompanionSettings {
+        if scope != crate::database::backup::BackupScope::Full {
+            return Default::default();
+        }
+        let store_dir = &self.config.orchestrator.store_dir;
+        let background_settings = std::fs::read_to_string(store_dir.join("agent_settings.json"))
+            .ok()
+            .and_then(|raw| serde_json::from_str::<serde_json::Value>(&raw).ok());
+        let knowledge_mcp_settings =
+            std::fs::read_to_string(store_dir.join("knowledge_mcp_settings.json"))
+                .ok()
+                .and_then(|raw| serde_json::from_str::<serde_json::Value>(&raw).ok());
+        crate::database::backup::BackupCompanionSettings {
+            background_settings,
+            knowledge_mcp_settings,
+        }
+    }
+
+    pub(crate) async fn apply_backup_import_outcome(
+        &self,
+        outcome: &mut crate::database::backup::BackupImportOutcome,
+    ) {
+        outcome.report.applied_background_settings = false;
+        outcome.report.applied_knowledge_mcp_settings = false;
+        if outcome.effective_scope == crate::database::backup::BackupScope::Full {
+            let store_dir = &self.config.orchestrator.store_dir;
+            if let Some(ref bg_val) = outcome.companion_settings.background_settings
+                && let Ok(parsed) = serde_json::from_value::<
+                    crate::services::task_flow::PersistedBackgroundSettings,
+                >(bg_val.clone())
+                && crate::services::task_flow::save_persisted_settings(store_dir, &parsed).is_ok()
+            {
+                let _ = crate::services::task_flow::write_agent_prompts(
+                    &self.config.orchestrator.prompts_dir,
+                    &parsed,
+                );
+                {
+                    let mut guard = self
+                        .admin_task_control
+                        .lock()
+                        .expect("admin_task_control mutex poisoned");
+                    guard.background_enabled_override = parsed.enabled;
+                    guard.background_settings = parsed;
+                    guard.background_revision = guard.background_revision.saturating_add(1);
+                }
+                let _ = crate::services::task_flow::sync_orchestrator_from_state(self).await;
+                outcome.report.applied_background_settings = true;
+            }
+            if let Some(ref kmcp_val) = outcome.companion_settings.knowledge_mcp_settings
+                && kmcp_val.is_object()
+            {
+                let _ = std::fs::create_dir_all(store_dir);
+                if let Ok(serialized) = serde_json::to_string_pretty(kmcp_val)
+                    && std::fs::write(store_dir.join("knowledge_mcp_settings.json"), serialized)
+                        .is_ok()
+                {
+                    if let Some(kmcp) = self.knowledge_mcp.get() {
+                        kmcp.reload_from_disk(&self.config.wiki.mcp);
+                    }
+                    outcome.report.applied_knowledge_mcp_settings = true;
+                }
+            }
+        }
+        let _ = self.llm_gateway_hub.reload_snapshot().await;
+        self.web_assistant.invalidate();
+        if let (Some(database), Some(prewarm)) = (&self.database, &self.provider_prewarm)
+            && let Ok(selected) = database.selected_prewarm_templates().await
+        {
+            for (template_id,) in selected {
+                prewarm.template(template_id).await;
+            }
+        }
+    }
+
     /// Whether this process can accept a *new* Voice connection right now.
     ///
     /// This is the whole of readiness, and what it deliberately does not do is the point: it never
