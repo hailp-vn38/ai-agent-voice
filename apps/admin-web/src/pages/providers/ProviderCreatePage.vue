@@ -22,7 +22,11 @@ import { useRoute, useRouter } from 'vue-router'
 import { formatApiError } from '@/api/errors'
 import { llmGatewayApi } from '@/api/llm-gateway'
 import { providerAdaptersApi } from '@/api/provider-adapters'
-import type { GatewayAccountView, GatewayVendorInfo } from '@/api/types/llm-gateway'
+import type {
+  GatewayAccountView,
+  GatewayPoolModelView,
+  GatewayVendorInfo,
+} from '@/api/types/llm-gateway'
 import type { ProviderAdapter, ProviderConfigField } from '@/api/types/providers'
 import DetailHeader from '@/components/admin/DetailHeader.vue'
 import ProviderTestPanel from '@/components/providers/ProviderTestPanel.vue'
@@ -100,7 +104,6 @@ const ADAPTER_CATALOG_META: Record<string, AdapterPresentation> = {
     cap: ['Streaming', 'Tool calling', 'Vision', 'Image / Video (Muse)'],
     defaults: {
       gateway_binding: 'pool:anthropic',
-      model: 'claude-sonnet-4-20250514',
       timeout_ms: 60000,
     },
     placeholders: {
@@ -294,33 +297,19 @@ const supportsGatewayBinding = computed(() => {
   return id === 'openai' || id === 'llm_gateway'
 })
 
-async function loadGatewayOptions() {
-  try {
-    const [vendorRes, accountRes] = await Promise.all([
-      llmGatewayApi.listVendors(),
-      llmGatewayApi.listAccounts(),
-    ])
-    gatewayVendors.value = vendorRes.vendors
-    gatewayAccounts.value = accountRes.accounts
-  } catch {
-    /* Gateway metadata is optional until user selects gateway binding. */
-  }
-}
+const isUsingGateway = computed(() => {
+  const id = descriptor.value?.adapter || selectedAdapterId.value
+  return id === 'llm_gateway' || (supportsGatewayBinding.value && authSource.value !== 'static_api_key')
+})
 
-const VENDOR_DEFAULT_MODELS: Record<string, string> = {
-  anthropic: 'claude-sonnet-4-20250514',
-  openai_codex: 'gpt-5.6-terra',
-  gemini: 'gemini-2.5-pro',
-  github_copilot: 'gpt-4o',
-  muse: 'muse-chat',
-}
+const KNOWN_GATEWAY_VENDORS = ['anthropic', 'openai_codex', 'gemini', 'github_copilot', 'muse']
 
 function resolveVendorForBinding(binding: string): string {
   if (binding.startsWith('account:')) {
     const key = binding.slice('account:'.length)
     const found = gatewayAccounts.value.find((a) => a.account_key === key)?.vendor
     if (found) return found
-    for (const v of Object.keys(VENDOR_DEFAULT_MODELS)) {
+    for (const v of KNOWN_GATEWAY_VENDORS) {
       if (key.startsWith(`gw_${v}_`)) return v
     }
     return ''
@@ -331,15 +320,89 @@ function resolveVendorForBinding(binding: string): string {
   return ''
 }
 
+function poolModelsForVendor(vendorId: string): GatewayPoolModelView[] {
+  if (!vendorId) return []
+  const vendor = gatewayVendors.value.find((v) => v.vendor === vendorId)
+  if (!vendor || !Array.isArray(vendor.models)) return []
+  const seen = new Set<string>()
+  const result: GatewayPoolModelView[] = []
+  for (const m of vendor.models) {
+    if (m.model && !seen.has(m.model)) {
+      seen.add(m.model)
+      result.push(m)
+    }
+  }
+  return result
+}
+
+const currentVendorPoolModels = computed<GatewayPoolModelView[]>(() => {
+  const binding = typeof form.config.gateway_binding === 'string' ? form.config.gateway_binding : ''
+  return poolModelsForVendor(resolveVendorForBinding(binding))
+})
+
+function applyPoolModelToConfig(poolModel: GatewayPoolModelView) {
+  form.config.model = poolModel.model
+  if (Array.isArray(poolModel.tags) && poolModel.tags.length > 0) {
+    form.config.tags = [...poolModel.tags]
+  } else {
+    delete form.config.tags
+  }
+  if (poolModel.max_tokens !== undefined) {
+    form.config.max_tokens = poolModel.max_tokens
+  }
+  if (poolModel.context_limit_tokens !== undefined) {
+    form.config.context_limit_tokens = poolModel.context_limit_tokens
+  }
+  if (poolModel.reasoning_effort) {
+    form.config.reasoning_effort = poolModel.reasoning_effort
+  }
+  if (poolModel.temperature_percent !== undefined) {
+    form.config.temperature_percent = poolModel.temperature_percent
+  }
+  if (poolModel.timeout_ms !== undefined) {
+    form.config.timeout_ms = poolModel.timeout_ms
+  }
+}
+
+async function loadGatewayOptions() {
+  try {
+    const [vendorRes, accountRes] = await Promise.all([
+      llmGatewayApi.listVendors(),
+      llmGatewayApi.listAccounts(),
+    ])
+    gatewayVendors.value = vendorRes.vendors
+    gatewayAccounts.value = accountRes.accounts
+    if (isUsingGateway.value) {
+      let binding = typeof form.config.gateway_binding === 'string' ? form.config.gateway_binding : ''
+      if (authSource.value === 'gateway_pool') {
+        const currentVendor = resolveVendorForBinding(binding)
+        if (!binding || (poolModelsForVendor(currentVendor).length === 0 && vendorRes.vendors.some((v) => (v.models?.length ?? 0) > 0))) {
+          const vendorWithModels = vendorRes.vendors.find((v) => (v.models?.length ?? 0) > 0) ?? vendorRes.vendors[0]
+          if (vendorWithModels) {
+            binding = vendorWithModels.pool_binding
+            form.config.gateway_binding = binding
+          }
+        }
+      }
+      if (binding) {
+        applyDefaultBaseUrlForBinding(binding)
+      }
+    }
+  } catch {
+    /* Gateway metadata is optional until user selects gateway binding. */
+  }
+}
+
 function applyDefaultBaseUrlForBinding(binding: string) {
   const vendorId = resolveVendorForBinding(binding)
-  const defaultModel = VENDOR_DEFAULT_MODELS[vendorId]
+  const models = poolModelsForVendor(vendorId)
   const currentModel = typeof form.config.model === 'string' ? form.config.model.trim() : ''
-  if (
-    defaultModel &&
-    (!currentModel || Object.values(VENDOR_DEFAULT_MODELS).includes(currentModel))
-  ) {
-    form.config.model = defaultModel
+  const matched = models.find((m) => m.model === currentModel) ?? models[0]
+  if (matched) {
+    applyPoolModelToConfig(matched)
+  } else {
+    delete form.config.model
+    delete form.config.tags
   }
 
   if (!fields.value.some((f) => f.key === 'base_url')) return
@@ -367,6 +430,10 @@ function updateGatewayBinding(binding: string) {
   errorMessage.value = ''
   if (!binding) {
     delete form.config.gateway_binding
+    if (isUsingGateway.value) {
+      delete form.config.model
+      delete form.config.tags
+    }
     return
   }
   form.config.gateway_binding = binding
@@ -383,9 +450,10 @@ function setAuthSource(mode: AuthSourceMode) {
   form.apiKey = ''
   if (mode === 'gateway_pool') {
     const current = typeof form.config.gateway_binding === 'string' ? form.config.gateway_binding : ''
+    const vendorWithModels = gatewayVendors.value.find((v) => (v.models?.length ?? 0) > 0) ?? gatewayVendors.value[0]
     const nextBinding = current.startsWith('pool:')
       ? current
-      : (gatewayVendors.value[0]?.pool_binding ?? 'pool:openai_codex')
+      : (vendorWithModels?.pool_binding ?? 'pool:openai_codex')
     updateGatewayBinding(nextBinding)
   } else if (mode === 'gateway_account') {
     const current = typeof form.config.gateway_binding === 'string' ? form.config.gateway_binding : ''
@@ -577,9 +645,14 @@ function applyAdapterDefaults(adapterId: string, schemaFields: ProviderConfigFie
   form.config = nextConfig
   if (adapterId === 'llm_gateway') {
     authSource.value = 'gateway_pool'
-    if (!form.config.gateway_binding) {
-      form.config.gateway_binding = gatewayVendors.value[0]?.pool_binding ?? 'pool:anthropic'
-    }
+    const vendorWithModels =
+      gatewayVendors.value.find((v) => (v.models?.length ?? 0) > 0) ?? gatewayVendors.value[0]
+    const defaultBinding =
+      vendorWithModels?.pool_binding ??
+      (typeof form.config.gateway_binding === 'string' && form.config.gateway_binding
+        ? form.config.gateway_binding
+        : 'pool:anthropic')
+    updateGatewayBinding(defaultBinding)
   } else {
     authSource.value = 'static_api_key'
   }
@@ -614,6 +687,12 @@ function toggleMultiSelect(key: string, value: string) {
 }
 
 function options(field: ProviderConfigField): Array<{ value: string; label: string }> {
+  if (field.key === 'model' && isUsingGateway.value) {
+    return currentVendorPoolModels.value.map((m) => ({
+      value: m.model,
+      label: m.display_name && m.display_name !== m.model ? `${m.display_name} (${m.model})` : m.model,
+    }))
+  }
   if (field.enum_values) {
     return field.enum_values.map((value) => ({ value: String(value), label: String(value) }))
   }
@@ -788,6 +867,18 @@ function isFieldRequired(field: ProviderConfigField): boolean {
 function validateField(field: ProviderConfigField): string {
   const value = form.config[field.key]
   const label = fieldLabel(field)
+  if (field.key === 'model' && isUsingGateway.value) {
+    if (currentVendorPoolModels.value.length === 0) {
+      return t('llmGateway.pool.noModels')
+    }
+    if (
+      typeof value !== 'string' ||
+      !value.trim() ||
+      !currentVendorPoolModels.value.some((m) => m.model === value.trim())
+    ) {
+      return `Trường “${label}” là bắt buộc.`
+    }
+  }
   if (
     isFieldRequired(field) &&
     (value === undefined ||
@@ -824,6 +915,9 @@ function validateField(field: ProviderConfigField): string {
 }
 
 function fieldValidationMessage(field: ProviderConfigField): string {
+  if (field.key === 'model' && isUsingGateway.value && currentVendorPoolModels.value.length === 0) {
+    return t('llmGateway.pool.noModels')
+  }
   const value = form.config[field.key]
   if (value === undefined || value === null || value === '') return ''
   return validateField(field)
@@ -920,6 +1014,20 @@ function updateFieldInput(field: ProviderConfigField, rawValue: unknown) {
     return
   }
   const str = typeof rawValue === 'string' ? rawValue : String(rawValue ?? '')
+  if (field.key === 'model' && isUsingGateway.value) {
+    if (!str) {
+      delete form.config.model
+      delete form.config.tags
+      return
+    }
+    const found = currentVendorPoolModels.value.find((m) => m.model === str)
+    if (found) {
+      applyPoolModelToConfig(found)
+    } else {
+      form.config.model = str
+    }
+    return
+  }
   if (str === '') {
     delete form.config[field.key]
   } else {
@@ -1297,14 +1405,23 @@ void loadGatewayOptions()
                 </div>
 
                 <select
-                  v-else-if="(field.type === 'select' || field.enum_source) && options(field).length"
+                  v-else-if="
+                    (field.key === 'model' && isUsingGateway) ||
+                    ((field.type === 'select' || field.enum_source) && options(field).length)
+                  "
                   class="select"
                   :data-field="field.key"
-                  :disabled="discoveryLoading"
+                  :disabled="discoveryLoading || (field.key === 'model' && isUsingGateway && !options(field).length)"
                   :value="String(form.config[field.key] ?? '')"
                   @change="updateFieldInput(field, ($event.target as HTMLSelectElement).value)"
                 >
-                  <option v-if="field.key !== 'model' || !form.config[field.key]" value="">Chọn {{ fieldLabel(field).toLowerCase() }}</option>
+                  <option v-if="field.key !== 'model' || !form.config[field.key] || !options(field).length" value="">
+                    {{
+                      field.key === 'model' && isUsingGateway && !options(field).length
+                        ? t('llmGateway.pool.noModels')
+                        : `Chọn ${fieldLabel(field).toLowerCase()}`
+                    }}
+                  </option>
                   <option
                     v-for="option in options(field)"
                     :key="option.value"

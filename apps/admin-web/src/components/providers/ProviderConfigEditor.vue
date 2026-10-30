@@ -117,8 +117,8 @@ function update(key: string, value: unknown) {
           {{ option.name }}
         </button>
       </div>
-      <select :disabled="readonly" v-else-if="options(field).length" class="admin-input" :value="config[field.key] ?? ''" :required="field.required" @change="update(field.key, field.enum_values?.find((value) => String(value) === ($event.target as HTMLSelectElement).value) ?? ($event.target as HTMLSelectElement).value)">
-        <option value="">—</option><option v-if="config[field.key] && !options(field).some((option) => option.id === String(config[field.key]))" :value="config[field.key]">{{ config[field.key] }}</option><option v-for="option in options(field)" :key="option.id" :value="option.id">{{ option.name }}</option>
+      <select :disabled="readonly || (field.type === 'select' && !options(field).length)" v-else-if="field.type === 'select' || options(field).length" class="admin-input" :value="config[field.key] ?? ''" :required="field.required" @change="update(field.key, field.enum_values?.find((value) => String(value) === ($event.target as HTMLSelectElement).value) ?? ($event.target as HTMLSelectElement).value)">
+        <option value="">—</option><option v-if="config[field.key] && options(field).length && !options(field).some((option) => option.id === String(config[field.key]))" :value="config[field.key]">{{ config[field.key] }}</option><option v-for="option in options(field)" :key="option.id" :value="option.id">{{ option.name }}</option>
       </select>
       <input :disabled="readonly" v-else-if="field.type === 'boolean'" type="checkbox" :checked="Boolean(config[field.key])" @change="update(field.key, ($event.target as HTMLInputElement).checked)" />
       <input :disabled="readonly" v-else class="admin-input" :type="field.type === 'integer' ? 'number' : 'text'" :value="config[field.key] ?? ''" :required="field.required" :min="field.minimum" :max="field.maximum" :maxlength="field.max_length" @input="update(field.key, field.type === 'integer' && ($event.target as HTMLInputElement).value !== '' ? Number(($event.target as HTMLInputElement).value) : ($event.target as HTMLInputElement).value)" />

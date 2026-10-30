@@ -11,10 +11,19 @@ const adaptersApi = vi.hoisted(() => ({
   discoverCapabilities: vi.fn(),
 }))
 
+const llmGatewayApiMock = vi.hoisted(() => ({
+  listVendors: vi.fn(),
+  listAccounts: vi.fn(),
+}))
+
 const createProviderFromSetup = vi.hoisted(() => vi.fn())
 
 vi.mock('@/api/provider-adapters', () => ({
   providerAdaptersApi: adaptersApi,
+}))
+
+vi.mock('@/api/llm-gateway', () => ({
+  llmGatewayApi: llmGatewayApiMock,
 }))
 
 vi.mock('@/stores/admin', () => ({
@@ -43,6 +52,10 @@ describe('ProviderCreatePage (Variant A wizard)', () => {
     adaptersApi.list.mockReset()
     adaptersApi.get.mockReset()
     adaptersApi.discoverCapabilities.mockReset()
+    llmGatewayApiMock.listVendors.mockReset()
+    llmGatewayApiMock.listAccounts.mockReset()
+    llmGatewayApiMock.listVendors.mockResolvedValue({ vendors: [] })
+    llmGatewayApiMock.listAccounts.mockResolvedValue({ accounts: [] })
     createProviderFromSetup.mockReset()
   })
 
@@ -239,6 +252,124 @@ describe('ProviderCreatePage (Variant A wizard)', () => {
     await nextBtn.trigger('click')
     expect(wrapper.text()).toContain('03 / Chạy kiểm tra cấu hình')
     expect(createProviderFromSetup).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
+
+  it('renders model as a Pool Model dropdown when using LLM Gateway and blocks empty pools', async () => {
+    llmGatewayApiMock.listVendors.mockResolvedValue({
+      vendors: [
+        {
+          vendor: 'anthropic',
+          display_name: 'Anthropic Claude',
+          default_base_url: 'https://api.anthropic.com/v1',
+          supports_oauth: true,
+          supports_browser_cdp: false,
+          supports_api_key: true,
+          pool_binding: 'pool:anthropic',
+          total_accounts: 1,
+          healthy_accounts: 1,
+          models: [
+            {
+              key: 'gw_model_claude_sonnet',
+              vendor: 'anthropic',
+              model: 'claude-sonnet-4-20250514',
+              display_name: 'Claude Sonnet 4',
+              tags: ['vision', 'tools'],
+              max_tokens: 8192,
+              context_limit_tokens: 200000,
+              reasoning_effort: 'medium',
+              temperature_percent: 30,
+              timeout_ms: 90000,
+              updated_at: 1000,
+            },
+            {
+              key: 'gw_model_claude_opus',
+              vendor: 'anthropic',
+              model: 'claude-opus-4-20250514',
+              display_name: 'Claude Opus 4',
+              tags: ['thinking', 'tools'],
+              max_tokens: 16384,
+              updated_at: 1000,
+            },
+          ],
+        },
+        {
+          vendor: 'gemini',
+          display_name: 'Google Gemini',
+          default_base_url: 'https://generativelanguage.googleapis.com/v1beta',
+          supports_oauth: true,
+          supports_browser_cdp: false,
+          supports_api_key: true,
+          pool_binding: 'pool:gemini',
+          total_accounts: 0,
+          healthy_accounts: 0,
+          models: [],
+        },
+      ],
+    })
+    llmGatewayApiMock.listAccounts.mockResolvedValue({ accounts: [] })
+
+    adaptersApi.list.mockResolvedValue([
+      { adapter: 'llm_gateway', type: 'llm', display_name: 'LLM Gateway' },
+    ])
+    adaptersApi.get.mockResolvedValue({
+      adapter: 'llm_gateway',
+      type: 'llm',
+      display_name: 'LLM Gateway',
+      config_schema: {
+        fields: [
+          { key: 'gateway_binding', label: 'Gateway Binding', type: 'string', required: true },
+          { key: 'model', label: 'Model', type: 'string', required: true },
+          { key: 'max_tokens', label: 'Max Tokens', type: 'integer', required: false },
+          { key: 'timeout_ms', label: 'Timeout (ms)', type: 'integer', required: false },
+        ],
+      },
+    })
+
+    const router = buildRouter()
+    await router.push('/providers/create')
+    await router.isReady()
+
+    const wrapper = mount(
+      defineComponent({ components: { RouterView }, template: '<RouterView />' }),
+      {
+        global: {
+          plugins: [router],
+          stubs: { ProviderTestPanel: { template: '<div data-test-panel />' } },
+        },
+      },
+    )
+
+    await flushPromises()
+
+    // Advance to Step 2
+    await wrapper.get('[data-action="wizard-next"]').trigger('click')
+    await wrapper.get('input[data-general="name"]').setValue('Claude Pool Provider')
+
+    // Model must be a <select>, NOT a manual text <input>
+    expect(wrapper.find('input[data-field="model"]').exists()).toBe(false)
+    const modelSelect = wrapper.get('select[data-field="model"]')
+    const optionValues = modelSelect.findAll('option').map((o) => o.attributes('value'))
+    expect(optionValues).toEqual(['claude-sonnet-4-20250514', 'claude-opus-4-20250514'])
+    expect((modelSelect.element as HTMLSelectElement).value).toBe('claude-sonnet-4-20250514')
+
+    // Selecting the second pool model updates config with that pool model's presets
+    await modelSelect.setValue('claude-opus-4-20250514')
+
+    const nextBtn = wrapper.get('[data-action="wizard-next"]')
+    expect(nextBtn.attributes('disabled')).toBeUndefined()
+
+    // Switching vendor pool to Gemini (which has 0 models in Pool) disables model select and blocks Next
+    const bindingSelect = wrapper.get('select[data-field="gateway_binding"]')
+    await bindingSelect.setValue('pool:gemini')
+    expect(modelSelect.attributes('disabled')).toBeDefined()
+    expect(nextBtn.attributes('disabled')).toBeDefined()
+
+    // Switching back to Anthropic restores valid model selection
+    await bindingSelect.setValue('pool:anthropic')
+    expect(modelSelect.attributes('disabled')).toBeUndefined()
+    expect(nextBtn.attributes('disabled')).toBeUndefined()
+
     wrapper.unmount()
   })
 })

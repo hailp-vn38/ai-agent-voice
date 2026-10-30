@@ -4,7 +4,11 @@ import { computed, reactive, ref, useId, watch } from 'vue'
 
 import { llmGatewayApi } from '@/api/llm-gateway'
 import { providerAdaptersApi } from '@/api/provider-adapters'
-import type { GatewayAccountView, GatewayVendorInfo } from '@/api/types/llm-gateway'
+import type {
+  GatewayAccountView,
+  GatewayPoolModelView,
+  GatewayVendorInfo,
+} from '@/api/types/llm-gateway'
 import type { ProviderAdapter } from '@/api/types/providers'
 import ProviderConfigEditor from '@/components/providers/ProviderConfigEditor.vue'
 import ProviderTestPanel from '@/components/providers/ProviderTestPanel.vue'
@@ -54,14 +58,84 @@ const supportsGatewayBinding = computed(
   () => form.adapter === 'openai' || form.adapter === 'llm_gateway',
 )
 
+const isUsingGateway = computed(
+  () =>
+    form.adapter === 'llm_gateway' ||
+    (supportsGatewayBinding.value && authSource.value !== 'static_api_key'),
+)
+
+const KNOWN_GATEWAY_VENDORS = [
+  'anthropic',
+  'openai_codex',
+  'gemini',
+  'github_copilot',
+  'muse',
+] as const
+
+function resolveVendorForBinding(binding: string): string {
+  if (binding.startsWith('account:')) {
+    const key = binding.slice('account:'.length)
+    const found = gatewayAccounts.value.find((a) => a.account_key === key)?.vendor
+    if (found) return found
+    for (const v of KNOWN_GATEWAY_VENDORS) {
+      if (key.startsWith(`gw_${v}_`)) return v
+    }
+    return ''
+  }
+  if (binding.startsWith('pool:')) {
+    return binding.slice('pool:'.length)
+  }
+  return ''
+}
+
+function poolModelsForVendor(vendorId: string): GatewayPoolModelView[] {
+  if (!vendorId) return []
+  const vendorInfo = gatewayVendors.value.find((v) => v.vendor === vendorId)
+  const seen = new Set<string>()
+  return (vendorInfo?.models ?? []).filter((m) => {
+    const id = m.model?.trim()
+    if (!id || seen.has(id)) return false
+    seen.add(id)
+    return true
+  })
+}
+
+const currentVendorPoolModels = computed<GatewayPoolModelView[]>(() => {
+  if (!isUsingGateway.value) return []
+  const binding =
+    typeof form.configJson.gateway_binding === 'string'
+      ? form.configJson.gateway_binding.trim()
+      : ''
+  return poolModelsForVendor(resolveVendorForBinding(binding))
+})
+
 const filteredSchema = computed(() => {
   if (!descriptor.value?.config_schema) return undefined
   if (!supportsGatewayBinding.value) return descriptor.value.config_schema
   return {
     ...descriptor.value.config_schema,
-    fields: (descriptor.value.config_schema.fields ?? []).filter(
-      (f) => f.key !== 'gateway_binding',
-    ),
+    fields: (descriptor.value.config_schema.fields ?? [])
+      .filter((f) => f.key !== 'gateway_binding')
+      .map((f) =>
+        f.key === 'model' && isUsingGateway.value
+          ? { ...f, type: 'select' as const, enum_source: 'models' as const }
+          : f,
+      ),
+  }
+})
+
+const effectiveCapabilities = computed(() => {
+  const base = descriptor.value?.capabilities
+  if (!isUsingGateway.value) return base
+  return {
+    ...base,
+    models: currentVendorPoolModels.value.map((m) => ({
+      id: m.model,
+      name:
+        m.display_name && m.display_name !== m.model
+          ? `${m.display_name} (${m.model})`
+          : m.model,
+    })),
   }
 })
 
@@ -73,8 +147,44 @@ async function loadGatewayData() {
     ])
     gatewayVendors.value = vendorRes.vendors
     gatewayAccounts.value = accountRes.accounts
+    if (isUsingGateway.value && !isReadOnly.value) {
+      const currentBinding =
+        typeof form.configJson.gateway_binding === 'string'
+          ? form.configJson.gateway_binding.trim()
+          : ''
+      if (currentBinding) {
+        updateGatewayBinding(currentBinding)
+      }
+    }
   } catch {
     /* Optional gateway lookup. */
+  }
+}
+
+function applyPoolModelDefaultsToObject(
+  target: Record<string, unknown>,
+  poolModel: GatewayPoolModelView,
+) {
+  target.model = poolModel.model
+  if (Array.isArray(poolModel.tags) && poolModel.tags.length > 0) {
+    target.tags = [...poolModel.tags]
+  } else {
+    delete target.tags
+  }
+  if (poolModel.max_tokens !== undefined) {
+    target.max_tokens = poolModel.max_tokens
+  }
+  if (poolModel.context_limit_tokens !== undefined) {
+    target.context_limit_tokens = poolModel.context_limit_tokens
+  }
+  if (poolModel.reasoning_effort) {
+    target.reasoning_effort = poolModel.reasoning_effort
+  }
+  if (poolModel.temperature_percent !== undefined) {
+    target.temperature_percent = poolModel.temperature_percent
+  }
+  if (poolModel.timeout_ms !== undefined) {
+    target.timeout_ms = poolModel.timeout_ms
   }
 }
 
@@ -88,16 +198,20 @@ function updateGatewayBinding(binding: string) {
     return
   }
   next.gateway_binding = binding
+  const vendorId = resolveVendorForBinding(binding)
+  const poolModels = poolModelsForVendor(vendorId)
+  const currentModel = typeof next.model === 'string' ? next.model.trim() : ''
+  if (poolModels.length > 0) {
+    if (!poolModels.some((m) => m.model === currentModel)) {
+      applyPoolModelDefaultsToObject(next, poolModels[0]!)
+    }
+  } else if (gatewayVendors.value.length > 0) {
+    delete next.model
+    delete next.tags
+  }
   if (form.adapter === 'openai') {
     const currentBaseUrl = typeof next.base_url === 'string' ? next.base_url.trim() : ''
     if (!currentBaseUrl) {
-      let vendorId = ''
-      if (binding.startsWith('account:')) {
-        const key = binding.slice('account:'.length)
-        vendorId = gatewayAccounts.value.find((a) => a.account_key === key)?.vendor ?? ''
-      } else if (binding.startsWith('pool:')) {
-        vendorId = binding.slice('pool:'.length)
-      }
       const vendorInfo = gatewayVendors.value.find((v) => v.vendor === vendorId)
       if (vendorInfo?.default_base_url) {
         next.base_url = vendorInfo.default_base_url
@@ -163,6 +277,19 @@ watch(() => form.adapter, (adapter, previous) => {
   form.apiKey = ''
   if (previous && adapter !== props.provider?.adapter) form.configJson = {}
 })
+watch(
+  () => form.configJson.model,
+  (nextModel, prevModel) => {
+    if (isReadOnly.value || !isUsingGateway.value) return
+    if (!prevModel || nextModel === prevModel || typeof nextModel !== 'string') return
+    const found = currentVendorPoolModels.value.find((m) => m.model === nextModel)
+    if (found) {
+      const next = { ...form.configJson }
+      applyPoolModelDefaultsToObject(next, found)
+      form.configJson = next
+    }
+  },
+)
 watch([open, () => form.adapter], async ([isOpen, adapter]) => {
   const version = ++descriptorVersion
   descriptor.value = undefined; configError.value = ''
@@ -218,6 +345,20 @@ function submit() {
   ) {
     configError.value = t('llmGateway.auth.bindingRequired')
     return
+  }
+  if (usingGateway && gatewayVendors.value.length > 0) {
+    const selectedModel = typeof nextConfig.model === 'string' ? nextConfig.model.trim() : ''
+    if (
+      currentVendorPoolModels.value.length === 0 ||
+      !selectedModel ||
+      !currentVendorPoolModels.value.some((m) => m.model === selectedModel)
+    ) {
+      configError.value =
+        currentVendorPoolModels.value.length === 0
+          ? t('llmGateway.pool.noModels')
+          : t('llmGateway.modelModal.modelRequired')
+      return
+    }
   }
   configError.value = ''
   emit('save', {
@@ -296,7 +437,7 @@ function submit() {
         </select>
       </label>
 
-      <div class="sm:col-span-2"><p v-if="configError" class="text-sm text-danger">{{ configError }}</p><ProviderConfigEditor :readonly="isReadOnly" v-model="form.configJson" :schema="filteredSchema" :capabilities="descriptor?.capabilities" /></div>
+      <div class="sm:col-span-2"><p v-if="configError" class="text-sm text-danger">{{ configError }}</p><ProviderConfigEditor :readonly="isReadOnly" v-model="form.configJson" :schema="filteredSchema" :capabilities="effectiveCapabilities" /></div>
 
       <div v-if="supportsGatewayBinding" class="space-y-2.5 rounded-lg border border-border/70 bg-surface/50 p-3.5 sm:col-span-2">
         <span class="block text-sm font-medium">{{ t('llmGateway.auth.title') }}</span>
