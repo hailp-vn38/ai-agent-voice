@@ -9,6 +9,7 @@ fn all_preset_voice_ids_and_source_names_are_unique() {
     assert_eq!(turbo_ids.len(), TURBO_VOICES.len());
     assert_eq!(turbo_names.len(), TURBO_VOICES.len());
     assert!(turbo_ids.contains(DEFAULT_VOICE));
+    assert_eq!(TURBO_VOICES[0].id, DEFAULT_VOICE);
 
     let nano_ids: HashSet<_> = NANO_VOICES.iter().map(|voice| voice.id).collect();
     let nano_names: HashSet<_> = NANO_VOICES.iter().map(|voice| voice.source_name).collect();
@@ -16,6 +17,7 @@ fn all_preset_voice_ids_and_source_names_are_unique() {
     assert_eq!(nano_ids.len(), NANO_VOICES.len());
     assert_eq!(nano_names.len(), NANO_VOICES.len());
     assert!(nano_ids.contains(NANO_DEFAULT_VOICE));
+    assert_eq!(NANO_VOICES[0].id, NANO_DEFAULT_VOICE);
 }
 
 #[test]

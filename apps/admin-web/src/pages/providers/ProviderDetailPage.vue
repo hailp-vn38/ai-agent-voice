@@ -338,6 +338,7 @@ onBeforeUnmount(() => {
               :key="`${provider.key}:${provider.revision}`"
               :type="provider.type"
               :adapter="provider.adapter"
+              :model="model"
               :revision="provider.revision"
               :saved-key="provider.key"
               :capabilities="adapterDescriptor?.capabilities"

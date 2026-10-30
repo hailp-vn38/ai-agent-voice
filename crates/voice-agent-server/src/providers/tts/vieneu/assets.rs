@@ -174,11 +174,11 @@ pub const DEFAULT_VOICE: &str = TURBO_DEFAULT_VOICE;
 pub const NANO_DEFAULT_VOICE: &str = "minh_quan";
 
 pub const TURBO_VOICES: &[PresetVoice] = &[
+    voice!("hai_dang", "Hải Đăng"),
     voice!("adam_bua", "Adam bựa"),
     voice!("truc_ly", "Trúc Ly"),
     voice!("thien_minh", "Thiện Minh"),
     voice!("mai_anh", "Mai Anh"),
-    voice!("hai_dang", "Hải Đăng"),
     voice!("thuy_dung", "Thùy Dung"),
     voice!("thien_tam_duc", "Thiền Tâm Đức"),
     voice!("ngoc_huyen", "Ngọc Huyền"),

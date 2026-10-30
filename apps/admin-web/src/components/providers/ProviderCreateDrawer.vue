@@ -31,6 +31,26 @@ const form = reactive({ name: '', apiKey: '', config: {} as Record<string, unkno
 let requestVersion = 0
 
 const fields = computed(() => descriptor.value?.config_schema?.fields ?? [])
+function resolveSelectedModel(): string {
+  if (typeof form.config.model === 'string' && form.config.model) {
+    return form.config.model
+  }
+  const models = descriptor.value?.capabilities?.models
+  if (Array.isArray(models) && models[0] && typeof models[0] === 'object' && typeof (models[0] as { id?: unknown }).id === 'string') {
+    return (models[0] as { id: string }).id
+  }
+  const voices = descriptor.value?.capabilities?.voices
+  if (Array.isArray(voices)) {
+    const first = voices.find((v): v is { model: string } =>
+      Boolean(v && typeof v === 'object' && typeof (v as { model?: unknown }).model === 'string' && (v as { model: string }).model),
+    )
+    if (first) return first.model
+  }
+  return ''
+}
+function isHiddenForSelectedModel(field: ProviderConfigField): boolean {
+  return field.key === 'speed_percent' && resolveSelectedModel() === 'vieneu_v3_turbo_fp32'
+}
 const config = computed(() => Object.fromEntries(Object.entries(form.config).filter(([key, value]) =>
   (value !== '' && (!Array.isArray(value) || value.length > 0)) || fields.value.some((field) => field.key === key && field.required),
 )))
@@ -41,8 +61,8 @@ function toggleMultiSelect(key: string, value: string) {
   form.config = toggleMultiSelectConfigValue(form.config, key, value)
 }
 const supportsDiscovery = computed(() => descriptor.value?.supports_discovery === true || Boolean(descriptor.value?.capabilities?.supports_discovery))
-const advancedFields = computed(() => fields.value.filter((field) => field.advanced))
-const regularFields = computed(() => fields.value.filter((field) => !field.advanced))
+const advancedFields = computed(() => fields.value.filter((field) => field.advanced && !isHiddenForSelectedModel(field)))
+const regularFields = computed(() => fields.value.filter((field) => !field.advanced && !isHiddenForSelectedModel(field)))
 const canContinue = computed(() => Boolean(descriptor.value && !adapterLoading.value))
 const canCreate = computed(() => form.name.trim().length > 0 && form.name.trim().length <= 128)
 
@@ -74,7 +94,7 @@ function options(field: ProviderConfigField) {
   const raw = descriptor.value?.capabilities?.[field.enum_source]
   if (!Array.isArray(raw)) return []
   const selectedLanguage = typeof form.config.language === 'string' && form.config.language ? form.config.language : ''
-  const selectedModel = typeof form.config.model === 'string' && form.config.model ? form.config.model : ''
+  const selectedModel = resolveSelectedModel()
   const seen = new Set<string>()
   return raw.flatMap((item) => {
     if (typeof item === 'string' || typeof item === 'number') {
@@ -127,7 +147,22 @@ async function chooseAdapter(adapter: ProviderAdapter) {
   error.value = null; descriptor.value = undefined; form.apiKey = ''; clearConfiguration()
   try {
     const selected = await providerAdaptersApi.get(adapter.adapter)
-    if (version === requestVersion && selectedType === type.value) descriptor.value = selected
+    if (version === requestVersion && selectedType === type.value) {
+      descriptor.value = selected
+      const schemaFields = selected.config_schema?.fields ?? []
+      if (schemaFields.some((f) => f.key === 'model' && f.enum_source === 'models')) {
+        const defaultModel = resolveSelectedModel()
+        if (defaultModel) {
+          form.config.model = defaultModel
+          for (const field of schemaFields) {
+            if ((field.key === 'voice' || field.key === 'language') && !form.config[field.key]) {
+              const firstOption = options(field)[0]
+              if (firstOption) form.config[field.key] = firstOption.value
+            }
+          }
+        }
+      }
+    }
   } catch (cause) {
     if (version === requestVersion && selectedType === type.value) error.value = cause
   }
@@ -180,6 +215,9 @@ function reset() { invalidatePendingRequests(); step.value = 1; descriptor.value
 watch(open, (value) => { if (value) { type.value = props.initialType ?? 'tts'; void loadAdapters() } else reset() })
 watch(() => form.config.model, (model) => {
   if (typeof model === 'string' && model) {
+    if (model === 'vieneu_v3_turbo_fp32' && form.config.speed_percent !== undefined && form.config.speed_percent !== 100) {
+      delete form.config.speed_percent
+    }
     const voices = descriptor.value?.capabilities?.voices
     if (Array.isArray(voices)) {
       const matching = voices.filter((item): item is { id: string; model?: string } =>
@@ -218,7 +256,7 @@ watch(() => form.config.language, (lang) => {
 
       <div v-else-if="step === 2" class="space-y-5">
         <div><label class="block space-y-1.5"><span class="text-sm font-medium">Tên hiển thị</span><input v-model="form.name" class="admin-input" placeholder="Giọng Mai Chi" required /></label></div>
-        <div class="grid gap-4 sm:grid-cols-2"><label v-for="field in regularFields" :key="field.key" class="space-y-1.5"><span class="text-sm font-medium">{{ label(field) }} <span v-if="field.required" class="text-danger">*</span></span><small v-if="field.description" class="block text-xs text-muted-foreground">{{ field.description }}</small><div v-if="field.type === 'multi_select' && options(field).length" class="flex flex-wrap gap-1.5 pt-0.5"><button v-for="option in options(field)" :key="option.value" type="button" :aria-pressed="selectedMultiValues(field.key).includes(option.value)" :class="['rounded-md border px-2.5 py-1 font-mono text-xs transition-colors', selectedMultiValues(field.key).includes(option.value) ? 'border-primary bg-primary text-primary-foreground' : 'border-border bg-background text-muted-foreground hover:bg-accent hover:text-foreground']" @click.prevent="toggleMultiSelect(field.key, option.value)">{{ option.label }}</button></div><select v-else-if="(field.type === 'select' || field.enum_source) && options(field).length" v-model="form.config[field.key]" class="admin-input" :disabled="discoveryLoading"><option value="">Chọn {{ label(field).toLowerCase() }}</option><option v-for="option in options(field)" :key="option.value" :value="option.value">{{ option.label }}</option></select><input v-else-if="field.type === 'integer'" v-model.number="form.config[field.key]" class="admin-input" type="number" :min="field.minimum" :max="field.maximum" /><label v-else-if="field.type === 'boolean'" class="flex h-10 items-center gap-2 text-sm"><input v-model="form.config[field.key]" type="checkbox" /> Bật</label><input v-else v-model="form.config[field.key]" class="admin-input" type="text" :maxlength="field.max_length" /><small v-if="validateField(field)" class="text-danger">{{ validateField(field) }}</small></label></div>
+        <div class="grid gap-4 sm:grid-cols-2"><label v-for="field in regularFields" :key="field.key" class="space-y-1.5"><span class="text-sm font-medium">{{ label(field) }} <span v-if="field.required" class="text-danger">*</span></span><small v-if="field.description" class="block text-xs text-muted-foreground">{{ field.description }}</small><div v-if="field.type === 'multi_select' && options(field).length" class="flex flex-wrap gap-1.5 pt-0.5"><button v-for="option in options(field)" :key="option.value" type="button" :aria-pressed="selectedMultiValues(field.key).includes(option.value)" :class="['rounded-md border px-2.5 py-1 font-mono text-xs transition-colors', selectedMultiValues(field.key).includes(option.value) ? 'border-primary bg-primary text-primary-foreground' : 'border-border bg-background text-muted-foreground hover:bg-accent hover:text-foreground']" @click.prevent="toggleMultiSelect(field.key, option.value)">{{ option.label }}</button></div><select v-else-if="(field.type === 'select' || field.enum_source) && options(field).length" v-model="form.config[field.key]" class="admin-input" :disabled="discoveryLoading"><option v-if="field.key !== 'model' || !form.config[field.key]" value="">Chọn {{ label(field).toLowerCase() }}</option><option v-for="option in options(field)" :key="option.value" :value="option.value">{{ option.label }}</option></select><input v-else-if="field.type === 'integer'" v-model.number="form.config[field.key]" class="admin-input" type="number" :min="field.minimum" :max="field.maximum" /><label v-else-if="field.type === 'boolean'" class="flex h-10 items-center gap-2 text-sm"><input v-model="form.config[field.key]" type="checkbox" /> Bật</label><input v-else v-model="form.config[field.key]" class="admin-input" type="text" :maxlength="field.max_length" /><small v-if="validateField(field)" class="text-danger">{{ validateField(field) }}</small></label></div>
         <details v-if="advancedFields.length" class="rounded-lg border p-3"><summary class="cursor-pointer text-sm font-medium">Nâng cao</summary><div class="mt-4 grid gap-4 sm:grid-cols-2"><label v-for="field in advancedFields" :key="field.key" class="space-y-1.5"><span class="text-sm font-medium">{{ label(field) }}</span><input v-if="field.type === 'integer'" v-model.number="form.config[field.key]" class="admin-input" type="number" :min="field.minimum" :max="field.maximum" /><label v-else-if="field.type === 'boolean'" class="flex h-10 items-center gap-2 text-sm"><input v-model="form.config[field.key]" type="checkbox" /> Bật</label><input v-else v-model="form.config[field.key]" class="admin-input" /></label></div></details>
         <label v-if="['openai', 'chillaudio_ws'].includes(descriptor?.adapter ?? '')" class="block space-y-1.5"><span class="text-sm font-medium">API key / token (tùy chọn)</span><input v-model="form.apiKey" type="password" autocomplete="new-password" maxlength="4096" class="admin-input" /><small class="block text-xs text-muted-foreground">Key được mã hóa trên server. Sau khi lưu chỉ hiển thị phần đã che.</small></label>
         <div v-if="supportsDiscovery" class="flex items-center gap-3"><Button variant="outline" :disabled="discoveryLoading" @click="discover">{{ discoveryLoading ? 'Đang lấy dữ liệu…' : 'Cập nhật model / voice / language' }}</Button><span class="text-xs text-muted-foreground">Nếu lỗi, chỉnh lựa chọn rồi thử lại.</span></div>

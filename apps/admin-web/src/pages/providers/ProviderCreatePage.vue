@@ -161,6 +161,7 @@ const ADAPTER_CATALOG_META: Record<string, AdapterPresentation> = {
     cap: ['Streaming', 'Offline'],
     defaults: {
       model: 'vieneu_v3_turbo_fp32',
+      voice: 'hai_dang',
       language: 'vi-VN',
     },
     placeholders: {
@@ -410,6 +411,39 @@ function onGatewayOAuthCompleted(account: GatewayAccountView) {
 
 const fields = computed<ProviderConfigField[]>(() => descriptor.value?.config_schema?.fields ?? [])
 
+function resolveSelectedModel(): string {
+  if (typeof form.config.model === 'string' && form.config.model) {
+    return form.config.model
+  }
+  const models = descriptor.value?.capabilities?.models
+  if (
+    Array.isArray(models) &&
+    models[0] &&
+    typeof models[0] === 'object' &&
+    typeof (models[0] as { id?: unknown }).id === 'string'
+  ) {
+    return (models[0] as { id: string }).id
+  }
+  const voices = descriptor.value?.capabilities?.voices
+  if (Array.isArray(voices)) {
+    const first = voices.find(
+      (v): v is { model: string } =>
+        Boolean(
+          v &&
+            typeof v === 'object' &&
+            typeof (v as { model?: unknown }).model === 'string' &&
+            (v as { model: string }).model,
+        ),
+    )
+    if (first) return first.model
+  }
+  return ''
+}
+
+function isHiddenForSelectedModel(field: ProviderConfigField): boolean {
+  return field.key === 'speed_percent' && resolveSelectedModel() === 'vieneu_v3_turbo_fp32'
+}
+
 function isAdvancedField(field: ProviderConfigField): boolean {
   return Boolean(field.advanced) || (!field.required && ADVANCED_FIELD_KEYS.has(field.key))
 }
@@ -417,13 +451,17 @@ function isAdvancedField(field: ProviderConfigField): boolean {
 const regularFields = computed(() =>
   fields.value.filter(
     (field) =>
-      !isAdvancedField(field) && !(supportsGatewayBinding.value && field.key === 'gateway_binding'),
+      !isAdvancedField(field) &&
+      !isHiddenForSelectedModel(field) &&
+      !(supportsGatewayBinding.value && field.key === 'gateway_binding'),
   ),
 )
 const advancedFields = computed(() =>
   fields.value.filter(
     (field) =>
-      isAdvancedField(field) && !(supportsGatewayBinding.value && field.key === 'gateway_binding'),
+      isAdvancedField(field) &&
+      !isHiddenForSelectedModel(field) &&
+      !(supportsGatewayBinding.value && field.key === 'gateway_binding'),
   ),
 )
 
@@ -584,8 +622,7 @@ function options(field: ProviderConfigField): Array<{ value: string; label: stri
   if (!Array.isArray(raw)) return []
   const selectedLanguage =
     typeof form.config.language === 'string' && form.config.language ? form.config.language : ''
-  const selectedModel =
-    typeof form.config.model === 'string' && form.config.model ? form.config.model : ''
+  const selectedModel = resolveSelectedModel()
   const seen = new Set<string>()
   return raw.flatMap((item) => {
     if (typeof item === 'string' || typeof item === 'number') {
@@ -1004,6 +1041,13 @@ watch(
   () => form.config.model,
   (model) => {
     if (typeof model === 'string' && model) {
+      if (
+        model === 'vieneu_v3_turbo_fp32' &&
+        form.config.speed_percent !== undefined &&
+        form.config.speed_percent !== 100
+      ) {
+        delete form.config.speed_percent
+      }
       const voices = descriptor.value?.capabilities?.voices
       if (Array.isArray(voices)) {
         const matching = voices.filter(
@@ -1260,7 +1304,7 @@ void loadGatewayOptions()
                   :value="String(form.config[field.key] ?? '')"
                   @change="updateFieldInput(field, ($event.target as HTMLSelectElement).value)"
                 >
-                  <option value="">Chọn {{ fieldLabel(field).toLowerCase() }}</option>
+                  <option v-if="field.key !== 'model' || !form.config[field.key]" value="">Chọn {{ fieldLabel(field).toLowerCase() }}</option>
                   <option
                     v-for="option in options(field)"
                     :key="option.value"

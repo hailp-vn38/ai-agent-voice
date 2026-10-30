@@ -70,3 +70,34 @@ fn exposes_bounded_optional_speed_percent_field() {
     assert_eq!(field.minimum, Some(50));
     assert_eq!(field.maximum, Some(200));
 }
+
+#[test]
+fn runtime_capabilities_isolate_turbo_and_nano_voices_and_sample_rates() {
+    let turbo = runtime_capabilities(r#"{"model":"vieneu_v3_turbo_fp32","voice":"hai_dang"}"#)
+        .expect("turbo capabilities");
+    let turbo_voices = turbo["voices"].as_array().unwrap();
+    assert_eq!(turbo_voices.len(), assets::TURBO_VOICES.len());
+    assert!(
+        turbo_voices
+            .iter()
+            .all(|v| v["model"] == "vieneu_v3_turbo_fp32")
+    );
+    assert_eq!(
+        turbo["provider_output_sample_rates"],
+        serde_json::json!([48_000])
+    );
+
+    let nano = runtime_capabilities(r#"{"model":"vieneu_v3_nano_fp32","voice":"minh_quan"}"#)
+        .expect("nano capabilities");
+    let nano_voices = nano["voices"].as_array().unwrap();
+    assert_eq!(nano_voices.len(), assets::NANO_VOICES.len());
+    assert!(
+        nano_voices
+            .iter()
+            .all(|v| v["model"] == "vieneu_v3_nano_fp32")
+    );
+    assert_eq!(
+        nano["provider_output_sample_rates"],
+        serde_json::json!([24_000])
+    );
+}

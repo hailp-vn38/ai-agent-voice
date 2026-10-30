@@ -215,6 +215,31 @@ static INSPECTOR: Inspector = Inspector;
 pub static REGISTRATION: ProviderAdapterRegistration =
     ProviderAdapterRegistration::local(&DESCRIPTOR, Some(&INSPECTOR), Some(assets::ASSETS));
 
+/// Scopes runtime capabilities to the configured VieNeu model so a materialized Turbo or Nano
+/// instance only advertises the voices and output sample rate of its active model.
+pub fn runtime_capabilities(config_json: &str) -> Option<Value> {
+    let config: super::config::VieneuNativeConfig = serde_json::from_str(config_json).ok()?;
+    let model = config.parsed_model()?;
+    let (models, voices, sample_rates): (&[ModelOption], &[VoiceOption], &[u32]) = match model {
+        VieneuModel::V3TurboFp32 => (&MODELS[..1], TURBO_VOICES, &[48_000]),
+        VieneuModel::V3NanoFp32 => (&MODELS[1..2], NANO_VOICES, &[24_000]),
+    };
+    serde_json::to_value(ProviderCapabilities {
+        models: Some(models),
+        voices: Some(voices),
+        languages: Some(LANGUAGES),
+        streaming: Some(true),
+        offline: Some(true),
+        tool_calling: None,
+        vision: None,
+        input_sample_rates: None,
+        channels: Some(&[1]),
+        provider_output_sample_rates: Some(sample_rates),
+        voice_delivery_sample_rates: Some(&[24_000]),
+    })
+    .ok()
+}
+
 #[cfg(test)]
 #[path = "descriptor_tests.rs"]
 mod tests;

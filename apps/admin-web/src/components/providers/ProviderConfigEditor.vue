@@ -1,12 +1,35 @@
 <script setup lang="ts">
+import { computed } from 'vue'
 import type { ProviderConfigSchema, ProviderConfigField } from '@/api/types/providers'
 import { selectedMultiSelectValues, toggleMultiSelectConfigValue } from '@/domain/admin'
 const config = defineModel<Record<string, unknown>>({ required: true })
 const props = defineProps<{ schema?: ProviderConfigSchema; capabilities?: Record<string, unknown>; readonly?: boolean }>()
+function resolveSelectedModel(): string {
+  if (typeof config.value.model === 'string' && config.value.model) {
+    return config.value.model
+  }
+  const models = props.capabilities?.models
+  if (Array.isArray(models) && models[0] && typeof models[0] === 'object' && typeof (models[0] as { id?: unknown }).id === 'string') {
+    return (models[0] as { id: string }).id
+  }
+  const voices = props.capabilities?.voices
+  if (Array.isArray(voices)) {
+    const first = voices.find((v): v is { model: string } =>
+      Boolean(v && typeof v === 'object' && typeof (v as { model?: unknown }).model === 'string' && (v as { model: string }).model),
+    )
+    if (first) return first.model
+  }
+  return ''
+}
+const visibleFields = computed(() =>
+  (props.schema?.fields ?? []).filter(
+    (field) => !(field.key === 'speed_percent' && resolveSelectedModel() === 'vieneu_v3_turbo_fp32'),
+  ),
+)
 function options(field: ProviderConfigField): Array<{ id: string; name: string }> {
   const values = field.enum_values ?? (field.enum_source ? props.capabilities?.[field.enum_source] : undefined)
   const selectedLanguage = typeof config.value.language === 'string' && config.value.language ? config.value.language : ''
-  const selectedModel = typeof config.value.model === 'string' && config.value.model ? config.value.model : ''
+  const selectedModel = resolveSelectedModel()
   const seen = new Set<string>()
   return Array.isArray(values) ? values.flatMap((value) => {
     if (typeof value === 'string' || typeof value === 'number') {
@@ -41,17 +64,22 @@ function update(key: string, value: unknown) {
   const next = { ...config.value }
   if (value === '') delete next[key]
   else next[key] = value
-  if (key === 'model' && typeof value === 'string' && value && Array.isArray(props.capabilities?.voices)) {
-    const matching = props.capabilities.voices.filter((item): item is { id: string; model?: string } =>
-      Boolean(
-        item &&
-          typeof item === 'object' &&
-          typeof (item as { id?: unknown }).id === 'string' &&
-          (typeof (item as { model?: unknown }).model !== 'string' || (item as { model: string }).model === value),
-      ),
-    )
-    if (matching.length > 0 && !matching.some((item) => item.id === next.voice)) {
-      next.voice = matching[0]!.id
+  if (key === 'model' && typeof value === 'string' && value) {
+    if (value === 'vieneu_v3_turbo_fp32' && next.speed_percent !== undefined && next.speed_percent !== 100) {
+      delete next.speed_percent
+    }
+    if (Array.isArray(props.capabilities?.voices)) {
+      const matching = props.capabilities.voices.filter((item): item is { id: string; model?: string } =>
+        Boolean(
+          item &&
+            typeof item === 'object' &&
+            typeof (item as { id?: unknown }).id === 'string' &&
+            (typeof (item as { model?: unknown }).model !== 'string' || (item as { model: string }).model === value),
+        ),
+      )
+      if (matching.length > 0 && !matching.some((item) => item.id === next.voice)) {
+        next.voice = matching[0]!.id
+      }
     }
   }
   if (key === 'language' && typeof value === 'string' && value && Array.isArray(props.capabilities?.voices)) {
@@ -67,7 +95,7 @@ function update(key: string, value: unknown) {
 </script>
 <template>
   <div class="grid gap-4 sm:grid-cols-2">
-    <label v-for="field in schema?.fields ?? []" :key="field.key" class="block space-y-1.5">
+    <label v-for="field in visibleFields" :key="field.key" class="block space-y-1.5">
       <span class="text-sm font-medium">{{ field.label || field.key }}<span v-if="field.required" class="text-danger"> *</span></span>
       <small v-if="field.description" class="block text-xs text-muted-foreground">{{ field.description }}</small>
       <div v-if="field.type === 'multi_select' && options(field).length" class="flex flex-wrap gap-1.5 pt-0.5">

@@ -389,7 +389,7 @@ function submit() {
         <small class="block text-xs text-muted-foreground">Để trống để giữ key hiện tại. Key mới được mã hóa trên server.</small>
       </label>
 
-      <ProviderTestPanel v-if="open && ['asr','llm','tts'].includes(form.type)" class="sm:col-span-2" :type="form.type" :adapter="form.adapter" :capabilities="descriptor?.capabilities" :saved-key="isReadOnly ? provider?.id : undefined" :draft="isReadOnly ? undefined : { type: form.type as 'asr' | 'llm' | 'tts', adapter: form.adapter, config_json: form.configJson, ...(form.apiKey ? { api_key: form.apiKey } : provider && ['openai', 'chillaudio_ws'].includes(form.adapter) && form.adapter === provider.adapter && provider.desiredRevision ? { saved_credential: { key: provider.id, expected_revision: provider.desiredRevision } } : {}) }" />
+      <ProviderTestPanel v-if="open && ['asr','llm','tts'].includes(form.type)" class="sm:col-span-2" :type="form.type" :adapter="form.adapter" :model="typeof form.configJson.model === 'string' && form.configJson.model ? form.configJson.model : form.model" :capabilities="descriptor?.capabilities" :saved-key="isReadOnly ? provider?.id : undefined" :draft="isReadOnly ? undefined : { type: form.type as 'asr' | 'llm' | 'tts', adapter: form.adapter, config_json: form.configJson, ...(form.apiKey ? { api_key: form.apiKey } : provider && ['openai', 'chillaudio_ws'].includes(form.adapter) && form.adapter === provider.adapter && provider.desiredRevision ? { saved_credential: { key: provider.id, expected_revision: provider.desiredRevision } } : {}) }" />
 
       <div class="flex justify-end gap-2 pt-2 sm:col-span-2">
         <Button type="button" variant="outline" @click="open = false">{{ t('common.cancel') }}</Button>

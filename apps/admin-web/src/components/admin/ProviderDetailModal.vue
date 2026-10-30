@@ -145,7 +145,7 @@ watch(
           </CardHeader>
           <CardContent class="space-y-3">
             <p class="text-sm text-muted-foreground">{{ testHint }}</p>
-            <ProviderTestPanel v-if="open" :type="provider.type" :adapter="provider.adapter" :revision="provider.desiredRevision" :saved-key="provider.id" />
+            <ProviderTestPanel v-if="open" :type="provider.type" :adapter="provider.adapter" :model="provider.model || (typeof provider.configJson?.model === 'string' ? provider.configJson.model : '')" :revision="provider.desiredRevision" :saved-key="provider.id" />
           </CardContent>
         </Card>
       </div>

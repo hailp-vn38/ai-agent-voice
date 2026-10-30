@@ -299,9 +299,16 @@ impl FactoryMaterializer {
         for runtime in catalog.vad.values() {
             self.supervisor.observe_vad(Arc::clone(&runtime.runtime));
         }
-        let capabilities = crate::providers::compiled_provider_adapter_registry()
-            .get(&snapshot.adapter)
-            .and_then(|descriptor| serde_json::to_value(&descriptor.capabilities).ok());
+        let capabilities = if snapshot.adapter == "vieneu" {
+            crate::providers::tts::vieneu::descriptor::runtime_capabilities(&snapshot.config_json)
+        } else {
+            None
+        }
+        .or_else(|| {
+            crate::providers::compiled_provider_adapter_registry()
+                .get(&snapshot.adapter)
+                .and_then(|descriptor| serde_json::to_value(&descriptor.capabilities).ok())
+        });
         let mut readiness = crate::workers::NativeReadiness::default();
         for runtime in catalog.asr.values() {
             readiness.add(runtime.readiness());

@@ -10,7 +10,7 @@ import { useI18n } from '@/composables/useI18n'
 import { useMicrophoneRecorder } from '@/composables/useMicrophoneRecorder'
 import VoiceRecordingDock from '@/components/voice/VoiceRecordingDock.vue'
 
-const props = defineProps<{ type: ProviderType; savedKey?: string; revision?: number; adapter?: string; capabilities?: Record<string, unknown>; draft?: ProviderTestDraft }>()
+const props = defineProps<{ type: ProviderType; savedKey?: string; revision?: number; adapter?: string; model?: string; capabilities?: Record<string, unknown>; draft?: ProviderTestDraft }>()
 const { t } = useI18n()
 const recorder = useMicrophoneRecorder()
 const text = ref('Xin chào')
@@ -21,9 +21,28 @@ const durationMs = ref<number>()
 const rtf = ref<number>()
 const discoveredCapabilities = ref<Record<string, unknown>>()
 const capabilities = computed(() => ({ ...props.capabilities, ...discoveredCapabilities.value }))
+function resolveSelectedModel(values: unknown): string {
+  if (typeof props.draft?.config_json?.model === 'string' && props.draft.config_json.model) {
+    return props.draft.config_json.model
+  }
+  if (typeof props.model === 'string' && props.model) {
+    return props.model
+  }
+  const models = capabilities.value?.models
+  if (Array.isArray(models) && models[0] && typeof models[0] === 'object' && typeof (models[0] as { id?: unknown }).id === 'string') {
+    return (models[0] as { id: string }).id
+  }
+  if (Array.isArray(values)) {
+    const firstWithModel = values.find((item): item is { model: string } =>
+      Boolean(item && typeof item === 'object' && typeof (item as { model?: unknown }).model === 'string' && (item as { model: string }).model),
+    )
+    if (firstWithModel) return firstWithModel.model
+  }
+  return ''
+}
 function options(key: 'voices' | 'languages') {
   const values = capabilities.value?.[key]
-  const selectedModel = typeof props.draft?.config_json?.model === 'string' && props.draft.config_json.model ? props.draft.config_json.model : ''
+  const selectedModel = key === 'voices' ? resolveSelectedModel(values) : ''
   const seen = new Set<string>()
   return Array.isArray(values) ? values.flatMap((item) => {
     if (typeof item === 'string') {
@@ -74,7 +93,7 @@ function invalidate() {
   if (stale) status.value = 'stale'
 }
 watch([text, voice, language], invalidate)
-watch(() => [props.savedKey, props.revision, props.type, props.draft], () => {
+watch(() => [props.savedKey, props.revision, props.type, props.draft, props.model], () => {
   invalidate(); audio.value = undefined; voice.value = ''; language.value = ''; recorder.dispose()
 }, { deep: true })
 onBeforeUnmount(reset)

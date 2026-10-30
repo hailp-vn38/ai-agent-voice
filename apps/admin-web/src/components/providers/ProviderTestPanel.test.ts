@@ -159,8 +159,12 @@ it('renders image and video previews when LLM diagnostics return media and clear
   wrapper.unmount()
 })
 
-it('filters and deduplicates voices by draft model selection', () => {
+it('filters and deduplicates voices by draft or saved model selection without merging models', () => {
   const capabilities = {
+    models: [
+      { id: 'vieneu_v3_turbo_fp32', name: 'VieNeu v3 Turbo FP32' },
+      { id: 'vieneu_v3_nano_fp32', name: 'VieNeu v3 Nano FP32' },
+    ],
     voices: [
       { id: 'hai_dang', name: 'Hải Đăng', model: 'vieneu_v3_turbo_fp32' },
       { id: 'adam', name: 'Adam', model: 'vieneu_v3_turbo_fp32' },
@@ -182,14 +186,28 @@ it('filters and deduplicates voices by draft model selection', () => {
   ])
   nanoDraft.unmount()
 
-  const savedWithoutDraft = mount(ProviderTestPanel, {
+  const savedNano = mount(ProviderTestPanel, {
+    props: {
+      type: 'tts',
+      savedKey: 'vieneu-nano-saved',
+      model: 'vieneu_v3_nano_fp32',
+      capabilities,
+    },
+  })
+  expect(savedNano.findAll('select')[0]!.findAll('option').map((o) => o.attributes('value'))).toEqual([
+    '',
+    'minh_quan',
+    'adam',
+  ])
+  savedNano.unmount()
+
+  const savedWithoutExplicitModel = mount(ProviderTestPanel, {
     props: { type: 'tts', savedKey: 'vieneu-saved', capabilities },
   })
-  expect(savedWithoutDraft.findAll('select')[0]!.findAll('option').map((o) => o.attributes('value'))).toEqual([
+  expect(savedWithoutExplicitModel.findAll('select')[0]!.findAll('option').map((o) => o.attributes('value'))).toEqual([
     '',
     'hai_dang',
     'adam',
-    'minh_quan',
   ])
-  savedWithoutDraft.unmount()
+  savedWithoutExplicitModel.unmount()
 })

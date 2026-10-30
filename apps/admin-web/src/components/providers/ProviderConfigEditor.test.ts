@@ -55,7 +55,7 @@ it('filters voices by selected language and auto-selects a compatible voice when
   })
 })
 
-it('filters voices by selected model and resets voice when switching to an incompatible model', async () => {
+it('filters voices by selected model, hides speed_percent on turbo, and resets voice/speed when switching models', async () => {
   const wrapper = mount(ProviderConfigEditor, {
     props: {
       modelValue: { model: 'vieneu_v3_turbo_fp32', voice: 'hai_dang', language: 'vi-VN' },
@@ -63,6 +63,7 @@ it('filters voices by selected model and resets voice when switching to an incom
         fields: [
           { key: 'model', type: 'select', enum_source: 'models' },
           { key: 'voice', type: 'select', enum_source: 'voices' },
+          { key: 'speed_percent', type: 'integer' },
         ],
       },
       capabilities: {
@@ -81,10 +82,24 @@ it('filters voices by selected model and resets voice when switching to an incom
   })
   const selects = wrapper.findAll('select')
   expect(selects[1]!.findAll('option').map((o) => o.attributes('value'))).toEqual(['', 'hai_dang', 'adam'])
+  expect(wrapper.find('input[type="number"]').exists()).toBe(false)
+
   await selects[0]!.setValue('vieneu_v3_nano_fp32')
   expect(wrapper.emitted('update:modelValue')?.[0]?.[0]).toEqual({
     model: 'vieneu_v3_nano_fp32',
     voice: 'minh_quan',
+    language: 'vi-VN',
+  })
+
+  await wrapper.setProps({
+    modelValue: { model: 'vieneu_v3_nano_fp32', voice: 'minh_quan', language: 'vi-VN', speed_percent: 120 },
+  })
+  expect(wrapper.find('input[type="number"]').exists()).toBe(true)
+
+  await wrapper.findAll('select')[0]!.setValue('vieneu_v3_turbo_fp32')
+  expect(wrapper.emitted('update:modelValue')?.[1]?.[0]).toEqual({
+    model: 'vieneu_v3_turbo_fp32',
+    voice: 'hai_dang',
     language: 'vi-VN',
   })
 })
