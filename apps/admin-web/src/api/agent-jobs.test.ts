@@ -67,6 +67,19 @@ describe('Agent Job admin clients', () => {
     expect(fetch.mock.calls[0]?.[1].method).toBe('DELETE')
   })
 
+  it('batch-deletes multiple Jobs via POST /api/admin/jobs/batch-delete and returns deleted summary', async () => {
+    const fetch = vi.fn().mockResolvedValue(json({ deleted: 2, deleted_ids: ['job-1', 'job-2'] }))
+    vi.stubGlobal('fetch', fetch)
+    await expect(agentJobsApi.deleteJobs(['job-1', 'job-2'])).resolves.toEqual({
+      deleted: 2,
+      deleted_ids: ['job-1', 'job-2'],
+    })
+    expect(fetch.mock.calls[0]?.[0]).toContain('/api/admin/jobs/batch-delete')
+    const init = fetch.mock.calls[0]?.[1] as RequestInit
+    expect(init.method).toBe('POST')
+    expect(JSON.parse(String(init.body))).toEqual({ ids: ['job-1', 'job-2'] })
+  })
+
   it('preserves the deletion conflict returned by the backend', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(
       JSON.stringify({ error: { code: 'job_delete_conflict' } }),

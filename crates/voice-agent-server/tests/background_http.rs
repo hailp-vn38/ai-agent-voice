@@ -1440,3 +1440,142 @@ vault_dir = "{}"
 
     server.abort();
 }
+
+#[tokio::test]
+async fn admin_http_batch_delete_jobs_removes_selected_tasks_and_validates_payload() {
+    let temp_root =
+        std::env::temp_dir().join(format!("background-batch-del-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&temp_root).unwrap();
+    let config: AppConfig = toml::from_str(&format!(
+        r#"
+[server]
+bind = "127.0.0.1:0"
+public_ws_url = "ws://127.0.0.1:0/voice/v1/"
+[provider_defaults]
+vad = "test"
+asr = "test"
+llm = "test"
+tts = "test"
+[database]
+url = "sqlite://{}"
+[api]
+enabled = true
+admin_token = "background-test-token"
+[orchestrator]
+enabled = true
+endpoint = "http://127.0.0.1:9/v1"
+api_key = "test-key"
+model = "test-model"
+store_dir = "{}"
+tasks_store_dir = "{}"
+reports_dir = "{}"
+work_dir = "{}"
+prompts_dir = "{}"
+skills_dir = "{}"
+[wiki]
+vault_dir = "{}"
+"#,
+        temp_root.join("voice-agent.db").display(),
+        temp_root.join("orch-store").display(),
+        temp_root.join("tasks-store").display(),
+        temp_root.join("reports").display(),
+        temp_root.join("work").display(),
+        temp_root.join("prompts").display(),
+        temp_root.join("skills").display(),
+        temp_root.join("wiki").display(),
+    ))
+    .unwrap();
+    let router = bootstrap_with_providers(config, Arc::new(ProviderSet::unavailable()))
+        .await
+        .unwrap();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base = format!("http://{}/api/admin", listener.local_addr().unwrap());
+    let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    let client = Client::new();
+
+    // 1. Unauthenticated request is rejected
+    let unauth = client
+        .post(format!("{base}/jobs/batch-delete"))
+        .json(&json!({ "ids": ["job-1"] }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(unauth.status(), StatusCode::UNAUTHORIZED);
+
+    // 2. Empty or blank IDs are rejected with 400 invalid_arguments
+    for bad_payload in [json!({ "ids": [] }), json!({ "ids": ["   "] })] {
+        let bad_resp = client
+            .post(format!("{base}/jobs/batch-delete"))
+            .bearer_auth("background-test-token")
+            .json(&bad_payload)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(bad_resp.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(
+            bad_resp.json::<Value>().await.unwrap()["error"]["code"],
+            "invalid_arguments"
+        );
+    }
+
+    // 3. Create 3 jobs and batch-delete 2 of them (with duplicate + missing IDs)
+    let mut created_ids = Vec::new();
+    for idx in 1..=3 {
+        let resp = client
+            .post(format!("{base}/jobs"))
+            .bearer_auth("background-test-token")
+            .json(&json!({ "goal": format!("Batch delete test job #{idx}") }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::CREATED);
+        let body: Value = resp.json().await.unwrap();
+        created_ids.push(body["id"].as_str().unwrap().to_owned());
+    }
+
+    let del_resp = client
+        .post(format!("{base}/jobs/batch-delete"))
+        .bearer_auth("background-test-token")
+        .json(&json!({
+            "ids": [
+                &created_ids[0],
+                &created_ids[1],
+                &created_ids[0],
+                "missing-job-id"
+            ]
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(del_resp.status(), StatusCode::OK);
+    let del_body: Value = del_resp.json().await.unwrap();
+    assert_eq!(del_body["deleted"], 2);
+    assert_eq!(
+        del_body["deleted_ids"],
+        json!([&created_ids[0], &created_ids[1]])
+    );
+
+    // 4. Verify deleted jobs return 404 and remaining job stays in GET /api/admin/jobs
+    for deleted_id in [&created_ids[0], &created_ids[1]] {
+        let get_resp = client
+            .get(format!("{base}/jobs/{deleted_id}"))
+            .bearer_auth("background-test-token")
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(get_resp.status(), StatusCode::NOT_FOUND);
+    }
+
+    let list_resp = client
+        .get(format!("{base}/jobs"))
+        .bearer_auth("background-test-token")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(list_resp.status(), StatusCode::OK);
+    let list_body: Value = list_resp.json().await.unwrap();
+    assert_eq!(list_body["total"], 1);
+    assert_eq!(list_body["items"][0]["id"], created_ids[2]);
+
+    server.abort();
+}

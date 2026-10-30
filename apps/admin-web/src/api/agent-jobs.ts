@@ -4,6 +4,7 @@ import type {
   ArtifactCatalogPage,
   BackgroundSettings,
   BackgroundSettingsUpdate,
+  BatchDeleteJobsResult,
   CreateSubagentInput,
   JobAttachmentUpload,
   JobEventPage,
@@ -135,6 +136,9 @@ export const agentJobsApi = {
   },
   deleteJob(id: string) {
     return requestJson<void>(jobPath(id), { method: 'DELETE' })
+  },
+  deleteJobs(ids: string[]) {
+    return requestJson<BatchDeleteJobsResult>(jobsPath + '/batch-delete', jsonRequest('POST', { ids }))
   },
   retryJob(id: string, idempotencyKey: string) {
     return requestJson<AdminJob>(jobPath(id) + '/retry', jsonRequest('POST', { confirm_safe_read_only: true }), { headers: { 'Idempotency-Key': idempotencyKey } })

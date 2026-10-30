@@ -8,7 +8,7 @@ mod tests;
 
 pub(super) use artifacts::{artifact, list_artifacts};
 pub(super) use jobs::{
-    cancel, create, delete, events, followup, get, history, list, retry, stream,
+    batch_delete, cancel, create, delete, events, followup, get, history, list, retry, stream,
 };
 pub(super) use settings::{create_agent, delete_agent, save_settings, settings};
 pub(super) use skills::{delete_skill, get_skill, save_skill};

@@ -8,7 +8,7 @@ import JobsPage from './JobsPage.vue'
 import JobDetailPage from './JobDetailPage.vue'
 
 const { api, listenJobChanges, push } = vi.hoisted(() => ({
-  api: { listJobs: vi.fn(), job: vi.fn(), events: vi.fn(), deleteJob: vi.fn(), createJob: vi.fn() },
+  api: { listJobs: vi.fn(), job: vi.fn(), events: vi.fn(), deleteJob: vi.fn(), deleteJobs: vi.fn(), createJob: vi.fn() },
   listenJobChanges: vi.fn(),
   push: vi.fn(),
 }))
@@ -34,6 +34,7 @@ beforeEach(() => {
   api.job.mockResolvedValue(job)
   api.events.mockResolvedValue({ items: [] })
   api.deleteJob.mockResolvedValue(undefined)
+  api.deleteJobs.mockResolvedValue({ deleted: 0, deleted_ids: [] })
 })
 afterEach(() => { vi.useRealTimers() })
 
@@ -403,6 +404,76 @@ it('attaches .wav audio in Create Job modal, auto-fills goal, and submits base64
       },
     ])
     expect(push).toHaveBeenCalledWith({ name: 'job-detail', params: { jobId: 'job-wav-1' } })
+  } finally {
+    wrapper.unmount()
+  }
+})
+
+it('allows selecting multiple Jobs (individual and select-all), confirms batch deletion, and reloads the list', async () => {
+  const jobsList = [
+    {
+      id: 'job-1', goal: 'First job', status: 'running',
+      created_at: '2026-10-14T00:00:00Z', requester_scope: 'admin',
+      plan_revision: 1, retry_of_job_id: null, result: null,
+      budget_used: {}, steps: [], artifacts: [],
+    },
+    {
+      id: 'job-2', goal: 'Second job', status: 'succeeded',
+      created_at: '2026-10-14T00:01:00Z', requester_scope: 'admin',
+      plan_revision: 1, retry_of_job_id: null, result: null,
+      budget_used: {}, steps: [], artifacts: [],
+    },
+    {
+      id: 'job-3', goal: 'Third job', status: 'failed',
+      created_at: '2026-10-14T00:02:00Z', requester_scope: 'admin',
+      plan_revision: 1, retry_of_job_id: null, result: null,
+      budget_used: {}, steps: [], artifacts: [],
+    },
+  ]
+  api.listJobs
+    .mockResolvedValueOnce({ items: jobsList, total: 3, page: 1, page_size: 30 })
+    .mockResolvedValueOnce({ items: [jobsList[2]!], total: 1, page: 1, page_size: 30 })
+  api.deleteJobs.mockResolvedValue({ deleted: 2, deleted_ids: ['job-1', 'job-2'] })
+
+  const wrapper = mount(JobsPage, { global: { stubs: { teleport: true } } })
+  try {
+    await flushPromises()
+    expect(wrapper.find('[data-testid="batch-delete-jobs"]').exists()).toBe(false)
+
+    const selectAll = wrapper.get('thead input[type="checkbox"]')
+    const rowCheckboxes = wrapper.findAll('tbody input[type="checkbox"]')
+    expect(rowCheckboxes).toHaveLength(3)
+
+    // Toggle select-all ON then OFF
+    await selectAll.setValue(true)
+    expect(wrapper.get('[data-testid="batch-delete-jobs"]').text()).toContain(
+      translate('jobUi.deleteSelectedJobs', { count: 3 }),
+    )
+    await selectAll.setValue(false)
+    expect(wrapper.find('[data-testid="batch-delete-jobs"]').exists()).toBe(false)
+
+    // Select job-1 and job-2 individually
+    await rowCheckboxes[0]!.setValue(true)
+    await rowCheckboxes[1]!.setValue(true)
+
+    const deleteBtn = wrapper.get('[data-testid="batch-delete-jobs"]')
+    expect(deleteBtn.text()).toContain(translate('jobUi.deleteSelectedJobs', { count: 2 }))
+    await deleteBtn.trigger('click')
+    expect(api.deleteJobs).not.toHaveBeenCalled()
+
+    const dialog = wrapper.get('[role="dialog"]')
+    expect(dialog.text()).toContain(translate('jobUi.deleteSelectedConfirm', { count: 2 }))
+    const confirmBtn = dialog
+      .findAll('button')
+      .find(button => button.text().includes(translate('jobUi.deleteSelectedJobs', { count: 2 })))!
+    await confirmBtn.trigger('click')
+    await flushPromises()
+
+    expect(api.deleteJobs).toHaveBeenCalledExactlyOnceWith(['job-1', 'job-2'])
+    expect(api.listJobs).toHaveBeenCalledTimes(2)
+    expect(wrapper.find('[data-testid="batch-delete-jobs"]').exists()).toBe(false)
+    expect(wrapper.findAll('tbody tr')).toHaveLength(1)
+    expect(wrapper.text()).toContain('Third job')
   } finally {
     wrapper.unmount()
   }

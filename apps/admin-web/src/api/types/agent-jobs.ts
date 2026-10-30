@@ -253,6 +253,11 @@ export interface JobPage {
   total?: number
 }
 
+export interface BatchDeleteJobsResult {
+  deleted: number
+  deleted_ids: string[]
+}
+
 export type JobEventType = 'plan_attempt' | 'plan_rejected' | 'plan_accepted' | 'step_started' | 'step_finished' | 'job_finished' | 'llm_run_started' | 'llm_provider_acquired' | 'llm_request_started' | 'llm_response_received' | 'llm_run_finished' | 'agent_run_created' | 'agent_run_started' | 'agent_decision_accepted' | 'agent_decision_rejected' | 'agent_run_finished' | 'join_completed' | 'knowledge_analysis_submitted' | 'knowledge_proposal_changed'
 export interface JobEvent {
   sequence: number

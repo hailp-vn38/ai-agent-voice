@@ -7,6 +7,7 @@ import { formatApiError, isApiError } from '@/api/errors'
 import type { AdminJob, JobAttachmentUpload, JobStatus } from '@/api/types/agent-jobs'
 import PageHeader from '@/components/admin/PageHeader.vue'
 import BaseModal from '@/components/admin/BaseModal.vue'
+import ConfirmDialog from '@/components/admin/ConfirmDialog.vue'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { useI18n } from '@/composables/useI18n'
@@ -35,6 +36,8 @@ const error = ref('')
 const notice = ref('')
 const backendPending = ref(false)
 const createOpen = ref(false)
+const batchDeleteOpen = ref(false)
+const selectedIds = ref<string[]>([])
 const goal = ref('')
 const wavAttachments = ref<PendingWavAttachment[]>([])
 const wavDragActive = ref(false)
@@ -46,6 +49,7 @@ let creation = { sig: '', key: '' }
 const activeCount = computed(() => jobs.value.filter(job => ['queued', 'planning', 'running', 'cancelling'].includes(job.status)).length)
 const completedCount = computed(() => jobs.value.filter(job => ['succeeded', 'partial_success'].includes(job.status)).length)
 const failedCount = computed(() => jobs.value.filter(job => job.status === 'failed').length)
+const allSelected = computed(() => jobs.value.length > 0 && jobs.value.every(job => selectedIds.value.includes(job.id)))
 const tone = (status: JobStatus): 'success' | 'danger' | 'secondary' | 'outline' =>
   status === 'succeeded' ? 'success' : status === 'failed' ? 'danger' :
     status === 'partial_success' || status === 'cancelled' ? 'outline' : 'secondary'
@@ -68,6 +72,7 @@ async function load(nextPage = 1) {
     }, pending.signal)
     if (pending.signal.aborted) return
     jobs.value = result.items
+    selectedIds.value = selectedIds.value.filter(id => result.items.some(job => job.id === id))
     total.value = result.total ?? result.items.length
     page.value = result.page
     hasMore.value = (result.page * result.page_size) < (result.total ?? (result.page * result.page_size + (result.items.length === result.page_size ? 1 : 0)))
@@ -233,6 +238,35 @@ async function create() {
 function openDetail(id: string) {
   void router.push({ name: 'job-detail', params: { jobId: id } })
 }
+function toggleSelectAll(event: Event) {
+  const checked = (event.target as HTMLInputElement).checked
+  selectedIds.value = checked ? jobs.value.map(job => job.id) : []
+}
+function toggleSelectJob(id: string, event: Event) {
+  const checked = (event.target as HTMLInputElement).checked
+  if (checked) {
+    if (!selectedIds.value.includes(id)) selectedIds.value.push(id)
+  } else {
+    selectedIds.value = selectedIds.value.filter(item => item !== id)
+  }
+}
+async function deleteSelectedJobs() {
+  if (!selectedIds.value.length || busy.value) return
+  busy.value = true
+  error.value = ''
+  notice.value = ''
+  try {
+    const ids = [...selectedIds.value]
+    const res = await agentJobsApi.deleteJobs(ids)
+    selectedIds.value = []
+    notice.value = t('jobUi.jobsDeleted', { count: res.deleted })
+    await load(page.value)
+  } catch (cause) {
+    error.value = formatApiError(cause)
+  } finally {
+    busy.value = false
+  }
+}
 onMounted(() => { void load() })
 onBeforeUnmount(() => {
   controller?.abort()
@@ -272,6 +306,16 @@ onBeforeUnmount(() => {
         <option v-for="status in statusOptions" :key="status" :value="status">{{ label(status) }}</option>
       </select>
       <Button variant="outline" @click="load()">{{ t('jobUi.search') }}</Button>
+      <Button
+        v-if="selectedIds.length > 0"
+        variant="outline"
+        class="text-danger sm:ml-auto"
+        data-testid="batch-delete-jobs"
+        :disabled="busy || loading"
+        @click="batchDeleteOpen = true"
+      >
+        <Trash2 class="size-4" />{{ t('jobUi.deleteSelectedJobs', { count: selectedIds.length }) }}
+      </Button>
     </div>
 
     <div v-if="loading" class="studio-panel p-8 text-center text-sm text-muted-foreground" role="status">{{ t('common.loading') }}</div>
@@ -280,6 +324,15 @@ onBeforeUnmount(() => {
         <table class="w-full text-left text-sm">
           <thead class="border-b bg-muted/40 text-xs text-muted-foreground">
             <tr>
+              <th class="w-10 px-4 py-3">
+                <input
+                  type="checkbox"
+                  class="size-4 cursor-pointer rounded border-border accent-studio-violet"
+                  :checked="allSelected"
+                  :aria-label="t('jobUi.selectAllJobs')"
+                  @change="toggleSelectAll"
+                />
+              </th>
               <th class="px-4 py-3 font-medium">{{ t('jobUi.goal') }}</th>
               <th class="px-4 py-3 font-medium">{{ t('jobUi.requester') }}</th>
               <th class="px-4 py-3 font-medium">{{ t('jobUi.status') }}</th>
@@ -289,6 +342,15 @@ onBeforeUnmount(() => {
           </thead>
           <tbody class="divide-y">
             <tr v-for="job in jobs" :key="job.id" class="hover:bg-muted/25">
+              <td class="w-10 px-4 py-4">
+                <input
+                  type="checkbox"
+                  class="size-4 cursor-pointer rounded border-border accent-studio-violet"
+                  :checked="selectedIds.includes(job.id)"
+                  :aria-label="t('jobUi.selectJob', { id: job.id })"
+                  @change="toggleSelectJob(job.id, $event)"
+                />
+              </td>
               <td class="max-w-sm px-4 py-4">
                 <button class="block w-full cursor-pointer truncate text-left font-medium hover:text-studio-violet" type="button" @click="openDetail(job.id)">{{ job.goal }}</button>
                 <span v-if="job.execution_mode === 'knowledge_ingest_v3'" class="text-xs text-muted-foreground">{{ t('jobUi.knowledge') }}</span>
@@ -397,5 +459,15 @@ onBeforeUnmount(() => {
         </div>
       </form>
     </BaseModal>
+
+    <ConfirmDialog
+      v-model="batchDeleteOpen"
+      :title="t('jobUi.deleteSelectedJobs', { count: selectedIds.length })"
+      :confirm-label="t('jobUi.deleteSelectedJobs', { count: selectedIds.length })"
+      tone="danger"
+      @confirm="deleteSelectedJobs"
+    >
+      <p>{{ t('jobUi.deleteSelectedConfirm', { count: selectedIds.length }) }}</p>
+    </ConfirmDialog>
   </section>
 </template>

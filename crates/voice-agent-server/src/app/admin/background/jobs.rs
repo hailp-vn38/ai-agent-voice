@@ -294,6 +294,57 @@ pub(in crate::app::admin) async fn delete(
     }
 }
 
+const MAX_BATCH_DELETE_IDS: usize = 100;
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct BatchDeleteJobsInput {
+    ids: Vec<String>,
+}
+
+pub(in crate::app::admin) async fn batch_delete(
+    State(state): State<AppState>,
+    request: Request,
+) -> Response {
+    let (request, input): (_, BatchDeleteJobsInput) = match json(request).await {
+        Ok(v) => v,
+        Err(e) => return e,
+    };
+    if input.ids.is_empty() || input.ids.len() > MAX_BATCH_DELETE_IDS {
+        return error(&request, StatusCode::BAD_REQUEST, "invalid_arguments");
+    }
+    let mut unique_ids = Vec::with_capacity(input.ids.len());
+    for raw_id in input.ids {
+        let trimmed = raw_id.trim();
+        if trimmed.is_empty() || trimmed.len() > 128 {
+            return error(&request, StatusCode::BAD_REQUEST, "invalid_arguments");
+        }
+        if !unique_ids
+            .iter()
+            .any(|existing: &String| existing == trimmed)
+        {
+            unique_ids.push(trimmed.to_owned());
+        }
+    }
+    let tm = match task_manager(&state, &request) {
+        Ok(tm) => tm,
+        Err(resp) => return resp,
+    };
+    let mut deleted_ids = Vec::with_capacity(unique_ids.len());
+    for id in unique_ids {
+        match tm.delete_task_any_scope(&id).await {
+            Ok(()) => deleted_ids.push(id),
+            Err(e) if e.code() == ErrorCode::NotFound => {}
+            Err(e) => return task_failure(&request, e),
+        }
+    }
+    Json(serde_json::json!({
+        "deleted": deleted_ids.len(),
+        "deleted_ids": deleted_ids,
+    }))
+    .into_response()
+}
+
 pub(in crate::app::admin) async fn cancel(
     State(state): State<AppState>,
     Path(id): Path<String>,

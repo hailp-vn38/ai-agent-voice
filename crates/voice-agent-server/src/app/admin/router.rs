@@ -146,6 +146,10 @@ fn background_routes() -> Router<AppState> {
         )
         .route("/artifacts", get(background::list_artifacts))
         .route("/jobs", get(background::list).post(background::create))
+        .route(
+            "/jobs/batch-delete",
+            axum::routing::post(background::batch_delete),
+        )
         .route("/jobs/stream", get(background::stream))
         .route(
             "/jobs/{id}",
