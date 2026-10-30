@@ -1301,3 +1301,196 @@ async fn llm_gateway_gemini_antigravity_streams_tools_vision_and_auto_refreshes_
     );
 }
 
+#[tokio::test]
+async fn llm_gateway_gemini_403_does_not_mark_upstream_unauthorized_and_pool_fails_over() {
+    use crate::services::llm_gateway::{
+        GatewayAccountStatus, GatewayCallOutcome, UpdateGatewayAccountPatch,
+    };
+
+    let hub = create_test_hub().await;
+
+    let ch1 = hub
+        .start_oauth_login(StartOAuthLoginRequest {
+            vendor: GatewayVendor::Gemini,
+            label: "Gemini Pro (Unverified)".to_owned(),
+            redirect_uri: None,
+        })
+        .await
+        .expect("ch1");
+    let acc1 = hub
+        .complete_oauth_login(
+            &ch1.session_id,
+            OAuthCallbackSubmission {
+                callback_url_or_code: "gem_code_1".to_owned(),
+                state: None,
+            },
+        )
+        .await
+        .expect("acc1");
+    hub.update_account(
+        &acc1.account_key,
+        UpdateGatewayAccountPatch {
+            label: None,
+            enabled: None,
+            priority: Some(10),
+        },
+    )
+    .await
+    .expect("set acc1 priority 10");
+
+    let ch2 = hub
+        .start_oauth_login(StartOAuthLoginRequest {
+            vendor: GatewayVendor::Gemini,
+            label: "Gemini Plus (Verified)".to_owned(),
+            redirect_uri: None,
+        })
+        .await
+        .expect("ch2");
+    let acc2 = hub
+        .complete_oauth_login(
+            &ch2.session_id,
+            OAuthCallbackSubmission {
+                callback_url_or_code: "gem_code_2".to_owned(),
+                state: None,
+            },
+        )
+        .await
+        .expect("acc2");
+
+    let forbidden_tok = "Bearer tok_gemini_gem_code_1".to_string();
+    let app = Router::new()
+        .route(
+            "/v1internal:streamGenerateContent",
+            post(
+                |State(bad_tok): State<String>, headers: HeaderMap| async move {
+                    let auth = headers
+                        .get("authorization")
+                        .and_then(|v| v.to_str().ok())
+                        .unwrap_or("");
+                    if auth == bad_tok {
+                        return (
+                            StatusCode::FORBIDDEN,
+                            [("content-type", "application/json")],
+                            r#"{"error":{"code":403,"message":"Verify your account to continue.","status":"PERMISSION_DENIED"}}"#,
+                        )
+                            .into_response();
+                    }
+                    let sse = "data: {\"response\":{\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[{\"text\":\"Phản hồi từ tài khoản thứ hai\"}]}}]}}\n\ndata: [DONE]\n\n";
+                    (
+                        StatusCode::OK,
+                        [("content-type", "text/event-stream")],
+                        sse,
+                    )
+                        .into_response()
+                },
+            ),
+        )
+        .with_state(forbidden_tok);
+
+    let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+    let addr = listener.local_addr().expect("addr");
+    tokio::spawn(async move {
+        let _ = axum::serve(listener, app).await;
+    });
+
+    // 1. Direct account call to acc1 (403 PERMISSION_DENIED) must return Rejected WITHOUT marking acc1 as ReauthRequired / upstream_unauthorized
+    let direct_cfg = LlmGatewayConfig {
+        gateway_binding: GatewayBinding::Account(acc1.account_key.clone()),
+        model: "gemini-3.8-flash-medium".to_owned(),
+        base_url: Some(Url::parse(&format!("http://{addr}")).expect("url")),
+        timeout_ms: 5_000,
+        max_tokens: Some(512),
+        context_limit_tokens: None,
+        reasoning_effort: None,
+        temperature_percent: None,
+        tags: Some(vec!["chat".to_owned()]),
+        account_concurrency: None,
+        cdp_port: None,
+        headless: None,
+    };
+    let direct_provider =
+        LlmGatewayProvider::with_hub(&direct_cfg, Arc::clone(&hub)).expect("direct provider");
+    let err = match direct_provider
+        .stream(LlmRequest::text_turn("hi".to_owned()))
+        .await
+    {
+        Ok(_) => panic!("403 account should reject"),
+        Err(e) => e,
+    };
+    assert_eq!(err, crate::providers::llm::LlmError::Rejected);
+
+    let views = hub
+        .list_accounts(Some(GatewayVendor::Gemini))
+        .await
+        .expect("list");
+    let v1 = views
+        .iter()
+        .find(|a| a.account_key == acc1.account_key)
+        .expect("v1");
+    assert_eq!(v1.status, GatewayAccountStatus::Active);
+    assert_eq!(v1.last_error, None);
+
+    // 2. Pool call (`pool:gemini`) hits acc1 (403) and automatically fails over to acc2 (200 OK)
+    let pool_cfg = LlmGatewayConfig {
+        gateway_binding: GatewayBinding::Pool(GatewayVendor::Gemini),
+        model: "gemini-3.8-flash-medium".to_owned(),
+        base_url: Some(Url::parse(&format!("http://{addr}")).expect("url")),
+        timeout_ms: 5_000,
+        max_tokens: Some(512),
+        context_limit_tokens: None,
+        reasoning_effort: None,
+        temperature_percent: None,
+        tags: Some(vec!["chat".to_owned()]),
+        account_concurrency: None,
+        cdp_port: None,
+        headless: None,
+    };
+    let pool_provider =
+        LlmGatewayProvider::with_hub(&pool_cfg, Arc::clone(&hub)).expect("pool provider");
+    let mut stream = pool_provider
+        .stream(LlmRequest::text_turn("hi".to_owned()))
+        .await
+        .expect("pool fails over from 403 acc1 to acc2");
+    let mut out = String::new();
+    while let Some(ev) = stream.next().await {
+        match ev.expect("ev") {
+            LlmEvent::TextDelta(d) => out.push_str(&d),
+            LlmEvent::Finished => break,
+            _ => {}
+        }
+    }
+    assert_eq!(out, "Phản hồi từ tài khoản thứ hai");
+
+    // 3. Verify that if an account had `upstream_unauthorized`, toggling enabled or fetching quota clears `last_error`
+    hub.report_outcome(&acc1.account_key, GatewayCallOutcome::Unauthorized);
+    let disabled_view = hub
+        .update_account(
+            &acc1.account_key,
+            UpdateGatewayAccountPatch {
+                label: None,
+                enabled: Some(false),
+                priority: None,
+            },
+        )
+        .await
+        .expect("disable acc1");
+    assert_eq!(disabled_view.status, GatewayAccountStatus::Disabled);
+    assert_eq!(disabled_view.last_error, None);
+
+    hub.report_outcome(&acc2.account_key, GatewayCallOutcome::Unauthorized);
+    let _quota = hub
+        .get_account_quota(&acc2.account_key, true)
+        .await
+        .expect("quota fetch succeeds");
+    let views_after = hub
+        .list_accounts(Some(GatewayVendor::Gemini))
+        .await
+        .expect("list after");
+    let v2_after = views_after
+        .iter()
+        .find(|a| a.account_key == acc2.account_key)
+        .expect("v2");
+    assert_eq!(v2_after.status, GatewayAccountStatus::Active);
+    assert_eq!(v2_after.last_error, None);
+}
+

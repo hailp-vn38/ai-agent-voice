@@ -525,6 +525,7 @@ pub(crate) fn parse_weekly_quota_summary(data: &Value) -> Vec<GatewayQuotaWindow
     windows
 }
 
+#[cfg(test)]
 pub(crate) fn parse_gemini_quota_payload(
     data: &Value,
     plan: Option<String>,

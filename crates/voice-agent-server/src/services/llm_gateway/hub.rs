@@ -510,7 +510,7 @@ impl LlmGatewayHub {
                  SET credential_json = ?, \
                      account_email = COALESCE(?, account_email), \
                      expires_at = ?, \
-                     status = 'active', \
+                     status = CASE WHEN enabled = 0 THEN 'disabled' ELSE 'active' END, \
                      last_error = NULL, \
                      last_refreshed_at = ?, \
                      updated_at = ? \
@@ -536,7 +536,11 @@ impl LlmGatewayHub {
                 acc.account_email = exchanged.account_email;
             }
             acc.expires_at = exchanged.expires_at;
-            acc.status = GatewayAccountStatus::Active;
+            acc.status = if acc.enabled {
+                GatewayAccountStatus::Active
+            } else {
+                GatewayAccountStatus::Disabled
+            };
             acc.last_error = None;
             acc.last_refreshed_at = Some(now_epoch);
             acc.cooldown_until = None;
@@ -1958,6 +1962,11 @@ impl LlmGatewayHub {
             }
         };
 
+        // A successful quota fetch proves the OAuth token is accepted by upstream (not 401),
+        // so clear any stale `upstream_unauthorized` error or false `ReauthRequired` status.
+        self.clear_stale_unauthorized_on_valid_token(account_key)
+            .await;
+
         if let Some(ref discovered_ctx) = vendor_snapshot.discovered_account_context_id
             && bundle.account_context_id.is_none()
         {
@@ -2122,11 +2131,51 @@ impl LlmGatewayHub {
         self.get_account_view(account_key).await
     }
 
+    async fn clear_stale_unauthorized_on_valid_token(&self, account_key: &str) {
+        let should_update_db = {
+            let mut guard = self.snapshot.write().unwrap_or_else(|p| p.into_inner());
+            let Some(acc) = guard.accounts.get_mut(account_key) else {
+                return;
+            };
+            let had_unauthorized = acc.last_error.as_deref() == Some("upstream_unauthorized")
+                || acc.status == GatewayAccountStatus::ReauthRequired;
+            if !had_unauthorized {
+                return;
+            }
+            if acc.last_error.as_deref() == Some("upstream_unauthorized") {
+                acc.last_error = None;
+            }
+            if acc.status == GatewayAccountStatus::ReauthRequired && acc.bundle.is_some() {
+                acc.status = if acc.enabled {
+                    GatewayAccountStatus::Active
+                } else {
+                    GatewayAccountStatus::Disabled
+                };
+            }
+            true
+        };
+
+        if should_update_db
+            && let Some(pool) = &self.pool
+        {
+            let _ = sqlx::query(
+                "UPDATE llm_gateway_accounts \
+                 SET status = CASE WHEN enabled = 0 THEN 'disabled' ELSE 'active' END, \
+                     last_error = NULL \
+                 WHERE account_key = ? AND (status = 'reauth_required' OR last_error = 'upstream_unauthorized')",
+            )
+            .bind(account_key)
+            .execute(pool)
+            .await;
+        }
+    }
+
     pub async fn update_account(
         &self,
         account_key: &str,
         patch: UpdateGatewayAccountPatch,
     ) -> Result<GatewayAccountView, GatewayError> {
+        let toggled_enabled = patch.enabled.is_some();
         let (next_label, next_enabled, next_priority, next_status) = {
             let guard = self.snapshot.read().unwrap_or_else(|p| p.into_inner());
             let acc = guard
@@ -2150,7 +2199,9 @@ impl LlmGatewayHub {
             }
             let status = if !enabled {
                 GatewayAccountStatus::Disabled
-            } else if acc.status == GatewayAccountStatus::Disabled {
+            } else if acc.status == GatewayAccountStatus::Disabled
+                || (toggled_enabled && acc.status == GatewayAccountStatus::ReauthRequired)
+            {
                 if acc.bundle.is_some() {
                     GatewayAccountStatus::Active
                 } else {
@@ -2164,20 +2215,37 @@ impl LlmGatewayHub {
 
         let now_epoch = unix_seconds().unwrap_or(0);
         if let Some(pool) = &self.pool {
-            sqlx::query(
-                "UPDATE llm_gateway_accounts \
-                 SET label = ?, enabled = ?, priority = ?, status = ?, updated_at = ? \
-                 WHERE account_key = ?",
-            )
-            .bind(&next_label)
-            .bind(i64::from(next_enabled))
-            .bind(next_priority)
-            .bind(next_status.as_str())
-            .bind(now_epoch)
-            .bind(account_key)
-            .execute(pool)
-            .await
-            .map_err(|_| GatewayError::DatabaseUnavailable)?;
+            if toggled_enabled {
+                sqlx::query(
+                    "UPDATE llm_gateway_accounts \
+                     SET label = ?, enabled = ?, priority = ?, status = ?, last_error = NULL, updated_at = ? \
+                     WHERE account_key = ?",
+                )
+                .bind(&next_label)
+                .bind(i64::from(next_enabled))
+                .bind(next_priority)
+                .bind(next_status.as_str())
+                .bind(now_epoch)
+                .bind(account_key)
+                .execute(pool)
+                .await
+                .map_err(|_| GatewayError::DatabaseUnavailable)?;
+            } else {
+                sqlx::query(
+                    "UPDATE llm_gateway_accounts \
+                     SET label = ?, enabled = ?, priority = ?, status = ?, updated_at = ? \
+                     WHERE account_key = ?",
+                )
+                .bind(&next_label)
+                .bind(i64::from(next_enabled))
+                .bind(next_priority)
+                .bind(next_status.as_str())
+                .bind(now_epoch)
+                .bind(account_key)
+                .execute(pool)
+                .await
+                .map_err(|_| GatewayError::DatabaseUnavailable)?;
+            }
         }
 
         {
@@ -2187,6 +2255,10 @@ impl LlmGatewayHub {
                 acc.enabled = next_enabled;
                 acc.priority = next_priority;
                 acc.status = next_status;
+                if toggled_enabled {
+                    acc.last_error = None;
+                    acc.cooldown_until = None;
+                }
             }
             guard.rebuild_vendor_index();
         }

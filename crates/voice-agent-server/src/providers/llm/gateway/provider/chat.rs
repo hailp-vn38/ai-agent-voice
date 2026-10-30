@@ -90,10 +90,14 @@ impl LlmGatewayProvider {
             let outcome = self.finalize_wire_result(&current_lease.account_key, response);
             match outcome {
                 Ok(stream) => return Ok(stream),
-                Err(err @ (WireError::RateLimited { .. } | WireError::Unauthorized))
-                    if is_pool && attempt + 1 < max_attempts =>
-                {
-                    if let Ok(next_lease) = self.hub.acquire_lease(&effective_cfg.gateway_binding) {
+                Err(
+                    err @ (WireError::RateLimited { .. }
+                    | WireError::Unauthorized
+                    | WireError::HttpRejected),
+                ) if is_pool && attempt + 1 < max_attempts => {
+                    if let Ok(next_lease) = self.hub.acquire_lease(&effective_cfg.gateway_binding)
+                        && next_lease.account_key != current_lease.account_key
+                    {
                         current_lease = next_lease;
                         continue;
                     }

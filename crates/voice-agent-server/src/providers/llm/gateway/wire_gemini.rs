@@ -366,9 +366,12 @@ async fn send_gemini_request(
             }
         };
         let status = resp.status();
-        if idx + 1 < bases.len() && matches!(status.as_u16(), 400 | 404 | 502 | 503) {
+        if idx + 1 < bases.len() && matches!(status.as_u16(), 400 | 403 | 404 | 502 | 503) {
             last_err = WireError::HttpRejected;
             continue;
+        }
+        if status.as_u16() == 403 {
+            return Err(WireError::HttpRejected);
         }
         return check_wire_status(resp);
     }
