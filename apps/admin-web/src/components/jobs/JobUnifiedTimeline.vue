@@ -1708,7 +1708,7 @@ function hasObjectKeys(value: unknown): boolean {
 
 /* Split Workspace */
 .workspace {
-  height: clamp(540px, calc(100dvh - 230px), 820px);
+  height: max(540px, calc(100dvh - 180px));
   display: grid;
   grid-template-columns: 324px minmax(0, 1fr);
   grid-template-rows: minmax(0, 1fr);
@@ -1820,7 +1820,7 @@ function hasObjectKeys(value: unknown): boolean {
   overflow-y: auto;
   overflow-x: auto;
   min-height: 0;
-  padding: 3px 7px 28px 7px;
+  padding: 3px 7px 16px 7px;
   scroll-behavior: smooth;
   overscroll-behavior: contain;
 }
@@ -2087,7 +2087,7 @@ function hasObjectKeys(value: unknown): boolean {
 }
 .inspector-inner {
   width: 100%;
-  padding: 19px 24px 38px;
+  padding: 16px 20px;
 }
 .detail-heading {
   display: flex;

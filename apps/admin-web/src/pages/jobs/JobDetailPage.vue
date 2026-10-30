@@ -213,7 +213,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <section class="space-y-5">
+  <section class="space-y-4">
     <DetailHeader :title="job?.id || jobId" :back-label="t('jobUi.jobs')" @back="router.push({ name: 'jobs' })">
       <template #icon><div class="grid size-10 shrink-0 place-items-center rounded-xl bg-studio-violet/10 text-studio-violet"><Workflow class="size-5" /></div></template>
       <template #details><span class="line-clamp-2">{{ job?.goal || jobId }}</span></template>
