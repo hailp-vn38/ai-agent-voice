@@ -744,7 +744,7 @@ void load()
 </script>
 
 <template>
-  <main class="mx-auto max-w-7xl space-y-4">
+  <section class="space-y-4">
     <!-- Compact Header -->
     <header class="flex flex-wrap items-center justify-between gap-3">
       <div class="flex items-start gap-3">
@@ -2133,5 +2133,5 @@ void load()
       destructive
       @confirm="confirmDeleteAccount"
     />
-  </main>
+  </section>
 </template>

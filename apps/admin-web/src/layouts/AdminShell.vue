@@ -77,7 +77,7 @@ onBeforeUnmount(() => {
         </div>
       </header>
 
-      <main :class="isKnowledge ? 'h-[calc(100dvh-3.5rem)] w-full overflow-hidden p-0 lg:h-dvh' : 'mx-auto w-full max-w-[1600px] p-4 sm:p-6 lg:p-8'">
+      <main :class="isKnowledge ? 'h-[calc(100dvh-3.5rem)] w-full overflow-hidden p-0 lg:h-dvh' : 'mx-auto w-full max-w-[1600px] p-4'">
         <slot />
       </main>
     </div>

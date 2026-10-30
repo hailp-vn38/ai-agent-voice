@@ -1821,7 +1821,6 @@ function hasObjectKeys(value: unknown): boolean {
   overflow-x: auto;
   min-height: 0;
   padding: 3px 7px 28px 7px;
-  scrollbar-width: thin;
   scroll-behavior: smooth;
   overscroll-behavior: contain;
 }
@@ -2083,7 +2082,6 @@ function hasObjectKeys(value: unknown): boolean {
   flex: 1 1 0%;
   width: 100%;
   min-height: 0;
-  scrollbar-width: thin;
   scroll-behavior: smooth;
   overscroll-behavior: contain;
 }
