@@ -78,7 +78,11 @@ pub(super) async fn append_speech_provider_group(
     }
 
     runtime_entries.sort_by(|a, b| a.0.cmp(&b.0));
-    for (key, adapter) in runtime_entries {
+    for (key, raw_adapter) in runtime_entries {
+        let (adapter, model) = match raw_adapter.split_once('|') {
+            Some((a, m)) => (a.to_owned(), m.to_owned()),
+            None => (raw_adapter.clone(), raw_adapter),
+        };
         if adapter == "unavailable" {
             continue;
         }
@@ -93,8 +97,8 @@ pub(super) async fn append_speech_provider_group(
             provider_ref: key.clone(),
             name: format!("{key} ({adapter})"),
             source: "runtime",
-            adapter: adapter.clone(),
-            model: adapter,
+            adapter,
+            model,
             base_url: String::new(),
             api_key: None,
             gateway_binding: None,
@@ -110,30 +114,40 @@ pub(super) async fn append_speech_provider_group(
 }
 
 fn extract_speech_model_and_url(kind: &str, adapter: &str, parsed: &Value) -> (String, String) {
-    let raw_model = if kind == "asr" {
+    let model = if kind == "asr" {
         parsed
             .get("model")
             .or_else(|| parsed.get("model_dir"))
             .or_else(|| parsed.get("encoder"))
-    } else {
-        parsed.get("model").or_else(|| parsed.get("voice"))
-    };
-    let model = raw_model
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .map(|s| {
-            if kind == "asr" {
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(|s| {
                 std::path::Path::new(s)
                     .file_name()
                     .and_then(|n| n.to_str())
                     .unwrap_or(s)
-            } else {
-                s
-            }
-        })
-        .unwrap_or(adapter)
-        .to_owned();
+            })
+            .unwrap_or(adapter)
+            .to_owned()
+    } else {
+        let raw_model = parsed
+            .get("model")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|s| !s.is_empty());
+        let raw_voice = parsed
+            .get("voice")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|s| !s.is_empty() && *s != "__readiness__");
+        match (raw_model, raw_voice) {
+            (Some(m), Some(v)) if !m.eq_ignore_ascii_case(v) => format!("{m}:{v}"),
+            (Some(m), _) => m.to_owned(),
+            (None, Some(v)) => v.to_owned(),
+            (None, None) => adapter.to_owned(),
+        }
+    };
     let base_url = parsed
         .get("url")
         .or_else(|| parsed.get("base_url"))

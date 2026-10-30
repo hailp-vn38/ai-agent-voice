@@ -98,6 +98,20 @@ impl TtsWorkerRuntime {
         }
     }
 
+    /// Resolves a requested voice ID or gender alias (`"female"`, `"vi-female"`, `"male"`, ...)
+    /// into a concrete voice supported by this runtime's TTS adapter/model.
+    pub fn resolve_background_voice(&self, voice: Option<&str>) -> String {
+        let default_binding_voice = (!self.binding.voice.is_empty()
+            && self.binding.voice != "__readiness__")
+            .then_some(self.binding.voice.as_str());
+        crate::providers::tts::voice_catalog::resolve_tts_voice(
+            self.provider.adapter(),
+            self.provider.model_id(),
+            default_binding_voice,
+            voice,
+        )
+    }
+
     /// Synthesizes one background TTS clip into a WAV payload (`ProviderWorkloadClass::Background`),
     /// honouring an optional voice override when supported by the provider and falling back to
     /// the runtime's configured [`TtsBinding`].
@@ -106,22 +120,21 @@ impl TtsWorkerRuntime {
         text: &str,
         voice: Option<&str>,
     ) -> Result<Vec<u8>, TtsWorkerError> {
-        let trimmed_voice = voice
-            .map(str::trim)
-            .filter(|v| !v.is_empty() && !matches!(*v, "vi-default" | "default" | "alloy"));
-        let synth_req = trimmed_voice
-            .and_then(|v| {
-                self.effective_diagnostic_request(TtsDiagnosticRequest {
-                    text: text.to_owned(),
-                    voice: Some(v.to_owned()),
-                    language: None,
-                })
-                .ok()
-            })
-            .unwrap_or_else(|| TtsSynthesisRequest {
+        let resolved_voice = self.resolve_background_voice(voice);
+        let synth_req = if !resolved_voice.is_empty() && resolved_voice != self.binding.voice {
+            self.effective_diagnostic_request(TtsDiagnosticRequest {
                 text: text.to_owned(),
-                selection: self.binding.clone(),
-            });
+                voice: Some(resolved_voice),
+                language: None,
+            })
+            .ok()
+        } else {
+            None
+        }
+        .unwrap_or_else(|| TtsSynthesisRequest {
+            text: text.to_owned(),
+            selection: self.binding.clone(),
+        });
 
         let workload_class = if self.admission.has_background_capacity() {
             ProviderWorkloadClass::Background

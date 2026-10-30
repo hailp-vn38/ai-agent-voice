@@ -499,3 +499,365 @@ async fn asr_provider_catalog_validation_and_server_asr_transcribe_backend() {
     assert_eq!(payload.channels, 2);
     let _ = asr_runtime.shutdown_acknowledged();
 }
+
+#[test]
+fn tts_constraints_and_voice_resolution_across_all_adapters() {
+    let make_prov = |adapter: &str, model: &str| ResolvedLlmProvider {
+        provider_ref: format!("config:tts:{adapter}"),
+        name: format!("Test {adapter}"),
+        source: "config",
+        adapter: adapter.to_owned(),
+        model: model.to_owned(),
+        base_url: String::new(),
+        api_key: None,
+        gateway_binding: None,
+        timeout_ms: 15_000,
+        max_tokens: 4_096,
+        context_limit_tokens: 64_000,
+        reasoning_effort: None,
+        temperature_percent: None,
+        tags: vec!["tts".into()],
+        muse_options: None,
+    };
+
+    // 1. VieNeu v3 Turbo (25 voices: 11 female, 14 male) configured with male default `hai_dang`
+    let vieneu_turbo = make_prov("vieneu", "vieneu_v3_turbo_fp32:hai_dang");
+    let turbo_c = vieneu_turbo.tts_constraints(None);
+    assert_eq!(turbo_c.default_voice, "hai_dang");
+    assert_eq!(turbo_c.female_voices.len(), 11);
+    assert_eq!(turbo_c.male_voices.len(), 14);
+    assert_eq!(
+        vieneu_turbo.resolve_tts_voice(None, Some("female")),
+        "ngoc_huyen"
+    );
+    assert_eq!(
+        vieneu_turbo.resolve_tts_voice(None, Some("vi-female")),
+        "ngoc_huyen"
+    );
+    assert_eq!(
+        vieneu_turbo.resolve_tts_voice(None, Some("giọng nữ")),
+        "ngoc_huyen"
+    );
+    assert_eq!(
+        vieneu_turbo.resolve_tts_voice(None, Some("male")),
+        "hai_dang"
+    );
+    assert_eq!(
+        vieneu_turbo.resolve_tts_voice(None, Some("truc_ly")),
+        "truc_ly"
+    );
+    assert_eq!(
+        vieneu_turbo.resolve_tts_voice(None, Some("alloy")),
+        "hai_dang"
+    );
+    // Cross-variant fallback: Nano-only female voice `ai_han` on Turbo -> Turbo female `ngoc_huyen`
+    assert_eq!(
+        vieneu_turbo.resolve_tts_voice(None, Some("ai_han")),
+        "ngoc_huyen"
+    );
+
+    // When VieNeu Turbo is already configured with a female voice (`mai_anh`), requesting `"female"` keeps `"mai_anh"`
+    assert_eq!(
+        vieneu_turbo.resolve_tts_voice(Some("mai_anh"), Some("female")),
+        "mai_anh"
+    );
+
+    // 2. VieNeu v3 Nano (11 voices: 4 female, 7 male) configured with overlapping male voice `adam`
+    let vieneu_nano = make_prov("vieneu", "vieneu_v3_nano_fp32:adam");
+    let nano_c = vieneu_nano.tts_constraints(None);
+    assert_eq!(nano_c.default_voice, "adam");
+    assert_eq!(
+        nano_c.female_voices,
+        vec!["my_duyen", "mai_anh", "truc_ly", "ai_han"]
+    );
+    assert_eq!(nano_c.male_voices.len(), 7);
+    assert_eq!(
+        vieneu_nano.resolve_tts_voice(None, Some("female")),
+        "my_duyen"
+    );
+    assert_eq!(
+        vieneu_nano.resolve_tts_voice(None, Some("ai_han")),
+        "ai_han"
+    );
+    // Cross-variant fallback: Turbo-only female voice `ngoc_huyen` on Nano -> Nano female `my_duyen`
+    assert_eq!(
+        vieneu_nano.resolve_tts_voice(None, Some("ngoc_huyen")),
+        "my_duyen"
+    );
+    // Cross-variant fallback: Turbo-only male voice `hai_dang` on Nano (when default is `my_duyen`) -> Nano male `minh_quan`
+    assert_eq!(
+        vieneu_nano.resolve_tts_voice(Some("my_duyen"), Some("hai_dang")),
+        "minh_quan"
+    );
+
+    // 3. ZeroTTS (`giahuy` male default -> `maichi` female)
+    let zerotts = make_prov("zerotts_onnx", "giahuy");
+    assert_eq!(zerotts.resolve_tts_voice(None, Some("female")), "maichi");
+    assert_eq!(zerotts.resolve_tts_voice(None, Some("male")), "giahuy");
+
+    // 4. Edge TTS (advertises 3 female + 3 male, accepts all 322 voices)
+    let edge = make_prov("edge_tts", "vi-VN-NamMinhNeural");
+    let edge_c = edge.tts_constraints(None);
+    assert_eq!(edge_c.default_voice, "vi-VN-NamMinhNeural");
+    assert_eq!(edge_c.female_voices.len(), 3);
+    assert_eq!(edge_c.male_voices.len(), 3);
+    assert_eq!(
+        edge.resolve_tts_voice(None, Some("female")),
+        "vi-VN-HoaiMyNeural"
+    );
+    assert_eq!(
+        edge.resolve_tts_voice(None, Some("af-ZA-AdriNeural")),
+        "af-ZA-AdriNeural"
+    );
+
+    // 5. Kokoro VI (`manh_dung` male default -> `ngoc_huyen` female)
+    let kokoro = make_prov("kokoro_vi_onnx", "kokoro_vi_contextbox:manh_dung");
+    assert_eq!(
+        kokoro.resolve_tts_voice(None, Some("female")),
+        "ngoc_huyen"
+    );
+    assert_eq!(kokoro.resolve_tts_voice(None, Some("male")), "manh_dung");
+
+    // 6. ChillAudio WS (`BV075_streaming` male default -> `BV421_vivn_streaming` female)
+    let chill = make_prov("chillaudio_ws", "BV075_streaming");
+    assert_eq!(
+        chill.resolve_tts_voice(None, Some("female")),
+        "BV421_vivn_streaming"
+    );
+    assert_eq!(
+        chill.resolve_tts_voice(None, Some("male")),
+        "BV075_streaming"
+    );
+
+    // 7. OpenAI AudioSpeech (`onyx` male default -> `nova` female; `"alloy"` is preserved on OpenAI)
+    let openai = make_prov("openai", "tts-1:onyx");
+    assert_eq!(openai.resolve_tts_voice(None, Some("female")), "nova");
+    assert_eq!(openai.resolve_tts_voice(None, Some("alloy")), "alloy");
+}
+
+#[tokio::test]
+async fn server_tts_runtime_synthesizes_with_female_voice_override_when_bound_to_male_default() {
+    use orchestrator_flow_rs::{TtsSynthesisRequest, TtsSynthesizerBackend};
+
+    struct RecordingVieneuTts {
+        model: &'static str,
+        supported: &'static [&'static str],
+        seen_voices: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
+    }
+    struct RecordingVieneuWorker {
+        seen_voices: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
+    }
+    impl crate::providers::TtsWorker for RecordingVieneuWorker {
+        fn synthesize(
+            &mut self,
+            request: &crate::providers::TtsSynthesisRequest,
+            _cancelled: &std::sync::atomic::AtomicBool,
+            on_pcm: &mut dyn FnMut(crate::audio::PcmF32Mono) -> Result<(), crate::providers::TtsError>,
+        ) -> Result<(), crate::providers::TtsError> {
+            self.seen_voices
+                .lock()
+                .unwrap()
+                .push(request.selection.voice.clone());
+            on_pcm(crate::audio::PcmF32Mono::new(vec![0.1; 2_400], 24_000))
+        }
+        fn reset(&mut self) -> Result<(), crate::providers::TtsError> {
+            Ok(())
+        }
+    }
+    impl crate::providers::TtsProvider for RecordingVieneuTts {
+        fn adapter(&self) -> &'static str {
+            "vieneu"
+        }
+        fn model_id(&self) -> Option<&str> {
+            Some(self.model)
+        }
+        fn validate_diagnostic(
+            &self,
+            request: &crate::providers::TtsDiagnosticRequest,
+        ) -> Result<(), crate::providers::TtsError> {
+            let v = request.voice.as_deref().unwrap_or("");
+            if !self.supported.contains(&v) {
+                return Err(crate::providers::TtsError::UnsupportedVoice(v.into()));
+            }
+            Ok(())
+        }
+        fn open_worker(
+            &self,
+        ) -> Result<Box<dyn crate::providers::TtsWorker>, crate::providers::TtsError> {
+            Ok(Box::new(RecordingVieneuWorker {
+                seen_voices: self.seen_voices.clone(),
+            }))
+        }
+    }
+
+    let worker_cfg = crate::workers::WorkerRuntimeConfig {
+        max_workers: 1,
+        final_timeout: std::time::Duration::from_secs(10),
+        cleanup_grace: std::time::Duration::from_secs(5),
+        ..crate::workers::WorkerRuntimeConfig::default()
+    };
+
+    // A. VieNeu v3 Turbo runtime bound to male default `hai_dang`
+    let turbo_seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let turbo_runtime = std::sync::Arc::new(crate::workers::TtsWorkerRuntime::new_with_binding(
+        std::sync::Arc::new(RecordingVieneuTts {
+            model: "vieneu_v3_turbo_fp32",
+            supported: &["hai_dang", "ngoc_huyen", "mai_anh"],
+            seen_voices: turbo_seen.clone(),
+        }),
+        worker_cfg.clone(),
+        crate::providers::TtsBinding {
+            voice: "hai_dang".into(),
+            language: "vi-VN".into(),
+        },
+    ));
+
+    let turbo_prov = ResolvedLlmProvider {
+        provider_ref: "tts_vieneu_turbo".into(),
+        name: "VieNeu Turbo".into(),
+        source: "database",
+        adapter: "vieneu".into(),
+        model: "vieneu_v3_turbo_fp32:hai_dang".into(),
+        base_url: String::new(),
+        api_key: None,
+        gateway_binding: None,
+        timeout_ms: 15_000,
+        max_tokens: 4_096,
+        context_limit_tokens: 64_000,
+        reasoning_effort: None,
+        temperature_percent: None,
+        tags: vec!["tts".into()],
+        muse_options: None,
+    };
+
+    let turbo_backend = CatalogMediaBackend::from_catalog(vec![turbo_prov])
+        .with_tts_runtime("tts_vieneu_turbo", turbo_runtime.clone());
+
+    let out_female = turbo_backend
+        .synthesize_tts(&TtsSynthesisRequest {
+            text: "Xin chào bằng giọng nữ".into(),
+            filename: "turbo-female.wav".into(),
+            voice: "vi-female".into(),
+            language: "vi-VN".into(),
+            speed: 1.0,
+        })
+        .await
+        .unwrap();
+    assert_eq!(out_female.voice, "ngoc_huyen");
+
+    let out_named = turbo_backend
+        .synthesize_tts(&TtsSynthesisRequest {
+            text: "Xin chào từ Mai Anh".into(),
+            filename: "turbo-maianh.wav".into(),
+            voice: "mai_anh".into(),
+            language: "vi-VN".into(),
+            speed: 1.0,
+        })
+        .await
+        .unwrap();
+    assert_eq!(out_named.voice, "mai_anh");
+    assert_eq!(
+        turbo_seen.lock().unwrap().as_slice(),
+        &["ngoc_huyen".to_string(), "mai_anh".to_string()]
+    );
+    let _ = turbo_runtime.shutdown_acknowledged();
+
+    // B. VieNeu v3 Nano runtime bound to overlapping male voice `adam`
+    let nano_seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let nano_runtime = std::sync::Arc::new(crate::workers::TtsWorkerRuntime::new_with_binding(
+        std::sync::Arc::new(RecordingVieneuTts {
+            model: "vieneu_v3_nano_fp32",
+            supported: &["adam", "minh_quan", "my_duyen", "mai_anh", "ai_han"],
+            seen_voices: nano_seen.clone(),
+        }),
+        worker_cfg,
+        crate::providers::TtsBinding {
+            voice: "adam".into(),
+            language: "vi-VN".into(),
+        },
+    ));
+
+    let nano_prov = ResolvedLlmProvider {
+        provider_ref: "tts_vieneu_nano".into(),
+        name: "VieNeu Nano".into(),
+        source: "runtime",
+        adapter: "vieneu".into(),
+        model: "vieneu".into(),
+        base_url: String::new(),
+        api_key: None,
+        gateway_binding: None,
+        timeout_ms: 15_000,
+        max_tokens: 4_096,
+        context_limit_tokens: 64_000,
+        reasoning_effort: None,
+        temperature_percent: None,
+        tags: vec!["tts".into()],
+        muse_options: None,
+    };
+
+    let nano_backend = CatalogMediaBackend::from_catalog(vec![nano_prov])
+        .with_tts_runtime("tts_vieneu_nano", nano_runtime.clone());
+    let nano_constraints = nano_backend.tts_constraints();
+    assert_eq!(nano_constraints.default_voice, "adam");
+    assert_eq!(
+        nano_constraints.female_voices,
+        vec!["my_duyen", "mai_anh", "truc_ly", "ai_han"]
+    );
+
+    let nano_female = nano_backend
+        .synthesize_tts(&TtsSynthesisRequest {
+            text: "Xin chào từ VieNeu Nano giọng nữ".into(),
+            filename: "nano-female.wav".into(),
+            voice: "female".into(),
+            language: "vi-VN".into(),
+            speed: 1.0,
+        })
+        .await
+        .unwrap();
+    assert_eq!(nano_female.voice, "my_duyen");
+    assert_eq!(
+        nano_seen.lock().unwrap().as_slice(),
+        &["my_duyen".to_string()]
+    );
+    let _ = nano_runtime.shutdown_acknowledged();
+}
+
+#[test]
+fn chillaudio_validate_and_synthesize_diagnostic_accept_supported_voices() {
+    use crate::providers::TtsProvider;
+    let provider = crate::providers::tts::ChillAudioWsProvider::new(crate::config::ChillAudioWsConfig {
+        ws_url: "ws://127.0.0.1:9/ws".parse().unwrap(),
+        app_key: crate::config::SecretString::new("key"),
+        token: crate::config::SecretString::new("token"),
+        voice: "BV075_streaming".into(),
+        language: "vi".into(),
+        timeout_ms: 5_000,
+        preload: false,
+    });
+    for valid_voice in [
+        "BV421_vivn_streaming",
+        "vi_female_huong",
+        "BV074_streaming",
+        "BV075_streaming",
+    ] {
+        assert!(
+            provider
+                .validate_diagnostic(&crate::providers::TtsDiagnosticRequest {
+                    text: "Xin chào".into(),
+                    voice: Some(valid_voice.into()),
+                    language: Some("vi".into()),
+                })
+                .is_ok(),
+            "expected ChillAudio voice `{valid_voice}` to be accepted"
+        );
+    }
+    let bad = provider.validate_diagnostic(&crate::providers::TtsDiagnosticRequest {
+        text: "Xin chào".into(),
+        voice: Some("unknown_voice".into()),
+        language: Some("vi".into()),
+    });
+    assert!(matches!(
+        bad,
+        Err(crate::providers::TtsError::UnsupportedVoice(_))
+    ));
+}

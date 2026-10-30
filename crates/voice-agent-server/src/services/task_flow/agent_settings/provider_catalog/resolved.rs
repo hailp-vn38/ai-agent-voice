@@ -113,6 +113,56 @@ impl ResolvedLlmProvider {
         }
     }
 
+    pub fn tts_constraints(
+        &self,
+        runtime_default_voice: Option<&str>,
+    ) -> orchestrator_flow_rs::TtsProviderConstraints {
+        self.tts_constraints_with_runtime(None, runtime_default_voice)
+    }
+
+    pub fn tts_constraints_with_runtime(
+        &self,
+        runtime_model_id: Option<&str>,
+        runtime_default_voice: Option<&str>,
+    ) -> orchestrator_flow_rs::TtsProviderConstraints {
+        let spec = runtime_model_id.unwrap_or(&self.model);
+        let cat = crate::providers::tts::voice_catalog::catalog_for_adapter(
+            &self.adapter,
+            Some(spec),
+            runtime_default_voice,
+        );
+        orchestrator_flow_rs::TtsProviderConstraints {
+            provider_label: format!("{} (model: {})", self.name, self.model),
+            default_voice: cat.default_voice,
+            female_voices: cat.female_voices,
+            male_voices: cat.male_voices,
+            provider_guidance: cat.guidance,
+        }
+    }
+
+    pub fn resolve_tts_voice(
+        &self,
+        runtime_default_voice: Option<&str>,
+        requested_voice: Option<&str>,
+    ) -> String {
+        self.resolve_tts_voice_with_runtime(None, runtime_default_voice, requested_voice)
+    }
+
+    pub fn resolve_tts_voice_with_runtime(
+        &self,
+        runtime_model_id: Option<&str>,
+        runtime_default_voice: Option<&str>,
+        requested_voice: Option<&str>,
+    ) -> String {
+        let spec = runtime_model_id.unwrap_or(&self.model);
+        crate::providers::tts::voice_catalog::resolve_tts_voice(
+            &self.adapter,
+            Some(spec),
+            runtime_default_voice,
+            requested_voice,
+        )
+    }
+
     pub fn supports_tag(&self, tag: &str) -> bool {
         let normalized = tag.trim().to_ascii_lowercase();
         if normalized == "asr" {

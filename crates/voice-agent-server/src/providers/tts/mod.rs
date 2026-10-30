@@ -16,6 +16,7 @@ pub mod kokoro_vi;
 pub mod qualification;
 pub mod vieneu;
 pub mod vifasttts;
+pub mod voice_catalog;
 pub mod zerotts;
 pub(crate) use chillaudio::ChillAudioWsProvider;
 pub(crate) use edge_tts::EdgeTtsProvider;
@@ -58,6 +59,11 @@ pub fn validate_warmup_pcm(pcm: WarmupPcm) -> Result<(), TtsError> {
 
 pub trait TtsProvider: Send + Sync {
     fn adapter(&self) -> &'static str;
+
+    /// Optional model identifier within the adapter family (e.g. `"vieneu_v3_turbo_fp32"` vs `"vieneu_v3_nano_fp32"`).
+    fn model_id(&self) -> Option<&str> {
+        None
+    }
 
     /// Stage complete segments before playback when inference can run below realtime.
     /// PCM still streams through the worker; this duration bounds staged audio.

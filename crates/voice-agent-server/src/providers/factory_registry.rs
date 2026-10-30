@@ -586,9 +586,12 @@ impl TtsFactory for KokoroViOnnxFactory {
             return Err(ProviderLoadError::Configuration("Kokoro Vietnamese requires vi-VN, a supported voice, positive threads, and speed_percent 50..=200".into()));
         }
         let assets = resolve(kokoro_assets::resolve_assets())?;
-        let voicepack = assets.voicepack(&options.voice).ok_or_else(|| {
-            ProviderLoadError::MissingArtifact(format!("voicepack_{}", options.voice))
-        })?;
+        if assets.voicepack(&options.voice).is_none() {
+            return Err(ProviderLoadError::MissingArtifact(format!(
+                "voicepack_{}",
+                options.voice
+            )));
+        }
         Ok(Arc::new(
             ConfiguredKokoroVi::load(
                 &options,
@@ -596,7 +599,7 @@ impl TtsFactory for KokoroViOnnxFactory {
                 KokoroViArtifacts {
                     model: &assets.model,
                     config: &assets.config,
-                    voicepack,
+                    voicepacks: &assets.voicepacks,
                 },
             )
             .map_err(|error| ProviderLoadError::Provider(error.to_string()))?,

@@ -162,6 +162,16 @@ impl CatalogMediaBackend {
         bridge.synthesize(provider_ref, text, voice).await
     }
 
+    fn inspect_runtime_model_and_voice(
+        &self,
+        provider_ref: &str,
+    ) -> (Option<String>, Option<String>) {
+        let Ok(bridge) = self.resolve_bridge("TTS", provider_ref) else {
+            return (None, None);
+        };
+        bridge.inspect_runtime_model_and_voice(provider_ref)
+    }
+
     async fn transcribe_via_server_asr(
         &self,
         provider_ref: &str,
@@ -405,6 +415,15 @@ pub(crate) fn build_generated_video_payload(
 
 #[async_trait::async_trait]
 impl orchestrator_flow_rs::TtsSynthesizerBackend for CatalogMediaBackend {
+    fn tts_constraints(&self) -> orchestrator_flow_rs::TtsProviderConstraints {
+        let Some(resolved) = self.select_provider("tts_synthesize", "tts") else {
+            return self.default_tts.tts_constraints();
+        };
+        let (runtime_model, runtime_voice) =
+            self.inspect_runtime_model_and_voice(&resolved.provider_ref);
+        resolved.tts_constraints_with_runtime(runtime_model.as_deref(), runtime_voice.as_deref())
+    }
+
     async fn synthesize_tts(
         &self,
         req: &orchestrator_flow_rs::TtsSynthesisRequest,
@@ -419,13 +438,20 @@ impl orchestrator_flow_rs::TtsSynthesizerBackend for CatalogMediaBackend {
             64,
         );
         let safe_name = format!("{}.wav", if stem.is_empty() { "tts-audio" } else { &stem });
+        let (runtime_model, runtime_voice) =
+            self.inspect_runtime_model_and_voice(&resolved.provider_ref);
+        let effective_voice = resolved.resolve_tts_voice_with_runtime(
+            runtime_model.as_deref(),
+            runtime_voice.as_deref(),
+            Some(&req.voice),
+        );
 
         if resolved.is_tts_adapter() {
             let wav_bytes = self
                 .synthesize_via_server_tts(
                     &resolved.provider_ref,
                     &req.text,
-                    (!req.voice.trim().is_empty()).then_some(req.voice.as_str()),
+                    Some(effective_voice.as_str()),
                 )
                 .await?;
             let (sample_rate_hz, duration_ms) =
@@ -437,6 +463,7 @@ impl orchestrator_flow_rs::TtsSynthesizerBackend for CatalogMediaBackend {
                 sample_rate_hz,
                 duration_ms,
                 provider: resolved.provider_ref.clone(),
+                voice: effective_voice,
             });
         }
 
@@ -445,7 +472,7 @@ impl orchestrator_flow_rs::TtsSynthesizerBackend for CatalogMediaBackend {
         let output = provider
             .invoke(crate::providers::LlmOperation::AudioSpeech {
                 text: req.text.clone(),
-                voice: (!req.voice.trim().is_empty()).then(|| req.voice.clone()),
+                voice: Some(effective_voice.clone()),
                 speed: Some(speed),
             })
             .await
@@ -465,6 +492,7 @@ impl orchestrator_flow_rs::TtsSynthesizerBackend for CatalogMediaBackend {
             sample_rate_hz: 24_000,
             duration_ms,
             provider: resolved.provider_ref.clone(),
+            voice: effective_voice,
         })
     }
 }

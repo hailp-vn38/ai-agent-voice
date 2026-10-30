@@ -1,6 +1,10 @@
 use std::{
+    collections::BTreeMap,
     path::Path,
-    sync::atomic::{AtomicBool, Ordering},
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
 };
 
 use ort::{session::Session, value::Tensor};
@@ -22,7 +26,8 @@ const PCM_CHUNK_SAMPLES: usize = KOKORO_SAMPLE_RATE_HZ as usize * PCM_CHUNK_DURA
 pub(super) struct KokoroViWorker {
     session: Session,
     tokenizer: Tokenizer,
-    voicepack: Voicepack,
+    default_voice: String,
+    voicepacks: Arc<BTreeMap<String, Voicepack>>,
     g2p: G2pSidecar,
     speed: f32,
 }
@@ -31,7 +36,8 @@ impl KokoroViWorker {
     pub(super) fn open(
         model: &Path,
         tokenizer: &Tokenizer,
-        voicepack: Voicepack,
+        default_voice: String,
+        voicepacks: Arc<BTreeMap<String, Voicepack>>,
         g2p_executable: &Path,
         runtime_library: &Path,
         num_threads: i32,
@@ -40,11 +46,15 @@ impl KokoroViWorker {
         if !speed.is_finite() || speed <= 0.0 {
             return Err(TtsError::Failed);
         }
+        if !voicepacks.contains_key(&default_voice) {
+            return Err(TtsError::UnsupportedVoice(default_voice));
+        }
         let session = build_session(model, runtime_library, num_threads)?;
         Ok(Self {
             session,
             tokenizer: tokenizer.clone(),
-            voicepack,
+            default_voice,
+            voicepacks,
             g2p: G2pSidecar::start(g2p_executable)?,
             speed,
         })
@@ -84,6 +94,17 @@ impl TtsWorker for KokoroViWorker {
         if cancelled.load(Ordering::Acquire) {
             return Err(TtsError::Failed);
         }
+        let voice_id = if request.selection.voice.is_empty()
+            || request.selection.voice == "__readiness__"
+        {
+            self.default_voice.as_str()
+        } else {
+            request.selection.voice.as_str()
+        };
+        let voicepack = self
+            .voicepacks
+            .get(voice_id)
+            .ok_or_else(|| TtsError::UnsupportedVoice(voice_id.to_owned()))?;
         let ids = self.tokenizer.encode(&self.g2p.phonemes(&request.text)?)?;
         if cancelled.load(Ordering::Acquire) {
             return Err(TtsError::Failed);
@@ -91,7 +112,7 @@ impl TtsWorker for KokoroViWorker {
         let phoneme_count = ids.len();
         let waveform = self.session.run(ort::inputs! {
             "input_ids" => Tensor::<i64>::from_array(([1usize, ids.len()], ids)).map_err(|_| TtsError::Failed)?,
-            "ref_s" => Tensor::<f32>::from_array(([1usize, 256], self.voicepack.latent(phoneme_count).to_vec())).map_err(|_| TtsError::Failed)?,
+            "ref_s" => Tensor::<f32>::from_array(([1usize, 256], voicepack.latent(phoneme_count).to_vec())).map_err(|_| TtsError::Failed)?,
             "speed" => Tensor::<f32>::from_array(((), vec![self.speed])).map_err(|_| TtsError::Failed)?,
         }).map_err(|_| TtsError::Failed)?;
         if cancelled.load(Ordering::Acquire) {

@@ -172,6 +172,10 @@ pub struct TtsDiagnosticOperation {
 }
 
 impl TtsWorkerRuntime {
+    pub fn binding(&self) -> &TtsBinding {
+        &self.binding
+    }
+
     /// Physical work remains occupied until terminal acknowledgement, including quarantine.
     pub(crate) fn pilot_work_pending(&self) -> bool {
         self.admission.view_usage() != 0 || self.reset_pending()

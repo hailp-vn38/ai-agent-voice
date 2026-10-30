@@ -11,12 +11,18 @@ mod runtime;
 mod tokenizer;
 mod voicepack;
 
-use std::path::Path;
+use std::{
+    collections::BTreeMap,
+    path::{Path, PathBuf},
+    sync::{Arc, atomic::AtomicBool},
+};
 
 use crate::{
     audio::PcmF32Mono,
     config::{KokoroViOnnxConfig, RuntimeConfig},
-    providers::tts::{TtsBinding, TtsError, TtsProvider, TtsSynthesisRequest, TtsWorker},
+    providers::tts::{
+        TtsBinding, TtsDiagnosticRequest, TtsError, TtsProvider, TtsSynthesisRequest, TtsWorker,
+    },
 };
 
 use runtime::KokoroViWorker;
@@ -26,16 +32,18 @@ use voicepack::Voicepack;
 pub(crate) struct KokoroViArtifacts<'a> {
     pub(crate) model: &'a Path,
     pub(crate) config: &'a Path,
-    pub(crate) voicepack: &'a Path,
+    pub(crate) voicepacks: &'a BTreeMap<String, PathBuf>,
 }
 
 /// Immutable factory state. ONNX sessions and the G2P child are worker-owned.
 pub(crate) struct ConfiguredKokoroVi {
-    model: std::path::PathBuf,
+    model: PathBuf,
     tokenizer: Tokenizer,
-    voicepack: Voicepack,
-    g2p_executable: std::path::PathBuf,
-    runtime_library: std::path::PathBuf,
+    default_voice: String,
+    language: String,
+    voicepacks: Arc<BTreeMap<String, Voicepack>>,
+    g2p_executable: PathBuf,
+    runtime_library: PathBuf,
     num_threads: i32,
     speed: f32,
 }
@@ -57,12 +65,21 @@ impl ConfiguredKokoroVi {
             ));
         }
         let tokenizer = Tokenizer::load(artifacts.config)?;
-        let voicepack = Voicepack::load(artifacts.voicepack)?;
+        let mut loaded_voicepacks = BTreeMap::new();
+        for (voice_id, path) in artifacts.voicepacks {
+            let vp = Voicepack::load(path)?;
+            loaded_voicepacks.insert(voice_id.clone(), vp);
+        }
+        if !loaded_voicepacks.contains_key(&options.voice) {
+            return Err(TtsError::UnsupportedVoice(options.voice.clone()));
+        }
         // Graph validation and warmup belong to the exact retained workers.
         Ok(Self {
             model: artifacts.model.into(),
             tokenizer,
-            voicepack,
+            default_voice: options.voice.clone(),
+            language: options.language.clone(),
+            voicepacks: Arc::new(loaded_voicepacks),
             g2p_executable: runtime.kokoro_vi.g2p_executable.clone(),
             runtime_library: runtime.onnx.library.clone(),
             num_threads: options.num_threads,
@@ -78,7 +95,7 @@ impl TtsProvider for ConfiguredKokoroVi {
 
     fn synthesize(&self, text: &str) -> Result<PcmF32Mono, TtsError> {
         let mut worker = self.open_worker()?;
-        let cancelled = std::sync::atomic::AtomicBool::new(false);
+        let cancelled = AtomicBool::new(false);
         let mut samples = Vec::new();
         worker.synthesize(
             &TtsSynthesisRequest {
@@ -106,7 +123,7 @@ impl TtsProvider for ConfiguredKokoroVi {
         on_pcm: &mut dyn FnMut(PcmF32Mono) -> Result<(), TtsError>,
     ) -> Result<(), TtsError> {
         let mut worker = self.open_worker()?;
-        let cancelled = std::sync::atomic::AtomicBool::new(false);
+        let cancelled = AtomicBool::new(false);
         worker.synthesize(
             &TtsSynthesisRequest {
                 text: text.into(),
@@ -117,11 +134,51 @@ impl TtsProvider for ConfiguredKokoroVi {
         )
     }
 
+    fn validate_diagnostic(&self, request: &TtsDiagnosticRequest) -> Result<(), TtsError> {
+        let voice = request.voice.as_deref().unwrap_or(&self.default_voice);
+        let language = request.language.as_deref().unwrap_or(&self.language);
+        if language != "vi-VN" {
+            return Err(TtsError::UnsupportedLanguage(language.into()));
+        }
+        if !self.voicepacks.contains_key(voice) {
+            return Err(TtsError::UnsupportedVoice(voice.into()));
+        }
+        Ok(())
+    }
+
+    fn synthesize_diagnostic(
+        &self,
+        request: &TtsDiagnosticRequest,
+        cancelled: &AtomicBool,
+        on_pcm: &mut dyn FnMut(PcmF32Mono) -> Result<(), TtsError>,
+    ) -> Result<(), TtsError> {
+        self.validate_diagnostic(request)?;
+        let mut worker = self.open_worker()?;
+        worker.synthesize(
+            &TtsSynthesisRequest {
+                text: request.text.clone(),
+                selection: TtsBinding {
+                    voice: request
+                        .voice
+                        .clone()
+                        .unwrap_or_else(|| self.default_voice.clone()),
+                    language: request
+                        .language
+                        .clone()
+                        .unwrap_or_else(|| self.language.clone()),
+                },
+            },
+            cancelled,
+            on_pcm,
+        )
+    }
+
     fn open_worker(&self) -> Result<Box<dyn TtsWorker>, TtsError> {
         Ok(Box::new(KokoroViWorker::open(
             &self.model,
             &self.tokenizer,
-            self.voicepack.clone(),
+            self.default_voice.clone(),
+            Arc::clone(&self.voicepacks),
             &self.g2p_executable,
             &self.runtime_library,
             self.num_threads,
@@ -132,7 +189,7 @@ impl TtsProvider for ConfiguredKokoroVi {
 
 #[cfg(test)]
 mod real_model_tests {
-    use std::path::PathBuf;
+    use std::{collections::BTreeMap, path::PathBuf};
 
     use crate::{
         config::{KokoroViOnnxConfig, KokoroViRuntimeConfig, OnnxRuntimeConfig, RuntimeConfig},
@@ -146,6 +203,10 @@ mod real_model_tests {
     fn loads_local_contextbox_model_and_synthesizes_24khz_pcm() {
         let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../models/TTS/kokoro_vi");
         let runtime_root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../runtime");
+        let voicepacks = BTreeMap::from([(
+            "diem_trinh".to_owned(),
+            root.join("voicepacks/diem_trinh.bin"),
+        )]);
         let provider = ConfiguredKokoroVi::load(
             &KokoroViOnnxConfig::default(),
             &RuntimeConfig {
@@ -165,7 +226,7 @@ mod real_model_tests {
             KokoroViArtifacts {
                 model: &root.join("kokoro_vi.onnx"),
                 config: &root.join("config.json"),
-                voicepack: &root.join("voicepacks/diem_trinh.bin"),
+                voicepacks: &voicepacks,
             },
         )
         .expect("load prepared local Kokoro Vietnamese provider");

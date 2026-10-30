@@ -39,6 +39,31 @@ impl ServerMediaRuntimeBridge {
             .insert(provider_ref, runtime);
     }
 
+    pub(crate) fn inspect_runtime_model_and_voice(
+        &self,
+        provider_ref: &str,
+    ) -> (Option<String>, Option<String>) {
+        let bare_key = provider_ref
+            .strip_prefix("config:tts:")
+            .unwrap_or(provider_ref);
+        let Some(runtime) = self
+            .runtimes
+            .tts
+            .get(provider_ref)
+            .or_else(|| self.runtimes.tts.get(bare_key))
+            .filter(|r| r.provider().adapter() != "unavailable")
+        else {
+            return (None, None);
+        };
+        let voice = runtime.binding().voice.trim();
+        let default_voice =
+            (!voice.is_empty() && voice != "__readiness__").then(|| voice.to_owned());
+        (
+            runtime.provider().model_id().map(str::to_owned),
+            default_voice,
+        )
+    }
+
     pub(crate) async fn acquire_managed_lease(
         &self,
         expected_kind: &str,

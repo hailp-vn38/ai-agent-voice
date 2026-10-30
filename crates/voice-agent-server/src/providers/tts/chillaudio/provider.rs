@@ -12,7 +12,9 @@ use symphonia::core::{
 };
 use tokio_tungstenite::{connect_async, tungstenite::Message};
 
-use super::super::{TtsError, TtsProvider, TtsSynthesisRequest, TtsWorker};
+use super::super::{
+    TtsBinding, TtsDiagnosticRequest, TtsError, TtsProvider, TtsSynthesisRequest, TtsWorker,
+};
 use crate::{audio::PcmF32Mono, config::ChillAudioWsConfig};
 
 pub(crate) struct ChillAudioWsProvider {
@@ -26,6 +28,43 @@ impl ChillAudioWsProvider {
 impl TtsProvider for ChillAudioWsProvider {
     fn adapter(&self) -> &'static str {
         "chillaudio_ws"
+    }
+    fn validate_diagnostic(&self, request: &TtsDiagnosticRequest) -> Result<(), TtsError> {
+        let voice = request.voice.as_deref().unwrap_or(&self.config.voice);
+        let language = request.language.as_deref().unwrap_or(&self.config.language);
+        if !matches!(language, "vi" | "vi-VN") {
+            return Err(TtsError::UnsupportedLanguage(language.into()));
+        }
+        if !super::descriptor::VOICES.iter().any(|v| v.id == voice) {
+            return Err(TtsError::UnsupportedVoice(voice.into()));
+        }
+        Ok(())
+    }
+    fn synthesize_diagnostic(
+        &self,
+        request: &TtsDiagnosticRequest,
+        cancelled: &AtomicBool,
+        on_pcm: &mut dyn FnMut(PcmF32Mono) -> Result<(), TtsError>,
+    ) -> Result<(), TtsError> {
+        self.validate_diagnostic(request)?;
+        let mut worker = self.open_worker()?;
+        worker.synthesize(
+            &TtsSynthesisRequest {
+                text: request.text.clone(),
+                selection: TtsBinding {
+                    voice: request
+                        .voice
+                        .clone()
+                        .unwrap_or_else(|| self.config.voice.clone()),
+                    language: request
+                        .language
+                        .clone()
+                        .unwrap_or_else(|| self.config.language.clone()),
+                },
+            },
+            cancelled,
+            on_pcm,
+        )
     }
     fn open_worker(&self) -> Result<Box<dyn TtsWorker>, TtsError> {
         let runtime = tokio::runtime::Builder::new_current_thread()
@@ -53,9 +92,19 @@ impl TtsWorker for ChillAudioWsWorker {
         if cancelled.load(Ordering::Acquire) {
             return Err(TtsError::Failed);
         }
+        let mut effective = self.config.clone();
+        if !request.selection.voice.is_empty() && request.selection.voice != "__readiness__" {
+            if !super::descriptor::VOICES
+                .iter()
+                .any(|v| v.id == request.selection.voice)
+            {
+                return Err(TtsError::UnsupportedVoice(request.selection.voice.clone()));
+            }
+            effective.voice = request.selection.voice.clone();
+        }
         let audio = self
             .runtime
-            .block_on(fetch_mp3(&self.config, &request.text, cancelled))?;
+            .block_on(fetch_mp3(&effective, &request.text, cancelled))?;
         if cancelled.load(Ordering::Acquire) {
             return Err(TtsError::Failed);
         }

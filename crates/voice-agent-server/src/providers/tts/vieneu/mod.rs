@@ -51,6 +51,10 @@ impl TtsProvider for ConfiguredVieneuNative {
         "vieneu"
     }
 
+    fn model_id(&self) -> Option<&str> {
+        Some(&self.options.model)
+    }
+
     fn open_worker(&self) -> Result<Box<dyn TtsWorker>, TtsError> {
         Ok(Box::new(VieneuWorker::open(
             &self.state,

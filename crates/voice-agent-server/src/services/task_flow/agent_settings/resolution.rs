@@ -344,6 +344,24 @@ pub fn build_agent_definitions(
                     vc.max_total_duration_secs
                 );
             }
+            if eff.allowed_tools.iter().any(|t| t == "tts_synthesize") {
+                let tc = super::media_backend::resolve_media_tool_provider(
+                    catalog,
+                    Some(settings),
+                    "tts_synthesize",
+                    "tts",
+                    true,
+                )
+                .map(|p| p.tts_constraints(None))
+                .unwrap_or_default();
+                description = format!(
+                    "{description} [Active tts_synthesize provider: {} | default_voice='{}' | female_voices=[{}] | male_voices=[{}]]",
+                    tc.provider_label,
+                    tc.default_voice,
+                    tc.female_voices.join(", "),
+                    tc.male_voices.join(", "),
+                );
+            }
             let mut def = AgentDefinition::new(&eff.id, &resolved.provider_ref, &resolved.model)
                 .with_mode(eff.mode)
                 .with_description(description)

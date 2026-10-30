@@ -41,7 +41,21 @@ pub async fn resolve_llm_provider_catalog(state: &AppState) -> Vec<ResolvedLlmPr
             .runtimes
             .tts
             .iter()
-            .map(|(k, r)| (k.clone(), r.provider().adapter().to_owned()))
+            .map(|(k, r)| {
+                let prov = r.provider();
+                let adapter = prov.adapter();
+                if adapter == "unavailable" {
+                    return (k.clone(), adapter.to_owned());
+                }
+                let model_base = prov.model_id().unwrap_or(adapter);
+                let voice = r.binding().voice.trim();
+                let model_spec = if !voice.is_empty() && voice != "__readiness__" {
+                    format!("{model_base}:{voice}")
+                } else {
+                    model_base.to_owned()
+                };
+                (k.clone(), format!("{adapter}|{model_spec}"))
+            })
             .collect(),
     )
     .await;
