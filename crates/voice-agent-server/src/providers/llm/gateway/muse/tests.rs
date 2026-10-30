@@ -1132,3 +1132,176 @@ async fn pool_rotates_to_second_account_on_quota_or_auth_failure() {
         .expect("pool rotates to second account on quota limit");
     assert_eq!(reply, LlmOutput::Text("Phản hồi từ tài khoản #2".to_string()));
 }
+
+#[tokio::test]
+async fn chat_stream_waits_for_in_progress_assistant_and_reconciles_full_history_text() {
+    let full_turn1_part1 = "**Mesut Özil** (sinh 15/10/1988 tại Gelsenkirchen) là cựu tiền vệ tấn công người Đức gốc Thổ Nhĩ Kỳ.";
+    let full_turn1_part2 =
+        "1. **Sự nghiệp**: Schalke 04, Werder Bremen, Real Madrid, Arsenal, Fenerbahçe.\n2. **Danh hiệu**: Vô địch World Cup 2014 cùng đội tuyển Đức.";
+    let expected_turn1 = format!("{full_turn1_part1}\n\n{full_turn1_part2}");
+
+    // Turn 1 reproduces the exact live Mesut Özil job bug:
+    // - Only the first 2 chars ("**") arrive over `delta.text_append` before a web search tool starts
+    // - An early `agent.status: "online"` arrives followed by `activity_code: "working"`
+    // - Poll 1 of `/chat/history` has `event_name: "message.assistant"` with only "**" (NO `status: "completed"`)
+    //   and an active `tool_group` (`status: "in_progress"`). The workflow MUST NOT exit early!
+    // - Poll 2 of `/chat/history` has the completed `tool_group` and both `message.assistant` blocks
+    //   with `status: "completed"`. The workflow must reconcile and emit the remaining suffix.
+    let turn1 = FakeStreamTurn {
+        status: 200,
+        assigned_session_id: Some("sess-ozil-1".to_string()),
+        events: vec![
+            json!({
+                "event": "delta.text_append",
+                "payload": {
+                    "chat_context": { "chat_id": "sess-ozil-1" },
+                    "text": "**"
+                }
+            }),
+            json!({
+                "event": "agent.status",
+                "payload": {
+                    "chat_context": { "chat_id": "sess-ozil-1" },
+                    "status": "online",
+                    "activity_code": "working"
+                }
+            }),
+        ],
+        history_polls: VecDeque::from(vec![
+            vec![
+                json!({
+                    "event_name": "message.user",
+                    "payload": { "content": "Hãy tìm thông tin về Mesut Özil" }
+                }),
+                json!({
+                    "event_name": "message.assistant",
+                    "payload": { "content": "**" }
+                }),
+                json!({
+                    "event_name": "tool_group",
+                    "payload": {
+                        "status": "in_progress",
+                        "data": { "display_state": "working" }
+                    }
+                }),
+            ],
+            vec![
+                json!({
+                    "event_name": "message.user",
+                    "payload": { "content": "Hãy tìm thông tin về Mesut Özil" }
+                }),
+                json!({
+                    "event_name": "message.assistant",
+                    "payload": {
+                        "status": "completed",
+                        "content": full_turn1_part1
+                    }
+                }),
+                json!({
+                    "event_name": "tool_group",
+                    "payload": {
+                        "status": "completed",
+                        "data": { "display_state": "done" }
+                    }
+                }),
+                json!({
+                    "event_name": "message.assistant",
+                    "payload": {
+                        "status": "completed",
+                        "content": [{ "type": "text", "text": full_turn1_part2 }]
+                    }
+                }),
+            ],
+        ]),
+    };
+
+    // Turn 2 tests follow-up stale history protection (`is_stale_followup_history`):
+    // - Poll 1 still returns Turn 1's completed history before the VM records Turn 2's `message.user`
+    // - Poll 2 returns Turn 2's `message.user` and completed `message.assistant`
+    let turn2_reply = "Dưới đây là bản tổng hợp chi tiết về Mesut Özil kèm nguồn tham khảo.";
+    let turn2 = FakeStreamTurn {
+        status: 200,
+        assigned_session_id: Some("sess-ozil-1".to_string()),
+        events: vec![],
+        history_polls: VecDeque::from(vec![
+            vec![
+                json!({
+                    "event_name": "message.user",
+                    "payload": { "content": "Hãy tìm thông tin về Mesut Özil" }
+                }),
+                json!({
+                    "event_name": "message.assistant",
+                    "payload": {
+                        "status": "completed",
+                        "content": full_turn1_part1
+                    }
+                }),
+            ],
+            vec![
+                json!({
+                    "event_name": "message.user",
+                    "payload": { "content": "Hãy tìm thông tin về Mesut Özil" }
+                }),
+                json!({
+                    "event_name": "message.assistant",
+                    "payload": {
+                        "status": "completed",
+                        "content": full_turn1_part1
+                    }
+                }),
+                json!({
+                    "event_name": "message.user",
+                    "payload": { "content": "Kết quả trước không hiển thị. Hãy thực hiện lại." }
+                }),
+                json!({
+                    "event_name": "message.assistant",
+                    "payload": {
+                        "status": "completed",
+                        "content": turn2_reply
+                    }
+                }),
+            ],
+        ]),
+    };
+
+    let acc = FakeVmAccount::new(vec![turn1, turn2]);
+    let transport = FakeMuseVmTransport::new(vec![Arc::clone(&acc)]);
+    let provider = build_gateway_muse_provider(&[SINGLE_COOKIE], transport).await;
+
+    // Verify Turn 1 streams both the initial "**" and the reconciled suffix from `/chat/history`
+    let req1 = LlmRequest::text_turn("Hãy tìm thông tin về Mesut Özil".to_string());
+    let mut stream = provider.stream(req1).await.expect("open turn 1 stream");
+    let mut deltas = Vec::new();
+    while let Some(item) = stream.next().await {
+        match item.expect("turn 1 stream event") {
+            LlmEvent::TextDelta(d) => deltas.push(d),
+            LlmEvent::Finished => break,
+            _ => {}
+        }
+    }
+    assert_eq!(deltas.concat(), expected_turn1);
+
+    // Verify Turn 2 skips stale Turn 1 history and returns Turn 2's full response
+    let req2 = LlmRequest {
+        messages: vec![
+            ChatMessage::User {
+                content: "Hãy tìm thông tin về Mesut Özil".to_string(),
+            },
+            ChatMessage::AssistantText {
+                content: expected_turn1,
+            },
+            ChatMessage::User {
+                content: "Kết quả trước không hiển thị. Hãy thực hiện lại.".to_string(),
+            },
+        ],
+        tools: Vec::new(),
+    };
+    let reply2 = provider
+        .invoke(LlmOperation::Chat {
+            request: req2,
+            reasoning: false,
+        })
+        .await
+        .expect("turn 2 invoke");
+    assert_eq!(reply2, LlmOutput::Text(turn2_reply.to_string()));
+}

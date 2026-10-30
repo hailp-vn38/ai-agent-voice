@@ -99,44 +99,64 @@ impl VmStreamEvent {
         p.get("session_id")
             .or_else(|| self.raw.get("session_id"))
             .or_else(|| {
+                p.get("chat_context")
+                    .and_then(|c| c.get("chat_id").or_else(|| c.get("session_id")))
+            })
+            .or_else(|| {
+                self.raw
+                    .get("chat_context")
+                    .and_then(|c| c.get("chat_id").or_else(|| c.get("session_id")))
+            })
+            .or_else(|| p.get("chat_id"))
+            .or_else(|| self.raw.get("chat_id"))
+            .or_else(|| {
                 p.get("session")
-                    .and_then(|s| s.get("id").or_else(|| s.get("session_id")))
+                    .and_then(|s| s.get("session_id").or_else(|| s.get("id")))
             })
             .and_then(Value::as_str)
     }
 
-    /// Inspects `agent.status` (`payload.activity_code`) per `src/core/client.js:1264-1276`.
-    pub fn agent_activity_state(&self) -> Option<bool> {
+    pub fn activity_code(&self) -> Option<&str> {
         if self.event_name() != "agent.status" {
             return None;
         }
-        let code = self.payload().get("activity_code").and_then(Value::as_str)?;
-        match code {
+        self.payload().get("activity_code").and_then(Value::as_str)
+    }
+
+    /// Inspects `agent.status` (`payload.activity_code`) per `src/core/client.js:1264-1276`.
+    pub fn agent_activity_state(&self) -> Option<bool> {
+        match self.activity_code()? {
             "working" | "making_something" | "responding" | "thinking" | "running" => Some(true),
             "online" | "idle" => Some(false),
             _ => None,
         }
     }
 
-    /// Inspects `sessions.updated` (`payload.change != "created"` && `payload.session.status == "completed"`).
-    pub fn is_session_completed_for(&self, target_session_id: &str) -> bool {
+    pub fn session_update_status(&self, target_session_id: &str) -> Option<&str> {
         if self.event_name() != "sessions.updated" {
-            return false;
+            return None;
         }
         let p = self.payload();
-        if p.get("change").and_then(Value::as_str) == Some("created") {
-            return false;
-        }
-        let Some(sess) = p.get("session") else {
-            return false;
-        };
-        let id_matches = sess
-            .get("id")
-            .or_else(|| sess.get("session_id"))
+        let change = p.get("change").and_then(Value::as_str);
+        let sess = p.get("session")?;
+        let id = sess
+            .get("session_id")
+            .or_else(|| sess.get("id"))
             .and_then(Value::as_str)
-            == Some(target_session_id);
-        let status_completed = sess.get("status").and_then(Value::as_str) == Some("completed");
-        id_matches && status_completed
+            .or_else(|| self.session_id())?;
+        if id != target_session_id {
+            return None;
+        }
+        let status = sess.get("status").and_then(Value::as_str)?;
+        if status == "completed" && change == Some("created") {
+            return None;
+        }
+        Some(status)
+    }
+
+    /// Inspects `sessions.updated` (`payload.change != "created"` && `payload.session.status == "completed"`).
+    pub fn is_session_completed_for(&self, target_session_id: &str) -> bool {
+        self.session_update_status(target_session_id) == Some("completed")
     }
 }
 

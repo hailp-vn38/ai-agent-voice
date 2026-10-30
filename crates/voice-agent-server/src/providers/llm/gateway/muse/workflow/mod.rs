@@ -107,8 +107,37 @@ pub(crate) fn extract_history_turn_events(history_json: &Value) -> Vec<Value> {
 
     match last_user_idx {
         Some(idx) if idx + 1 <= evs.len() => evs[idx + 1..].to_vec(),
-        _ => evs,
+        _ => Vec::new(),
     }
+}
+
+pub(crate) fn extract_value_text(val: &Value) -> Option<String> {
+    if let Some(s) = val.as_str() {
+        let trimmed = s.trim();
+        if !trimmed.is_empty() {
+            return Some(trimmed.to_string());
+        }
+        return None;
+    }
+    if let Some(arr) = val.as_array() {
+        let mut combined = String::new();
+        for item in arr {
+            if let Some(s) = item.as_str() {
+                combined.push_str(s);
+            } else if let Some(s) = item
+                .get("text")
+                .or_else(|| item.get("content"))
+                .and_then(Value::as_str)
+            {
+                combined.push_str(s);
+            }
+        }
+        let trimmed = combined.trim();
+        if !trimmed.is_empty() {
+            return Some(trimmed.to_string());
+        }
+    }
+    None
 }
 
 pub(crate) fn has_active_tool_task(turn_events: &[Value]) -> bool {
@@ -143,8 +172,10 @@ pub(crate) fn extract_turn_assistant_messages(turn_events: &[Value]) -> Vec<Stri
             continue;
         }
         let p = ev.get("payload").unwrap_or(ev);
+        let d = p.get("data").or_else(|| ev.get("data"));
         if ev.get("kind").and_then(Value::as_str) == Some("browser_task")
             || p.get("kind").and_then(Value::as_str) == Some("browser_task")
+            || d.and_then(|x| x.get("browser_task_id")).is_some()
         {
             continue;
         }
@@ -156,16 +187,15 @@ pub(crate) fn extract_turn_assistant_messages(turn_events: &[Value]) -> Vec<Stri
         }
         let text = ev
             .get("display_text")
-            .or_else(|| ev.get("text"))
-            .or_else(|| ev.get("content"))
-            .or_else(|| p.get("display_text"))
-            .or_else(|| p.get("content"))
-            .or_else(|| p.get("text"))
-            .and_then(Value::as_str)
-            .unwrap_or("")
-            .trim();
-        if !text.is_empty() && !blocks.iter().any(|b| b == text) {
-            blocks.push(text.to_string());
+            .and_then(extract_value_text)
+            .or_else(|| p.get("display_text").and_then(extract_value_text))
+            .or_else(|| p.get("content").and_then(extract_value_text))
+            .or_else(|| ev.get("content").and_then(extract_value_text))
+            .or_else(|| ev.get("text").and_then(extract_value_text))
+            .or_else(|| p.get("text").and_then(extract_value_text))
+            .unwrap_or_default();
+        if !text.is_empty() && !blocks.iter().any(|b| b == &text) {
+            blocks.push(text);
         }
     }
     blocks

@@ -13,7 +13,8 @@ use super::super::proto::SERVICE_DAEMON;
 use super::prompt::{extract_prior_turns_and_last_user, flatten_messages, followup_text};
 use super::{
     WorkflowFailure, classify_assistant_error, extract_history_turn_events,
-    extract_turn_assistant_messages, handle_approval_event, has_active_tool_task,
+    extract_turn_assistant_messages, extract_value_text, handle_approval_event,
+    has_active_tool_task,
 };
 use crate::providers::llm::{LlmRequest, ReferenceImage};
 
@@ -132,20 +133,51 @@ where
     poll_interval.tick().await;
 
     let mut emitted_text = String::new();
-    let mut explicit_done = false;
+    let mut last_polled_text = String::new();
+    let mut latest_activity_code = String::new();
+    let mut session_completed = false;
+    let mut message_done_seen = false;
+    let mut unchanged_ticks = 0usize;
     let mut should_poll_history = false;
+    let prior_last_user = prior_turns.last().map(|t| t.user.trim());
 
     while Instant::now() < deadline {
         tokio::select! {
             recv_res = event_rx.recv() => {
                 if let Ok(ev) = recv_res {
-                    let sid_matches = ev
-                        .session_id()
-                        .is_none_or(|sid| sid == lease.session_id());
+                    let ev_name = ev.event_name();
+                    let ev_sid = ev.session_id();
+                    let sid_matches = ev_sid == Some(lease.session_id());
+
+                    if ev_sid.is_none_or(|sid| sid == lease.session_id())
+                        && (ev_name == "approvals.snapshot"
+                            || ev_name.starts_with("task.")
+                            || ev_name.contains("approval"))
+                    {
+                        unchanged_ticks = 0;
+                        if ev_name.contains("approval") {
+                            handle_chat_approval(lease, &ev).await;
+                        }
+                        continue;
+                    }
+
+                    if let Some(status) = ev.session_update_status(lease.session_id()) {
+                        if status == "completed" {
+                            session_completed = true;
+                            should_poll_history = true;
+                        } else if status == "running" {
+                            session_completed = false;
+                            message_done_seen = false;
+                            unchanged_ticks = 0;
+                            should_poll_history = true;
+                        }
+                        continue;
+                    }
+
                     if !sid_matches {
                         continue;
                     }
-                    let ev_name = ev.event_name();
+
                     if ev_name == "delta.text_append" {
                         if let Some(chunk) = ev.payload().get("text").and_then(Value::as_str)
                             && !chunk.is_empty()
@@ -154,22 +186,32 @@ where
                                 return Err(WorkflowFailure::Upstream(kind, reason));
                             }
                             emitted_text.push_str(chunk);
+                            last_polled_text = emitted_text.clone();
+                            unchanged_ticks = 0;
                             on_delta(chunk.to_string());
                         }
-                    } else if ev_name.contains("approval") {
-                        handle_chat_approval(lease, &ev).await;
+                    } else if ev_name == "agent.status" {
+                        if let Some(code) = ev.activity_code() {
+                            latest_activity_code = code.to_string();
+                            if matches!(
+                                code,
+                                "working" | "making_something" | "responding" | "thinking" | "running"
+                            ) {
+                                unchanged_ticks = 0;
+                                message_done_seen = false;
+                            } else if matches!(code, "online" | "idle") && session_completed {
+                                should_poll_history = true;
+                            }
+                        }
                     } else if ev_name == "delta.message_done" {
                         let done_text = extract_message_done_text(ev.payload());
                         if let Some((kind, reason)) = classify_assistant_error(&done_text) {
                             return Err(WorkflowFailure::Upstream(kind, reason));
                         }
-                        append_and_emit_missing_suffix(&mut emitted_text, &done_text, on_delta);
-                        explicit_done = true;
-                        should_poll_history = true;
-                    } else if ev.agent_activity_state() == Some(false)
-                        || ev.is_session_completed_for(lease.session_id())
-                    {
-                        explicit_done = true;
+                        if reconcile_and_emit_history_text(&mut emitted_text, &done_text, on_delta) {
+                            last_polled_text = emitted_text.clone();
+                        }
+                        message_done_seen = true;
                         should_poll_history = true;
                     } else if ev_name == "error" || ev_name == "chat.error" {
                         let msg = ev
@@ -210,6 +252,9 @@ where
                 && resp.status == 200
                 && let Ok(history_json) = resp.json()
             {
+                if is_stale_followup_history(&history_json, prior_last_user, &effective_prompt) {
+                    continue;
+                }
                 let turn_events = extract_history_turn_events(&history_json);
                 let assistant_blocks = extract_turn_assistant_messages(&turn_events);
                 let history_text = assistant_blocks.join("\n\n");
@@ -217,16 +262,44 @@ where
                     if let Some((kind, reason)) = classify_assistant_error(&history_text) {
                         return Err(WorkflowFailure::Upstream(kind, reason));
                     }
-                    append_and_emit_missing_suffix(&mut emitted_text, &history_text, on_delta);
+                    if reconcile_and_emit_history_text(&mut emitted_text, &history_text, on_delta) {
+                        unchanged_ticks = 0;
+                        last_polled_text = history_text.clone();
+                    }
                 }
+
                 let active_tools = has_active_tool_task(&turn_events);
-                if !active_tools
-                    && !emitted_text.trim().is_empty()
-                    && (explicit_done || is_last_assistant_completed(&turn_events))
-                {
-                    break;
+                let is_agent_working = active_tools
+                    || matches!(
+                        latest_activity_code.as_str(),
+                        "working" | "making_something" | "responding" | "thinking" | "running"
+                    );
+
+                if !history_text.is_empty() {
+                    if history_text == last_polled_text && !is_agent_working {
+                        unchanged_ticks += 1;
+                    } else if is_agent_working {
+                        unchanged_ticks = 0;
+                    } else {
+                        last_polled_text = history_text;
+                        unchanged_ticks = 0;
+                    }
                 }
-            } else if explicit_done && !emitted_text.trim().is_empty() {
+
+                let is_assistant_completed = is_last_assistant_completed(&turn_events);
+                let is_all_completed =
+                    (session_completed || is_assistant_completed) && !active_tools;
+
+                if !emitted_text.trim().is_empty() && !active_tools && !is_agent_working {
+                    if is_assistant_completed && (session_completed || message_done_seen) {
+                        break;
+                    }
+                    let required_ticks = if is_all_completed { 6 } else { 20 };
+                    if unchanged_ticks >= required_ticks {
+                        break;
+                    }
+                }
+            } else if (session_completed || message_done_seen) && !emitted_text.trim().is_empty() {
                 break;
             }
         }
@@ -263,28 +336,97 @@ where
     Ok(final_text)
 }
 
-fn append_and_emit_missing_suffix<F>(
+fn is_stale_followup_history(
+    history_json: &Value,
+    prior_last_user: Option<&str>,
+    effective_prompt: &str,
+) -> bool {
+    let Some(prev_u) = prior_last_user.filter(|s| !s.is_empty()) else {
+        return false;
+    };
+    if prev_u == effective_prompt.trim() {
+        return false;
+    }
+    let evs = history_json
+        .get("result")
+        .and_then(|r| r.get("chat_events"))
+        .or_else(|| history_json.get("chat_events"))
+        .and_then(Value::as_array);
+    let Some(evs) = evs else {
+        return false;
+    };
+    let last_user_ev = evs.iter().rev().find(|e| {
+        let p = e.get("payload").unwrap_or(e);
+        e.get("role").and_then(Value::as_str) == Some("user")
+            || p.get("role").and_then(Value::as_str) == Some("user")
+            || e.get("event_name").and_then(Value::as_str) == Some("message.user")
+            || e.get("event").and_then(Value::as_str) == Some("message.user")
+    });
+    let Some(ev) = last_user_ev else {
+        return false;
+    };
+    let p = ev.get("payload").unwrap_or(ev);
+    let last_u_text = ev
+        .get("display_text")
+        .and_then(extract_value_text)
+        .or_else(|| p.get("display_text").and_then(extract_value_text))
+        .or_else(|| p.get("content").and_then(extract_value_text))
+        .or_else(|| ev.get("content").and_then(extract_value_text))
+        .unwrap_or_default();
+    last_u_text.trim() == prev_u
+}
+
+fn reconcile_and_emit_history_text<F>(
     emitted_text: &mut String,
     candidate_full: &str,
     on_delta: &mut F,
-) where
+) -> bool
+where
     F: FnMut(String) + Send,
 {
-    if candidate_full.is_empty() {
-        return;
+    if candidate_full.is_empty() || candidate_full.len() <= emitted_text.len() {
+        return false;
     }
-    let delta = if emitted_text.is_empty() {
-        candidate_full.to_string()
-    } else if candidate_full.len() > emitted_text.len() && candidate_full.starts_with(&*emitted_text)
-    {
-        candidate_full[emitted_text.len()..].to_string()
-    } else {
-        String::new()
-    };
+    if emitted_text.is_empty() {
+        *emitted_text = candidate_full.to_string();
+        on_delta(candidate_full.to_string());
+        return true;
+    }
+    if candidate_full.starts_with(&*emitted_text) {
+        let delta = candidate_full[emitted_text.len()..].to_string();
+        *emitted_text = candidate_full.to_string();
+        if !delta.is_empty() {
+            on_delta(delta);
+            return true;
+        }
+        return false;
+    }
+    if let Some(idx) = candidate_full.find(&*emitted_text) {
+        let delta = candidate_full[idx + emitted_text.len()..].to_string();
+        *emitted_text = candidate_full.to_string();
+        if !delta.is_empty() {
+            on_delta(delta);
+            return true;
+        }
+        return false;
+    }
+
+    // Suffix / prefix overlap matching (`muse-api-server-main/src/core/client.js:1397-1410`)
+    let max_possible = emitted_text.len().min(candidate_full.len());
+    let mut max_overlap = 0usize;
+    for i in (1..=max_possible).rev() {
+        if candidate_full.is_char_boundary(i) && emitted_text.ends_with(&candidate_full[..i]) {
+            max_overlap = i;
+            break;
+        }
+    }
+    let delta = candidate_full[max_overlap..].to_string();
     if !delta.is_empty() {
         emitted_text.push_str(&delta);
         on_delta(delta);
+        return true;
     }
+    false
 }
 
 fn extract_message_done_text(payload: &Value) -> String {
@@ -298,13 +440,12 @@ fn extract_message_done_text(payload: &Value) -> String {
             if m.get("role").and_then(Value::as_str) == Some("assistant")
                 && let Some(t) = m
                     .get("content")
-                    .or_else(|| m.get("text"))
-                    .or_else(|| m.get("display_text"))
-                    .and_then(Value::as_str)
+                    .and_then(extract_value_text)
+                    .or_else(|| m.get("text").and_then(extract_value_text))
+                    .or_else(|| m.get("display_text").and_then(extract_value_text))
             {
-                let trimmed = t.trim();
-                if !trimmed.is_empty() {
-                    blocks.push(trimmed.to_string());
+                if !t.is_empty() {
+                    blocks.push(t);
                 }
             }
         }
@@ -314,11 +455,10 @@ fn extract_message_done_text(payload: &Value) -> String {
     }
     payload
         .get("content")
-        .or_else(|| payload.get("text"))
-        .or_else(|| payload.get("display_text"))
-        .and_then(Value::as_str)
-        .unwrap_or("")
-        .to_string()
+        .and_then(extract_value_text)
+        .or_else(|| payload.get("text").and_then(extract_value_text))
+        .or_else(|| payload.get("display_text").and_then(extract_value_text))
+        .unwrap_or_default()
 }
 
 fn is_last_assistant_completed(turn_events: &[Value]) -> bool {
@@ -326,16 +466,30 @@ fn is_last_assistant_completed(turn_events: &[Value]) -> bool {
         .iter()
         .rev()
         .find(|ev| {
+            let ev_name = ev
+                .get("event_name")
+                .or_else(|| ev.get("event"))
+                .and_then(Value::as_str)
+                .unwrap_or("");
+            if ev_name == "delta.presentation" {
+                return false;
+            }
             let p = ev.get("payload").unwrap_or(ev);
+            let d = p.get("data").or_else(|| ev.get("data"));
+            if ev.get("kind").and_then(Value::as_str) == Some("browser_task")
+                || p.get("kind").and_then(Value::as_str) == Some("browser_task")
+                || d.and_then(|x| x.get("browser_task_id")).is_some()
+            {
+                return false;
+            }
             ev.get("role").and_then(Value::as_str) == Some("assistant")
                 || p.get("role").and_then(Value::as_str) == Some("assistant")
-                || ev.get("event_name").and_then(Value::as_str) == Some("message.assistant")
+                || ev_name == "message.assistant"
         })
         .is_some_and(|ev| {
             let p = ev.get("payload").unwrap_or(ev);
             ev.get("status").and_then(Value::as_str) == Some("completed")
                 || p.get("status").and_then(Value::as_str) == Some("completed")
-                || ev.get("event_name").and_then(Value::as_str) == Some("message.assistant")
         })
 }
 
