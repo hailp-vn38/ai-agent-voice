@@ -49,7 +49,7 @@ Call `wiki_ingest_source` for `source_rel_path` (do NOT invent a random filename
 - `wiki_markdown_body`: A comprehensive, deeply structured Markdown article containing:
   1. **Context & Core Thesis**: Purpose of the source and how it connects to existing `[[wiki/sources/...]]` pages.
   2. **Detailed Technical / Factual Breakdown**: All core claims, rules, parameters, code blocks, SQL/schemas, or formulas preserved verbatim, with inline `[[entities/<slug>|Label]]` and `[[concepts/<slug>|Label]]` links.
-  3. **Empirical Findings / Data / Metrics Table**: Markdown table summarizing experiments, configurations, or comparisons when present.
+  3. **Empirical Findings / Data / Metrics Table**: Markdown table summarizing experiments, configurations, or comparisons when present (preceded and followed by a blank line; escape any pipe inside aliased WikiLinks in table cells as `[[path\|Label]]`).
   4. **Key Takeaways, Caveats & Contradictions**: Include a `> [!WARNING] Contradiction / Caveat` callout block if there are internal caveats or conflicts with other wiki pages.
   5. **Architecture / Process Diagram**: Valid multi-line `flowchart TD` or `flowchart LR` Mermaid diagram with double-quoted node labels (`A["..."] --> B["..."]`) when applicable.
 

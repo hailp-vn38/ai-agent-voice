@@ -102,17 +102,18 @@ pub(super) async fn trigger_source_analysis(state: &AppState, rel_path: &str, bo
 }
 
 pub(super) fn format_wiki_markdown(title: &str, body: &str, source_ref: Option<&str>) -> String {
-    if body.trim_start().starts_with("---") {
-        return body.to_string();
+    let normalized_body = crate::tools::knowledge_mcp::normalize_wiki_markdown_tables(body);
+    if normalized_body.trim_start().starts_with("---") {
+        return normalized_body;
     }
     let mut out = format!("---\ntitle: \"{}\"\n", title.replace('"', "\\\""));
     if let Some(src) = source_ref.filter(|s| !s.trim().is_empty()) {
         out.push_str(&format!("sources:\n  - \"[[{src}]]\"\n"));
     }
     out.push_str("---\n\n");
-    if !body.trim_start().starts_with("# ") {
+    if !normalized_body.trim_start().starts_with("# ") {
         out.push_str(&format!("# {title}\n\n"));
     }
-    out.push_str(body);
+    out.push_str(&normalized_body);
     out
 }

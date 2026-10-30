@@ -19,9 +19,9 @@ use settings::{
     RESULT_CHARS_RANGE, SETTINGS_FILENAME, constant_time_eq, load_or_seed_settings,
     persist_settings, unix_now,
 };
-use staging::{
+pub(crate) use staging::{
     add_to_sources_tool_definition, bound_result_chars, execute_add_to_sources,
-    sanitize_schema_node,
+    normalize_wiki_markdown_tables, normalize_wiki_tool_arguments, sanitize_schema_node,
 };
 use std::{
     path::{Path, PathBuf},
@@ -425,6 +425,7 @@ impl KnowledgeMcp {
                 obj.remove("sub_path");
             }
         }
+        normalize_wiki_tool_arguments(name, &mut arguments);
 
         let max_chars = self
             .settings

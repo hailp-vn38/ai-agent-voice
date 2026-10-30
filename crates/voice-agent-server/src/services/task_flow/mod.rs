@@ -46,16 +46,38 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use llm_wiki::{AdaptiveReadBudget, WikiEngine, WikiError};
-use orchestrator_agent_rs::{LlmConfig, Orchestrator, OrchestratorConfig, OrchestratorError};
+use orchestrator_agent_rs::{
+    HostTool, LlmConfig, Orchestrator, OrchestratorConfig, OrchestratorError, ToolContext,
+    ToolDescriptor, ToolError, ToolOutcome,
+};
 use orchestrator_flow_rs::{
     CreateTaskRequest, TaskConfig, TaskError, TaskManager, TaskRuntimeConfig, TaskSource, TaskView,
     WikiAutoFlowBinding, WorkspaceToolKit,
 };
+use serde_json::Value;
 use thiserror::Error;
 use tokio::sync::Notify;
 
 use crate::config::{AppConfig, OrchestratorSectionConfig, WikiSectionConfig};
+use crate::tools::knowledge_mcp::normalize_wiki_tool_arguments;
 use workspace_seed::ensure_prompts_and_skills;
+
+struct NormalizedWikiHostTool {
+    inner: Arc<dyn HostTool>,
+}
+
+#[async_trait::async_trait]
+impl HostTool for NormalizedWikiHostTool {
+    fn descriptor(&self) -> ToolDescriptor {
+        self.inner.descriptor()
+    }
+
+    async fn execute(&self, ctx: ToolContext, mut args: Value) -> Result<ToolOutcome, ToolError> {
+        let name = self.inner.descriptor().name;
+        normalize_wiki_tool_arguments(&name, &mut args);
+        self.inner.execute(ctx, args).await
+    }
+}
 
 #[derive(Debug, Error)]
 pub enum TaskFlowError {
@@ -219,7 +241,7 @@ async fn init_orchestrator_and_task_manager(
 
     let mut builder = Orchestrator::builder(orch_cfg);
     for tool in toolkit.all_host_tools(&task_init) {
-        builder = builder.register_tool(tool);
+        builder = builder.register_tool(Arc::new(NormalizedWikiHostTool { inner: tool }));
     }
     for tool in chart_host_tools(&wiki_cfg.vault_dir) {
         builder = builder.register_tool(tool);

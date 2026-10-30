@@ -218,7 +218,7 @@ pub(crate) fn execute_add_to_sources(
         ));
     }
 
-    let mut final_body = body.trim_end().to_string();
+    let mut final_body = normalize_wiki_markdown_tables(body.trim_end());
     if conflict_with.is_some() || !open_questions.is_empty() {
         final_body.push_str("\n\n## Mâu thuẫn & Câu hỏi mở (Conflict & Open Questions)\n\n");
         final_body.push_str("> [!WARNING] Contradiction / Caveat\n");
@@ -371,6 +371,207 @@ fn normalize_and_validate_provenance(
                     "invalid provenance '{p}': expected 'user', 'source', 'verified_synthesis', or 'assistant'"
                 ))),
             }
+        }
+    }
+}
+
+fn is_table_separator_line(line: &str) -> bool {
+    let trimmed = line.trim();
+    if !trimmed.contains('|') {
+        return false;
+    }
+    let inner = trimmed.strip_prefix('|').unwrap_or(trimmed);
+    let inner = inner.strip_suffix('|').unwrap_or(inner);
+    let mut count = 0usize;
+    for cell in inner.split('|') {
+        let c = cell.trim();
+        if c.is_empty() {
+            return false;
+        }
+        let c = c.strip_prefix(':').unwrap_or(c);
+        let c = c.strip_suffix(':').unwrap_or(c);
+        if c.len() < 3 || !c.bytes().all(|b| b == b'-') {
+            return false;
+        }
+        count += 1;
+    }
+    count > 0
+}
+
+fn is_non_table_block_line(line: &str) -> bool {
+    let trimmed = line.trim_start();
+    trimmed.starts_with("```")
+        || trimmed.starts_with("~~~")
+        || trimmed.starts_with('#')
+        || trimmed.starts_with('>')
+}
+
+fn escape_wikilink_pipes_in_table_row(line: &str) -> String {
+    let chars: Vec<char> = line.chars().collect();
+    let mut out = String::with_capacity(line.len() + 8);
+    let mut wiki_depth = 0usize;
+    let mut i = 0usize;
+    while i < chars.len() {
+        let ch = chars[i];
+        let next = chars.get(i + 1).copied();
+        if ch == '[' && next == Some('[') {
+            wiki_depth += 1;
+            out.push_str("[[");
+            i += 2;
+            continue;
+        }
+        if wiki_depth > 0 && ch == ']' && next == Some(']') {
+            wiki_depth -= 1;
+            out.push_str("]]");
+            i += 2;
+            continue;
+        }
+        if wiki_depth > 0 && ch == '\\' && next == Some('|') {
+            out.push_str("\\|");
+            i += 2;
+            continue;
+        }
+        if wiki_depth > 0 && ch == '|' {
+            out.push_str("\\|");
+            i += 1;
+            continue;
+        }
+        out.push(ch);
+        i += 1;
+    }
+    out
+}
+
+/// Normalizes GFM tables in Wiki/Source Markdown so that files render cleanly both in Admin Web
+/// and in external Markdown applications (Obsidian, VS Code, Typora, GitHub):
+/// 1. Preserves YAML frontmatter (`--- ... ---`) and fenced code blocks (` ``` ` / `~~~`) verbatim.
+/// 2. Ensures blank lines before and after multi-line GFM table blocks.
+/// 3. Escapes unescaped pipes inside `[[target|alias]]` WikiLinks on table rows as `[[target\|alias]]`
+///    so external table parsers do not split the cell at the WikiLink pipe.
+pub(crate) fn normalize_wiki_markdown_tables(markdown: &str) -> String {
+    if !markdown.contains('|') {
+        return markdown.to_string();
+    }
+    let trailing_newline = markdown.ends_with('\n');
+    let lines: Vec<&str> = markdown.lines().collect();
+    let mut out: Vec<String> = Vec::with_capacity(lines.len() + 4);
+
+    let mut idx = 0usize;
+    if let Some(first) = lines.first()
+        && first.trim_start_matches('\u{FEFF}').trim() == "---"
+        && let Some(end_offset) = lines[1..].iter().position(|l| l.trim() == "---")
+    {
+        let close_idx = 1 + end_offset;
+        for line in &lines[..=close_idx] {
+            out.push((*line).to_string());
+        }
+        idx = close_idx + 1;
+    }
+
+    let frontmatter_end = idx;
+    let mut fence: Option<char> = None;
+
+    while idx < lines.len() {
+        let line = lines[idx];
+        let trimmed_start = line.trim_start();
+        if trimmed_start.starts_with("```") || trimmed_start.starts_with("~~~") {
+            let marker = trimmed_start.chars().next().unwrap_or('`');
+            match fence {
+                None => fence = Some(marker),
+                Some(open) if open == marker => fence = None,
+                Some(_) => {}
+            }
+            out.push(line.to_string());
+            idx += 1;
+            continue;
+        }
+
+        if fence.is_some() {
+            out.push(line.to_string());
+            idx += 1;
+            continue;
+        }
+
+        if line.contains('|')
+            && !is_non_table_block_line(line)
+            && idx + 1 < lines.len()
+            && is_table_separator_line(lines[idx + 1])
+        {
+            if idx > frontmatter_end
+                && out
+                    .last()
+                    .is_some_and(|prev| !prev.trim().is_empty() && !prev.trim().starts_with('>'))
+            {
+                out.push(String::new());
+            }
+
+            out.push(escape_wikilink_pipes_in_table_row(line));
+            out.push(lines[idx + 1].to_string());
+            idx += 2;
+
+            while idx < lines.len() {
+                let row = lines[idx];
+                let row_trim = row.trim();
+                if row_trim.is_empty()
+                    || !row_trim.contains('|')
+                    || is_non_table_block_line(row)
+                {
+                    break;
+                }
+                out.push(escape_wikilink_pipes_in_table_row(row));
+                idx += 1;
+            }
+
+            if idx < lines.len() && !lines[idx].trim().is_empty() {
+                out.push(String::new());
+            }
+            continue;
+        }
+
+        let trimmed = line.trim();
+        if trimmed.starts_with('|') && trimmed.ends_with('|') && !is_table_separator_line(trimmed) {
+            out.push(escape_wikilink_pipes_in_table_row(line));
+        } else {
+            out.push(line.to_string());
+        }
+        idx += 1;
+    }
+
+    let mut joined = out.join("\n");
+    if trailing_newline {
+        joined.push('\n');
+    }
+    joined
+}
+
+/// Normalizes Markdown body arguments on mutating Wiki/Report tools before persistence.
+pub(crate) fn normalize_wiki_tool_arguments(tool_name: &str, args: &mut Value) {
+    if !matches!(
+        tool_name,
+        "wiki_write_file"
+            | "wiki_patch_file"
+            | "wiki_file_synthesis"
+            | "wiki_ingest_source"
+            | "add_to_sources"
+            | "markdown_create"
+    ) {
+        return;
+    }
+    let Some(obj) = args.as_object_mut() else {
+        return;
+    };
+    for key in [
+        "content",
+        "wiki_markdown_body",
+        "markdown_body",
+        "raw_source_content",
+        "replacement_text",
+        "append_text",
+        "body",
+        "markdown",
+    ] {
+        if let Some(Value::String(text)) = obj.get_mut(key) {
+            *text = normalize_wiki_markdown_tables(text);
         }
     }
 }

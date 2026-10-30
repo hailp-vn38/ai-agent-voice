@@ -925,7 +925,7 @@ const introduction = computed(() => {
   const boundary = text.indexOf('\n\n')
   if (boundary < 0) return { lead: '', rest: text }
   const first = text.slice(0, boundary).trim()
-  if (!first || /^(#{1,6}\s|[-*+]\s|>\s|\x60{3}|~{3}|\d+\.\s)/.test(first)) {
+  if (!first || /^(#{1,6}\s|[-*+]\s|>\s|\x60{3}|~{3}|\d+\.\s|\|)/.test(first)) {
     return { lead: '', rest: text }
   }
   return { lead: first, rest: text.slice(boundary + 2).trimStart() }

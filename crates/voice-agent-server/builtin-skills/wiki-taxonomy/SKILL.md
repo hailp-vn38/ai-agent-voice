@@ -95,3 +95,6 @@ Every time you ingest or update a page from a source, extract **3 facets of `keb
    ```
 5. **Always Use Raw Obsidian `[[WikiLink]]` Syntax in Body (NEVER Wrap in Backticks)**:
    - Use raw `[[entities/slug|Label]]`, `[[concepts/slug|Label]]`, `[[wiki/sources/...|Label]]` in the Markdown body — NEVER wrap `[[WikiLinks]]` inside single backticks (do NOT write `` `[[entities/slug]]` ``) because backticks turn links into dead inline code boxes in Obsidian, and never use standard Markdown links `[label](path.md)` for internal wiki references.
+6. **Markdown Table Formatting & Escaped Pipes in `[[WikiLinks]]` (`[[path\|Label]]`)**:
+   - Always leave an empty line before the table header row and after the last table row, with each table row on its own line (`| Col 1 | Col 2 |`, followed by `|---|---|`, followed by data rows).
+   - Inside Markdown table cells, any `[[path|Label]]` WikiLink with a display alias **MUST escape the pipe with a backslash** (`[[path\|Label]]`, e.g., `| [[wiki/sources/trading/fvg/the-secret-fvg\|The Secret FVG]] | ... |`) so that Obsidian and external GFM Markdown viewers do not treat the pipe inside the WikiLink as a table column separator.

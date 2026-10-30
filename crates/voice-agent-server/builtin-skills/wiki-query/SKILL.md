@@ -40,7 +40,7 @@ Karpathy's core rule: *"Good answers shouldn't disappear into chat history."*
 When a query produces a deep comparison, architectural synthesis, multi-source table, or thesis:
 1. Call `wiki_file_synthesis` to save it permanently under `wiki/syntheses/<slug>.md` with:
    - Executive thesis & core conclusions
-   - Markdown comparison table across sources/entities/methods
+   - Markdown comparison table across sources/entities/methods (always preceded and followed by a blank line; inside table cells, escape the pipe in aliased WikiLinks as `[[path\|Label]]` so Obsidian and external Markdown apps do not split columns)
    - Contradictions & caveats (`> [!WARNING] Contradiction / Caveat`)
    - Mermaid diagram (`flowchart LR` or `flowchart TD` with double-quoted labels `A["..."]`)
    - Rich `[[entities/...]]`, `[[concepts/...]]`, `[[wiki/sources/...]]`, and `[[sources/...]]` links

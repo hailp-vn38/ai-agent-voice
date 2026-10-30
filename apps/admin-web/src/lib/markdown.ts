@@ -226,8 +226,8 @@ function inline(value: string): string {
     output += escape(value.slice(at, start))
     const token = match[0]
     if (token.startsWith('[[') || token.startsWith('![[')) {
-      const parts = token.slice(token.startsWith('!') ? 3 : 2, -2).split('|', 2)
-      const target = parts[0].trim()
+      const parts = token.slice(token.startsWith('!') ? 3 : 2, -2).split(/\\?\|/, 2)
+      const target = parts[0].replace(/\\+$/, '').trim()
       output += target ? '<a href="#" class="knowledge-wikilink" data-wikilink="' +
         escape(target) + '">' + escape((parts[1] || target).trim()) + '</a>' : escape(token)
     } else if (token.startsWith('![')) {
@@ -255,6 +255,69 @@ function inline(value: string): string {
   return output + escape(value.slice(at))
 }
 
+type TableAlignment = 'left' | 'center' | 'right' | null
+
+function splitTableRow(line: string): string[] {
+  let s = line.trim()
+  if (s.startsWith('|')) s = s.slice(1)
+  if (s.endsWith('|') && !s.endsWith('\\|')) s = s.slice(0, -1)
+  const cells: string[] = []
+  let cell = ''
+  let inCode = false
+  let wikiDepth = 0
+  for (let i = 0; i < s.length; i++) {
+    const ch = s[i]!
+    const next = s[i + 1]
+    if (ch === '\x60') {
+      inCode = !inCode
+      cell += ch
+      continue
+    }
+    if (!inCode && ch === '[' && next === '[') {
+      wikiDepth++
+      cell += '[['
+      i++
+      continue
+    }
+    if (!inCode && wikiDepth > 0 && ch === ']' && next === ']') {
+      wikiDepth--
+      cell += ']]'
+      i++
+      continue
+    }
+    if (!inCode && ch === '\\' && next === '|') {
+      cell += wikiDepth > 0 ? '\\|' : '|'
+      i++
+      continue
+    }
+    if (!inCode && wikiDepth === 0 && ch === '|') {
+      cells.push(cell.trim())
+      cell = ''
+      continue
+    }
+    cell += ch
+  }
+  cells.push(cell.trim())
+  return cells
+}
+
+function parseTableAlignments(line: string): TableAlignment[] | null {
+  const trimmed = line.trim()
+  if (!trimmed.includes('|')) return null
+  const cells = splitTableRow(trimmed)
+  if (cells.length === 0 || !cells.every(cell => /^:?-{3,}:?$/.test(cell))) return null
+  return cells.map(cell => {
+    if (cell.startsWith(':') && cell.endsWith(':')) return 'center'
+    if (cell.endsWith(':')) return 'right'
+    if (cell.startsWith(':')) return 'left'
+    return null
+  })
+}
+
+function alignAttr(align: TableAlignment | undefined): string {
+  return align ? ' style="text-align:' + align + '"' : ''
+}
+
 export function renderMarkdown(markdown: string): string {
   const body = stripMarkdownFrontmatter(markdown)
   const headings = markdownOutline(body)
@@ -278,7 +341,9 @@ export function renderMarkdown(markdown: string): string {
     if (list) output += '</' + list + '>'
     list = null
   }
-  for (const line of body.split(/\r?\n/)) {
+  const lines = body.split(/\r?\n/)
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i]!
     const delimiter = /^\s*(\x60{3,}|~{3,})\s*([\w-]*)/.exec(line)
     if (code !== null) {
       if (delimiter && delimiter[1][0] === fence) {
@@ -314,6 +379,52 @@ export function renderMarkdown(markdown: string): string {
     const quoted = /^\s*>\s?(.*)$/.exec(line)
     if (quoted) { flushParagraph(); closeList(); quote.push(quoted[1]); continue }
     flushQuote()
+    if (line.includes('|') && i + 1 < lines.length) {
+      const aligns = parseTableAlignments(lines[i + 1]!)
+      if (aligns !== null) {
+        const headers = splitTableRow(line)
+        if (headers.length > 0) {
+          flushParagraph(); closeList()
+          const colCount = Math.max(headers.length, aligns.length)
+          let tableHtml = '<div class="markdown-table-wrap"><table><thead><tr>'
+          for (let c = 0; c < colCount; c++) {
+            tableHtml += '<th' + alignAttr(aligns[c]) + '>' + inline(headers[c] ?? '') + '</th>'
+          }
+          tableHtml += '</tr></thead>'
+          i += 2
+          const bodyRows: string[] = []
+          while (i < lines.length) {
+            const rowLine = lines[i]!
+            const rowTrim = rowLine.trim()
+            if (
+              !rowTrim ||
+              !rowTrim.includes('|') ||
+              /^\s*(\x60{3,}|~{3,})/.test(rowLine) ||
+              /^(#{1,6})\s+/.test(rowLine) ||
+              /^\s*(-{3,}|\*{3,}|_{3,})\s*$/.test(rowLine) ||
+              /^\s*>/.test(rowLine)
+            ) {
+              break
+            }
+            const cells = splitTableRow(rowLine)
+            let rowHtml = '<tr>'
+            for (let c = 0; c < colCount; c++) {
+              rowHtml += '<td' + alignAttr(aligns[c]) + '>' + inline(cells[c] ?? '') + '</td>'
+            }
+            rowHtml += '</tr>'
+            bodyRows.push(rowHtml)
+            i++
+          }
+          if (bodyRows.length) {
+            tableHtml += '<tbody>' + bodyRows.join('') + '</tbody>'
+          }
+          tableHtml += '</table></div>'
+          output += tableHtml
+          i--
+          continue
+        }
+      }
+    }
     const bullet = /^\s*[-*+]\s+(.*)$/.exec(line)
     const ordered = /^\s*\d+\.\s+(.*)$/.exec(line)
     if (bullet || ordered) {

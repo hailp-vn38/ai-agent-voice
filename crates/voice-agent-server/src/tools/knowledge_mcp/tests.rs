@@ -234,3 +234,73 @@ fn runtime_token_lifecycle_redaction_and_dynamic_concurrency() {
     mcp.delete_token(&entry.id).expect("delete token");
     assert!(mcp.verify_token(&entry.token).is_none());
 }
+
+#[tokio::test]
+async fn wiki_write_tools_normalize_markdown_tables_for_external_markdown_apps() {
+    let (_dir, engine) = test_engine();
+    let mcp = KnowledgeMcp::new(Arc::clone(&engine), None, true, 12_000);
+    let rw_ctx = test_ctx(KnowledgeMcpAccess::ReadWrite);
+
+    let raw_content = [
+        "---",
+        "title: \"FVG Synthesis\"",
+        "category: \"synthesis\"",
+        "---",
+        "",
+        "# FVG Synthesis",
+        "",
+        "Đoạn văn có [[wiki/concepts/trading/fair-value-gap|Fair Value Gap (FVG)]] ngoài bảng.",
+        "",
+        "## Tiến triển bằng chứng theo nguồn",
+        "| Nguồn | Luận điểm chính | Ghi chú |",
+        "|---|---|---|",
+        "| [[wiki/sources/trading/fvg/the-secret-fvg-breakaway-gap|The Secret FVG that we don't trade back into]] | Breakaway Gap | `a | b` |",
+        "| [[wiki/sources/trading/sharp-turn-entry/the-sharp-turn-entry-model\\|The Sharp Turn Entry Model]] | Đã escape sẵn | Giữ nguyên |",
+        "Đoạn văn ngay sau bảng không có dòng trống.",
+        "",
+        "```markdown",
+        "| [[not/escaped/in/code|Code Block Link]] | Value |",
+        "```",
+    ]
+    .join("\n");
+
+    mcp.call_tool(
+        &rw_ctx,
+        "wiki_write_file",
+        json!({
+            "scope": "wiki",
+            "rel_path": "syntheses/trading/fvg-synthesis.md",
+            "content": raw_content,
+        }),
+    )
+    .await
+    .expect("wiki_write_file should succeed");
+
+    let saved = engine
+        .get_document(
+            "wiki/syntheses/trading/fvg-synthesis.md",
+            llm_wiki::GetOptions {
+                include_frontmatter: true,
+                ..Default::default()
+            },
+        )
+        .expect("read saved wiki synthesis")
+        .content;
+
+    // 1. Prose WikiLink outside table keeps unescaped pipe `|`
+    assert!(saved.contains("Đoạn văn có [[wiki/concepts/trading/fair-value-gap|Fair Value Gap (FVG)]] ngoài bảng."));
+    // 2. Blank line inserted between heading and table header, and after table before paragraph
+    assert!(saved.contains("## Tiến triển bằng chứng theo nguồn\n\n| Nguồn | Luận điểm chính | Ghi chú |"));
+    assert!(saved.contains("| Đã escape sẵn | Giữ nguyên |\n\nĐoạn văn ngay sau bảng không có dòng trống."));
+    // 3. Unescaped WikiLink pipe inside table cell is escaped as `\|` for Obsidian / external GFM apps
+    assert!(saved.contains(
+        "| [[wiki/sources/trading/fvg/the-secret-fvg-breakaway-gap\\|The Secret FVG that we don't trade back into]] | Breakaway Gap | `a | b` |"
+    ));
+    // 4. Already-escaped WikiLink inside table cell is not double-escaped
+    assert!(saved.contains(
+        "| [[wiki/sources/trading/sharp-turn-entry/the-sharp-turn-entry-model\\|The Sharp Turn Entry Model]] | Đã escape sẵn | Giữ nguyên |"
+    ));
+    assert!(!saved.contains("\\\\|"));
+    // 5. Fenced code block content is untouched
+    assert!(saved.contains("| [[not/escaped/in/code|Code Block Link]] | Value |"));
+}

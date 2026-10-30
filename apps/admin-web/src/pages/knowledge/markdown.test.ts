@@ -100,3 +100,26 @@ it('parses YAML frontmatter into structured properties and strips it from render
   expect(html).not.toContain('qmd:')
   expect(html).toContain('Diễn biến chính')
 })
+
+it('renders GFM tables with WikiLinks (both escaped and unescaped pipes), inline code pipes, and column alignment', () => {
+  const md = [
+    '## Tiến triển bằng chứng theo nguồn',
+    '',
+    '| Nguồn | Luận điểm chính | Căn giữa | Căn phải |',
+    '|---|---|:---:|---:|',
+    '| [[wiki/sources/trading/fvg/the-secret-fvg-breakaway-gap\\|The Secret FVG that we don\'t trade back into]] | Breakaway Gap là FVG rời vùng cân bằng | `a | b` | 100 \\| 200 |',
+    '| [[wiki/sources/trading/sharp-turn-entry/the-sharp-turn-entry-model|The Sharp Turn Entry Model]] | FVG cần bias và <script>alert(1)</script> | Heuristic | 42 |',
+  ].join('\n')
+
+  const html = renderMarkdown(md)
+  expect(html).toContain('<div class="markdown-table-wrap"><table>')
+  expect(html).toContain('<thead><tr><th>Nguồn</th><th>Luận điểm chính</th><th style="text-align:center">Căn giữa</th><th style="text-align:right">Căn phải</th></tr></thead>')
+  expect(html).toContain('<tbody>')
+  expect(html).toContain('<a href="#" class="knowledge-wikilink" data-wikilink="wiki/sources/trading/fvg/the-secret-fvg-breakaway-gap">The Secret FVG that we don&#39;t trade back into</a>')
+  expect(html).toContain('<a href="#" class="knowledge-wikilink" data-wikilink="wiki/sources/trading/sharp-turn-entry/the-sharp-turn-entry-model">The Sharp Turn Entry Model</a>')
+  expect(html).toContain('<td style="text-align:center"><code>a | b</code></td>')
+  expect(html).toContain('<td style="text-align:right">100 | 200</td>')
+  expect(html).toContain('&lt;script&gt;alert(1)&lt;/script&gt;')
+  expect(html).not.toContain('<script>')
+  expect(html).not.toContain('|---|---|')
+})

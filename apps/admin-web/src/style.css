@@ -190,6 +190,32 @@
     transform: translateX(-100%);
     animation: studio-shimmer 1.6s infinite;
   }
+
+  .markdown-table-wrap {
+    margin: 0.75rem 0;
+    overflow-x: auto;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+  }
+
+  .markdown-table-wrap table {
+    width: 100%;
+    border-collapse: collapse;
+    text-align: left;
+  }
+
+  .markdown-table-wrap th,
+  .markdown-table-wrap td {
+    padding: 0.45rem 0.65rem;
+    border-top: 1px solid var(--border);
+    vertical-align: top;
+  }
+
+  .markdown-table-wrap thead th {
+    border-top: 0;
+    background: var(--surface);
+    font-weight: 650;
+  }
 }
 
 @keyframes studio-shimmer {
