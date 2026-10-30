@@ -1138,13 +1138,29 @@ async fn llm_gateway_gemini_antigravity_streams_tools_vision_and_auto_refreshes_
                     );
                     assert_eq!(
                         payload.get("model").and_then(Value::as_str),
-                        Some("gemini-3.8-flash-medium(medium)")
+                        Some("gemini-3.8-flash-medium")
                     );
                     assert_eq!(
                         payload.get("userAgent").and_then(Value::as_str),
                         Some("antigravity")
                     );
                     let req_obj = payload.get("request").expect("request object");
+                    assert_eq!(
+                        req_obj
+                            .get("generationConfig")
+                            .and_then(|g| g.get("thinkingConfig"))
+                            .and_then(|t| t.get("thinkingLevel"))
+                            .and_then(Value::as_str),
+                        Some("medium")
+                    );
+                    assert_eq!(
+                        req_obj
+                            .get("generationConfig")
+                            .and_then(|g| g.get("thinkingConfig"))
+                            .and_then(|t| t.get("includeThoughts"))
+                            .and_then(Value::as_bool),
+                        Some(true)
+                    );
                     assert!(
                         req_obj
                             .get("sessionId")
@@ -1179,7 +1195,7 @@ async fn llm_gateway_gemini_antigravity_streams_tools_vision_and_auto_refreshes_
                 let payload: Value = serde_json::from_slice(&body).expect("vision json");
                 assert_eq!(
                     payload.get("model").and_then(Value::as_str),
-                    Some("gemini-3.8-flash-medium(medium)")
+                    Some("gemini-3.8-flash-medium")
                 );
                 axum::Json(json!({
                     "response": {

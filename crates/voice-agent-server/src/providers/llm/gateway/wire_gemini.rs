@@ -22,53 +22,60 @@ const DAILY_CLOUDCODE_BASE: &str = "https://daily-cloudcode-pa.googleapis.com/v1
 const PROD_CLOUDCODE_BASE: &str = "https://cloudcode-pa.googleapis.com/v1internal";
 const DEFAULT_FALLBACK_PROJECT: &str = "bamboo-precept-lgxtn";
 
-pub(crate) fn resolve_gemini_model(raw_model: &str, reasoning_effort: Option<&str>) -> String {
+pub(crate) fn resolve_gemini_model_and_thinking(
+    raw_model: &str,
+    reasoning_effort: Option<&str>,
+) -> (String, Option<String>) {
     let trimmed = raw_model.trim();
-    if trimmed.ends_with("(high)") || trimmed.ends_with("(medium)") || trimmed.ends_with("(low)") {
-        return trimmed.to_owned();
+    for suffix in ["(high)", "(medium)", "(low)", "(minimal)"] {
+        if let Some(stem) = trimmed.strip_suffix(suffix) {
+            let level = suffix.trim_matches(|c| c == '(' || c == ')').to_owned();
+            return (stem.trim().to_ascii_lowercase(), Some(level));
+        }
     }
     let lower = trimmed.to_ascii_lowercase();
     let effort = reasoning_effort
         .map(str::trim)
         .map(str::to_ascii_lowercase)
-        .filter(|e| matches!(e.as_str(), "low" | "medium" | "high"));
+        .filter(|e| matches!(e.as_str(), "minimal" | "low" | "medium" | "high"));
 
     match lower.as_str() {
         "gemini-4-argon" => {
-            let lvl = effort.as_deref().unwrap_or("high");
-            format!("gemini-4-argon-{lvl}({lvl})")
+            let lvl = effort.unwrap_or_else(|| "high".to_owned());
+            (format!("gemini-4-argon-{lvl}"), Some(lvl))
         }
         "gemini-4-argon-high" | "gemini-4-argon-medium" | "gemini-4-argon-low" => {
-            let lvl = lower.rsplit('-').next().unwrap_or("high");
-            format!("{lower}({lvl})")
+            let lvl = lower.rsplit('-').next().unwrap_or("high").to_owned();
+            (lower, Some(lvl))
         }
         "gemini-3.8-flash" => {
-            let lvl = effort.as_deref().unwrap_or("medium");
-            format!("gemini-3.8-flash-{lvl}({lvl})")
+            let lvl = effort.unwrap_or_else(|| "medium".to_owned());
+            (format!("gemini-3.8-flash-{lvl}"), Some(lvl))
         }
         "gemini-3.8-flash-high" | "gemini-3.8-flash-medium" | "gemini-3.8-flash-low" => {
-            let lvl = lower.rsplit('-').next().unwrap_or("medium");
-            format!("{lower}({lvl})")
+            let lvl = lower.rsplit('-').next().unwrap_or("medium").to_owned();
+            (lower, Some(lvl))
         }
         "gemini-3.7-flash" => {
-            let lvl = effort.as_deref().unwrap_or("medium");
-            format!("gemini-3.7-flash-tiered({lvl})")
+            let lvl = effort.unwrap_or_else(|| "medium".to_owned());
+            ("gemini-3.7-flash-tiered".to_owned(), Some(lvl))
         }
         "gemini-3.7-flash-high" | "gemini-3.7-flash-medium" | "gemini-3.7-flash-low" => {
-            let lvl = lower.rsplit('-').next().unwrap_or("medium");
-            format!("gemini-3.7-flash-tiered({lvl})")
+            let lvl = lower.rsplit('-').next().unwrap_or("medium").to_owned();
+            ("gemini-3.7-flash-tiered".to_owned(), Some(lvl))
         }
         "gemini-3.6-flash" => {
-            let lvl = effort.as_deref().unwrap_or("medium");
-            format!("gemini-3.6-flash-tiered({lvl})")
+            let lvl = effort.unwrap_or_else(|| "medium".to_owned());
+            ("gemini-3.6-flash-tiered".to_owned(), Some(lvl))
         }
         "gemini-3.6-flash-high" | "gemini-3.6-flash-medium" | "gemini-3.6-flash-low" => {
-            let lvl = lower.rsplit('-').next().unwrap_or("medium");
-            format!("gemini-3.6-flash-tiered({lvl})")
+            let lvl = lower.rsplit('-').next().unwrap_or("medium").to_owned();
+            ("gemini-3.6-flash-tiered".to_owned(), Some(lvl))
         }
-        "gemini-3.1-pro-high" | "gemini-pro-agent" => "gemini-pro-agent".to_owned(),
-        "gemini-3.1-pro-low" => "gemini-3.1-pro-low(low)".to_owned(),
-        _ => lower,
+        "gemini-3.1-pro-high" | "gemini-pro-agent" => ("gemini-pro-agent".to_owned(), effort),
+        "gemini-3.1-pro-low" => ("gemini-3.1-pro-low".to_owned(), Some("low".to_owned())),
+        "gemini-3-flash" => ("gemini-3-flash-agent".to_owned(), effort),
+        _ => (lower, effort),
     }
 }
 
@@ -268,6 +275,8 @@ fn build_gemini_envelope(
         });
     }
 
+    let (model, thinking_level) =
+        resolve_gemini_model_and_thinking(&config.model, config.reasoning_effort.as_deref());
     let mut generation_config = serde_json::Map::new();
     if let Some(max_tokens) = config.max_tokens {
         generation_config.insert("maxOutputTokens".to_owned(), json!(max_tokens));
@@ -276,6 +285,15 @@ fn build_gemini_envelope(
         generation_config.insert(
             "temperature".to_owned(),
             json!((f32::from(pct) / 100.0).clamp(0.0, 2.0)),
+        );
+    }
+    if let Some(level) = thinking_level {
+        generation_config.insert(
+            "thinkingConfig".to_owned(),
+            json!({
+                "includeThoughts": level != "minimal",
+                "thinkingLevel": level,
+            }),
         );
     }
     if !generation_config.is_empty() {
@@ -306,7 +324,6 @@ fn build_gemini_envelope(
     }
 
     let now_ms = unix_seconds().unwrap_or(0).saturating_mul(1000);
-    let model = resolve_gemini_model(&config.model, config.reasoning_effort.as_deref());
     let project = project_id_for_lease(lease);
 
     json!({

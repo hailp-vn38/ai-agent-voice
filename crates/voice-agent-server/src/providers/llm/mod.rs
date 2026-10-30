@@ -662,7 +662,11 @@ pub(crate) async fn stream_openai_request(
                 "OpenAI-compatible LLM stream could not be opened"
             );
             match error {
-                llm::error::LLMError::ResponseFormatError { .. } => LlmError::Rejected,
+                llm::error::LLMError::ResponseFormatError { .. }
+                | llm::error::LLMError::AuthError(_)
+                | llm::error::LLMError::InvalidRequest(_)
+                | llm::error::LLMError::ProviderError(_)
+                | llm::error::LLMError::JsonError(_) => LlmError::Rejected,
                 _ => LlmError::Failed,
             }
         })?;
