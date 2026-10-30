@@ -141,7 +141,12 @@ impl FakeVmAccount {
     }
 
     pub fn with_file(self: &Arc<Self>, path: &str, bytes: Vec<u8>) -> Arc<Self> {
-        let clean = path.trim().trim_start_matches("sandbox://").to_string();
+        let clean = path
+            .trim()
+            .trim_start_matches("sandbox://")
+            .trim_start_matches("/home/user/")
+            .trim_start_matches('/')
+            .to_string();
         self.files.lock().unwrap().insert(clean, bytes);
         Arc::clone(self)
     }
@@ -232,11 +237,26 @@ impl MuseVmSender for FakeVmSender {
             } else if path == "/fs/read" {
                 let body_json: Value =
                     serde_json::from_slice(&req.body).unwrap_or_else(|_| json!({}));
-                let file_path = body_json
+                let raw_path = body_json
                     .get("path")
                     .and_then(Value::as_str)
-                    .unwrap_or("")
-                    .trim_start_matches("sandbox://");
+                    .unwrap_or("");
+                if raw_path.starts_with('/') {
+                    send_json_response(
+                        &self.tx,
+                        stream_id,
+                        400,
+                        &json!({
+                            "ok": false,
+                            "error": {
+                                "code": "invalid_params",
+                                "message": "absolute paths are not allowed"
+                            }
+                        }),
+                    );
+                    continue;
+                }
+                let file_path = raw_path.trim_start_matches("sandbox://");
                 let offset = body_json
                     .get("offset")
                     .and_then(Value::as_u64)
@@ -1334,4 +1354,111 @@ async fn chat_stream_waits_for_in_progress_assistant_and_reconciles_full_history
         .await
         .expect("turn 2 invoke");
     assert_eq!(reply2, LlmOutput::Text(turn2_reply.to_string()));
+}
+
+#[tokio::test]
+async fn image_generation_completes_from_history_presentation_without_done_marker_and_reads_relative_workspace_path()
+ {
+    // Reproduces job `4c435790-58da-4551-8adf-91f795fb2713` (Muse session `5c21af1d-7235-4e0e-b5fc-705e0105f21b`):
+    // 1. `/chat/subscribe` only emits `sessions.updated` (`status: "running"`) and never emits `agent.status: "idle"`
+    //    or `delta.message_done`.
+    // 2. `/chat/history` records `message.assistant` (`status: "completed"`) WITHOUT `[ALL_MEDIA_ATTACHED]`,
+    //    followed by `delta.presentation` (`kind: "image"`) with relative `image_path: "workspace/imagine_media/..."`
+    //    and `data.images[0].path: "sandbox://workspace/imagine_media/..."`.
+    // 3. `/fs/read` on the Muse VM rejects absolute paths starting with `'/'` (`HTTP 400: absolute paths are not allowed`)
+    //    and returns a WebP image (`RIFF....WEBP`).
+    let webp_bytes = [
+        b"RIFF".as_slice(),
+        &[0x24, 0x00, 0x00, 0x00],
+        b"WEBP",
+        b"VP8 ",
+        &[0x10, 0x00, 0x00, 0x00, 0x9D, 0x01, 0x2A, 0x80, 0x04, 0x00, 0x08],
+    ]
+    .concat();
+    let rel_path =
+        "workspace/imagine_media/media-generation-generate-an-image-aspect-ratio-0-de718b19.webp";
+    let sandbox_path = format!("sandbox://{rel_path}");
+
+    let turn = FakeStreamTurn {
+        status: 200,
+        assigned_session_id: Some("5c21af1d-7235-4e0e-b5fc-705e0105f21b".to_string()),
+        events: vec![json!({
+            "type": "event",
+            "event": "sessions.updated",
+            "payload": {
+                "change": "updated",
+                "session": {
+                    "session_id": "5c21af1d-7235-4e0e-b5fc-705e0105f21b",
+                    "status": "running"
+                }
+            }
+        })],
+        history_polls: VecDeque::from(vec![vec![
+            json!({
+                "event_name": "message.user",
+                "payload": {
+                    "role": "user",
+                    "display_text": "Generate an image (aspect ratio 9:16): Cinematic fantasy poster"
+                }
+            }),
+            json!({
+                "event_name": "message.assistant",
+                "display_text": "Done — modern xianxia poster, 9:16, with the cultivator on the rain-slick rooftop.",
+                "payload": {
+                    "role": "assistant",
+                    "status": "completed",
+                    "display_text": "Done — modern xianxia poster, 9:16, with the cultivator on the rain-slick rooftop."
+                }
+            }),
+            json!({
+                "event_name": "delta.presentation",
+                "payload": {
+                    "id": "widget-8039231a",
+                    "kind": "image",
+                    "image_path": rel_path,
+                    "fallback_text": format!("![Modern cultivation xianxia poster]({sandbox_path})"),
+                    "data": {
+                        "fallback_text": format!("![Modern cultivation xianxia poster]({sandbox_path})"),
+                        "images": [{
+                            "byte_len": webp_bytes.len(),
+                            "width": 1152,
+                            "height": 2048,
+                            "mime": "image/webp",
+                            "missing": false,
+                            "path": sandbox_path
+                        }]
+                    }
+                }
+            }),
+        ]]),
+    };
+
+    let acc = FakeVmAccount::new(vec![turn]).with_file(rel_path, webp_bytes.clone());
+    let transport = FakeMuseVmTransport::new(vec![Arc::clone(&acc)]);
+    let provider = build_gateway_muse_provider(&[SINGLE_COOKIE], transport).await;
+
+    let output = provider
+        .invoke(LlmOperation::ImageGeneration {
+            prompt: "Cinematic fantasy poster illustration of modern cultivation / xianxia"
+                .to_string(),
+            width: 1024,
+            height: 1792,
+            reference_images: Vec::new(),
+            transparent_background: false,
+        })
+        .await
+        .expect("image generation succeeds without /home/user prefix or [ALL_MEDIA_ATTACHED]");
+
+    assert_eq!(
+        output,
+        LlmOutput::Media {
+            bytes: webp_bytes,
+            mime_type: "image/webp".to_string(),
+            extra_parts: Vec::new(),
+            assistant_message: Some(
+                "Done — modern xianxia poster, 9:16, with the cultivator on the rain-slick rooftop."
+                    .to_string()
+            ),
+        }
+    );
 }

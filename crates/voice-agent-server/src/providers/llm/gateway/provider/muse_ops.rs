@@ -173,7 +173,7 @@ impl LlmGatewayProvider {
         };
         let min_timeout_ms = match kind {
             MediaKind::Video => 600_000,
-            MediaKind::Image => 1_000,
+            MediaKind::Image => 180_000,
         };
         let timeout = Duration::from_millis(self.config.timeout_ms.max(min_timeout_ms));
         let mut current_lease = lease;

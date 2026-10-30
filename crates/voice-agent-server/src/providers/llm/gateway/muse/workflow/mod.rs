@@ -201,6 +201,38 @@ pub(crate) fn extract_turn_assistant_messages(turn_events: &[Value]) -> Vec<Stri
     blocks
 }
 
+pub(crate) fn is_last_assistant_completed(turn_events: &[Value]) -> bool {
+    turn_events
+        .iter()
+        .rev()
+        .find(|ev| {
+            let ev_name = ev
+                .get("event_name")
+                .or_else(|| ev.get("event"))
+                .and_then(Value::as_str)
+                .unwrap_or("");
+            if ev_name == "delta.presentation" {
+                return false;
+            }
+            let p = ev.get("payload").unwrap_or(ev);
+            let d = p.get("data").or_else(|| ev.get("data"));
+            if ev.get("kind").and_then(Value::as_str) == Some("browser_task")
+                || p.get("kind").and_then(Value::as_str) == Some("browser_task")
+                || d.and_then(|x| x.get("browser_task_id")).is_some()
+            {
+                return false;
+            }
+            ev.get("role").and_then(Value::as_str) == Some("assistant")
+                || p.get("role").and_then(Value::as_str) == Some("assistant")
+                || ev_name == "message.assistant"
+        })
+        .is_some_and(|ev| {
+            let p = ev.get("payload").unwrap_or(ev);
+            ev.get("status").and_then(Value::as_str) == Some("completed")
+                || p.get("status").and_then(Value::as_str) == Some("completed")
+        })
+}
+
 pub(crate) async fn handle_approval_event<F>(
     lease: &VmOperationLease,
     ev: &VmStreamEvent,

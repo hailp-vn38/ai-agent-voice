@@ -52,7 +52,10 @@ impl VmOperationLease {
         }
         self.cleaned = true;
         self.saved_as_hot = false;
-        spawn_delete_ephemeral_session(&self.client, &self.session_id);
+        let sid = self.session_id.trim();
+        if !sid.is_empty() && self.client.is_connected() {
+            let _ = self.client.delete_session(sid).await;
+        }
         self.pool.fail_account(self.account_index, kind).await;
     }
 }

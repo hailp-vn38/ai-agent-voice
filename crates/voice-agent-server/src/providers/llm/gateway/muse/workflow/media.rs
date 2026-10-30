@@ -12,6 +12,7 @@ use super::png::remove_background_to_rgba_png;
 use super::{
     MEDIA_DONE_MARKER, MediaKind, WorkflowFailure, classify_assistant_error,
     extract_history_turn_events, extract_turn_assistant_messages, has_active_tool_task,
+    is_last_assistant_completed,
 };
 use crate::providers::llm::{LlmOutput, MediaPart, ReferenceImage};
 
@@ -47,11 +48,21 @@ pub(super) fn select_effective_ready_attachments(
 ) -> Vec<ReadyMediaCandidate> {
     let mut unique: Vec<ReadyMediaCandidate> = Vec::with_capacity(ready.len());
     for item in ready {
-        let clean = item.path.trim().trim_start_matches("sandbox://");
+        let clean = item
+            .path
+            .trim()
+            .trim_start_matches("sandbox://")
+            .trim_start_matches("/home/user/")
+            .trim_start_matches('/');
         if !clean.is_empty()
-            && !unique
-                .iter()
-                .any(|u| u.path.trim().trim_start_matches("sandbox://") == clean)
+            && !unique.iter().any(|u| {
+                u.path
+                    .trim()
+                    .trim_start_matches("sandbox://")
+                    .trim_start_matches("/home/user/")
+                    .trim_start_matches('/')
+                    == clean
+            })
         {
             unique.push(item.clone());
         }
@@ -205,6 +216,7 @@ async fn execute_media_turn_on_lease(
             should_poll_history = false;
             let history_path = format!("/chat/history?session_id={}", lease.session_id());
             let mut active_tools = false;
+            let mut is_assistant_completed = false;
 
             if let Ok(resp) = lease
                 .client()
@@ -222,6 +234,7 @@ async fn execute_media_turn_on_lease(
             {
                 let turn_events = extract_history_turn_events(&history_json);
                 active_tools = has_active_tool_task(&turn_events);
+                is_assistant_completed = is_last_assistant_completed(&turn_events);
                 let history_bubbles = extract_turn_assistant_messages(&turn_events);
                 if !history_bubbles.is_empty() {
                     assistant_bubbles = history_bubbles;
@@ -255,14 +268,18 @@ async fn execute_media_turn_on_lease(
                 .iter()
                 .any(|b| b.contains(MEDIA_DONE_MARKER))
                 || streamed_text.contains(MEDIA_DONE_MARKER);
+            let media_turn_done = match kind {
+                MediaKind::Image => true,
+                MediaKind::Video => has_done_marker || explicit_done || is_assistant_completed,
+            };
 
-            if !active_tools && !ready_candidates.is_empty() && (has_done_marker || explicit_done) {
+            if !active_tools && !ready_candidates.is_empty() && media_turn_done {
                 break;
             }
 
             if !active_tools
                 && ready_candidates.is_empty()
-                && explicit_done
+                && (explicit_done || is_assistant_completed)
                 && !nudged_attach
                 && !joined_raw.trim().is_empty()
             {
@@ -305,10 +322,11 @@ async fn execute_media_turn_on_lease(
                 ));
             }
             let (final_bytes, final_mime) = if transparent_background {
-                let rgba_png = remove_background_to_rgba_png(&raw_bytes)?;
-                (rgba_png, "image/png".to_string())
+                let processed = remove_background_to_rgba_png(&raw_bytes)?;
+                let mime = sniff_media_mime_type(&processed, "image/png", MediaKind::Image);
+                (processed, mime)
             } else {
-                let mime = sniff_media_mime_type(&raw_bytes, "image/png", MediaKind::Image);
+                let mime = sniff_media_mime_type(&raw_bytes, "image/webp", MediaKind::Image);
                 (raw_bytes, mime)
             };
             lease.finish_clean(None);
@@ -569,6 +587,13 @@ fn extract_paths_from_presentation(
     }
 
     if let Some(fb) = p.get("fallback_text").and_then(Value::as_str) {
+        extract_sandbox_paths_from_text(kind, fb, group, out);
+    }
+    if let Some(fb) = p
+        .get("data")
+        .and_then(|d| d.get("fallback_text"))
+        .and_then(Value::as_str)
+    {
         extract_sandbox_paths_from_text(kind, fb, group, out);
     }
 }

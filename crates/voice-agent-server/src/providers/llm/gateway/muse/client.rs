@@ -631,12 +631,12 @@ impl MuseVmClient {
     }
 
     pub async fn read_file(&self, path: &str, max_bytes: usize) -> Result<Vec<u8>, VmError> {
-        let stripped = path.trim().trim_start_matches("sandbox://");
-        let clean_path = if stripped.starts_with('/') {
-            stripped.to_string()
-        } else {
-            format!("/home/user/{stripped}")
-        };
+        let clean_path = path
+            .trim()
+            .trim_start_matches("sandbox://")
+            .trim_start_matches("/home/user/")
+            .trim_start_matches('/')
+            .to_string();
         let mut offset = 0usize;
         let mut out = Vec::new();
 

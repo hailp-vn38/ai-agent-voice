@@ -5,8 +5,10 @@ use super::WorkflowFailure;
 
 pub(crate) fn remove_background_to_rgba_png(bytes: &[u8]) -> Result<Vec<u8>, WorkflowFailure> {
     const PNG_SIG: &[u8; 8] = b"\x89PNG\r\n\x1a\n";
+    let is_webp = bytes.len() >= 12 && &bytes[0..4] == b"RIFF" && &bytes[8..12] == b"WEBP";
+    let is_jpeg = bytes.starts_with(&[0xFF, 0xD8, 0xFF]);
     let Some((w, h, mut rgba)) = decode_uncompressed_or_simple_png(bytes) else {
-        if bytes.starts_with(PNG_SIG) {
+        if bytes.starts_with(PNG_SIG) || is_webp || is_jpeg {
             return Ok(bytes.to_vec());
         }
         return Err(WorkflowFailure::Upstream(
