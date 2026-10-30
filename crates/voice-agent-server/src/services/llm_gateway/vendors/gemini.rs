@@ -335,7 +335,30 @@ impl GeminiOAuthDriver {
             .unwrap_or("legacy-tier")
             .to_owned();
 
-        if run_onboard_if_needed {
+        let ineligible_message = data
+            .get("ineligibleTiers")
+            .and_then(Value::as_array)
+            .and_then(|arr| arr.first())
+            .and_then(|entry| {
+                let msg = entry
+                    .get("reasonMessage")
+                    .or_else(|| entry.get("validationErrorMessage"))
+                    .and_then(Value::as_str)
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())?;
+                if let Some(url) = entry
+                    .get("validationUrl")
+                    .and_then(Value::as_str)
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                {
+                    Some(format!("{msg} ({url})"))
+                } else {
+                    Some(msg.to_owned())
+                }
+            });
+
+        if run_onboard_if_needed && ineligible_message.is_none() {
             if project_id.is_none() {
                 project_id = self.onboard_user(access_token, &tier_id).await;
             } else {
@@ -367,7 +390,7 @@ impl GeminiOAuthDriver {
             project_id,
             plan,
             is_free_tier,
-            error_message: None,
+            error_message: ineligible_message,
         }
     }
 
@@ -816,7 +839,7 @@ impl OAuthVendorDriver for GeminiOAuthDriver {
                 snapshot.windows.push(w);
             }
         }
-        if snapshot.windows.is_empty() && snapshot.message.is_none() {
+        if snapshot.message.is_none() {
             snapshot.message = ctx.error_message;
         }
         Ok(snapshot)
