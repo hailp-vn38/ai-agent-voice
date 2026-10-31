@@ -1,6 +1,6 @@
 //! Default agent system prompts and Built-in Job Skills seeded into the workspace if absent.
 //!
-//! Canonical prompt constants are shared from [`orchestrator_flow_rs::prompts`], while the 7
+//! Canonical prompt constants are shared from [`orchestrator_flow_rs::prompts`], while the 8
 //! Built-in Job Skills live in `crates/voice-agent-server/builtin-skills/<id>/SKILL.md` so the
 //! server can seed runtime `skills/` and restore defaults on demand.
 
@@ -23,6 +23,8 @@ pub const DAILY_TASK_REMINDER_SKILL: &str =
     include_str!("../../../builtin-skills/daily-task-reminder/SKILL.md");
 pub const TRADING_CHART_SKILL: &str =
     include_str!("../../../builtin-skills/trading-chart/SKILL.md");
+pub const WEB_FETCH_POLICY_SKILL: &str =
+    include_str!("../../../builtin-skills/web-fetch-policy/SKILL.md");
 
 pub const BUILTIN_SKILLS: &[(&str, &str)] = &[
     ("wiki-taxonomy", WIKI_TAXONOMY_SKILL),
@@ -32,6 +34,7 @@ pub const BUILTIN_SKILLS: &[(&str, &str)] = &[
     ("daily-synthesis-staging", DAILY_SYNTHESIS_STAGING_SKILL),
     ("daily-task-reminder", DAILY_TASK_REMINDER_SKILL),
     ("trading-chart", TRADING_CHART_SKILL),
+    ("web-fetch-policy", WEB_FETCH_POLICY_SKILL),
 ];
 
 pub(crate) fn ensure_builtin_skills(skills_root: &Path) -> Result<(), std::io::Error> {

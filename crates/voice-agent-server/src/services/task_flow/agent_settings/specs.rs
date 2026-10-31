@@ -177,8 +177,8 @@ pub const AGENT_SPECS: &[AgentSpec] = &[
         default_steps: 35,
         default_allowed_tools: SOURCE_COLLECTOR_TOOLS,
         available_tools: SOURCE_COLLECTOR_TOOLS,
-        default_allowed_skills: &["wiki-taxonomy"],
-        suggested_skills: &["wiki-taxonomy", "wiki-ingest"],
+        default_allowed_skills: &["wiki-taxonomy", "web-fetch-policy"],
+        suggested_skills: &["wiki-taxonomy", "web-fetch-policy", "wiki-ingest"],
         default_subagents: &[],
     },
     AgentSpec {
@@ -192,8 +192,8 @@ pub const AGENT_SPECS: &[AgentSpec] = &[
         default_steps: 12,
         default_allowed_tools: WIKI_RESEARCHER_TOOLS,
         available_tools: WIKI_RESEARCHER_TOOLS,
-        default_allowed_skills: &["wiki-query"],
-        suggested_skills: &["wiki-query", "wiki-taxonomy"],
+        default_allowed_skills: &["wiki-query", "web-fetch-policy"],
+        suggested_skills: &["wiki-query", "web-fetch-policy", "wiki-taxonomy"],
         default_subagents: &[],
     },
     AgentSpec {

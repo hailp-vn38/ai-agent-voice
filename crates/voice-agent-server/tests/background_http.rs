@@ -673,7 +673,7 @@ skills_dir = "{}"
     let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
     let client = Client::new();
 
-    // 1. GET /background/settings includes 7 built-in skills and dynamic subagent available_skills
+    // 1. GET /background/settings includes 8 built-in skills and dynamic subagent available_skills
     let initial: Value = client
         .get(format!("{base}/background/settings"))
         .bearer_auth("background-test-token")
@@ -686,11 +686,12 @@ skills_dir = "{}"
     let skills = initial["skills"]
         .as_array()
         .expect("skills array in settings");
-    assert_eq!(skills.len(), 7);
+    assert_eq!(skills.len(), 8);
     for expected_id in [
         "daily-synthesis-staging",
         "daily-task-reminder",
         "trading-chart",
+        "web-fetch-policy",
         "wiki-ingest",
         "wiki-lint",
         "wiki-query",
@@ -713,9 +714,10 @@ skills_dir = "{}"
         .find(|a| a["id"] == "wiki_researcher")
         .unwrap();
     let researcher_avail = researcher["available_skills"].as_array().unwrap();
-    assert_eq!(researcher_avail.len(), 7);
+    assert_eq!(researcher_avail.len(), 8);
     assert_eq!(researcher_avail[0], "wiki-query");
-    assert_eq!(researcher_avail[1], "wiki-taxonomy");
+    assert_eq!(researcher_avail[1], "web-fetch-policy");
+    assert_eq!(researcher_avail[2], "wiki-taxonomy");
 
     // 2. GET /background/skills/wiki-ingest returns detail + default + ETag header
     let detail_resp = client

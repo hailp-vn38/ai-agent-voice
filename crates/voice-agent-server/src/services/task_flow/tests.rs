@@ -178,6 +178,19 @@ fn dual_flow_agent_specs_assign_collectors_to_daily_flow_and_keep_wiki_flow_pure
         );
     }
     assert!(collector.default_allowed_tools.contains(&"add_to_sources"));
+    assert!(
+        collector
+            .default_allowed_skills
+            .contains(&"web-fetch-policy")
+    );
+
+    let wiki_researcher = find_agent_spec("wiki_researcher").expect("wiki_researcher spec");
+    assert!(
+        wiki_researcher
+            .default_allowed_skills
+            .contains(&"web-fetch-policy")
+    );
+    assert!(BUILTIN_SKILLS.iter().any(|(id, _)| *id == "web-fetch-policy"));
 
     let report_stager = find_agent_spec("report_stager").expect("report_stager spec");
     assert!(
@@ -512,8 +525,13 @@ fn canonical_prompts_enforce_summarize_analyze_visualize_pipeline_and_flexible_d
     assert!(DAILY_ROOT_PROMPT.contains("Visual Brief"));
     assert!(DAILY_ROOT_PROMPT.contains("Video Built-in Audio & Subtitles vs. Standalone TTS"));
     assert!(DAILY_ROOT_PROMPT.contains("media_processor"));
+    assert!(
+        DAILY_ROOT_PROMPT.contains("Web URL (`fetch_html`) Gate — Explicit URL vs. Search-First Escalation")
+    );
+    assert!(SOURCE_COLLECTOR_PROMPT.contains("Web Fetch Policy Gate (`web-fetch-policy`)"));
     assert!(SOURCE_COLLECTOR_PROMPT.contains("Phân tích chi tiết (Deep Analysis)"));
     assert!(SOURCE_COLLECTOR_PROMPT.contains("Điểm nhấn trực quan (Key Visual Concepts)"));
+    assert!(WIKI_RESEARCHER_PROMPT.contains("Web Fetch Gate (`web-fetch-policy`)"));
     assert!(WIKI_RESEARCHER_PROMPT.contains("Điểm nhấn trực quan (Key Visual Concepts)"));
     assert!(MEDIA_CREATOR_PROMPT.contains("Agent-Selectable or Smart Default"));
     assert!(MEDIA_CREATOR_PROMPT.contains("svg_content"));
