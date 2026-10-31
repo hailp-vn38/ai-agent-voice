@@ -178,47 +178,23 @@ impl LlmGatewayProvider {
         Box::pin(stream)
     }
 
-    pub(super) async fn run_muse_media(
+    pub(super) async fn execute_muse_with_auth_refresh_and_failover<T, F, Fut>(
         &self,
-        kind: MediaKind,
-        formatted_prompt: &str,
-        images: &[ReferenceImage],
-        transparent_background: bool,
-        required_tag: &'static str,
-    ) -> Result<LlmOutput, LlmError> {
-        let lease = self
-            .hub
-            .acquire_lease(&self.config.gateway_binding)
-            .map_err(|_| LlmError::Rejected)?;
-        if lease.vendor != GatewayVendor::Muse {
-            return Err(LlmError::UnsupportedCapability(required_tag));
-        }
-        let is_pool = matches!(self.config.gateway_binding, GatewayBinding::Pool(_));
-        let max_attempts = if is_pool {
-            MAX_POOL_FAILOVER_ATTEMPTS
-        } else {
-            1
-        };
-        let min_timeout_ms = match kind {
-            MediaKind::Video => 600_000,
-            MediaKind::Image => 180_000,
-        };
-        let timeout = Duration::from_millis(self.config.timeout_ms.max(min_timeout_ms));
-        let mut current_lease = lease;
+        initial_lease: GatewayLease,
+        is_pool: bool,
+        max_attempts: usize,
+        mut op: F,
+    ) -> Result<T, LlmError>
+    where
+        F: FnMut(Arc<SharedMusePool>) -> Fut,
+        Fut: std::future::Future<Output = Result<T, WorkflowFailure>>,
+    {
+        let mut current_lease = initial_lease;
         for attempt in 0..max_attempts {
             let mut refreshed_in_attempt = false;
             loop {
                 let pool = self.muse_pool_for_lease(&self.config, &current_lease);
-                match run_media_turn_once(
-                    &pool,
-                    kind,
-                    formatted_prompt,
-                    images,
-                    transparent_background,
-                    timeout,
-                )
-                .await
-                {
+                match op(pool).await {
                     Ok(output) => {
                         self.hub.report_outcome(
                             &current_lease.account_key,
@@ -265,5 +241,45 @@ impl LlmGatewayProvider {
             }
         }
         Err(LlmError::Failed)
+    }
+
+    pub(super) async fn run_muse_media(
+        &self,
+        kind: MediaKind,
+        formatted_prompt: &str,
+        images: &[ReferenceImage],
+        transparent_background: bool,
+        required_tag: &'static str,
+    ) -> Result<LlmOutput, LlmError> {
+        let lease = self
+            .hub
+            .acquire_lease(&self.config.gateway_binding)
+            .map_err(|_| LlmError::Rejected)?;
+        if lease.vendor != GatewayVendor::Muse {
+            return Err(LlmError::UnsupportedCapability(required_tag));
+        }
+        let is_pool = matches!(self.config.gateway_binding, GatewayBinding::Pool(_));
+        let max_attempts = if is_pool {
+            MAX_POOL_FAILOVER_ATTEMPTS
+        } else {
+            1
+        };
+        let min_timeout_ms = match kind {
+            MediaKind::Video => 600_000,
+            MediaKind::Image => 180_000,
+        };
+        let timeout = Duration::from_millis(self.config.timeout_ms.max(min_timeout_ms));
+        self.execute_muse_with_auth_refresh_and_failover(lease, is_pool, max_attempts, |pool| async move {
+            run_media_turn_once(
+                &pool,
+                kind,
+                formatted_prompt,
+                images,
+                transparent_background,
+                timeout,
+            )
+            .await
+        })
+        .await
     }
 }

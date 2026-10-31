@@ -453,8 +453,8 @@ A runtime wrapper that exposes credentials only for request/provider constructio
 _Avoid_: ordinary debug string, clone/display implementation, telemetry label, persisted configuration
 
 **Secret Rotation Snapshot**:
-A credential lifecycle snapshot: the backing Provider Runtime retains the resolved secret for the resource lifetime; an admitted session holds a resource lease, and an External MCP Client retains the secret until disconnect. The resolver currently provides no credential generation, so remote/authenticated resources are not shared across desired versions; the secret of a resource in use is not silently rotated.
-_Avoid_: per-request secret resolution, silent credential replacement, runtime failure refresh
+A credential lifecycle snapshot: the backing Provider Runtime retains the resolved secret for the resource lifetime; an admitted session holds a resource lease, and an External MCP Client retains the secret until disconnect. The resolver currently provides no credential generation, so remote/authenticated resources are not shared across desired versions; the secret of a resource in use is not silently rotated. (`GatewayAccount` OAuth/session bundles managed by `LlmGatewayHub` under [ADR 0130](docs/adr/0130-internal-llm-gateway-oauth-account-pools.md) follow their own single-flight proactive and pre-emission `401` renewal lifecycle rather than static secret snapshots.)
+_Avoid_: per-request secret resolution, silent credential replacement on static providers
 
 **Credential-free Provider Config**:
 Canonical serialization of typed adapter configuration without credentials; Provider credentials flow only through Secret Reference and Secret Resolver.

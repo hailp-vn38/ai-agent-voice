@@ -2,10 +2,8 @@ use std::sync::Arc;
 
 use super::super::cdp::extract_wss_via_chromium;
 use super::super::client::{MuseVmClient, MuseVmTransport, VmError};
-use super::super::config::{SITE_URL, format_cookie_header, parse_cookie_header};
-use super::super::credentials::{
-    WSS_EXPIRY_BUFFER_SECS, fetch_wss_from_cookie_http, get_wss_expiry_unix_secs, is_wss_valid,
-};
+use super::super::config::{SITE_URL, format_cookie_header};
+use super::super::credentials::{WSS_EXPIRY_BUFFER_SECS, fetch_wss_from_cookie_http, is_wss_valid};
 use super::{SharedMusePool, UpstreamFailureKind};
 
 impl SharedMusePool {
@@ -89,26 +87,23 @@ impl SharedMusePool {
                 };
 
             let mut persist_target = None;
-            {
+            let wss_url = {
                 let mut state = self.inner.state.lock().unwrap_or_else(|e| e.into_inner());
                 if let Some(acc) = state.accounts.get_mut(account_index) {
-                    acc.credential.wss_url = Some(bootstrapped.wss_url.clone());
-                    acc.credential.wss_expires = get_wss_expiry_unix_secs(&bootstrapped.wss_url);
-                    for (k, v) in parse_cookie_header(&bootstrapped.cookie_header) {
-                        acc.credential.cookies.insert(k, v);
-                    }
-                    if bootstrapped.vm_id.is_some() {
-                        acc.credential.vm_id = bootstrapped.vm_id;
-                    }
+                    let mut discovered_email = None;
+                    let wss = bootstrapped.apply_to(&mut acc.credential, &mut discovered_email);
                     if let Some(gw_key) = &acc.gateway_account_key {
                         persist_target = Some((
                             gw_key.clone(),
                             acc.credential.clone(),
-                            bootstrapped.discovered_email,
+                            discovered_email,
                         ));
                     }
+                    wss
+                } else {
+                    bootstrapped.wss_url
                 }
-            }
+            };
             if let Some((account_key, updated_cred, discovered_email)) = persist_target {
                 tokio::spawn(async move {
                     crate::services::llm_gateway::SharedGatewayHub::global()
@@ -120,7 +115,7 @@ impl SharedMusePool {
                         .await;
                 });
             }
-            bootstrapped.wss_url
+            wss_url
         };
 
         let client = connect_and_init_client(&*self.inner.transport, &wss_url)

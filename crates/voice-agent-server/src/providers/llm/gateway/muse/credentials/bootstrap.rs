@@ -4,9 +4,14 @@ use serde_json::{Value, json};
 use super::super::pool::UpstreamFailureKind;
 use super::{BootstrappedMuseSession, DEFAULT_USER_AGENT, build_wss_url, merge_set_cookies};
 
-pub(crate) fn parse_session_json(
-    sess_data: &Value,
-) -> (Option<String>, Option<String>, Option<String>) {
+#[derive(Debug, Clone, Default)]
+pub(crate) struct ParsedMuseSession {
+    pub vm_id: Option<String>,
+    pub endpoint_url: Option<String>,
+    pub discovered_email: Option<String>,
+}
+
+pub(crate) fn parse_session_json(sess_data: &Value) -> ParsedMuseSession {
     let first_vm = sess_data
         .get("vms")
         .and_then(Value::as_array)
@@ -59,7 +64,60 @@ pub(crate) fn parse_session_json(
         .filter(|s| !s.is_empty())
         .map(ToOwned::to_owned);
 
-    (vm_id, endpoint_url, discovered_email)
+    ParsedMuseSession {
+        vm_id,
+        endpoint_url,
+        discovered_email,
+    }
+}
+
+pub(crate) async fn request_hatch_token_with_retry(
+    http: &reqwest::Client,
+    base_url: &str,
+    current_cookie: &mut String,
+    vm_id: &str,
+    endpoint_url: &str,
+) -> Option<String> {
+    let base = base_url.trim_end_matches('/');
+    for t_attempt in 0..2 {
+        let token_resp = http
+            .post(format!("{base}/api/hatch/token"))
+            .header(COOKIE, current_cookie.as_str())
+            .header(USER_AGENT, DEFAULT_USER_AGENT)
+            .header(ORIGIN, base)
+            .header(REFERER, format!("{base}/"))
+            .header(CONTENT_TYPE, "application/json")
+            .json(&json!({
+                "vmAddress": endpoint_url,
+                "vmName": vm_id,
+            }))
+            .send()
+            .await;
+
+        if let Ok(t_resp) = token_resp {
+            *current_cookie = merge_set_cookies(current_cookie, t_resp.headers());
+            if t_resp.status().is_success()
+                && let Ok(token_data) = t_resp.json::<Value>().await
+                && let Some(auth_token) = token_data
+                    .get("token")
+                    .or_else(|| token_data.get("authToken"))
+                    .and_then(Value::as_str)
+                    .filter(|s| !s.is_empty())
+            {
+                let notary_token = token_data
+                    .get("notary_token")
+                    .or_else(|| token_data.get("noiseNotaryToken"))
+                    .or_else(|| token_data.get("notaryToken"))
+                    .and_then(Value::as_str)
+                    .unwrap_or("");
+                return Some(build_wss_url(vm_id, auth_token, notary_token));
+            }
+        }
+        if t_attempt == 0 && !cfg!(test) {
+            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        }
+    }
+    None
 }
 
 /// Bootstraps a fresh Hatch VM WebSocket URL from a Muse session cookie via:
@@ -95,53 +153,24 @@ pub(crate) async fn fetch_wss_from_cookie_http(
         if resp.status().is_success()
             && let Ok(sess_data) = resp.json::<Value>().await
         {
-            let (vm_id, endpoint_url, discovered_email) = parse_session_json(&sess_data);
+            let parsed = parse_session_json(&sess_data);
 
-            if let (Some(vm_id), Some(endpoint_url)) = (vm_id.clone(), endpoint_url) {
-                for t_attempt in 0..2 {
-                    let token_resp = http
-                        .post(format!("{base}/api/hatch/token"))
-                        .header(COOKIE, &current_cookie)
-                        .header(USER_AGENT, DEFAULT_USER_AGENT)
-                        .header(ORIGIN, base)
-                        .header(REFERER, format!("{base}/"))
-                        .header(CONTENT_TYPE, "application/json")
-                        .json(&json!({
-                            "vmAddress": endpoint_url,
-                            "vmName": vm_id,
-                        }))
-                        .send()
-                        .await;
-
-                    if let Ok(t_resp) = token_resp {
-                        current_cookie = merge_set_cookies(&current_cookie, t_resp.headers());
-                        if t_resp.status().is_success()
-                            && let Ok(token_data) = t_resp.json::<Value>().await
-                            && let Some(auth_token) = token_data
-                                .get("token")
-                                .or_else(|| token_data.get("authToken"))
-                                .and_then(Value::as_str)
-                                .filter(|s| !s.is_empty())
-                        {
-                            let notary_token = token_data
-                                .get("notary_token")
-                                .or_else(|| token_data.get("noiseNotaryToken"))
-                                .or_else(|| token_data.get("notaryToken"))
-                                .and_then(Value::as_str)
-                                .unwrap_or("");
-                            let wss_url = build_wss_url(&vm_id, auth_token, notary_token);
-                            return Ok(BootstrappedMuseSession {
-                                wss_url,
-                                cookie_header: current_cookie,
-                                vm_id: Some(vm_id),
-                                discovered_email,
-                            });
-                        }
-                    }
-                    if t_attempt == 0 && !cfg!(test) {
-                        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-                    }
-                }
+            if let (Some(vm_id), Some(endpoint_url)) = (parsed.vm_id, parsed.endpoint_url)
+                && let Some(wss_url) = request_hatch_token_with_retry(
+                    http,
+                    base,
+                    &mut current_cookie,
+                    &vm_id,
+                    &endpoint_url,
+                )
+                .await
+            {
+                return Ok(BootstrappedMuseSession {
+                    wss_url,
+                    cookie_header: current_cookie,
+                    vm_id: Some(vm_id),
+                    discovered_email: parsed.discovered_email,
+                });
             }
         }
     }

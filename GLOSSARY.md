@@ -279,8 +279,8 @@ Một tài khoản nhà cung cấp mô hình ngôn ngữ đã được xác th�
 _Avoid_: Provider Instance, static API key, Admin User, OAuthAccount
 
 **Gateway Account Pool**:
-Tập hợp các Gateway Account đang bật và không nằm trong thời gian tạm nghỉ do giới hạn tốc độ của cùng một nhà cung cấp, cho phép phân phối lượt gọi luân phiên giữa nhiều tài khoản.
-_Avoid_: Provider Runtime Pool, fallback chain, retry loop, AccountPool
+Tập hợp các Gateway Account đang bật và không nằm trong thời gian tạm nghỉ do giới hạn tốc độ của cùng một nhà cung cấp, cho phép phân phối lượt gọi luân phiên và chuyển đổi dự phòng có giới hạn trước khi phát dữ liệu giữa nhiều tài khoản.
+_Avoid_: Provider Runtime Pool, unbounded retry loop, AccountPool
 
 **Gateway Binding**:
 Tham chiếu phi bí mật trên cấu hình của một Provider Instance liên kết nó với một Gateway Account cụ thể hoặc một Gateway Account Pool thay vì sử dụng khóa API tĩnh.

@@ -3,7 +3,9 @@
 ## Status
 Accepted
 
-Mỗi logical ASR, LLM, TTS hoặc MCP operation V1 chỉ thực hiện một lần; timeout/lỗi đi theo terminal path, không retry application/provider layer. MCP `tools/call` đặc biệt không retry để tránh side effect lặp. Điều này giữ latency, cost, cancellation và delivery semantics deterministic.
+Mỗi logical ASR, LLM, TTS hoặc MCP operation V1 chỉ thực hiện một lần sau khi đã phát dữ liệu; timeout/lỗi đi theo terminal path, không retry application/provider layer đối với các adapter khóa tĩnh hoặc MCP `tools/call` (để tránh side effect lặp). Điều này giữ latency, cost, cancellation và delivery semantics deterministic.
+
+Ngoại lệ có giới hạn cho `LlmGatewayProvider` ([ADR-0130](0130-internal-llm-gateway-oauth-account-pools.md)): trước khi phát bất kỳ token/delta nào ra stream, nếu tài khoản OAuth/phiên máy ảo trả về lỗi xác thực (`401` / `AuthInvalid`), provider được phép gọi `try_refresh_on_unauthorized` tối đa 1 lần cho tài khoản đó (và với cấu hình `pool:<vendor>`, xoay vòng tối đa `MAX_POOL_FAILOVER_ATTEMPTS` tài khoản khỏe mạnh khi gặp lỗi `401`/`429`/transient trước khi phát dữ liệu).
 
 ## Reminder delivery attempts (proposed)
 

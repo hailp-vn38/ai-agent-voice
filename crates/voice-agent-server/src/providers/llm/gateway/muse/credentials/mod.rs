@@ -9,8 +9,10 @@ use reqwest::header::{HeaderMap, SET_COOKIE};
 use serde_json::Value;
 use uuid::Uuid;
 
-pub(crate) use self::bootstrap::{fetch_wss_from_cookie_http, parse_session_json};
-use super::config::{format_cookie_header, parse_cookie_header};
+pub(crate) use self::bootstrap::{
+    fetch_wss_from_cookie_http, parse_session_json, request_hatch_token_with_retry,
+};
+use super::config::{MuseAccountCredential, format_cookie_header, parse_cookie_header};
 
 pub(crate) const DEFAULT_USER_AGENT: &str = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36";
 
@@ -46,6 +48,27 @@ pub(crate) struct BootstrappedMuseSession {
     pub cookie_header: String,
     pub vm_id: Option<String>,
     pub discovered_email: Option<String>,
+}
+
+impl BootstrappedMuseSession {
+    pub(crate) fn apply_to(
+        self,
+        cred: &mut MuseAccountCredential,
+        discovered_email: &mut Option<String>,
+    ) -> String {
+        for (k, v) in parse_cookie_header(&self.cookie_header) {
+            cred.cookies.insert(k, v);
+        }
+        if self.vm_id.is_some() {
+            cred.vm_id = self.vm_id;
+        }
+        if discovered_email.is_none() {
+            *discovered_email = self.discovered_email;
+        }
+        cred.wss_expires = get_wss_expiry_unix_secs(&self.wss_url);
+        cred.wss_url = Some(self.wss_url.clone());
+        self.wss_url
+    }
 }
 
 impl std::fmt::Debug for BootstrappedMuseSession {

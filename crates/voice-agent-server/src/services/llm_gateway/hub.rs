@@ -499,14 +499,24 @@ impl LlmGatewayHub {
                 self.get_account_view(account_key).await
             }
             Err(err) => {
-                if driver.is_transient_refresh_error(&err) {
-                    self.mark_account_transient_refresh_cooldown(account_key, err.code());
-                } else {
-                    self.mark_account_reauth_required(account_key, err.code())
-                        .await;
-                }
+                self.record_refresh_failure(account_key, driver.as_ref(), &err)
+                    .await;
                 Err(err)
             }
+        }
+    }
+
+    async fn record_refresh_failure(
+        &self,
+        account_key: &str,
+        driver: &dyn OAuthVendorDriver,
+        err: &GatewayError,
+    ) {
+        if driver.is_transient_refresh_error(err) {
+            self.mark_account_transient_refresh_cooldown(account_key, err.code());
+        } else {
+            self.mark_account_reauth_required(account_key, err.code())
+                .await;
         }
     }
 
@@ -2165,12 +2175,8 @@ impl LlmGatewayHub {
                     .ok()
             }
             Err(err) => {
-                if driver.is_transient_refresh_error(&err) {
-                    self.mark_account_transient_refresh_cooldown(account_key, err.code());
-                } else {
-                    self.mark_account_reauth_required(account_key, err.code())
-                        .await;
-                }
+                self.record_refresh_failure(account_key, driver.as_ref(), &err)
+                    .await;
                 None
             }
         }
