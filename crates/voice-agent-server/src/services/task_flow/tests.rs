@@ -125,6 +125,7 @@ fn project_task_to_admin_job_includes_multi_kind_artifacts_and_download_urls() {
     summary.apply_artifacts(&artifacts);
 
     let detail = TaskDetailView {
+        max_resume_attempts: None,
         task: task.clone(),
         followups: Vec::new(),
         artifacts,
@@ -192,7 +193,11 @@ fn dual_flow_agent_specs_assign_collectors_to_daily_flow_and_keep_wiki_flow_pure
             .default_allowed_skills
             .contains(&"web-fetch-policy")
     );
-    assert!(BUILTIN_SKILLS.iter().any(|(id, _)| *id == "web-fetch-policy"));
+    assert!(
+        BUILTIN_SKILLS
+            .iter()
+            .any(|(id, _)| *id == "web-fetch-policy")
+    );
 
     let report_stager = find_agent_spec("report_stager").expect("report_stager spec");
     assert!(
@@ -445,6 +450,7 @@ fn project_task_to_admin_job_and_events_include_agent_messages_for_tool_calls() 
     };
 
     let detail = TaskDetailView {
+        max_resume_attempts: None,
         task: task.clone(),
         followups: Vec::new(),
         artifacts: vec![orchestrator_flow_rs::TaskArtifactView {
@@ -532,7 +538,8 @@ fn canonical_prompts_enforce_summarize_analyze_visualize_pipeline_and_flexible_d
     assert!(DAILY_ROOT_PROMPT.contains("Video Built-in Audio & Subtitles vs. Standalone TTS"));
     assert!(DAILY_ROOT_PROMPT.contains("media_processor"));
     assert!(
-        DAILY_ROOT_PROMPT.contains("Web URL (`fetch_html`) Gate — Explicit URL vs. Search-First Escalation")
+        DAILY_ROOT_PROMPT
+            .contains("Web URL (`fetch_html`) Gate — Explicit URL vs. Search-First Escalation")
     );
     assert!(SOURCE_COLLECTOR_PROMPT.contains("Web Fetch Policy Gate (`web-fetch-policy`)"));
     assert!(SOURCE_COLLECTOR_PROMPT.contains("Phân tích chi tiết (Deep Analysis)"));

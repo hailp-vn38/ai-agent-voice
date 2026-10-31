@@ -568,3 +568,11 @@ describe('unified Job activity', () => {
   })
 
 })
+
+it.each(['waiting_retry', 'waiting_user'] as const)('preserves %s in LLM activity while the job is waiting', status => {
+  const waitingJob: AdminJob = { ...job, status: 'waiting', agent_runs: job.agent_runs!.map(run => ({ ...run, status })) }
+  const activities = projectUnifiedActivity(waitingJob, [
+    event(1, 'agent_run_started', { run_id: 'run-child', agent_run_id: 'child', attempt: 2 }),
+  ])
+  expect(activities.find(item => item.kind === 'llm')?.status).toBe(status)
+})

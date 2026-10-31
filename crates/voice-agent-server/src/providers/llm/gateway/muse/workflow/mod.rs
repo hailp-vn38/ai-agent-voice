@@ -10,6 +10,7 @@ use super::pool::{UpstreamFailureKind, VmOperationLease};
 
 #[derive(Debug, Clone)]
 pub(crate) enum WorkflowFailure {
+    OutcomeUnknown(String),
     Rejected(String),
     Upstream(UpstreamFailureKind, String),
     Timeout(String),
@@ -18,6 +19,10 @@ pub(crate) enum WorkflowFailure {
 impl WorkflowFailure {
     pub fn into_llm_error(self) -> crate::providers::llm::LlmError {
         match self {
+            WorkflowFailure::OutcomeUnknown(reason) => {
+                tracing::warn!(reason = %reason, "Muse operation requires reconciliation");
+                crate::providers::llm::LlmError::ToolOutcomeUnknown
+            }
             WorkflowFailure::Rejected(reason) => {
                 tracing::warn!(reason = %reason, "Muse workflow rejected request");
                 crate::providers::llm::LlmError::Rejected

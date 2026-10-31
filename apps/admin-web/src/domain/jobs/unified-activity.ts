@@ -2,7 +2,7 @@ import type { AdminJob, AgentRunView, JobArtifact, JobEvent, JobStep } from '@/a
 import { projectLlmRuns, type LlmRun } from './llm-activity'
 
 export type ActivityKind = 'llm' | 'plugin' | 'fork' | 'join' | 'agent' | 'job' | 'plan' | 'result' | 'media'
-export type ActivityStatus = 'running' | 'completed' | 'failed' | 'interrupted' | 'cancelled' | 'skipped' | 'unknown'
+export type ActivityStatus = 'waiting_retry' | 'waiting_user' | 'running' | 'completed' | 'failed' | 'interrupted' | 'cancelled' | 'skipped' | 'unknown'
 export type ActivityFilter =
   | { kind: 'all' }
   | { kind: 'llm' }

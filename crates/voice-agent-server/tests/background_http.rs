@@ -292,6 +292,7 @@ fn project_task_events_preserves_subagent_sequence_numbers_when_root_continues()
 
     // Snapshot 1: root is currently awaiting `subagent` tool call
     let detail_while_running = TaskDetailView {
+        max_resume_attempts: None,
         task: base_task.clone(),
         followups: Vec::new(),
         artifacts: Vec::new(),
@@ -341,6 +342,7 @@ fn project_task_events_preserves_subagent_sequence_numbers_when_root_continues()
     let mut completed_task = base_task;
     completed_task.status = TaskStatus::Completed;
     let detail_after_root_continues = TaskDetailView {
+        max_resume_attempts: None,
         task: completed_task,
         followups: Vec::new(),
         artifacts: Vec::new(),

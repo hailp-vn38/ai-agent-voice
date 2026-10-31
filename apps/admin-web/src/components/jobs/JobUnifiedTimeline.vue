@@ -305,6 +305,7 @@ const agentRunsSummary = computed(() => {
 })
 
 const runningNodesCount = computed(() => treeNodes.value.filter(n => n.state === 'running').length)
+const hasWaitingNodes = computed(() => treeNodes.value.some(n => n.state === 'waiting'))
 
 function iconType(type: ExecutionNodeType): string {
   switch (type) {
@@ -852,6 +853,7 @@ function hasObjectKeys(value: unknown): boolean {
                   {
                     selected: selectedNode?.id === n.id,
                     running: n.state === 'running',
+                    waiting: n.state === 'waiting',
                   },
                 ]"
                 :style="{ '--depth': treeNodeAncestors(treeNodes, n.id).length }"
@@ -919,7 +921,7 @@ function hasObjectKeys(value: unknown): boolean {
             {{
               runningNodesCount > 0
                 ? `${runningNodesCount} ${t('jobUi.nodesRunning')}`
-                : t('jobUi.treeIdle')
+                : hasWaitingNodes ? t('jobUi.jobStatus.waiting') : t('jobUi.treeIdle')
             }}
           </span>
           <button
@@ -2585,4 +2587,9 @@ function hasObjectKeys(value: unknown): boolean {
     display: inline-flex;
   }
 }
+</style>
+
+<style scoped>
+.tree-row .state-dot.waiting { background: #f59e0b; }
+.tree-row.waiting:not(.selected) { border-color: rgb(245 158 11 / 30%); }
 </style>

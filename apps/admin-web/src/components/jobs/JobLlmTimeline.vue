@@ -2,13 +2,14 @@
 import { Activity, AlertCircle, BrainCircuit, CheckCircle2, ChevronDown, Clock3, Cpu, PlayCircle, RefreshCw, Sparkles, Workflow } from '@lucide/vue'
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import type { AdminJob, JobEvent } from '@/api/types/agent-jobs'
+import { parseTimestampMs } from '@/domain/jobs/execution-tree'
 import { llmTokenSummary, projectLlmRuns, type LlmRun } from '@/domain/jobs/llm-activity'
 import { Badge } from '@/components/ui/badge'
 import { useI18n } from '@/composables/useI18n'
 
 const props = defineProps<{ job: AdminJob; events: JobEvent[] }>()
 const { t } = useI18n()
-const runs = computed(() => projectLlmRuns(props.events, props.job.status))
+const runs = computed(() => projectLlmRuns(props.events, props.job.status, props.job.agent_runs))
 const selected = ref<string | null>(null)
 const expanded = ref(new Set<string>())
 const now = ref(Date.now())
@@ -26,15 +27,15 @@ const failed = computed(() => runs.value.filter(run => run.status === 'failed').
 const tokens = computed(() => llmTokenSummary(runs.value))
 const repairCount = computed(() => runs.value.filter(run => run.phase === 'repair').length)
 const selectedRun = computed(() => runs.value.find(run => run.id === selected.value) ?? null)
-const isJobTerminal = computed(() => ['succeeded', 'partial_success', 'failed', 'cancelled'].includes(props.job.status))
+const isJobTerminal = computed(() => ['succeeded', 'partial_success', 'failed', 'cancelled', 'stopped'].includes(props.job.status))
 const finishedEvent = computed(() => [...props.events].reverse().find(e => e.event_type === 'job_finished'))
 const elapsed = computed(() => {
-  const start = Date.parse(props.job.created_at)
+  const start = parseTimestampMs(props.job.started_at ?? props.job.created_at)
   const lastObserved = props.events.length ? props.events[props.events.length - 1]?.created_at : null
   const end = isJobTerminal.value
-    ? Date.parse(finishedEvent.value?.created_at ?? lastObserved ?? props.job.created_at)
+    ? parseTimestampMs(finishedEvent.value?.created_at ?? props.job.finished_at ?? lastObserved ?? props.job.created_at)
     : now.value
-  if (!Number.isFinite(start) || !Number.isFinite(end)) return '—'
+  if (start === null || end === null) return '—'
   const seconds = Math.max(0, Math.floor((end - start) / 1000))
   return String(Math.floor(seconds / 60)).padStart(2, '0') + ':' + String(seconds % 60).padStart(2, '0')
 })
@@ -60,6 +61,7 @@ function role(run: LlmRun) {
   return t('jobUi.llmPlanner')
 }
 function stateLabel(status: LlmRun['status']) {
+  if (status === 'waiting_retry' || status === 'waiting_user') return t('jobUi.jobStatus.waiting')
   if (status === 'completed') return t('jobUi.llmCompleted')
   if (status === 'failed') return t('jobUi.llmFailed')
   if (status === 'cancelled') return t('jobUi.llmCancelled')
@@ -121,6 +123,7 @@ function usage(run: LlmRun) {
   return String(run.inputTokens ?? '—') + ' / ' + String(run.outputTokens ?? '—')
 }
 function progressLabel(done: boolean, activeStage: boolean) {
+  if (!done && activeStage && props.job.status === 'waiting') return t('jobUi.jobStatus.waiting')
   return done ? t('jobUi.llmCompleted') : activeStage ? t('jobUi.llmRunning') : t('jobUi.llmPending')
 }
 </script>
@@ -146,7 +149,7 @@ function progressLabel(done: boolean, activeStage: boolean) {
       <div class="studio-panel p-4">
         <div class="flex items-center justify-between text-xs text-muted-foreground"><span>{{ t('jobUi.llmElapsed') }}</span><Clock3 class="size-4 text-studio-violet" /></div>
         <p class="mt-2 text-2xl font-bold tabular-nums tracking-tight">{{ elapsed }}</p>
-        <p class="mt-1 text-xs text-muted-foreground">{{ isJobTerminal ? t('jobUi.llmFinished') : t('jobUi.llmRunning') }}</p>
+        <p class="mt-1 text-xs text-muted-foreground">{{ isJobTerminal ? t('jobUi.llmFinished') : job.status === 'waiting' ? t('jobUi.jobStatus.waiting') : t('jobUi.llmRunning') }}</p>
       </div>
     </div>
 
@@ -166,6 +169,7 @@ function progressLabel(done: boolean, activeStage: boolean) {
             <div class="relative z-10 flex flex-col items-center pt-3">
               <div class="grid size-7 place-items-center rounded-lg" :class="run.status === 'failed' ? 'bg-danger/10 text-danger' : run.status === 'running' ? 'bg-studio-cyan/10 text-studio-cyan' : 'bg-primary/10 text-studio-violet'">
                 <AlertCircle v-if="run.status === 'failed'" class="size-4" />
+                <Clock3 v-else-if="run.status === 'waiting_retry' || run.status === 'waiting_user'" class="size-4 text-amber-500" />
                 <PlayCircle v-else-if="run.status === 'running'" class="size-4" />
                 <CheckCircle2 v-else class="size-4" />
               </div>

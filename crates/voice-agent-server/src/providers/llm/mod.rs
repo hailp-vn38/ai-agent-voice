@@ -548,7 +548,7 @@ impl LlmOutput {
 
 #[async_trait::async_trait]
 pub trait OperationJournal: Send + Sync {
-    async fn record(&self, update: orchestrator_agent_rs::OperationUpdate);
+    async fn record(&self, update: orchestrator_agent_rs::OperationUpdate) -> Result<(), LlmError>;
 }
 
 #[derive(Clone, Debug)]
@@ -635,6 +635,8 @@ pub trait LlmProvider: Send + Sync {
 
 #[derive(Clone, Debug, PartialEq, Eq, Error)]
 pub enum LlmError {
+    #[error("the durable tool outcome needs reconciliation")]
+    ToolOutcomeUnknown,
     #[error("LLM completion failed")]
     Failed,
     /// A terminal provider response definitively rejected or failed to produce usable output.

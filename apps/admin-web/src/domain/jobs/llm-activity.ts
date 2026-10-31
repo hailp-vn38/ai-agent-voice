@@ -14,7 +14,7 @@ export interface LlmRun {
   model: string | null
   adapter: string | null
   transport: string | null
-  status: 'running' | 'completed' | 'failed' | 'cancelled' | 'interrupted'
+  status: 'running' | 'waiting_retry' | 'waiting_user' | 'completed' | 'failed' | 'cancelled' | 'interrupted'
   errorCode: string | null
   errorMessage: string | null
   validationPath: string | null
@@ -162,6 +162,17 @@ export function projectLlmRuns(
       run.errorMessage = text(event.payload.error_message) ?? run.errorMessage
       run.validationPath = text(event.payload.validation_path)
     }
+  }
+  // The latest unfinished activity follows the durable Agent Run read view.
+  const latestByAgent = new Map<string, LlmRun>()
+  for (const run of runs.values()) {
+    const agentId = text(run.events[0]?.payload.agent_run_id)
+    if (agentId) latestByAgent.set(agentId, run)
+  }
+  for (const [agentId, run] of latestByAgent) {
+    const current = agentRunById.get(agentId)?.status
+    if ((current === 'waiting_retry' || current === 'waiting_user') &&
+        (run.status === 'running' || run.status === 'interrupted')) run.status = current
   }
   const ordered = [...runs.values()].sort((a, b) => a.startSequence - b.startSequence)
   for (const run of ordered) if (terminal && run.status === 'running') run.status = 'interrupted'

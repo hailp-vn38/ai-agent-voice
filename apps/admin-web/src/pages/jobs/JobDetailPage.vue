@@ -44,6 +44,15 @@ let retryRequest = { id: '', key: '' }
 
 const isTerminal = (status: JobStatus) => ['succeeded', 'partial_success', 'failed', 'cancelled', 'stopped'].includes(status)
 const canRetry = computed(() => job.value && job.value.execution_mode !== 'knowledge_ingest_v3' && ['failed', 'cancelled', 'stopped'].includes(job.value.status))
+const clockNow = ref(Date.now())
+const waitingSince = ref<number | null>(null)
+let clockTimer: ReturnType<typeof setInterval> | undefined
+watch([jobId, () => job.value?.status], ([id, status], previous) => {
+  if (status !== 'waiting') waitingSince.value = null
+  else if (waitingSince.value === null || previous?.[0] !== id) waitingSince.value = Date.now()
+}, { immediate: true })
+const longWaiting = computed(() => waitingSince.value !== null && clockNow.value - waitingSince.value >= 5 * 60_000)
+const partialOutput = computed(() => job.value && ['failed', 'cancelled', 'stopped'].includes(job.value.status) ? job.value.output_preview?.trim() : '')
 const canResume = computed(() => job.value?.status === 'waiting')
 const waitingReason = computed(() => job.value?.wait_reason || job.value?.agent_runs?.find(r => r.retry_reason)?.retry_reason || 'retry')
 const waitingBannerText = computed(() => {
@@ -53,7 +62,11 @@ const waitingBannerText = computed(() => {
   if (nextMs && Number.isFinite(nextMs) && nextMs > 0) {
     const stamp = new Date(nextMs < 1e11 ? nextMs * 1000 : nextMs)
     const time = Number.isFinite(stamp.getTime()) ? stamp.toLocaleTimeString() : String(nextMs)
-    return t('jobUi.waitingSchedule', { reason, time })
+    const waitingRun = job.value.agent_runs?.find(run => run.status === 'waiting_retry')
+    const limit = job.value.max_resume_attempts
+    const counter = waitingRun?.retry_attempt != null && limit != null
+      ? t('jobUi.retryCounter', { attempt: Math.min(waitingRun.retry_attempt + 2, limit + 1), limit: limit + 1 }) : ''
+    return t('jobUi.waitingSchedule', { reason, time }) + counter
   }
   return t('jobUi.waitingUserNotice', { reason })
 })
@@ -223,6 +236,7 @@ watch(jobId, () => { activityFilter.value = { kind: 'all' }; selectedActivityId.
 watch(() => auth.adminToken, startStream)
 onMounted(() => {
   mounted = true
+  clockTimer = setInterval(() => { clockNow.value = Date.now() }, 30_000)
   startStream()
   document.addEventListener('visibilitychange', onVisible)
   fallbackTimer = setInterval(() => {
@@ -236,6 +250,7 @@ onBeforeUnmount(() => {
   document.removeEventListener('visibilitychange', onVisible)
   if (refreshTimer) clearTimeout(refreshTimer)
   if (fallbackTimer) clearInterval(fallbackTimer)
+  if (clockTimer) clearInterval(clockTimer)
 })
 </script>
 
@@ -304,13 +319,16 @@ onBeforeUnmount(() => {
           </div>
           <Button size="sm" :disabled="busy" @click="resume"><Play class="size-3.5" />{{ t('jobUi.resumeJob') }}</Button>
         </div>
-        <p class="mt-1.5 text-xs text-muted-foreground">{{ t('jobUi.longWaitNotice', { reason: waitingReason }) }}</p>
+        <p v-if="longWaiting" data-job-long-wait class="mt-1.5 text-xs text-muted-foreground">{{ t('jobUi.longWaitNotice', { reason: waitingReason }) }}</p>
       </div>
       <div v-if="job.error_code || job.error_message || unknownOutcome" role="alert" class="rounded-xl border border-danger/30 bg-danger/5 p-4">
         <div class="flex items-center gap-2 font-semibold text-danger"><AlertTriangle class="size-4" />{{ t('jobUi.executionWarning') }}</div>
         <p v-if="job.error_code" class="mt-2 break-all font-mono text-xs font-semibold text-danger">{{ job.error_code }}</p>
         <p v-if="job.error_message && job.error_message !== job.error_code" class="mt-1.5 break-words font-mono text-xs text-danger/90">{{ job.error_message }}</p>
         <p v-if="unknownOutcome" class="mt-2 text-sm text-danger">{{ t('jobUi.unknownOutcomeWarning') }}</p>
+      </div>
+      <div v-if="partialOutput" data-job-partial-output class="studio-panel whitespace-pre-wrap break-words p-4 text-sm">
+        <p class="mb-2 font-semibold">{{ t('jobUi.partialOutput') }}</p>{{ partialOutput }}
       </div>
       <p v-if="eventsError" role="alert" class="text-xs text-danger">{{ eventsError }}</p>
       <JobUnifiedTimeline

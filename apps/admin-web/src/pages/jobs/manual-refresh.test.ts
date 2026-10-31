@@ -364,9 +364,7 @@ it('attaches .wav audio in Create Job modal, auto-fills goal, and submits base64
     await dropzone.trigger('drop', {
       dataTransfer: { files: [fakeWav] },
     })
-    await new Promise(resolve => setTimeout(resolve, 25))
-    await flushPromises()
-    expect(wrapper.text()).toContain(translate('jobUi.wavInvalidFormat'))
+    await vi.waitFor(() => expect(wrapper.text()).toContain(translate('jobUi.wavInvalidFormat')), { timeout: 2000 })
 
     const wavFile = new File([new Uint8Array([82, 73, 70, 70, 36, 0, 0, 0, 87, 65, 86, 69])], 'cuoc-hop.wav', {
       type: 'audio/wav',
@@ -377,8 +375,7 @@ it('attaches .wav audio in Create Job modal, auto-fills goal, and submits base64
     await dropzone.trigger('drop', {
       dataTransfer: { files: [wavFile, mp4File] },
     })
-    await new Promise(resolve => setTimeout(resolve, 25))
-    await flushPromises()
+    await vi.waitFor(() => expect(wrapper.text()).toContain('ban-ghi-hinh.mp4'), { timeout: 2000 })
 
     expect(wrapper.text()).toContain('cuoc-hop.wav')
     expect(wrapper.text()).toContain('ban-ghi-hinh.mp4')
@@ -477,4 +474,38 @@ it('allows selecting multiple Jobs (individual and select-all), confirms batch d
   } finally {
     wrapper.unmount()
   }
+})
+
+it('shows partial output for a failed job', async () => {
+  const job = await api.job()
+  api.job.mockResolvedValue({ ...job, status: 'failed', output_preview: 'Recovered partial findings' })
+  const wrapper = mount(JobDetailPage, { global: { stubs: { teleport: true } } })
+  try {
+    await flushPromises()
+    expect(wrapper.get('[data-job-partial-output]').text()).toContain('Recovered partial findings')
+  } finally { wrapper.unmount() }
+})
+
+it('shows the long wait notice only after five minutes of waiting', async () => {
+  const job = await api.job()
+  api.job.mockResolvedValue({ ...job, status: 'waiting', wait_reason: 'PROVIDER_TIMEOUT' })
+  const wrapper = mount(JobDetailPage, { global: { stubs: { teleport: true } } })
+  try {
+    await flushPromises()
+    expect(wrapper.find('[data-job-long-wait]').exists()).toBe(false)
+    await vi.advanceTimersByTimeAsync(5 * 60_000)
+    await flushPromises()
+    expect(wrapper.find('[data-job-long-wait]').exists()).toBe(true)
+  } finally { wrapper.unmount() }
+})
+
+it('renders the next retry attempt against the configured recovery limit', async () => {
+  const job = await api.job()
+  api.job.mockResolvedValue({ ...job, status: 'waiting', next_attempt_at: Date.now() + 60_000, max_resume_attempts: 9,
+    agent_runs: [{ agent_run_id: 'root', role: 'orchestrator', status: 'waiting_retry', retry_attempt: 0 }] })
+  const wrapper = mount(JobDetailPage, { global: { stubs: { teleport: true } } })
+  try {
+    await flushPromises()
+    expect(wrapper.get('[data-job-waiting-banner]').text()).toContain('(attempt 2/10)')
+  } finally { wrapper.unmount() }
 })

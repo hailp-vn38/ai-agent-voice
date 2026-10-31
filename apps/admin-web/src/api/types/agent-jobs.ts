@@ -132,6 +132,7 @@ export interface AgentRunView {
   finished_at: string | null
   next_attempt_at?: number | null
   retry_reason?: string | null
+  retry_attempt?: number | null
   error_code?: string | null
   error_message?: string | null
   provider_id?: string | null
@@ -247,6 +248,7 @@ export interface AdminJob {
   retry_of_job_id: string | null
   result: Record<string, unknown> | null
   output_preview?: string | null
+  max_resume_attempts?: number | null
   wait_reason?: string | null
   next_attempt_at?: number | null
   budget_used: Record<string, unknown>

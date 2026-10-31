@@ -128,7 +128,11 @@ impl CatalogMediaBackend {
             .clone()
     }
 
-    pub(super) fn select_provider(&self, tool_name: &str, required_tag: &str) -> Option<ResolvedLlmProvider> {
+    pub(super) fn select_provider(
+        &self,
+        tool_name: &str,
+        required_tag: &str,
+    ) -> Option<ResolvedLlmProvider> {
         let guard = self.catalog.read().unwrap_or_else(|e| e.into_inner());
         let settings = self.effective_settings();
         resolve_media_tool_provider(&guard, settings.as_ref(), tool_name, required_tag, true)
@@ -307,6 +311,11 @@ fn map_llm_error_to_media_backend_error(
     use crate::providers::LlmError;
     use orchestrator_flow_rs::MediaBackendError;
     match err {
+        LlmError::ToolOutcomeUnknown => MediaBackendError::new(
+            "TOOL_OUTCOME_UNKNOWN",
+            "the video operation requires reconciliation",
+            false,
+        ),
         LlmError::Timeout => MediaBackendError::new(
             "VIDEO_GENERATION_TIMEOUT",
             "the video provider did not finish in time",
@@ -334,10 +343,17 @@ struct CatalogJournalBridge(
 
 #[async_trait::async_trait]
 impl crate::providers::OperationJournal for CatalogJournalBridge {
-    async fn record(&self, update: orchestrator_agent_rs::OperationUpdate) {
+    async fn record(
+        &self,
+        update: orchestrator_agent_rs::OperationUpdate,
+    ) -> Result<(), crate::providers::LlmError> {
         if let Some(ref inner) = self.0 {
-            let _ = inner.advance(update).await;
+            inner
+                .advance(update)
+                .await
+                .map_err(|_| crate::providers::LlmError::ToolOutcomeUnknown)?;
         }
+        Ok(())
     }
 }
 
@@ -354,10 +370,8 @@ impl orchestrator_flow_rs::VideoGeneratorBackend for CatalogMediaBackend {
         &self,
         req: &orchestrator_flow_rs::VideoGenerationRequest,
         ctx: &orchestrator_flow_rs::MediaCallContext,
-    ) -> Result<
-        orchestrator_flow_rs::GeneratedVideoPayload,
-        orchestrator_flow_rs::MediaBackendError,
-    > {
+    ) -> Result<orchestrator_flow_rs::GeneratedVideoPayload, orchestrator_flow_rs::MediaBackendError>
+    {
         let Some(resolved) = self.select_provider("video_create", "video") else {
             return self.default_video.generate_video(req, ctx).await;
         };
@@ -456,10 +470,8 @@ impl orchestrator_flow_rs::VideoGeneratorBackend for CatalogMediaBackend {
         req: &orchestrator_flow_rs::VideoGenerationRequest,
         op: &orchestrator_agent_rs::ToolOperation,
         ctx: &orchestrator_flow_rs::MediaCallContext,
-    ) -> Result<
-        orchestrator_flow_rs::GeneratedVideoPayload,
-        orchestrator_flow_rs::MediaBackendError,
-    > {
+    ) -> Result<orchestrator_flow_rs::GeneratedVideoPayload, orchestrator_flow_rs::MediaBackendError>
+    {
         let Some(resolved) = self.select_provider("video_create", "video") else {
             return Err(orchestrator_flow_rs::MediaBackendError::new(
                 "TOOL_OUTCOME_UNKNOWN",

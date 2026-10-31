@@ -3,7 +3,7 @@ import type { LlmRun } from './llm-activity'
 import type { ActivityKind, ActivityStatus, JobMediaEmbed, UnifiedActivity } from './unified-activity'
 
 export type ExecutionNodeType = 'root' | 'agent' | 'tool' | 'llm' | 'artifact' | 'result' | 'media'
-export type ExecutionNodeState = 'done' | 'running' | 'pending' | 'failed'
+export type ExecutionNodeState = 'waiting' | 'done' | 'running' | 'pending' | 'failed'
 export type ExecutionEventKind = 'start' | 'call' | 'message' | 'output' | 'error' | 'processing'
 
 export interface ExecutionEventItem {
@@ -108,10 +108,11 @@ export function mapActivityStatusToNodeState(status: ActivityStatus | string | n
     case 'unknown':
     case 'interrupted':
       return 'failed'
-    case 'queued':
     case 'waiting':
     case 'waiting_retry':
     case 'waiting_user':
+      return 'waiting'
+    case 'queued':
     case 'pending':
     case 'cancelled':
     case 'stopped':

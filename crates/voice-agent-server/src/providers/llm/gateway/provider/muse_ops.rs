@@ -31,6 +31,16 @@ use super::super::{
 };
 use super::{LlmGatewayProvider, MAX_POOL_FAILOVER_ATTEMPTS, record_wire_detail};
 
+fn operation_deadline(
+    op: &orchestrator_agent_rs::ToolOperation,
+) -> Result<tokio::time::Instant, LlmError> {
+    let seconds = u64::try_from(op.deadline_at).map_err(|_| LlmError::Timeout)?;
+    let remaining = (std::time::UNIX_EPOCH + Duration::from_secs(seconds))
+        .duration_since(std::time::SystemTime::now())
+        .map_err(|_| LlmError::Timeout)?;
+    Ok(tokio::time::Instant::now() + remaining)
+}
+
 pub(super) fn is_retryable_muse_failure(failure: &WorkflowFailure) -> bool {
     matches!(
         failure,
@@ -68,7 +78,9 @@ pub(super) fn report_muse_failure_to_hub(
                 },
             );
         }
-        WorkflowFailure::Rejected(_) | WorkflowFailure::Timeout(_) => {}
+        WorkflowFailure::Rejected(_)
+        | WorkflowFailure::Timeout(_)
+        | WorkflowFailure::OutcomeUnknown(_) => {}
     }
     failure.into_llm_error()
 }
@@ -95,14 +107,7 @@ impl LlmGatewayProvider {
         is_pool: bool,
         max_attempts: usize,
     ) -> LlmEventStream {
-        let timeout = if effective_cfg.timeout_profile.is_some()
-            || effective_cfg.max_total_ms.is_some()
-            || effective_cfg.timeout_ms >= 60_000
-        {
-            effective_cfg.resolved_limits().max_total + Duration::from_secs(30)
-        } else {
-            Duration::from_millis(effective_cfg.timeout_ms.max(1_000))
-        };
+        let timeout = effective_cfg.resolved_limits().max_total + Duration::from_secs(30);
         let req_clone = request.clone();
         let hub = Arc::clone(&self.hub);
         let http = self.http.clone();
@@ -332,7 +337,10 @@ impl LlmGatewayProvider {
             MediaKind::Image => 180_000,
         };
         let timeout = Duration::from_millis(self.config.timeout_ms.max(min_timeout_ms));
-        let deadline = tokio::time::Instant::now() + timeout;
+        let deadline = match existing_op {
+            Some(op) => operation_deadline(op)?,
+            None => tokio::time::Instant::now() + timeout,
+        };
         let started_running = Arc::new(AtomicBool::new(false));
         let started_flag = Arc::clone(&started_running);
         self.execute_muse_with_auth_refresh_and_failover(
@@ -384,8 +392,7 @@ impl DurableMediaProvider for LlmGatewayProvider {
                 continuation_key,
             } => {
                 self.ensure_tag(LlmCapabilityTag::Video)?;
-                let Some(batches) =
-                    format_video_batches(prompt, *width, *height, *duration_secs)
+                let Some(batches) = format_video_batches(prompt, *width, *height, *duration_secs)
                 else {
                     return Err(LlmError::Rejected);
                 };
@@ -480,10 +487,7 @@ impl DurableMediaProvider for LlmGatewayProvider {
                 LlmCapabilityTag::Video.as_str(),
             ));
         }
-        let extra_batches = batches.len().saturating_sub(1) as u64;
-        let min_timeout_ms = 900_000 + 800_000 * extra_batches;
-        let timeout = Duration::from_millis(self.config.timeout_ms.max(min_timeout_ms));
-        let deadline = tokio::time::Instant::now() + timeout;
+        let deadline = operation_deadline(&state.operation)?;
         let pool = self.muse_pool_for_lease(&self.config, &lease);
         let job = state.continuation_key.as_deref().map(job_entry);
         let request_sig = Some(VideoRequestSignature {

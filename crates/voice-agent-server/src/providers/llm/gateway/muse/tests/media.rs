@@ -550,7 +550,7 @@ async fn video_generation_waits_across_commentary_and_message_to_presentation_ga
     );
 }
 
-fn single_video_history(text: &str, path: &str) -> Vec<Vec<serde_json::Value>> {
+pub(super) fn single_video_history(text: &str, path: &str) -> Vec<Vec<serde_json::Value>> {
     vec![vec![
         json!({ "role": "user", "display_text": "prompt" }),
         json!({ "role": "assistant", "status": "completed", "display_text": text }),
@@ -648,7 +648,7 @@ async fn invoke_video(
         .await
 }
 
-fn full_video_turn(path: &str) -> FakeStreamTurn {
+pub(super) fn full_video_turn(path: &str) -> FakeStreamTurn {
     FakeStreamTurn::media_reply(
         vec![],
         single_video_history("done [ALL_MEDIA_ATTACHED]", path),
@@ -719,8 +719,14 @@ async fn ninety_second_video_runs_two_batches_in_one_session_and_returns_both_pa
     let first = mp4_with_duration(60);
     let second = mp4_with_duration(30);
     let acc = FakeVmAccount::new(vec![
-        video_turn("beats 1-6 merged [ALL_MEDIA_ATTACHED]", "sandbox:///home/user/p1.mp4"),
-        video_turn("beats 7-9 merged [ALL_MEDIA_ATTACHED]", "sandbox:///home/user/p2.mp4"),
+        video_turn(
+            "beats 1-6 merged [ALL_MEDIA_ATTACHED]",
+            "sandbox:///home/user/p1.mp4",
+        ),
+        video_turn(
+            "beats 7-9 merged [ALL_MEDIA_ATTACHED]",
+            "sandbox:///home/user/p2.mp4",
+        ),
     ])
     .with_file("/home/user/p1.mp4", first.clone())
     .with_file("/home/user/p2.mp4", second.clone());
@@ -741,15 +747,34 @@ async fn ninety_second_video_runs_two_batches_in_one_session_and_returns_both_pa
 
     let reqs = acc.stream_requests();
     assert_eq!(reqs.len(), 2, "90s = one 60s batch + one 30s batch");
-    assert_eq!(reqs[0]["session_id"], reqs[1]["session_id"], "batches share one session");
+    assert_eq!(
+        reqs[0]["session_id"], reqs[1]["session_id"],
+        "batches share one session"
+    );
     let texts = stream_texts(&acc);
-    assert!(texts[0].contains("beats 1-6"), "first batch scope: {}", texts[0]);
-    assert!(texts[1].contains("beats 7-9"), "second batch scope: {}", texts[1]);
+    assert!(
+        texts[0].contains("beats 1-6"),
+        "first batch scope: {}",
+        texts[0]
+    );
+    assert!(
+        texts[1].contains("beats 7-9"),
+        "second batch scope: {}",
+        texts[1]
+    );
     let (parts, _message) = output.into_media_parts().expect("media output");
     let bytes: Vec<Vec<u8>> = parts.into_iter().map(|p| p.bytes).collect();
-    assert_eq!(bytes, vec![first, second], "one merged file per batch, in order");
+    assert_eq!(
+        bytes,
+        vec![first, second],
+        "one merged file per batch, in order"
+    );
     tokio::task::yield_now().await;
-    assert_eq!(acc.deleted_sessions().len(), 1, "no job key: session deleted after the batches");
+    assert_eq!(
+        acc.deleted_sessions().len(),
+        1,
+        "no job key: session deleted after the batches"
+    );
 }
 
 #[tokio::test]
@@ -819,7 +844,10 @@ async fn retry_after_timeout_recovers_a_video_that_finished_late_without_a_new_r
     tokio::time::pause();
 
     let first = invoke_video(&provider, Some("job-late")).await;
-    assert!(matches!(first, Err(crate::providers::llm::LlmError::Timeout)));
+    assert!(matches!(
+        first,
+        Err(crate::providers::llm::LlmError::Timeout)
+    ));
 
     // Muse finishes the video after the first call gave up.
     acc.set_history_polls(single_video_history(
@@ -827,7 +855,9 @@ async fn retry_after_timeout_recovers_a_video_that_finished_late_without_a_new_r
         "sandbox:///home/user/late.mp4",
     ));
 
-    let second = invoke_video(&provider, Some("job-late")).await.expect("recovered");
+    let second = invoke_video(&provider, Some("job-late"))
+        .await
+        .expect("recovered");
     let (parts, _) = second.into_media_parts().expect("media output");
     assert_eq!(parts.len(), 1);
     assert_eq!(parts[0].bytes, late, "the late video is returned as-is");
@@ -999,18 +1029,18 @@ async fn retry_with_new_request_not_recovered() {
     );
     let old_video = mp4_with_duration(30);
     let new_video = mp4_with_duration(40);
-    let acc = FakeVmAccount::new(vec![
-        stuck,
-        full_video_turn("sandbox:///home/user/new.mp4"),
-    ])
-    .with_file("/home/user/old.mp4", old_video)
-    .with_file("/home/user/new.mp4", new_video.clone());
+    let acc = FakeVmAccount::new(vec![stuck, full_video_turn("sandbox:///home/user/new.mp4")])
+        .with_file("/home/user/old.mp4", old_video)
+        .with_file("/home/user/new.mp4", new_video.clone());
     let transport = FakeMuseVmTransport::new(vec![Arc::clone(&acc)]);
     let provider = build_gateway_muse_provider(&[SINGLE_COOKIE], transport).await;
     tokio::time::pause();
 
     let first = invoke_video(&provider, Some("job-new-req")).await;
-    assert!(matches!(first, Err(crate::providers::llm::LlmError::Timeout)));
+    assert!(matches!(
+        first,
+        Err(crate::providers::llm::LlmError::Timeout)
+    ));
 
     // Even if the old 30s video finished in history, the next call asks for a different prompt/duration (40s).
     acc.set_history_polls(single_video_history(
@@ -1060,12 +1090,14 @@ async fn no_failover_while_running() {
     let acc2 = FakeVmAccount::new(vec![full_video_turn("sandbox:///home/user/acc2.mp4")])
         .with_file("/home/user/acc2.mp4", mp4_with_duration(30));
     let transport = FakeMuseVmTransport::new(vec![Arc::clone(&acc1), Arc::clone(&acc2)]);
-    let provider =
-        build_gateway_muse_provider(&[SINGLE_COOKIE, SECOND_COOKIE], transport).await;
+    let provider = build_gateway_muse_provider(&[SINGLE_COOKIE, SECOND_COOKIE], transport).await;
 
     let res = invoke_video(&provider, Some("job-no-failover")).await;
     assert!(
-        matches!(res, Err(crate::providers::llm::LlmError::RateLimited { .. })),
+        matches!(
+            res,
+            Err(crate::providers::llm::LlmError::RateLimited { .. })
+        ),
         "expected RateLimited from Account 1, got {res:?}"
     );
     assert_eq!(acc1.stream_requests().len(), 1);
@@ -1095,8 +1127,7 @@ async fn shared_deadline() {
     );
     let acc2 = FakeVmAccount::new(vec![stuck]);
     let transport = FakeMuseVmTransport::new(vec![Arc::clone(&acc1), Arc::clone(&acc2)]);
-    let provider =
-        build_gateway_muse_provider(&[SINGLE_COOKIE, SECOND_COOKIE], transport).await;
+    let provider = build_gateway_muse_provider(&[SINGLE_COOKIE, SECOND_COOKIE], transport).await;
 
     tokio::time::pause();
     let start = tokio::time::Instant::now();
@@ -1114,4 +1145,3 @@ async fn shared_deadline() {
         "failover must share the single 900s deadline instead of granting another 900s (elapsed={elapsed:?})"
     );
 }
-

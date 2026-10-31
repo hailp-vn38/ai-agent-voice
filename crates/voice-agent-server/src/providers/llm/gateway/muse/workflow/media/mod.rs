@@ -1,4 +1,6 @@
 mod candidates;
+mod journal;
+use journal::TurnJournal;
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -25,6 +27,17 @@ use super::{
     is_last_assistant_completed,
 };
 use crate::providers::llm::{LlmOutput, MediaPart, OperationJournal, ReferenceImage};
+
+async fn within_deadline<T>(
+    deadline: Instant,
+    future: impl std::future::Future<Output = Result<T, WorkflowFailure>>,
+) -> Result<T, WorkflowFailure> {
+    tokio::time::timeout_at(deadline, future)
+        .await
+        .map_err(|_| {
+            WorkflowFailure::Timeout("media operation exceeded its shared deadline".into())
+        })?
+}
 
 const MEDIA_POLL_INTERVAL: Duration = Duration::from_millis(400);
 const MAX_IMAGE_FILE_BYTES: usize = 50 * 1024 * 1024;
@@ -59,6 +72,18 @@ pub(crate) async fn run_media_turn_once(
     existing_op: Option<&orchestrator_agent_rs::ToolOperation>,
     journal: Option<&dyn OperationJournal>,
 ) -> Result<LlmOutput, WorkflowFailure> {
+    if let Some(op) = existing_op
+        && op.remote_session_id.is_some()
+        && (op.batch_index > 0
+            || op.repairs_used > 0
+            || op.request_json.as_deref().is_some_and(|raw| {
+                serde_json::from_str::<Value>(raw)
+                    .is_ok_and(|value| value.get("pending_turn").is_some())
+            }))
+    {
+        return resume_media_turn_once(pool, batches, job, request_sig, deadline, op, journal)
+            .await;
+    }
     if batches.is_empty() || batches.iter().any(|b| b.prompt.trim().is_empty()) {
         return Err(WorkflowFailure::Rejected("empty media prompt".to_string()));
     }
@@ -126,16 +151,20 @@ pub(crate) async fn run_media_turn_once(
     let res = match recovered {
         Some(output) => Ok(output),
         None => {
-            execute_media_turn_on_lease(
-                &mut lease,
-                batches,
-                images,
-                kind,
-                transparent_background,
+            within_deadline(
                 deadline,
-                started_running,
-                journal,
-                &mut completed_batch_paths,
+                execute_media_turn_on_lease(
+                    &mut lease,
+                    batches,
+                    images,
+                    kind,
+                    transparent_background,
+                    deadline,
+                    started_running,
+                    journal,
+                    existing_op,
+                    &mut completed_batch_paths,
+                ),
             )
             .await
         }
@@ -144,9 +173,7 @@ pub(crate) async fn run_media_turn_once(
     if let Err(WorkflowFailure::Upstream(err_kind, _)) = &res {
         let was_running = started_running.load(std::sync::atomic::Ordering::Relaxed);
         lease.fail_account(*err_kind).await;
-        if !was_running
-            && let (Some(entry), Some(slot)) = (&job, gate.as_mut())
-        {
+        if !was_running && let (Some(entry), Some(slot)) = (&job, gate.as_mut()) {
             **slot = None;
             entry.set_account_hint(None);
         }
@@ -180,6 +207,15 @@ pub(crate) async fn resume_media_turn_once(
     op: &orchestrator_agent_rs::ToolOperation,
     journal: Option<&dyn OperationJournal>,
 ) -> Result<LlmOutput, WorkflowFailure> {
+    let mut turn_journal = TurnJournal::new(journal, Some(op), deadline);
+    if op.status == orchestrator_agent_rs::ToolOperationStatus::Running
+        && op.batch_index > 0
+        && turn_journal.pending_items().is_none()
+    {
+        return Err(WorkflowFailure::OutcomeUnknown(
+            "legacy multi-batch checkpoint does not identify whether the next turn was sent".into(),
+        ));
+    }
     let Some(ref remote_sid) = op.remote_session_id else {
         return Err(WorkflowFailure::Rejected(
             "cannot resume operation without remote_session_id".to_string(),
@@ -217,10 +253,13 @@ pub(crate) async fn resume_media_turn_once(
         .unwrap_or_default();
 
     if op.status == orchestrator_agent_rs::ToolOperationStatus::Downloading {
-        let mut all_parts = download_video_paths(&mut lease, &completed_paths).await?;
+        let mut all_parts =
+            within_deadline(deadline, download_video_paths(&mut lease, &completed_paths)).await?;
         let mut message = None;
         if all_parts.is_empty() {
-            if let Some((parts, msg)) = inspect_and_download_latest_turn(&mut lease).await? {
+            if let Some((parts, msg)) =
+                within_deadline(deadline, inspect_and_download_latest_turn(&mut lease)).await?
+            {
                 all_parts = parts;
                 message = msg;
             }
@@ -235,28 +274,48 @@ pub(crate) async fn resume_media_turn_once(
     }
 
     let mut event_rx = lease.client().subscribe_events();
-    let mut all_parts = download_video_paths(&mut lease, &completed_paths).await?;
+    let mut all_parts =
+        within_deadline(deadline, download_video_paths(&mut lease, &completed_paths)).await?;
     let mut messages: Vec<String> = Vec::new();
     let start_index = (op.batch_index as usize).min(batches.len());
-    let mut total_repairs = op.repairs_used;
-
     for (index, batch) in batches.iter().enumerate().skip(start_index) {
-        if index > start_index {
-            send_media_stream_request(&mut lease, build_turn_items(&[], &batch.prompt)).await?;
-            if let Some(io) = journal {
-                io.record(orchestrator_agent_rs::OperationUpdate {
-                    status: Some(orchestrator_agent_rs::ToolOperationStatus::Running),
-                    batch_index: Some(index as u32),
-                    ..Default::default()
-                })
-                .await;
-            }
-        }
         let initial_repairs = if index == start_index {
             op.repairs_used as usize
         } else {
             0
         };
+        let pending = index > start_index
+            || op.status == orchestrator_agent_rs::ToolOperationStatus::Submitting;
+        if pending {
+            let should_send = if index > start_index {
+                true
+            } else {
+                let before = op.user_turns_before.ok_or_else(|| {
+                    WorkflowFailure::OutcomeUnknown("missing submission baseline".into())
+                })?;
+                let actual = count_remote_user_turns(&mut lease).await.ok_or_else(|| {
+                    WorkflowFailure::OutcomeUnknown("could not reconcile pending turn".into())
+                })?;
+                if actual < before {
+                    return Err(WorkflowFailure::OutcomeUnknown(
+                        "remote history is behind the submission baseline".into(),
+                    ));
+                }
+                actual == before
+            };
+            if should_send {
+                let items = if index == start_index {
+                    turn_journal
+                        .pending_items()
+                        .unwrap_or_else(|| build_turn_items(&[], &batch.prompt))
+                } else {
+                    build_turn_items(&[], &batch.prompt)
+                };
+                turn_journal
+                    .send(&mut lease, index as u32, initial_repairs as u32, items)
+                    .await?;
+            }
+        }
         let outcome = run_media_batch(
             &mut lease,
             &mut event_rx,
@@ -265,27 +324,25 @@ pub(crate) async fn resume_media_turn_once(
             false,
             deadline,
             initial_repairs,
+            &mut turn_journal,
+            index as u32,
         )
         .await;
         match outcome {
             Ok(BatchOutput::Image(output)) => return Ok(output),
             Ok(BatchOutput::Video(best)) => {
-                total_repairs = total_repairs.saturating_add(best.repairs_used as u32);
                 completed_paths.extend(best.paths);
                 all_parts.extend(best.parts);
                 messages.extend(best.assistant_message);
-                if let Some(io) = journal {
-                    let paths_json = serde_json::to_string(&completed_paths).unwrap_or_default();
-                    io.record(orchestrator_agent_rs::OperationUpdate {
-                        batch_index: Some((index + 1) as u32),
-                        repairs_used: Some(total_repairs),
-                        batch_paths_json: Some(paths_json),
-                        ..Default::default()
-                    })
-                    .await;
-                }
+                turn_journal
+                    .complete_batch(
+                        &mut lease,
+                        index + 1,
+                        batches.get(index + 1),
+                        &completed_paths,
+                    )
+                    .await?;
             }
-            Err(WorkflowFailure::Timeout(_)) if !all_parts.is_empty() => break,
             Err(err) => {
                 if let (Some(entry), Some(slot)) = (&job, gate.as_mut())
                     && let Some(account_key) = lease.account_key()
@@ -304,16 +361,6 @@ pub(crate) async fn resume_media_turn_once(
                 return Err(err);
             }
         }
-    }
-
-    if let Some(io) = journal {
-        let paths_json = serde_json::to_string(&completed_paths).unwrap_or_default();
-        io.record(orchestrator_agent_rs::OperationUpdate {
-            status: Some(orchestrator_agent_rs::ToolOperationStatus::Downloading),
-            batch_paths_json: Some(paths_json),
-            ..Default::default()
-        })
-        .await;
     }
 
     lease.finish_clean(None);
@@ -341,37 +388,25 @@ async fn execute_media_turn_on_lease(
     deadline: Instant,
     started_running: &std::sync::atomic::AtomicBool,
     journal: Option<&dyn OperationJournal>,
+    existing_op: Option<&orchestrator_agent_rs::ToolOperation>,
     completed_batch_paths: &mut Vec<String>,
 ) -> Result<LlmOutput, WorkflowFailure> {
     let mut event_rx = lease.client().subscribe_events();
 
-    if let Some(io) = journal {
-        let turns_before = count_remote_user_turns(lease).await.unwrap_or(0);
-        io.record(orchestrator_agent_rs::OperationUpdate {
-            status: Some(orchestrator_agent_rs::ToolOperationStatus::Submitting),
-            account_key: lease.account_key().map(str::to_string),
-            remote_session_id: Some(lease.session_id().to_string()),
-            user_turns_before: Some(turns_before),
-            ..Default::default()
-        })
-        .await;
-    }
-
+    let mut turn_journal = TurnJournal::new(journal, existing_op, deadline);
     let mut all_parts: Vec<MediaPart> = Vec::new();
     let mut messages: Vec<String> = Vec::new();
-    let mut total_repairs = 0u32;
     for (index, batch) in batches.iter().enumerate() {
         let batch_images = if index == 0 { images } else { &[] };
-        send_media_stream_request(lease, build_turn_items(batch_images, &batch.prompt)).await?;
+        turn_journal
+            .send(
+                lease,
+                index as u32,
+                0,
+                build_turn_items(batch_images, &batch.prompt),
+            )
+            .await?;
         started_running.store(true, std::sync::atomic::Ordering::Relaxed);
-        if let Some(io) = journal {
-            io.record(orchestrator_agent_rs::OperationUpdate {
-                status: Some(orchestrator_agent_rs::ToolOperationStatus::Running),
-                batch_index: Some(index as u32),
-                ..Default::default()
-            })
-            .await;
-        }
         let outcome = run_media_batch(
             lease,
             &mut event_rx,
@@ -380,41 +415,27 @@ async fn execute_media_turn_on_lease(
             transparent_background,
             deadline,
             0,
+            &mut turn_journal,
+            index as u32,
         )
         .await;
         match outcome {
             Ok(BatchOutput::Image(output)) => return Ok(output),
             Ok(BatchOutput::Video(best)) => {
-                total_repairs = total_repairs.saturating_add(best.repairs_used as u32);
                 completed_batch_paths.extend(best.paths);
                 all_parts.extend(best.parts);
                 messages.extend(best.assistant_message);
-                if let Some(io) = journal {
-                    let paths_json =
-                        serde_json::to_string(completed_batch_paths).unwrap_or_default();
-                    io.record(orchestrator_agent_rs::OperationUpdate {
-                        batch_index: Some((index + 1) as u32),
-                        repairs_used: Some(total_repairs),
-                        batch_paths_json: Some(paths_json),
-                        ..Default::default()
-                    })
-                    .await;
-                }
+                turn_journal
+                    .complete_batch(
+                        lease,
+                        index + 1,
+                        batches.get(index + 1),
+                        completed_batch_paths,
+                    )
+                    .await?;
             }
-            // Earlier batches already produced footage: hand it back instead of discarding it.
-            Err(WorkflowFailure::Timeout(_)) if !all_parts.is_empty() => break,
             Err(err) => return Err(err),
         }
-    }
-
-    if let Some(io) = journal {
-        let paths_json = serde_json::to_string(completed_batch_paths).unwrap_or_default();
-        io.record(orchestrator_agent_rs::OperationUpdate {
-            status: Some(orchestrator_agent_rs::ToolOperationStatus::Downloading),
-            batch_paths_json: Some(paths_json),
-            ..Default::default()
-        })
-        .await;
     }
 
     lease.finish_clean(None);
@@ -458,13 +479,24 @@ async fn run_media_batch(
     transparent_background: bool,
     deadline: Instant,
     initial_repairs: usize,
+    journal: &mut TurnJournal<'_>,
+    batch_index: u32,
 ) -> Result<BatchOutput, WorkflowFailure> {
     let mut repairs_used = initial_repairs;
     let mut best: Option<BestVideo> = None;
     loop {
-        let turn = match collect_media_turn(lease, event_rx, kind, deadline).await {
+        let turn = match collect_media_turn(
+            lease,
+            event_rx,
+            kind,
+            deadline,
+            journal,
+            batch_index,
+            repairs_used as u32,
+        )
+        .await
+        {
             Ok(turn) => turn,
-            Err(WorkflowFailure::Timeout(_)) if best.is_some() => break,
             Err(err) => return Err(err),
         };
         let selected = select_effective_ready_attachments(&turn.ready_candidates);
@@ -479,13 +511,16 @@ async fn run_media_batch(
         let assistant_message = format_clean_assistant_bubbles(&turn.assistant_bubbles);
 
         if matches!(kind, MediaKind::Image) {
-            let output =
-                finish_image(lease, &selected, transparent_background, assistant_message).await?;
+            let output = within_deadline(
+                deadline,
+                finish_image(lease, &selected, transparent_background, assistant_message),
+            )
+            .await?;
             return Ok(BatchOutput::Image(output));
         }
 
         let paths: Vec<String> = selected.iter().map(|c| c.path.clone()).collect();
-        let parts = download_video_parts(lease, &selected).await?;
+        let parts = within_deadline(deadline, download_video_parts(lease, &selected)).await?;
         let total_secs = total_duration_secs(&parts);
         let is_better = best
             .as_ref()
@@ -496,25 +531,38 @@ async fn run_media_batch(
                 parts,
                 total_secs,
                 assistant_message,
-                repairs_used: repairs_used.saturating_sub(initial_repairs),
+                repairs_used,
             });
         }
 
         let best_total = best.as_ref().and_then(|b| b.total_secs);
         let shortfall = video_shortfall_secs(target_duration_secs, best_total);
-        if shortfall == 0 || repairs_used >= MAX_DURATION_REPAIRS || Instant::now() >= deadline {
+        if shortfall > 0 && Instant::now() >= deadline {
+            return Err(WorkflowFailure::Timeout(
+                "media deadline reached before all requested footage was produced".into(),
+            ));
+        }
+        if shortfall == 0 || repairs_used >= MAX_DURATION_REPAIRS {
             break;
         }
         repairs_used += 1;
         if let Some(ref mut b) = best {
-            b.repairs_used = repairs_used.saturating_sub(initial_repairs);
+            b.repairs_used = repairs_used;
         }
         let followup = video_repair_prompt(
             target_duration_secs.unwrap_or_default(),
             best_total.unwrap_or_default(),
             shortfall,
         );
-        send_media_stream_request(lease, vec![json!({ "type": "text", "text": followup })]).await?;
+        journal.reset_attachment_followup();
+        journal
+            .send(
+                lease,
+                batch_index,
+                repairs_used as u32,
+                vec![json!({ "type": "text", "text": followup })],
+            )
+            .await?;
     }
 
     best.map(BatchOutput::Video).ok_or_else(|| {
@@ -629,6 +677,9 @@ async fn collect_media_turn(
     event_rx: &mut tokio::sync::broadcast::Receiver<VmStreamEvent>,
     kind: MediaKind,
     deadline: Instant,
+    journal: &mut TurnJournal<'_>,
+    batch_index: u32,
+    repairs_used: u32,
 ) -> Result<CollectedTurn, WorkflowFailure> {
     let mut poll_interval = tokio::time::interval(MEDIA_POLL_INTERVAL);
     poll_interval.tick().await;
@@ -642,7 +693,7 @@ async fn collect_media_turn(
     let mut empty_completed_ticks: usize = 0;
     let mut candidate_ready_ticks: usize = 0;
     let mut should_poll_history = false;
-    let mut nudged_attach = false;
+    let mut nudged_attach = journal.attachment_followup_sent();
 
     while Instant::now() < deadline {
         tokio::select! {
@@ -825,11 +876,18 @@ async fn collect_media_turn(
                     "type": "text",
                     "text": followup,
                 })];
-                send_media_stream_request(lease, followup_items).await?;
+                journal
+                    .send_attachment_followup(lease, batch_index, repairs_used, followup_items)
+                    .await?;
             }
         }
     }
 
+    if Instant::now() >= deadline {
+        return Err(WorkflowFailure::Timeout(
+            "media turn did not finish before the shared deadline".into(),
+        ));
+    }
     Ok(CollectedTurn {
         ready_candidates,
         assistant_bubbles,

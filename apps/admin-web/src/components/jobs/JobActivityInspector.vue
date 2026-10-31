@@ -302,10 +302,10 @@ function stageNote(event: JobEvent): string {
                 ? 'text-success'
                 : activity.status === 'failed' || activity.status === 'unknown'
                   ? 'text-danger'
-                  : 'text-studio-cyan'
+                  : activity.status === 'waiting_retry' || activity.status === 'waiting_user' ? 'text-amber-500' : 'text-studio-cyan'
             "
           >
-            ● {{ activity.status }}
+            ● {{ activity.status === 'waiting_retry' || activity.status === 'waiting_user' ? t('jobUi.jobStatus.waiting') : activity.status }}
           </span>
         </div>
         <strong class="ins-name block break-words text-base font-bold">{{ activity.title }}</strong>

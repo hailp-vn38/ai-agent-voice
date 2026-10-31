@@ -361,7 +361,7 @@ pub(crate) fn map_stream_llm_error_to_gateway(err: LlmError) -> GatewayError {
         LlmError::Timeout => GatewayError::Timeout,
         LlmError::Transient => GatewayError::Provider,
         LlmError::Rejected | LlmError::UnsupportedCapability(_) => GatewayError::InvalidRequest,
-        LlmError::Failed => GatewayError::Protocol,
+        LlmError::Failed | LlmError::ToolOutcomeUnknown => GatewayError::Protocol,
     }
 }
 

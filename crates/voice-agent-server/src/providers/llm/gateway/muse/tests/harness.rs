@@ -33,6 +33,8 @@ pub(in crate::providers::llm::gateway) struct FakeVmAccount {
     deleted_sessions: Mutex<Vec<String>>,
     active_history: Mutex<VecDeque<Vec<Value>>>,
     stream_delay: Mutex<Option<std::time::Duration>>,
+    read_delay: Mutex<Option<std::time::Duration>>,
+    lose_stream_ack: std::sync::atomic::AtomicBool,
 }
 
 impl FakeVmAccount {
@@ -46,11 +48,24 @@ impl FakeVmAccount {
             deleted_sessions: Mutex::new(Vec::new()),
             active_history: Mutex::new(VecDeque::new()),
             stream_delay: Mutex::new(None),
+            read_delay: Mutex::new(None),
+            lose_stream_ack: std::sync::atomic::AtomicBool::new(false),
         })
     }
 
     pub fn with_stream_delay(self: &Arc<Self>, delay: std::time::Duration) -> Arc<Self> {
         *self.stream_delay.lock().unwrap() = Some(delay);
+        Arc::clone(self)
+    }
+
+    pub fn with_lost_stream_ack(self: &Arc<Self>) -> Arc<Self> {
+        self.lose_stream_ack
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+        Arc::clone(self)
+    }
+
+    pub fn with_read_delay(self: &Arc<Self>, delay: std::time::Duration) -> Arc<Self> {
+        *self.read_delay.lock().unwrap() = Some(delay);
         Arc::clone(self)
     }
 
@@ -154,6 +169,10 @@ impl MuseVmSender for FakeVmSender {
                     .push((file_path, bytes));
                 send_json_response(&self.tx, stream_id, 200, &json!({ "ok": true }));
             } else if path == "/fs/read" {
+                let read_delay = *self.account.read_delay.lock().unwrap();
+                if let Some(delay) = read_delay {
+                    tokio::time::sleep(delay).await;
+                }
                 let body_json: Value =
                     serde_json::from_slice(&req.body).unwrap_or_else(|_| json!({}));
                 let raw_path = body_json.get("path").and_then(Value::as_str).unwrap_or("");
@@ -276,6 +295,16 @@ impl MuseVmSender for FakeVmSender {
 
                 let effective_sid = turn.assigned_session_id.unwrap_or(req_sid);
                 *self.account.active_history.lock().unwrap() = turn.history_polls;
+                if self
+                    .account
+                    .lose_stream_ack
+                    .load(std::sync::atomic::Ordering::SeqCst)
+                {
+                    let _ = self.tx.send(Err(VmError::Transport(
+                        "connection lost after accepting stream".into(),
+                    )));
+                    continue;
+                }
 
                 let _ = self.tx.send(Ok(DecodedServiceFrame {
                     stream_id,

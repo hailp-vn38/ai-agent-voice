@@ -314,6 +314,7 @@ impl LlmRuntime {
             Ok(Err(LlmError::Rejected)) => Err(LlmInvokeError::Rejected),
             Ok(Err(
                 LlmError::Failed
+                | LlmError::ToolOutcomeUnknown
                 | LlmError::RateLimited { .. }
                 | LlmError::Transient
                 | LlmError::Unauthorized,

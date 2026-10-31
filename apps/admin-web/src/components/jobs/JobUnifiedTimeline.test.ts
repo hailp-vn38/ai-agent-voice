@@ -312,3 +312,10 @@ describe('Agent Tree Compact Job workspace', () => {
     }
   })
 })
+
+it('labels the tree as waiting while its runs are parked', () => {
+  const waiting: AdminJob = { ...job, status: 'waiting', agent_runs: job.agent_runs!.map(run => ({ ...run, status: 'waiting_retry' })) }
+  const wrapper = mount(JobUnifiedTimeline, { props: { job: waiting, activities: [], selectedId: null, filter: { kind: 'all' }, roles: [] } })
+  try { expect(wrapper.get('#footerState').text()).toBe('Waiting') }
+  finally { wrapper.unmount() }
+})

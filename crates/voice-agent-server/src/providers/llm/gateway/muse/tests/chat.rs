@@ -8,12 +8,13 @@ use super::harness::{
     FakeMuseVmTransport, FakeStreamTurn, FakeVmAccount, SECOND_COOKIE, SINGLE_COOKIE,
     build_gateway_muse_provider,
 };
-use crate::providers::llm::{ChatMessage, LlmEvent, LlmOperation, LlmOutput, LlmProvider, LlmRequest};
+use crate::providers::llm::{
+    ChatMessage, LlmEvent, LlmOperation, LlmOutput, LlmProvider, LlmRequest,
+};
 
 #[tokio::test]
 async fn chat_stream_emits_realtime_deltas_and_reuses_session_id_on_followup() {
-    let mut turn1 =
-        FakeStreamTurn::chat_reply(vec!["Xin ", "chào ", "bạn!"], "Xin chào bạn!");
+    let mut turn1 = FakeStreamTurn::chat_reply(vec!["Xin ", "chào ", "bạn!"], "Xin chào bạn!");
     turn1.assigned_session_id = Some("sess-hot-1".to_string());
     let turn2 = FakeStreamTurn::chat_reply(vec!["Hôm nay ", "trời đẹp."], "Hôm nay trời đẹp.");
 
@@ -90,8 +91,7 @@ async fn pool_rotates_to_second_account_on_quota_or_auth_failure() {
     )]);
 
     let transport = FakeMuseVmTransport::new(vec![acc1, acc2]);
-    let provider =
-        build_gateway_muse_provider(&[SINGLE_COOKIE, SECOND_COOKIE], transport).await;
+    let provider = build_gateway_muse_provider(&[SINGLE_COOKIE, SECOND_COOKIE], transport).await;
 
     let req = LlmRequest::text_turn("Kiểm tra failover".to_string());
     let reply = provider
@@ -101,7 +101,10 @@ async fn pool_rotates_to_second_account_on_quota_or_auth_failure() {
         })
         .await
         .expect("pool rotates to second account on quota limit");
-    assert_eq!(reply, LlmOutput::Text("Phản hồi từ tài khoản #2".to_string()));
+    assert_eq!(
+        reply,
+        LlmOutput::Text("Phản hồi từ tài khoản #2".to_string())
+    );
 }
 
 #[tokio::test]
@@ -135,8 +138,7 @@ async fn single_account_auto_refreshes_and_retries_on_401_unauthorized() {
 #[tokio::test]
 async fn chat_stream_waits_for_in_progress_assistant_and_reconciles_full_history_text() {
     let full_turn1_part1 = "# Mesut Özil — Tổng quan sự nghiệp & hoạt động sau giải nghệ\n\n**Mesut Özil** (sinh 15/10/1988 tại Gelsenkirchen) là cựu tiền vệ tấn công người Đức gốc Thổ Nhĩ Kỳ.";
-    let full_turn1_part2 =
-        "1. **Sự nghiệp**: Schalke 04, Werder Bremen, Real Madrid, Arsenal, Fenerbahçe, İstanbul Başakşehir.\n2. **Danh hiệu**: Vô địch World Cup 2014 cùng đội tuyển Đức.";
+    let full_turn1_part2 = "1. **Sự nghiệp**: Schalke 04, Werder Bremen, Real Madrid, Arsenal, Fenerbahçe, İstanbul Başakşehir.\n2. **Danh hiệu**: Vô địch World Cup 2014 cùng đội tuyển Đức.";
     let expected_turn1 = format!("{full_turn1_part1}\n\n{full_turn1_part2}");
 
     let flattened_turn1_user =
@@ -374,6 +376,7 @@ async fn muse_truncated_is_error() {
     let transport = FakeMuseVmTransport::new(vec![Arc::clone(&acc)]);
     let mut provider = build_gateway_muse_provider(&[SINGLE_COOKIE], transport).await;
     provider.config.timeout_ms = 1_000;
+    tokio::time::pause();
 
     let res = provider
         .invoke(LlmOperation::Chat {
@@ -472,4 +475,3 @@ async fn muse_stream_drop_aborts() {
         "dropping the stream must abort the background task and delete the remote session"
     );
 }
-

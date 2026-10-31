@@ -1,4 +1,5 @@
 mod chat;
+mod durability;
 mod fixtures;
 mod harness;
 mod media;

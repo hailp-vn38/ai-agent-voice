@@ -115,7 +115,7 @@ Trạng thái tạm dừng bền vững của một Agent Run khi gặp lỗi nh
 _Avoid_: failed run, in-memory sleep retry, provider-layer retry
 
 **Job Budget**:
-Giới hạn tài nguyên cho toàn bộ vòng đời của một Background Task gồm thời gian chạy tích lũy, thời hạn tổng thể và khoảng dự trữ để dừng có kiểm soát kèm kết quả từng phần.
+Giới hạn tài nguyên của một lượt thực thi Background Task, gồm thời gian chạy tích lũy, thời hạn tổng thể và khoảng dự trữ để dừng có kiểm soát kèm kết quả từng phần. Các lần phục hồi dùng chung ngân sách; một Task Follow-up bắt đầu lượt thực thi với ngân sách mới.
 _Avoid_: per-request timeout, single-attempt step limit
 
 **Tool Operation**:

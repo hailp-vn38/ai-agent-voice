@@ -16,7 +16,7 @@ use super::super::client::MuseVmClient;
 /// A retained job session is dropped (and deleted on the VM) after this long without use.
 pub(super) const JOB_SESSION_TTL: Duration = Duration::from_secs(60 * 60);
 
-/// Upper bound on tracked jobs; the least recently used idle entry is evicted beyond this.
+/// Soft limit for cached jobs. Entries holding remote state remain until cleanup is acknowledged.
 const MAX_JOB_ENTRIES: usize = 256;
 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -108,92 +108,42 @@ impl JobEntry {
 static JOB_ENTRIES: LazyLock<Mutex<HashMap<String, Arc<JobEntry>>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
-/// Returns the entry for `key`, creating it on first use, and reaps expired idle jobs.
+/// Returns the entry for a job. Durable cleanup is owned by the server sweep,
+/// which can protect recoverable operations and record acknowledged deletions.
 pub(crate) fn job_entry(key: &str) -> Arc<JobEntry> {
-    let now = Instant::now();
-    let mut expired: Vec<JobSession> = Vec::new();
-    let entry = {
-        let mut map = JOB_ENTRIES.lock().unwrap_or_else(|e| e.into_inner());
-        map.retain(|_, entry| {
-            if entry.idle_for(now) < JOB_SESSION_TTL {
-                return true;
-            }
-            // A held gate means a call is still running: keep the entry.
-            match entry.gate.try_lock() {
-                Ok(mut slot) => {
-                    expired.extend(slot.take());
-                    false
-                }
-                Err(_) => true,
-            }
-        });
-        if map.len() >= MAX_JOB_ENTRIES && !map.contains_key(key) {
-            let oldest = map
-                .iter()
-                .filter(|(_, e)| e.gate.try_lock().is_ok())
-                .max_by_key(|(_, e)| e.idle_for(now))
-                .map(|(k, _)| k.clone());
-            if let Some(oldest_key) = oldest
-                && let Some(removed) = map.remove(&oldest_key)
-                && let Ok(mut slot) = removed.gate.try_lock()
-            {
-                expired.extend(slot.take());
-            }
+    let mut map = JOB_ENTRIES.lock().unwrap_or_else(|e| e.into_inner());
+    if map.len() >= MAX_JOB_ENTRIES {
+        map.retain(|_, entry| entry.gate.try_lock().map_or(true, |slot| slot.is_some()));
+    }
+    Arc::clone(
+        map.entry(key.to_string())
+            .or_insert_with(|| Arc::new(JobEntry::new())),
+    )
+}
+
+/// Deletes idle sessions that have no recoverable work, returning acknowledged IDs.
+pub(crate) async fn sweep_idle_job_sessions(
+    protected: &std::collections::HashSet<String>,
+) -> Vec<String> {
+    let keys: Vec<String> = {
+        let map = JOB_ENTRIES.lock().unwrap_or_else(|e| e.into_inner());
+        let now = Instant::now();
+        map.iter()
+            .filter(|(key, entry)| {
+                !protected.contains(*key) && entry.idle_for(now) >= JOB_SESSION_TTL
+            })
+            .map(|(key, _)| key.clone())
+            .collect()
+    };
+    let mut deleted = Vec::new();
+    for key in keys {
+        if let Some(id) = release_job_session_inner(&key, true).await {
+            deleted.push(id);
         }
-        Arc::clone(
-            map.entry(key.to_string())
-                .or_insert_with(|| Arc::new(JobEntry::new())),
-        )
-    };
-    for session in expired {
-        delete_in_background(&session);
     }
-    entry
+    deleted
 }
 
-fn delete_in_background(session: &JobSession) {
-    let Some(ref client) = session.client else {
-        return;
-    };
-    if !client.is_connected() {
-        return;
-    }
-    if let Ok(handle) = tokio::runtime::Handle::try_current() {
-        let client = Arc::clone(client);
-        let session_id = session.session_id.clone();
-        handle.spawn(async move {
-            let _ = client.delete_session(&session_id).await;
-        });
-    }
-}
-
-/// Sweeps in-RAM `JOB_ENTRIES` that have been idle longer than `JOB_SESSION_TTL` even when no new
-/// video call arrives.
-pub(crate) fn sweep_idle_job_sessions() {
-    let now = Instant::now();
-    let mut expired: Vec<JobSession> = Vec::new();
-    {
-        let mut map = JOB_ENTRIES.lock().unwrap_or_else(|e| e.into_inner());
-        map.retain(|_, entry| {
-            if entry.idle_for(now) < JOB_SESSION_TTL {
-                return true;
-            }
-            match entry.gate.try_lock() {
-                Ok(mut slot) => {
-                    expired.extend(slot.take());
-                    false
-                }
-                Err(_) => true,
-            }
-        });
-    }
-    for session in expired {
-        delete_in_background(&session);
-    }
-}
-
-/// Restores a job's retained Muse session into the in-RAM registry from a persisted
-/// `tool_operations` record after server restart.
 pub(crate) async fn restore_job_session(
     key: &str,
     account_key: String,
@@ -242,8 +192,7 @@ pub(crate) async fn restore_job_sessions_from_operations(
             .as_deref()
             .and_then(|s| serde_json::from_str::<Vec<String>>(s).ok())
             .unwrap_or_default();
-        let last_timed_out =
-            op.status == orchestrator_agent_rs::ToolOperationStatus::Expired;
+        let last_timed_out = op.status == orchestrator_agent_rs::ToolOperationStatus::Expired;
         restore_job_session(
             cont_key,
             acc_key.clone(),
@@ -256,21 +205,111 @@ pub(crate) async fn restore_job_sessions_from_operations(
     }
 }
 
-/// Releases and deletes the retained Muse session for a finished job (`key` = `root_session_id`).
-pub(crate) async fn release_job_session(key: &str) {
-    let removed = {
-        let mut map = JOB_ENTRIES.lock().unwrap_or_else(|e| e.into_inner());
-        map.remove(key)
-    };
-    let Some(entry) = removed else {
-        return;
-    };
+/// Deletes the remote session, returning its ID only after Muse acknowledges deletion.
+/// Failed cleanup remains registered so the periodic sweep can retry it.
+pub(crate) async fn release_job_session(key: &str) -> Option<String> {
+    release_job_session_inner(key, false).await
+}
+
+async fn release_job_session_inner(key: &str, idle_only: bool) -> Option<String> {
+    let entry = {
+        let map = JOB_ENTRIES.lock().unwrap_or_else(|e| e.into_inner());
+        map.get(key).cloned()
+    }?;
+    let mut slot = entry.gate.lock().await;
+    if idle_only && entry.idle_for(Instant::now()) < JOB_SESSION_TTL {
+        return None;
+    }
+    let session = slot.as_ref()?;
+    if !delete_remote_session(session).await {
+        return None;
+    }
+    let session_id = session.session_id.clone();
+    *slot = None;
     entry.set_account_hint(None);
-    let mut slot = entry.lock().await;
-    if let Some(session) = slot.take()
-        && let Some(ref client) = session.client
+    let mut map = JOB_ENTRIES.lock().unwrap_or_else(|e| e.into_inner());
+    if map
+        .get(key)
+        .is_some_and(|current| Arc::ptr_eq(current, &entry))
+    {
+        map.remove(key);
+    }
+    Some(session_id)
+}
+
+/// Cleanup must address every recorded remote session, not only the latest
+/// session retained under a job's continuation key.
+pub(crate) async fn release_operation_session(
+    op: &orchestrator_agent_rs::ToolOperation,
+) -> Option<String> {
+    let sid = op.remote_session_id.as_ref()?;
+    if let Some(key) = op.continuation_key.as_deref() {
+        let entry = {
+            JOB_ENTRIES
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .get(key)
+                .cloned()
+        };
+        if let Some(entry) = entry {
+            let matches = entry.gate.lock().await.as_ref().is_some_and(|session| {
+                session.session_id == *sid && Some(&session.account_key) == op.account_key.as_ref()
+            });
+            if matches {
+                return release_job_session(key).await;
+            }
+        }
+    }
+    let session = JobSession::new(
+        op.account_key.clone()?,
+        sid.clone(),
+        None,
+        false,
+        None,
+        Vec::new(),
+    );
+    delete_remote_session(&session).await.then(|| sid.clone())
+}
+
+async fn delete_remote_session(session: &JobSession) -> bool {
+    if let Some(client) = &session.client
         && client.is_connected()
     {
-        let _ = client.delete_session(&session.session_id).await;
+        return client.delete_session(&session.session_id).await.is_ok();
     }
+    // Restored sessions have no client. Reopen the owning account, including
+    // accounts cooling down for new requests: cleanup does not generate media.
+    let cached_pool = {
+        let pools = super::GLOBAL_POOLS
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        pools
+            .values()
+            .find(|pool| {
+                pool.gateway_account_key().as_deref() == Some(session.account_key.as_str())
+            })
+            .cloned()
+    };
+    let pool = match cached_pool {
+        Some(pool) => pool,
+        None => {
+            let hub = crate::services::llm_gateway::SharedGatewayHub::global();
+            let Ok(lease) = hub.acquire_account_for_polling(&session.account_key) else {
+                return false;
+            };
+            if lease.vendor != crate::services::llm_gateway::GatewayVendor::Muse {
+                return false;
+            }
+            super::SharedMusePool::for_gateway_lease(
+                &reqwest::Client::new(),
+                &lease.account_key,
+                lease.access_token.expose(),
+                None,
+            )
+        }
+    };
+    let Ok(client) = pool.ensure_account_client(0).await else {
+        return false;
+    };
+    client.delete_session(&session.session_id).await.is_ok()
 }
