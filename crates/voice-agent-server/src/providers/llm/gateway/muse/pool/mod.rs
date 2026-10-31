@@ -1,5 +1,6 @@
 mod account;
 mod connect;
+mod job_sessions;
 mod lease;
 mod types;
 mod warmup;
@@ -12,6 +13,7 @@ use tokio::sync::Notify;
 use uuid::Uuid;
 
 use self::account::{AccountStatus, MuseAccountState};
+pub(crate) use self::job_sessions::{JobEntry, JobSession, job_entry};
 pub(crate) use self::lease::VmOperationLease;
 pub(crate) use self::types::{ConversationTurn, HotConversation, UpstreamFailureKind};
 use super::cdp::BrowserEngine;
@@ -123,10 +125,8 @@ impl SharedMusePool {
         fallback_browser: Option<Arc<dyn BrowserEngine>>,
         credentials: Vec<MuseAccountCredential>,
     ) -> Self {
-        let accounts: Vec<MuseAccountState> = credentials
-            .into_iter()
-            .map(MuseAccountState::new)
-            .collect();
+        let accounts: Vec<MuseAccountState> =
+            credentials.into_iter().map(MuseAccountState::new).collect();
         let has_accounts = !accounts.is_empty();
         let pool = Self {
             inner: Arc::new(MusePoolInner {
@@ -151,17 +151,35 @@ impl SharedMusePool {
         &self,
         prior_turns: &[ConversationTurn],
     ) -> Result<VmOperationLease, (UpstreamFailureKind, String)> {
-        self.acquire_internal(prior_turns, true).await
+        self.acquire_internal(prior_turns, true, None).await
     }
 
     pub async fn acquire_fresh(&self) -> Result<VmOperationLease, (UpstreamFailureKind, String)> {
-        self.acquire_internal(&[], false).await
+        self.acquire_internal(&[], false, None).await
+    }
+
+    /// Acquires a lease that talks on `session_id` (a retained job session) instead of a new one.
+    pub async fn acquire_existing_session(
+        &self,
+        session_id: String,
+    ) -> Result<VmOperationLease, (UpstreamFailureKind, String)> {
+        self.acquire_internal(&[], false, Some(session_id)).await
+    }
+
+    /// Gateway account key of this pool's (single) account, used to validate session reuse.
+    pub fn gateway_account_key(&self) -> Option<String> {
+        let state = self.inner.state.lock().unwrap_or_else(|e| e.into_inner());
+        state
+            .accounts
+            .first()
+            .and_then(|acc| acc.gateway_account_key.clone())
     }
 
     async fn acquire_internal(
         &self,
         prior_turns: &[ConversationTurn],
         prefer_hot: bool,
+        forced_session_id: Option<String>,
     ) -> Result<VmOperationLease, (UpstreamFailureKind, String)> {
         loop {
             let candidate = {
@@ -259,7 +277,16 @@ impl SharedMusePool {
                         let session_id = matched_hot
                             .as_ref()
                             .map(|h| h.session_id.clone())
+                            .or_else(|| forced_session_id.clone())
                             .unwrap_or_else(|| Uuid::new_v4().to_string());
+                        let account_key = self
+                            .inner
+                            .state
+                            .lock()
+                            .unwrap_or_else(|e| e.into_inner())
+                            .accounts
+                            .get(acc_idx)
+                            .and_then(|acc| acc.gateway_account_key.clone());
                         return Ok(VmOperationLease {
                             pool: self.clone(),
                             account_index: acc_idx,
@@ -268,6 +295,8 @@ impl SharedMusePool {
                             matched_hot,
                             saved_as_hot: false,
                             cleaned: false,
+                            account_key,
+                            retain_session: false,
                         });
                     }
                     Err((kind, _reason)) => {

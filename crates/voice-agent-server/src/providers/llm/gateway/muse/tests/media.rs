@@ -75,8 +75,7 @@ async fn image_generation_attaches_reference_images_reads_fs_and_removes_backgro
     };
     assert_eq!(assistant_message.as_deref(), Some("Here is your sticker"));
     assert_eq!(mime_type, "image/png");
-    let (_w, _h, rgba) =
-        decode_uncompressed_or_simple_png(&bytes).expect("decode output rgba png");
+    let (_w, _h, rgba) = decode_uncompressed_or_simple_png(&bytes).expect("decode output rgba png");
     assert_eq!(rgba[3], 0, "background removed to alpha 0");
 
     // Allow spawned ephemeral session cleanup task to run
@@ -168,6 +167,7 @@ async fn video_generation_harvests_all_multi_clip_paths_via_fs_read_and_assistan
             height: 720,
             duration_secs: 30,
             first_frame: None,
+            continuation_key: None,
         })
         .await
         .expect("multi-clip video generation succeeds");
@@ -253,6 +253,7 @@ async fn video_generation_selects_final_merged_group_when_raw_clips_precede_merg
             height: 720,
             duration_secs: 20,
             first_frame: None,
+            continuation_key: None,
         })
         .await
         .expect("merged video generation succeeds");
@@ -278,7 +279,9 @@ async fn image_generation_completes_from_history_presentation_without_done_marke
         &[0x24, 0x00, 0x00, 0x00],
         b"WEBP",
         b"VP8 ",
-        &[0x10, 0x00, 0x00, 0x00, 0x9D, 0x01, 0x2A, 0x80, 0x04, 0x00, 0x08],
+        &[
+            0x10, 0x00, 0x00, 0x00, 0x9D, 0x01, 0x2A, 0x80, 0x04, 0x00, 0x08,
+        ],
     ]
     .concat();
     let rel_path =
@@ -519,6 +522,7 @@ async fn video_generation_waits_across_commentary_and_message_to_presentation_ga
             height: 1920,
             duration_secs: 50,
             first_frame: None,
+            continuation_key: None,
         })
         .await
         .expect("50s merged video generation succeeds without premature nudge");
@@ -569,12 +573,18 @@ async fn short_video_is_repaired_in_the_same_session_until_target_duration_is_me
     let full = mp4_with_duration(50);
     let turn1 = FakeStreamTurn::media_reply(
         vec![],
-        single_video_history("Beat 4 failed, here is what I have", "sandbox:///home/user/a.mp4"),
+        single_video_history(
+            "Beat 4 failed, here is what I have",
+            "sandbox:///home/user/a.mp4",
+        ),
         vec![],
     );
     let turn2 = FakeStreamTurn::media_reply(
         vec![],
-        single_video_history("Merged all beats [ALL_MEDIA_ATTACHED]", "sandbox:///home/user/b.mp4"),
+        single_video_history(
+            "Merged all beats [ALL_MEDIA_ATTACHED]",
+            "sandbox:///home/user/b.mp4",
+        ),
         vec![],
     );
     let acc = FakeVmAccount::new(vec![turn1, turn2])
@@ -590,12 +600,17 @@ async fn short_video_is_repaired_in_the_same_session_until_target_duration_is_me
             height: 1920,
             duration_secs: 50,
             first_frame: None,
+            continuation_key: None,
         })
         .await
         .expect("repaired video succeeds");
 
     let reqs = acc.stream_requests();
-    assert_eq!(reqs.len(), 2, "one repair turn must follow the short result");
+    assert_eq!(
+        reqs.len(),
+        2,
+        "one repair turn must follow the short result"
+    );
     assert_eq!(
         reqs[0]["session_id"], reqs[1]["session_id"],
         "repair must reuse the same Muse session"
@@ -609,5 +624,87 @@ async fn short_video_is_repaired_in_the_same_session_until_target_duration_is_me
     };
     assert_eq!(bytes, full, "the full-length video replaces the short one");
     tokio::task::yield_now().await;
-    assert_eq!(acc.deleted_sessions().len(), 1, "session deleted once, after the repair");
+    assert_eq!(
+        acc.deleted_sessions().len(),
+        1,
+        "session deleted once, after the repair"
+    );
+}
+
+async fn invoke_video(
+    provider: &crate::providers::llm::gateway::LlmGatewayProvider,
+    key: Option<&str>,
+) -> Result<LlmOutput, crate::providers::llm::LlmError> {
+    provider
+        .invoke(LlmOperation::VideoGeneration {
+            prompt: "recap".to_string(),
+            width: 1080,
+            height: 1920,
+            duration_secs: 30,
+            first_frame: None,
+            continuation_key: key.map(str::to_string),
+        })
+        .await
+}
+
+fn full_video_turn(path: &str) -> FakeStreamTurn {
+    FakeStreamTurn::media_reply(
+        vec![],
+        single_video_history("done [ALL_MEDIA_ATTACHED]", path),
+        vec![],
+    )
+}
+
+#[tokio::test]
+async fn video_calls_with_same_continuation_key_share_one_muse_session() {
+    let acc = FakeVmAccount::new(vec![
+        full_video_turn("sandbox:///home/user/a.mp4"),
+        full_video_turn("sandbox:///home/user/b.mp4"),
+        full_video_turn("sandbox:///home/user/c.mp4"),
+    ])
+    .with_file("/home/user/a.mp4", mp4_with_duration(30))
+    .with_file("/home/user/b.mp4", mp4_with_duration(30))
+    .with_file("/home/user/c.mp4", mp4_with_duration(30));
+    let transport = FakeMuseVmTransport::new(vec![Arc::clone(&acc)]);
+    let provider = build_gateway_muse_provider(&[SINGLE_COOKIE], transport).await;
+
+    invoke_video(&provider, Some("job-1"))
+        .await
+        .expect("first call");
+    invoke_video(&provider, Some("job-1"))
+        .await
+        .expect("retry in same job");
+    invoke_video(&provider, Some("job-2"))
+        .await
+        .expect("other job");
+    for _ in 0..20 {
+        tokio::task::yield_now().await;
+    }
+
+    let sids: Vec<String> = acc
+        .stream_requests()
+        .iter()
+        .map(|r| r["session_id"].as_str().unwrap_or("").to_string())
+        .collect();
+    assert_eq!(sids.len(), 3);
+    assert_eq!(sids[0], sids[1], "same job reuses its Muse session");
+    assert_ne!(sids[0], sids[2], "another job gets its own session");
+    assert!(
+        acc.deleted_sessions().is_empty(),
+        "job sessions are retained for the job, not deleted per call: {:?}",
+        acc.deleted_sessions()
+    );
+}
+
+#[tokio::test]
+async fn video_call_without_continuation_key_still_deletes_its_session() {
+    let acc = FakeVmAccount::new(vec![full_video_turn("sandbox:///home/user/a.mp4")])
+        .with_file("/home/user/a.mp4", mp4_with_duration(30));
+    let transport = FakeMuseVmTransport::new(vec![Arc::clone(&acc)]);
+    let provider = build_gateway_muse_provider(&[SINGLE_COOKIE], transport).await;
+    invoke_video(&provider, None).await.expect("call");
+    for _ in 0..20 {
+        tokio::task::yield_now().await;
+    }
+    assert_eq!(acc.deleted_sessions().len(), 1);
 }

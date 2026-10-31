@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
-use super::SharedMusePool;
 use super::super::client::MuseVmClient;
+use super::SharedMusePool;
 use super::types::{HotConversation, UpstreamFailureKind};
 
 pub(crate) struct VmOperationLease {
@@ -12,6 +12,10 @@ pub(crate) struct VmOperationLease {
     pub(super) matched_hot: Option<HotConversation>,
     pub(super) saved_as_hot: bool,
     pub(super) cleaned: bool,
+    /// Gateway account that owns this lease's VM (None for pools built without gateway context).
+    pub(super) account_key: Option<String>,
+    /// Keep the Muse session alive after the operation (job-scoped continuation).
+    pub(super) retain_session: bool,
 }
 
 impl VmOperationLease {
@@ -25,6 +29,16 @@ impl VmOperationLease {
 
     pub fn set_session_id(&mut self, session_id: String) {
         self.session_id = session_id;
+    }
+
+    pub fn account_key(&self) -> Option<&str> {
+        self.account_key.as_deref()
+    }
+
+    /// Keeps the Muse session after this operation so a later call of the same job can continue it.
+    /// Failures that condemn the account (`fail_account`) still delete the session.
+    pub fn retain_session(&mut self) {
+        self.retain_session = true;
     }
 
     pub fn matched_hot(&self) -> Option<&HotConversation> {
@@ -42,7 +56,9 @@ impl VmOperationLease {
         } else {
             self.saved_as_hot = false;
             self.pool.release_op_clean(self.account_index, None);
-            spawn_delete_ephemeral_session(&self.client, &self.session_id);
+            if !self.retain_session {
+                spawn_delete_ephemeral_session(&self.client, &self.session_id);
+            }
         }
     }
 
@@ -65,7 +81,7 @@ impl Drop for VmOperationLease {
         if !self.cleaned {
             self.cleaned = true;
             self.pool.release_op_clean(self.account_index, None);
-            if !self.saved_as_hot {
+            if !self.saved_as_hot && !self.retain_session {
                 spawn_delete_ephemeral_session(&self.client, &self.session_id);
             }
         }

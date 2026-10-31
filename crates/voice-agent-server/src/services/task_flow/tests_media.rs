@@ -128,6 +128,7 @@ async fn catalog_media_backend_and_reasoning_tag_wire_provider_capabilities() {
             height: 360,
             duration_secs: 4,
             first_frame: None,
+            continuation_key: None,
         })
         .await
         .unwrap();
@@ -236,6 +237,7 @@ async fn catalog_media_backend_and_reasoning_tag_wire_provider_capabilities() {
             height: 64,
             duration_secs: 2,
             first_frame: None,
+            continuation_key: None,
         })
         .await
         .unwrap();

@@ -323,6 +323,9 @@ pub enum LlmOperation {
         duration_secs: u32,
         /// Ảnh khung hình đầu tiên (Image-to-Video) nếu có.
         first_frame: Option<ReferenceImage>,
+        /// Khoá liên tục theo job (root session id). Các lần gọi cùng khoá được phép dùng chung
+        /// một session phía provider thay vì mở session mới cho mỗi lần gọi.
+        continuation_key: Option<String>,
     },
     AudioSpeech {
         text: String,
@@ -388,6 +391,7 @@ impl LlmOperation {
                 height: 720,
                 duration_secs: 5,
                 first_frame: None,
+                continuation_key: None,
             },
             LlmCapabilityTag::Audio => Self::AudioSpeech {
                 text: prompt,

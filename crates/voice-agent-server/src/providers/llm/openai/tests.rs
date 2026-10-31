@@ -256,6 +256,7 @@ async fn openai_provider_executes_all_seven_capabilities_against_upstream() {
             height: 720,
             duration_secs: 5,
             first_frame: None,
+            continuation_key: None,
         })
         .await
         .unwrap();
@@ -383,6 +384,7 @@ async fn video_generation_polls_async_job_status_until_completed_and_fetches_con
             height: 720,
             duration_secs: 8,
             first_frame: None,
+            continuation_key: None,
         })
         .await
         .unwrap();

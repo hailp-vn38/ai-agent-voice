@@ -756,8 +756,7 @@ async fn llm_gateway_provider_executes_muse_chat_vision_image_video_and_rotates_
     .with_file("/home/user/out.png", VALID_PNG_BYTES.to_vec())
     .with_file("/home/user/out.mp4", VALID_MP4_BYTES.to_vec());
 
-    let transport: Arc<dyn MuseVmTransport> =
-        FakeMuseVmTransport::new(vec![vm_acc1, vm_acc2]);
+    let transport: Arc<dyn MuseVmTransport> = FakeMuseVmTransport::new(vec![vm_acc1, vm_acc2]);
 
     let cfg = LlmGatewayConfig {
         gateway_binding: GatewayBinding::Pool(GatewayVendor::Muse),
@@ -838,6 +837,7 @@ async fn llm_gateway_provider_executes_muse_chat_vision_image_video_and_rotates_
             height: 720,
             duration_secs: 5,
             first_frame: None,
+            continuation_key: None,
         })
         .await
         .expect("video generation via acc2");
@@ -1386,4 +1386,3 @@ async fn llm_gateway_gemini_403_does_not_mark_upstream_unauthorized_and_pool_fai
     assert_eq!(v2_after.status, GatewayAccountStatus::Active);
     assert_eq!(v2_after.last_error, None);
 }
-

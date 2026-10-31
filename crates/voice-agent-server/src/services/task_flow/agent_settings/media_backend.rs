@@ -333,6 +333,7 @@ impl orchestrator_flow_rs::VideoGeneratorBackend for CatalogMediaBackend {
                 height,
                 duration_secs,
                 first_frame,
+                continuation_key: req.continuation_key.clone(),
             })
             .await
             .map_err(|e| e.to_string())?;

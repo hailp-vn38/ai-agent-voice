@@ -291,6 +291,7 @@ impl LlmProvider for LlmGatewayProvider {
                     &reference_images,
                     transparent_background,
                     None,
+                    None,
                     LlmCapabilityTag::Image.as_str(),
                 )
                 .await
@@ -301,6 +302,7 @@ impl LlmProvider for LlmGatewayProvider {
                 height,
                 duration_secs,
                 first_frame,
+                continuation_key,
             } => {
                 self.ensure_tag(LlmCapabilityTag::Video)?;
                 let formatted = format_video_prompt(&prompt, width, height, duration_secs);
@@ -311,6 +313,7 @@ impl LlmProvider for LlmGatewayProvider {
                     &images,
                     false,
                     Some(duration_secs),
+                    continuation_key,
                     LlmCapabilityTag::Video.as_str(),
                 )
                 .await

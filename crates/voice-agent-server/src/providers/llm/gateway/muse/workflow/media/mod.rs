@@ -13,7 +13,9 @@ use self::candidates::{
     is_presentation_pending, select_effective_ready_attachments, sniff_media_mime_type,
 };
 use super::super::client::VmStreamEvent;
-use super::super::pool::{SharedMusePool, UpstreamFailureKind, VmOperationLease};
+use super::super::pool::{
+    JobEntry, JobSession, SharedMusePool, UpstreamFailureKind, VmOperationLease,
+};
 use super::super::proto::SERVICE_DAEMON;
 use super::png::remove_background_to_rgba_png;
 use super::{
@@ -41,15 +43,34 @@ pub(crate) async fn run_media_turn_once(
     images: &[ReferenceImage],
     transparent_background: bool,
     target_duration_secs: Option<u32>,
+    job: Option<Arc<JobEntry>>,
     timeout_duration: Duration,
 ) -> Result<LlmOutput, WorkflowFailure> {
     if formatted_prompt.trim().is_empty() {
         return Err(WorkflowFailure::Rejected("empty media prompt".to_string()));
     }
-    let mut lease = pool
-        .acquire_fresh()
-        .await
-        .map_err(|(kind, reason)| WorkflowFailure::Upstream(kind, reason))?;
+    // Calls of one job run one at a time so they never interleave inside the shared session.
+    let mut gate = match &job {
+        Some(entry) => Some(entry.lock().await),
+        None => None,
+    };
+    let retained = gate
+        .as_ref()
+        .and_then(|slot| (**slot).clone())
+        .filter(|session| {
+            pool.gateway_account_key().as_deref() == Some(session.account_key.as_str())
+        });
+    let mut lease = match &retained {
+        Some(session) => {
+            pool.acquire_existing_session(session.session_id.clone())
+                .await
+        }
+        None => pool.acquire_fresh().await,
+    }
+    .map_err(|(kind, reason)| WorkflowFailure::Upstream(kind, reason))?;
+    if job.is_some() {
+        lease.retain_session();
+    }
 
     let res = execute_media_turn_on_lease(
         &mut lease,
@@ -64,6 +85,19 @@ pub(crate) async fn run_media_turn_once(
 
     if let Err(WorkflowFailure::Upstream(err_kind, _)) = &res {
         lease.fail_account(*err_kind).await;
+        if let (Some(entry), Some(slot)) = (&job, gate.as_mut()) {
+            **slot = None;
+            entry.set_account_hint(None);
+        }
+    } else if let (Some(entry), Some(slot)) = (&job, gate.as_mut())
+        && let Some(account_key) = lease.account_key()
+    {
+        **slot = Some(JobSession::new(
+            account_key.to_string(),
+            lease.session_id().to_string(),
+            Arc::clone(lease.client()),
+        ));
+        entry.set_account_hint(Some(account_key.to_string()));
     }
     res
 }
@@ -120,15 +154,14 @@ async fn execute_media_turn_on_lease(
         let assistant_message = format_clean_assistant_bubbles(&turn.assistant_bubbles);
 
         if matches!(kind, MediaKind::Image) {
-            return finish_image(lease, &selected, transparent_background, assistant_message)
-                .await;
+            return finish_image(lease, &selected, transparent_background, assistant_message).await;
         }
 
         let parts = download_video_parts(lease, &selected).await?;
         let total_secs = total_duration_secs(&parts);
-        let is_better = best.as_ref().is_none_or(|b| {
-            total_secs.unwrap_or(0) >= b.total_secs.unwrap_or(0)
-        });
+        let is_better = best
+            .as_ref()
+            .is_none_or(|b| total_secs.unwrap_or(0) >= b.total_secs.unwrap_or(0));
         if is_better {
             best = Some(BestVideo {
                 parts,
@@ -139,10 +172,7 @@ async fn execute_media_turn_on_lease(
 
         let best_total = best.as_ref().and_then(|b| b.total_secs);
         let shortfall = video_shortfall_secs(target_duration_secs, best_total);
-        if shortfall == 0
-            || repairs_used >= MAX_DURATION_REPAIRS
-            || Instant::now() >= deadline
-        {
+        if shortfall == 0 || repairs_used >= MAX_DURATION_REPAIRS || Instant::now() >= deadline {
             break;
         }
         repairs_used += 1;
@@ -151,8 +181,7 @@ async fn execute_media_turn_on_lease(
             best_total.unwrap_or_default(),
             shortfall,
         );
-        send_media_stream_request(lease, vec![json!({ "type": "text", "text": followup })])
-            .await?;
+        send_media_stream_request(lease, vec![json!({ "type": "text", "text": followup })]).await?;
     }
 
     let Some(best) = best else {

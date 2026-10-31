@@ -18,7 +18,7 @@ use crate::{
 use super::super::{
     config::LlmGatewayConfig,
     muse::{
-        pool::{SharedMusePool, UpstreamFailureKind},
+        pool::{SharedMusePool, UpstreamFailureKind, job_entry},
         workflow::{MediaKind, WorkflowFailure, run_chat_turn_once, run_media_turn_once},
     },
 };
@@ -111,12 +111,11 @@ impl LlmGatewayProvider {
                     let emitted_delta = Arc::new(AtomicBool::new(false));
                     let emitted_flag = Arc::clone(&emitted_delta);
                     let tx_delta = tx.clone();
-                    let res =
-                        run_chat_turn_once(&pool, &req_clone, &[], timeout, move |delta| {
-                            emitted_flag.store(true, Ordering::Relaxed);
-                            let _ = tx_delta.send(Ok(LlmEvent::TextDelta(delta)));
-                        })
-                        .await;
+                    let res = run_chat_turn_once(&pool, &req_clone, &[], timeout, move |delta| {
+                        emitted_flag.store(true, Ordering::Relaxed);
+                        let _ = tx_delta.send(Ok(LlmEvent::TextDelta(delta)));
+                    })
+                    .await;
 
                     match res {
                         Ok(_) => {
@@ -250,12 +249,27 @@ impl LlmGatewayProvider {
         images: &[ReferenceImage],
         transparent_background: bool,
         target_duration_secs: Option<u32>,
+        continuation_key: Option<String>,
         required_tag: &'static str,
     ) -> Result<LlmOutput, LlmError> {
-        let lease = self
-            .hub
-            .acquire_lease(&self.config.gateway_binding)
-            .map_err(|_| LlmError::Rejected)?;
+        let job = continuation_key.as_deref().map(job_entry);
+        // Keep a job on the account that already holds its Muse session.
+        let pinned = job
+            .as_ref()
+            .and_then(|entry| entry.account_hint())
+            .and_then(|account_key| {
+                self.hub
+                    .acquire_lease(&GatewayBinding::Account(account_key))
+                    .ok()
+            })
+            .filter(|lease| lease.vendor == GatewayVendor::Muse);
+        let lease = match pinned {
+            Some(lease) => lease,
+            None => self
+                .hub
+                .acquire_lease(&self.config.gateway_binding)
+                .map_err(|_| LlmError::Rejected)?,
+        };
         if lease.vendor != GatewayVendor::Muse {
             return Err(LlmError::UnsupportedCapability(required_tag));
         }
@@ -270,17 +284,21 @@ impl LlmGatewayProvider {
             MediaKind::Image => 180_000,
         };
         let timeout = Duration::from_millis(self.config.timeout_ms.max(min_timeout_ms));
-        self.execute_muse_with_auth_refresh_and_failover(lease, is_pool, max_attempts, |pool| async move {
-            run_media_turn_once(
-                &pool,
-                kind,
-                formatted_prompt,
-                images,
-                transparent_background,
-                target_duration_secs,
-                timeout,
-            )
-            .await
+        self.execute_muse_with_auth_refresh_and_failover(lease, is_pool, max_attempts, |pool| {
+            let job = job.clone();
+            async move {
+                run_media_turn_once(
+                    &pool,
+                    kind,
+                    formatted_prompt,
+                    images,
+                    transparent_background,
+                    target_duration_secs,
+                    job,
+                    timeout,
+                )
+                .await
+            }
         })
         .await
     }

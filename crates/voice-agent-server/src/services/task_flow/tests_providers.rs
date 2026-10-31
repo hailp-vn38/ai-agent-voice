@@ -524,6 +524,7 @@ fn muse_gateway_provider_in_catalog_supports_media_and_custom_executor() {
             height: 720,
             duration_secs: 20,
             first_frame: None,
+            continuation_key: None,
         },
         "muse_media",
         &backend_vc,
