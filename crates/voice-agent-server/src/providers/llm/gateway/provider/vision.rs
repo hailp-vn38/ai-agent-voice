@@ -6,7 +6,11 @@ use crate::{
 };
 
 use super::super::{
-    muse::workflow::run_chat_turn_once, wire_anthropic, wire_codex, wire_gemini, wire_openai,
+    muse::{
+        pool::UpstreamFailureKind,
+        workflow::{WorkflowFailure, run_chat_turn_once},
+    },
+    wire_anthropic, wire_codex, wire_gemini, wire_openai,
 };
 use super::muse_ops::{is_retryable_muse_failure, report_muse_failure_to_hub};
 use super::{LlmGatewayProvider, MAX_POOL_FAILOVER_ATTEMPTS, WireError};
@@ -99,40 +103,60 @@ impl LlmGatewayProvider {
             let req = LlmRequest::text_turn(prompt.to_owned());
             let mut current_lease = lease;
             for attempt in 0..max_attempts {
-                let pool = self.muse_pool_for_lease(&self.config, &current_lease);
-                match run_chat_turn_once(
-                    &pool,
-                    &req,
-                    std::slice::from_ref(&ref_img),
-                    timeout,
-                    |_| {},
-                )
-                .await
-                {
-                    Ok(text) => {
-                        self.hub.report_outcome(
-                            &current_lease.account_key,
-                            GatewayCallOutcome::Success,
-                        );
-                        return Ok(LlmOutput::Text(text));
-                    }
-                    Err(failure) => {
-                        let can_failover = is_pool
-                            && is_retryable_muse_failure(&failure)
-                            && attempt + 1 < max_attempts;
-                        let err = report_muse_failure_to_hub(
-                            &self.hub,
-                            &current_lease.account_key,
-                            failure,
-                        );
-                        if can_failover
-                            && let Ok(next_lease) =
-                                self.hub.acquire_lease(&self.config.gateway_binding)
-                        {
-                            current_lease = next_lease;
-                            continue;
+                let mut refreshed_in_attempt = false;
+                loop {
+                    let pool = self.muse_pool_for_lease(&self.config, &current_lease);
+                    match run_chat_turn_once(
+                        &pool,
+                        &req,
+                        std::slice::from_ref(&ref_img),
+                        timeout,
+                        |_| {},
+                    )
+                    .await
+                    {
+                        Ok(text) => {
+                            self.hub.report_outcome(
+                                &current_lease.account_key,
+                                GatewayCallOutcome::Success,
+                            );
+                            return Ok(LlmOutput::Text(text));
                         }
-                        return Err(err);
+                        Err(failure) => {
+                            if !refreshed_in_attempt
+                                && matches!(
+                                    failure,
+                                    WorkflowFailure::Upstream(UpstreamFailureKind::AuthInvalid, _)
+                                )
+                                && let Some(refreshed_lease) = self
+                                    .hub
+                                    .try_refresh_on_unauthorized(
+                                        &current_lease.account_key,
+                                        current_lease.access_token.expose(),
+                                    )
+                                    .await
+                            {
+                                refreshed_in_attempt = true;
+                                current_lease = refreshed_lease;
+                                continue;
+                            }
+                            let can_failover = is_pool
+                                && is_retryable_muse_failure(&failure)
+                                && attempt + 1 < max_attempts;
+                            let err = report_muse_failure_to_hub(
+                                &self.hub,
+                                &current_lease.account_key,
+                                failure,
+                            );
+                            if can_failover
+                                && let Ok(next_lease) =
+                                    self.hub.acquire_lease(&self.config.gateway_binding)
+                            {
+                                current_lease = next_lease;
+                                break;
+                            }
+                            return Err(err);
+                        }
                     }
                 }
             }

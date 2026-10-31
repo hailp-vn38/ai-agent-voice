@@ -57,22 +57,61 @@ impl SharedMusePool {
             .as_ref()
             .map(|t| Arc::as_ptr(t) as *const () as usize)
             .unwrap_or(0);
-        let cache_key = format!("gw:{account_id}:{transport_id}:{credential_json}");
+        let prefix = format!("gw:{account_id}:{transport_id}:");
+        let cache_key = format!("{prefix}{credential_json}");
         let mut map = GLOBAL_POOLS.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(existing) = map.get(&cache_key) {
             return Arc::clone(existing);
         }
-        map.retain(|k, _| !k.starts_with(&format!("gw:{account_id}:{transport_id}:")));
+        if let Some(target_cred) = credentials.first()
+            && let Some(existing_pool) = map
+                .iter()
+                .find(|(k, _)| k.starts_with(&prefix))
+                .map(|(_, p)| Arc::clone(p))
+        {
+            let can_reuse = {
+                let state = existing_pool
+                    .inner
+                    .state
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner());
+                state.accounts.first().is_some_and(|acc| {
+                    matches!(acc.status, AccountStatus::Healthy)
+                        && acc.credential.wss_url == target_cred.wss_url
+                        && acc.credential.cookies == target_cred.cookies
+                })
+            };
+            if can_reuse {
+                map.retain(|k, _| !k.starts_with(&prefix));
+                map.insert(cache_key, Arc::clone(&existing_pool));
+                return existing_pool;
+            }
+        }
+        map.retain(|k, _| !k.starts_with(&prefix));
         let has_custom = custom_transport.is_some();
         let transport: Arc<dyn MuseVmTransport> =
             custom_transport.unwrap_or_else(|| Arc::new(WsNoiseVmTransport));
+        #[cfg(not(test))]
+        let fallback_browser: Option<Arc<dyn BrowserEngine>> = if has_custom {
+            None
+        } else {
+            Some(Arc::new(super::cdp::CdpBrowserEngine::new(19222, true)))
+        };
+        #[cfg(test)]
+        let fallback_browser: Option<Arc<dyn BrowserEngine>> = None;
         let pool = Arc::new(Self::new_with_options(
             http.clone(),
             transport,
             has_custom,
-            None,
+            fallback_browser,
             credentials,
         ));
+        {
+            let mut state = pool.inner.state.lock().unwrap_or_else(|e| e.into_inner());
+            if let Some(acc) = state.accounts.first_mut() {
+                acc.gateway_account_key = Some(account_id.to_string());
+            }
+        }
         map.insert(cache_key, Arc::clone(&pool));
         pool
     }

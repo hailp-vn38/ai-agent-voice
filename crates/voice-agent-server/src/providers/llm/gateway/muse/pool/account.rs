@@ -2,7 +2,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use super::super::client::MuseVmClient;
-use super::super::config::MuseAccountCredential;
+use super::super::config::{MuseAccountCredential, has_required_cookies};
 use super::types::{
     ConversationTurn, HOT_SESSION_IDLE_TTL, HotConversation, MAX_CONCURRENT_OPS_PER_ACCOUNT,
     MAX_HOT_SESSIONS_PER_ACCOUNT, QUOTA_COOLDOWN, TRANSIENT_COOLDOWN, UpstreamFailureKind,
@@ -20,6 +20,7 @@ pub(crate) enum AccountStatus {
 
 pub(crate) struct MuseAccountState {
     pub credential: MuseAccountCredential,
+    pub gateway_account_key: Option<String>,
     pub status: AccountStatus,
     pub vm_client: Option<Arc<MuseVmClient>>,
     pub active_ops: usize,
@@ -31,6 +32,7 @@ impl MuseAccountState {
     pub fn new(credential: MuseAccountCredential) -> Self {
         Self {
             credential,
+            gateway_account_key: None,
             status: AccountStatus::Healthy,
             vm_client: None,
             active_ops: 0,
@@ -104,6 +106,12 @@ impl MuseAccountState {
                 reason: kind,
             },
         };
+        if matches!(kind, UpstreamFailureKind::AuthInvalid)
+            && has_required_cookies(&self.credential.cookies)
+        {
+            self.credential.wss_url = None;
+            self.credential.wss_expires = None;
+        }
         if matches!(
             kind,
             UpstreamFailureKind::AuthInvalid | UpstreamFailureKind::Transient

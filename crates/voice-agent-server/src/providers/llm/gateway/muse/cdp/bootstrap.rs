@@ -18,15 +18,16 @@ const EXTRACT_GATEWAY_INIT_JS: &str = r#"(async () => {
         };
     }
     const sResp = await fetch("/api/session?vm_state=live", { credentials: "include" });
-    if (sResp.status === 401 || sResp.status === 403) {
+    if (sResp.status === 401) {
         return { unauthorized: true, status: sResp.status };
     }
     if (!sResp.ok) {
         return { error: "session_http_" + sResp.status };
     }
     const s = await sResp.json();
-    const vmId = s.vmId || s.vm_id || "";
-    const endpointUrl = s.endpointUrl || s.endpoint_url || "";
+    const firstVm = Array.isArray(s.vms) && s.vms.length > 0 ? s.vms[0] : null;
+    const vmId = s.vmId || s.vm_id || s.vm_name || s.vmName || (firstVm && (firstVm.vm_id || firstVm.vmId || firstVm.id)) || "";
+    const endpointUrl = s.endpointUrl || s.endpoint_url || (firstVm && (firstVm.endpointUrl || firstVm.endpoint_url)) || (vmId ? ("wss://" + vmId + ".metaaivm.com/") : "");
     const email = s.email || (s.user && s.user.email) || "";
     if (!vmId || !endpointUrl) {
         return { error: "missing_vm_or_endpoint" };

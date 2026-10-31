@@ -395,31 +395,49 @@ impl LlmGatewayHub {
         }
     }
 
-    /// Out-of-band proactive renewal for accounts whose `expires_at` is within `margin_secs`.
+    /// Out-of-band proactive renewal for accounts whose `expires_at` is within `margin_secs`,
+    /// plus self-healing watchdog recovery for cookie-backed Muse accounts stuck in
+    /// `oauth_exchange_failed` or `upstream_unauthorized` (matching `muse-api-server-main`).
     pub async fn proactive_refresh_expiring(
         &self,
         margin_secs: i64,
     ) -> Result<usize, GatewayError> {
+        let now = Instant::now();
         let now_epoch = unix_seconds().unwrap_or(0);
-        let threshold = now_epoch + margin_secs.max(0);
-        let due_keys: Vec<String> = {
+        let default_margin = margin_secs.max(0);
+        let due_keys: Vec<(String, Option<i64>)> = {
             let guard = self.snapshot.read().unwrap_or_else(|p| p.into_inner());
             guard
                 .accounts
                 .values()
-                .filter(|acc| {
-                    acc.enabled
-                        && acc.status == GatewayAccountStatus::Active
-                        && acc.expires_at.is_some_and(|exp| exp <= threshold)
+                .filter_map(|acc| {
+                    if !acc.enabled || acc.cooldown_remaining_secs(now) > 0 {
+                        return None;
+                    }
+                    let drv = self.drivers.get(&acc.vendor);
+                    if acc.status == GatewayAccountStatus::Active {
+                        let eff_margin = drv
+                            .map(|d| d.proactive_refresh_margin_secs(default_margin))
+                            .unwrap_or(default_margin);
+                        let eff_threshold = now_epoch + eff_margin;
+                        if acc.expires_at.is_some_and(|exp| exp <= eff_threshold) {
+                            return Some((acc.account_key.clone(), Some(eff_threshold)));
+                        }
+                    } else if acc.status == GatewayAccountStatus::ReauthRequired
+                        && let (Some(d), Some(b)) = (drv, acc.bundle.as_ref())
+                        && d.can_self_heal_reauth(b, acc.last_error.as_deref())
+                    {
+                        return Some((acc.account_key.clone(), None));
+                    }
+                    None
                 })
-                .map(|acc| acc.account_key.clone())
                 .collect()
         };
 
         let mut refreshed = 0usize;
-        for key in due_keys {
+        for (key, skip_after) in due_keys {
             if self
-                .refresh_account_internal(&key, Some(threshold))
+                .refresh_account_internal(&key, skip_after)
                 .await
                 .is_ok()
             {
@@ -481,8 +499,12 @@ impl LlmGatewayHub {
                 self.get_account_view(account_key).await
             }
             Err(err) => {
-                self.mark_account_reauth_required(account_key, err.code())
-                    .await;
+                if driver.is_transient_refresh_error(&err) {
+                    self.mark_account_transient_refresh_cooldown(account_key, err.code());
+                } else {
+                    self.mark_account_reauth_required(account_key, err.code())
+                        .await;
+                }
                 Err(err)
             }
         }
@@ -546,6 +568,15 @@ impl LlmGatewayHub {
             acc.cooldown_until = None;
         }
         Ok(())
+    }
+
+    fn mark_account_transient_refresh_cooldown(&self, account_key: &str, err_code: &str) {
+        let now = Instant::now();
+        let mut guard = self.snapshot.write().unwrap_or_else(|p| p.into_inner());
+        if let Some(acc) = guard.accounts.get_mut(account_key) {
+            acc.cooldown_until = Some(now + Duration::from_secs(DEFAULT_COOLDOWN_SECS));
+            acc.last_error = Some(err_code.to_owned());
+        }
     }
 
     async fn mark_account_reauth_required(&self, account_key: &str, err_code: &str) {
@@ -2074,6 +2105,32 @@ impl LlmGatewayHub {
         }
     }
 
+    pub(crate) async fn persist_muse_runtime_credential(
+        &self,
+        account_key: &str,
+        cred: crate::providers::llm::gateway::muse::config::MuseAccountCredential,
+        discovered_email: Option<String>,
+    ) {
+        let is_muse = {
+            let guard = self.snapshot.read().unwrap_or_else(|p| p.into_inner());
+            guard
+                .accounts
+                .get(account_key)
+                .is_some_and(|acc| acc.vendor == GatewayVendor::Muse)
+        };
+        if !is_muse {
+            return;
+        }
+        let Ok(exchanged) =
+            super::vendors::muse::MuseOAuthDriver::build_exchanged_account(cred, discovered_email)
+        else {
+            return;
+        };
+        let _ = self
+            .persist_refreshed_bundle(account_key, GatewayVendor::Muse, exchanged)
+            .await;
+    }
+
     pub(crate) async fn try_refresh_on_unauthorized(
         &self,
         account_key: &str,
@@ -2108,8 +2165,12 @@ impl LlmGatewayHub {
                     .ok()
             }
             Err(err) => {
-                self.mark_account_reauth_required(account_key, err.code())
-                    .await;
+                if driver.is_transient_refresh_error(&err) {
+                    self.mark_account_transient_refresh_cooldown(account_key, err.code());
+                } else {
+                    self.mark_account_reauth_required(account_key, err.code())
+                        .await;
+                }
                 None
             }
         }

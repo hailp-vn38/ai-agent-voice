@@ -165,6 +165,18 @@ pub trait OAuthVendorDriver: Send + Sync {
     ) -> Result<VendorQuotaSnapshot, GatewayError>;
 
     fn extra_headers_for(&self, bundle: &OAuthTokenBundle) -> Vec<(String, String)>;
+
+    fn proactive_refresh_margin_secs(&self, default_margin_secs: i64) -> i64 {
+        default_margin_secs
+    }
+
+    fn can_self_heal_reauth(&self, _bundle: &OAuthTokenBundle, _last_error: Option<&str>) -> bool {
+        false
+    }
+
+    fn is_transient_refresh_error(&self, _err: &GatewayError) -> bool {
+        false
+    }
 }
 
 pub fn default_vendor_drivers() -> BTreeMap<GatewayVendor, Arc<dyn OAuthVendorDriver>> {
@@ -347,9 +359,14 @@ impl OAuthVendorDriver for FakeOAuthVendorDriver {
     ) -> Result<ExchangedOAuthAccount, GatewayError> {
         let seq = self.refresh_calls.fetch_add(1, Ordering::SeqCst) + 1;
         tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        let access_token = if self.vendor == GatewayVendor::Muse {
+            format!("{}; refreshed_seq={seq}", current.access_token)
+        } else {
+            format!("tok_refreshed_{}_{seq}", self.vendor.as_str())
+        };
         Ok(ExchangedOAuthAccount {
             bundle: OAuthTokenBundle {
-                access_token: format!("tok_refreshed_{}_{seq}", self.vendor.as_str()),
+                access_token,
                 refresh_token: current
                     .refresh_token
                     .clone()

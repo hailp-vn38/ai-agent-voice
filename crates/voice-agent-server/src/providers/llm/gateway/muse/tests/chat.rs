@@ -105,6 +105,34 @@ async fn pool_rotates_to_second_account_on_quota_or_auth_failure() {
 }
 
 #[tokio::test]
+async fn single_account_auto_refreshes_and_retries_on_401_unauthorized() {
+    let mut unauthorized_turn = FakeStreamTurn::chat_reply(vec![], "");
+    unauthorized_turn.status = 401;
+    let recovered_turn = FakeStreamTurn::chat_reply(
+        vec!["Phản hồi sau khi ", "auto-refresh phiên Muse!"],
+        "Phản hồi sau khi auto-refresh phiên Muse!",
+    );
+
+    let acc1_stale = FakeVmAccount::new(vec![unauthorized_turn]);
+    let acc1_refreshed = FakeVmAccount::new(vec![recovered_turn]);
+    let transport = FakeMuseVmTransport::new(vec![acc1_stale, acc1_refreshed]);
+    let provider = build_gateway_muse_provider(&[SINGLE_COOKIE], transport).await;
+
+    let req = LlmRequest::text_turn("Kiểm tra tự động refresh khi 401".to_string());
+    let reply = provider
+        .invoke(LlmOperation::Chat {
+            request: req,
+            reasoning: false,
+        })
+        .await
+        .expect("single Muse account should auto-refresh via hub and retry on 401");
+    assert_eq!(
+        reply,
+        LlmOutput::Text("Phản hồi sau khi auto-refresh phiên Muse!".to_string())
+    );
+}
+
+#[tokio::test]
 async fn chat_stream_waits_for_in_progress_assistant_and_reconciles_full_history_text() {
     let full_turn1_part1 = "# Mesut Özil — Tổng quan sự nghiệp & hoạt động sau giải nghệ\n\n**Mesut Özil** (sinh 15/10/1988 tại Gelsenkirchen) là cựu tiền vệ tấn công người Đức gốc Thổ Nhĩ Kỳ.";
     let full_turn1_part2 =

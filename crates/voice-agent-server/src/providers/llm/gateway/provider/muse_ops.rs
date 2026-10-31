@@ -100,47 +100,75 @@ impl LlmGatewayProvider {
         tokio::spawn(async move {
             let mut current_lease = lease;
             for attempt in 0..max_attempts {
-                let pool = SharedMusePool::for_gateway_lease(
-                    &http,
-                    &current_lease.account_key,
-                    current_lease.access_token.expose(),
-                    muse_transport.clone(),
-                );
-                let emitted_delta = Arc::new(AtomicBool::new(false));
-                let emitted_flag = Arc::clone(&emitted_delta);
-                let tx_delta = tx.clone();
-                let res = run_chat_turn_once(&pool, &req_clone, &[], timeout, move |delta| {
-                    emitted_flag.store(true, Ordering::Relaxed);
-                    let _ = tx_delta.send(Ok(LlmEvent::TextDelta(delta)));
-                })
-                .await;
+                let mut refreshed_in_attempt = false;
+                loop {
+                    let pool = SharedMusePool::for_gateway_lease(
+                        &http,
+                        &current_lease.account_key,
+                        current_lease.access_token.expose(),
+                        muse_transport.clone(),
+                    );
+                    let emitted_delta = Arc::new(AtomicBool::new(false));
+                    let emitted_flag = Arc::clone(&emitted_delta);
+                    let tx_delta = tx.clone();
+                    let res =
+                        run_chat_turn_once(&pool, &req_clone, &[], timeout, move |delta| {
+                            emitted_flag.store(true, Ordering::Relaxed);
+                            let _ = tx_delta.send(Ok(LlmEvent::TextDelta(delta)));
+                        })
+                        .await;
 
-                match res {
-                    Ok(_) => {
-                        hub.report_outcome(&current_lease.account_key, GatewayCallOutcome::Success);
-                        let _ = tx.send(Ok(LlmEvent::Finished));
-                        return;
-                    }
-                    Err(failure) => {
-                        let failure_summary = format!(
-                            "Muse workflow failure on account '{}': {:?}",
-                            current_lease.account_key, failure
-                        );
-                        let can_failover = is_pool
-                            && !emitted_delta.load(Ordering::Relaxed)
-                            && is_retryable_muse_failure(&failure)
-                            && attempt + 1 < max_attempts;
-                        let err =
-                            report_muse_failure_to_hub(&hub, &current_lease.account_key, failure);
-                        if can_failover
-                            && let Ok(next_lease) = hub.acquire_lease(&cfg_clone.gateway_binding)
-                        {
-                            current_lease = next_lease;
-                            continue;
+                    match res {
+                        Ok(_) => {
+                            hub.report_outcome(
+                                &current_lease.account_key,
+                                GatewayCallOutcome::Success,
+                            );
+                            let _ = tx.send(Ok(LlmEvent::Finished));
+                            return;
                         }
-                        record_wire_detail(&err_slot, failure_summary);
-                        let _ = tx.send(Err(err));
-                        return;
+                        Err(failure) => {
+                            if !refreshed_in_attempt
+                                && !emitted_delta.load(Ordering::Relaxed)
+                                && matches!(
+                                    failure,
+                                    WorkflowFailure::Upstream(UpstreamFailureKind::AuthInvalid, _)
+                                )
+                                && let Some(refreshed_lease) = hub
+                                    .try_refresh_on_unauthorized(
+                                        &current_lease.account_key,
+                                        current_lease.access_token.expose(),
+                                    )
+                                    .await
+                            {
+                                refreshed_in_attempt = true;
+                                current_lease = refreshed_lease;
+                                continue;
+                            }
+                            let failure_summary = format!(
+                                "Muse workflow failure on account '{}': {:?}",
+                                current_lease.account_key, failure
+                            );
+                            let can_failover = is_pool
+                                && !emitted_delta.load(Ordering::Relaxed)
+                                && is_retryable_muse_failure(&failure)
+                                && attempt + 1 < max_attempts;
+                            let err = report_muse_failure_to_hub(
+                                &hub,
+                                &current_lease.account_key,
+                                failure,
+                            );
+                            if can_failover
+                                && let Ok(next_lease) =
+                                    hub.acquire_lease(&cfg_clone.gateway_binding)
+                            {
+                                current_lease = next_lease;
+                                break;
+                            }
+                            record_wire_detail(&err_slot, failure_summary);
+                            let _ = tx.send(Err(err));
+                            return;
+                        }
                     }
                 }
             }
@@ -178,35 +206,61 @@ impl LlmGatewayProvider {
         let timeout = Duration::from_millis(self.config.timeout_ms.max(min_timeout_ms));
         let mut current_lease = lease;
         for attempt in 0..max_attempts {
-            let pool = self.muse_pool_for_lease(&self.config, &current_lease);
-            match run_media_turn_once(
-                &pool,
-                kind,
-                formatted_prompt,
-                images,
-                transparent_background,
-                timeout,
-            )
-            .await
-            {
-                Ok(output) => {
-                    self.hub
-                        .report_outcome(&current_lease.account_key, GatewayCallOutcome::Success);
-                    return Ok(output);
-                }
-                Err(failure) => {
-                    let can_failover = is_pool
-                        && is_retryable_muse_failure(&failure)
-                        && attempt + 1 < max_attempts;
-                    let err =
-                        report_muse_failure_to_hub(&self.hub, &current_lease.account_key, failure);
-                    if can_failover
-                        && let Ok(next_lease) = self.hub.acquire_lease(&self.config.gateway_binding)
-                    {
-                        current_lease = next_lease;
-                        continue;
+            let mut refreshed_in_attempt = false;
+            loop {
+                let pool = self.muse_pool_for_lease(&self.config, &current_lease);
+                match run_media_turn_once(
+                    &pool,
+                    kind,
+                    formatted_prompt,
+                    images,
+                    transparent_background,
+                    timeout,
+                )
+                .await
+                {
+                    Ok(output) => {
+                        self.hub.report_outcome(
+                            &current_lease.account_key,
+                            GatewayCallOutcome::Success,
+                        );
+                        return Ok(output);
                     }
-                    return Err(err);
+                    Err(failure) => {
+                        if !refreshed_in_attempt
+                            && matches!(
+                                failure,
+                                WorkflowFailure::Upstream(UpstreamFailureKind::AuthInvalid, _)
+                            )
+                            && let Some(refreshed_lease) = self
+                                .hub
+                                .try_refresh_on_unauthorized(
+                                    &current_lease.account_key,
+                                    current_lease.access_token.expose(),
+                                )
+                                .await
+                        {
+                            refreshed_in_attempt = true;
+                            current_lease = refreshed_lease;
+                            continue;
+                        }
+                        let can_failover = is_pool
+                            && is_retryable_muse_failure(&failure)
+                            && attempt + 1 < max_attempts;
+                        let err = report_muse_failure_to_hub(
+                            &self.hub,
+                            &current_lease.account_key,
+                            failure,
+                        );
+                        if can_failover
+                            && let Ok(next_lease) =
+                                self.hub.acquire_lease(&self.config.gateway_binding)
+                        {
+                            current_lease = next_lease;
+                            break;
+                        }
+                        return Err(err);
+                    }
                 }
             }
         }

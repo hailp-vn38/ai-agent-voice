@@ -88,14 +88,37 @@ impl SharedMusePool {
                     Err(err) => return Err(err),
                 };
 
-            let mut state = self.inner.state.lock().unwrap_or_else(|e| e.into_inner());
-            if let Some(acc) = state.accounts.get_mut(account_index) {
-                acc.credential.wss_url = Some(bootstrapped.wss_url.clone());
-                acc.credential.wss_expires = get_wss_expiry_unix_secs(&bootstrapped.wss_url);
-                acc.credential.cookies = parse_cookie_header(&bootstrapped.cookie_header);
-                if bootstrapped.vm_id.is_some() {
-                    acc.credential.vm_id = bootstrapped.vm_id;
+            let mut persist_target = None;
+            {
+                let mut state = self.inner.state.lock().unwrap_or_else(|e| e.into_inner());
+                if let Some(acc) = state.accounts.get_mut(account_index) {
+                    acc.credential.wss_url = Some(bootstrapped.wss_url.clone());
+                    acc.credential.wss_expires = get_wss_expiry_unix_secs(&bootstrapped.wss_url);
+                    for (k, v) in parse_cookie_header(&bootstrapped.cookie_header) {
+                        acc.credential.cookies.insert(k, v);
+                    }
+                    if bootstrapped.vm_id.is_some() {
+                        acc.credential.vm_id = bootstrapped.vm_id;
+                    }
+                    if let Some(gw_key) = &acc.gateway_account_key {
+                        persist_target = Some((
+                            gw_key.clone(),
+                            acc.credential.clone(),
+                            bootstrapped.discovered_email,
+                        ));
+                    }
                 }
+            }
+            if let Some((account_key, updated_cred, discovered_email)) = persist_target {
+                tokio::spawn(async move {
+                    crate::services::llm_gateway::SharedGatewayHub::global()
+                        .persist_muse_runtime_credential(
+                            &account_key,
+                            updated_cred,
+                            discovered_email,
+                        )
+                        .await;
+                });
             }
             bootstrapped.wss_url
         };

@@ -14,15 +14,17 @@ use crate::providers::llm::gateway::muse::cdp::CdpBrowserEngine;
 use crate::{
     database::unix_seconds,
     providers::llm::gateway::muse::{
-        cdp::{BrowserEngine, BrowserPage},
+        cdp::{BrowserEngine, BrowserPage, extract_wss_via_chromium},
         config::{
             MuseAccountCredential, NEW_THREAD_URL, SESSION_API_URL, SITE_URL, VM_WAKE_API_URL,
             format_cookie_header, has_required_cookies, parse_accounts, parse_cookie_header,
         },
         credentials::{
-            build_wss_url, build_wss_url_from_init_json, fetch_wss_from_cookie_http,
-            get_wss_expiry_unix_secs, merge_set_cookies,
+            WSS_EXPIRY_BUFFER_SECS, build_wss_url, build_wss_url_from_init_json,
+            fetch_wss_from_cookie_http, get_wss_expiry_unix_secs, is_wss_valid, merge_set_cookies,
+            parse_session_json,
         },
+        pool::UpstreamFailureKind,
     },
     services::llm_gateway::types::{
         GatewayError, GatewayQuotaWindow, GatewayVendor, OAuthTokenBundle, VendorQuotaSnapshot,
@@ -33,6 +35,8 @@ use super::{ExchangedOAuthAccount, OAuthVendorDriver};
 
 const DEFAULT_MUSE_RENEWAL_INTERVAL_SECS: i64 = 6 * 3600;
 #[cfg(not(test))]
+const HEADLESS_REFRESH_CDP_PORT: u16 = 19222;
+#[cfg(not(test))]
 const INTERACTIVE_LOGIN_CDP_PORT: u16 = 19223;
 
 pub struct MuseOAuthDriver {
@@ -40,6 +44,7 @@ pub struct MuseOAuthDriver {
     session_api_url: String,
     vm_wake_api_url: String,
     verify_online: bool,
+    headless_engine: Option<Arc<dyn BrowserEngine>>,
     login_engine: Option<Arc<dyn BrowserEngine>>,
     login_pages: Mutex<HashMap<String, Arc<dyn BrowserPage>>>,
     login_unavailable_states: Mutex<HashSet<String>>,
@@ -55,6 +60,12 @@ impl MuseOAuthDriver {
             .build()
             .unwrap_or_default();
         #[cfg(not(test))]
+        let headless_engine: Option<Arc<dyn BrowserEngine>> = Some(Arc::new(
+            CdpBrowserEngine::new(HEADLESS_REFRESH_CDP_PORT, true),
+        ));
+        #[cfg(test)]
+        let headless_engine: Option<Arc<dyn BrowserEngine>> = None;
+        #[cfg(not(test))]
         let login_engine: Option<Arc<dyn BrowserEngine>> = Some(Arc::new(CdpBrowserEngine::new(
             INTERACTIVE_LOGIN_CDP_PORT,
             false,
@@ -67,6 +78,7 @@ impl MuseOAuthDriver {
             session_api_url: SESSION_API_URL.to_owned(),
             vm_wake_api_url: VM_WAKE_API_URL.to_owned(),
             verify_online: !cfg!(test),
+            headless_engine,
             login_engine,
             login_pages: Mutex::new(HashMap::new()),
             login_unavailable_states: Mutex::new(HashSet::new()),
@@ -99,49 +111,15 @@ impl MuseOAuthDriver {
             return Ok((cred, None));
         }
 
-        let cookie_header = format_cookie_header(&cred.cookies);
-        let resp = match self
-            .http
-            .get(&self.session_api_url)
-            .header("Origin", SITE_URL)
-            .header("Referer", NEW_THREAD_URL)
-            .header("Accept", "application/json")
-            .header("Cookie", &cookie_header)
-            .send()
-            .await
-        {
-            Ok(resp) => resp,
-            Err(err) => {
-                if strict_network {
-                    return Err(GatewayError::OAuthExchangeFailed(format!(
-                        "muse_session_unreachable: {err}"
-                    )));
-                }
-                return Ok((cred, None));
-            }
-        };
-
-        let status = resp.status().as_u16();
-        if status == 401 || status == 403 {
-            if strict_network {
-                return Err(GatewayError::OAuthExchangeFailed(
-                    "muse_session_unauthorized".to_owned(),
-                ));
-            }
-            return Ok((cred, None));
-        }
-        if !resp.status().is_success() {
-            if strict_network {
-                return Err(GatewayError::OAuthExchangeFailed(format!(
-                    "muse_session_http_{status}"
-                )));
-            }
-            return Ok((cred, None));
-        }
-
-        let merged_header = merge_set_cookies(&cookie_header, resp.headers());
-        for (k, v) in parse_cookie_header(&merged_header) {
-            cred.cookies.insert(k, v);
+        let previous_valid_wss = cred
+            .wss_url
+            .clone()
+            .filter(|u| is_wss_valid(u, WSS_EXPIRY_BUFFER_SECS))
+            .map(|u| (u, cred.wss_expires));
+        let wss_needs_renewal = strict_network || previous_valid_wss.is_none();
+        if wss_needs_renewal {
+            cred.wss_url = None;
+            cred.wss_expires = None;
         }
 
         let site_base_url = self
@@ -151,96 +129,169 @@ impl MuseOAuthDriver {
             .unwrap_or(SITE_URL)
             .trim_end_matches('/');
 
+        let mut session_verified = false;
         let mut discovered_email: Option<String> = None;
         let mut endpoint_url: Option<String> = None;
-        if let Ok(body) = resp.json::<Value>().await {
-            if cred.vm_id.is_none() {
-                cred.vm_id = body
-                    .get("vm_id")
-                    .or_else(|| body.get("vmId"))
-                    .and_then(Value::as_str)
-                    .map(str::trim)
-                    .filter(|s| !s.is_empty())
-                    .map(ToOwned::to_owned);
+
+        // Tier 1: Direct Meta Muse Session REST API (/api/session -> /api/hatch/token)
+        let cookie_header = format_cookie_header(&cred.cookies);
+        if let Ok(resp) = self
+            .http
+            .get(&self.session_api_url)
+            .header("Origin", site_base_url)
+            .header("Referer", NEW_THREAD_URL)
+            .header("Accept", "application/json")
+            .header("Cookie", &cookie_header)
+            .send()
+            .await
+        {
+            let status = resp.status().as_u16();
+            let merged_header = merge_set_cookies(&cookie_header, resp.headers());
+            for (k, v) in parse_cookie_header(&merged_header) {
+                cred.cookies.insert(k, v);
             }
-            endpoint_url = body
-                .get("endpointUrl")
-                .or_else(|| body.get("endpoint_url"))
-                .and_then(Value::as_str)
-                .map(str::trim)
-                .filter(|s| !s.is_empty())
-                .map(ToOwned::to_owned);
-            discovered_email = body
-                .get("email")
-                .and_then(Value::as_str)
-                .or_else(|| {
-                    body.get("user")
-                        .and_then(|u| u.get("email"))
-                        .and_then(Value::as_str)
-                })
-                .map(str::trim)
-                .filter(|s| !s.is_empty())
-                .map(ToOwned::to_owned);
+            if status == 401 {
+                if strict_network {
+                    return Err(GatewayError::AccountReauthRequired);
+                }
+                return Ok((cred, None));
+            }
+            if resp.status().is_success() {
+                session_verified = true;
+                if let Ok(body) = resp.json::<Value>().await {
+                    let (parsed_vm, parsed_ep, parsed_email) = parse_session_json(&body);
+                    if parsed_vm.is_some() {
+                        cred.vm_id = parsed_vm;
+                    }
+                    endpoint_url = parsed_ep.or_else(|| {
+                        cred.vm_id
+                            .as_ref()
+                            .map(|vm| format!("wss://{vm}.metaaivm.com/"))
+                    });
+                    discovered_email = parsed_email;
+                }
+            }
         }
 
-        if let (Some(vm), Some(ep)) = (cred.vm_id.clone(), endpoint_url) {
-            let updated_cookie_header = format_cookie_header(&cred.cookies);
-            if let Ok(t_resp) = self
-                .http
-                .post(format!("{site_base_url}/api/hatch/token"))
-                .header("Origin", site_base_url)
-                .header("Referer", NEW_THREAD_URL)
-                .header("Cookie", &updated_cookie_header)
-                .json(&serde_json::json!({
-                    "vmAddress": ep,
-                    "vmName": vm,
-                }))
-                .send()
-                .await
-            {
-                let token_merged_cookies =
-                    merge_set_cookies(&updated_cookie_header, t_resp.headers());
-                for (k, v) in parse_cookie_header(&token_merged_cookies) {
-                    cred.cookies.insert(k, v);
-                }
-                if t_resp.status().is_success()
-                    && let Ok(t_body) = t_resp.json::<Value>().await
-                    && let Some(auth_token) = t_body
-                        .get("token")
-                        .or_else(|| t_body.get("authToken"))
-                        .and_then(Value::as_str)
-                        .filter(|s| !s.is_empty())
+        if let (Some(vm), Some(ep)) = (cred.vm_id.clone(), endpoint_url)
+            && cred.wss_url.is_none()
+        {
+            for t_attempt in 0..2 {
+                let updated_cookie_header = format_cookie_header(&cred.cookies);
+                if let Ok(t_resp) = self
+                    .http
+                    .post(format!("{site_base_url}/api/hatch/token"))
+                    .header("Origin", site_base_url)
+                    .header("Referer", NEW_THREAD_URL)
+                    .header("Cookie", &updated_cookie_header)
+                    .json(&serde_json::json!({
+                        "vmAddress": ep,
+                        "vmName": vm,
+                    }))
+                    .send()
+                    .await
                 {
-                    let notary_token = t_body
-                        .get("notary_token")
-                        .or_else(|| t_body.get("noiseNotaryToken"))
-                        .or_else(|| t_body.get("notaryToken"))
-                        .and_then(Value::as_str)
-                        .unwrap_or("");
-                    let wss = build_wss_url(&vm, auth_token, notary_token);
-                    cred.wss_expires = get_wss_expiry_unix_secs(&wss);
-                    cred.wss_url = Some(wss);
+                    let token_merged_cookies =
+                        merge_set_cookies(&updated_cookie_header, t_resp.headers());
+                    for (k, v) in parse_cookie_header(&token_merged_cookies) {
+                        cred.cookies.insert(k, v);
+                    }
+                    if t_resp.status().is_success()
+                        && let Ok(t_body) = t_resp.json::<Value>().await
+                        && let Some(auth_token) = t_body
+                            .get("token")
+                            .or_else(|| t_body.get("authToken"))
+                            .and_then(Value::as_str)
+                            .filter(|s| !s.is_empty())
+                    {
+                        let notary_token = t_body
+                            .get("notary_token")
+                            .or_else(|| t_body.get("noiseNotaryToken"))
+                            .or_else(|| t_body.get("notaryToken"))
+                            .and_then(Value::as_str)
+                            .unwrap_or("");
+                        let wss = build_wss_url(&vm, auth_token, notary_token);
+                        cred.wss_expires = get_wss_expiry_unix_secs(&wss);
+                        cred.wss_url = Some(wss);
+                        break;
+                    }
+                }
+                if t_attempt == 0 {
+                    tokio::time::sleep(Duration::from_millis(200)).await;
                 }
             }
         }
 
+        // Tier 2: Multi-tier HTTP/SSR probe (`GET /api/session?vm_state=live` -> `GET /` RSC stream)
         if cred.wss_url.is_none() {
             let current_cookie_header = format_cookie_header(&cred.cookies);
-            if let Ok(bootstrapped) =
-                fetch_wss_from_cookie_http(&self.http, &current_cookie_header, site_base_url).await
+            match fetch_wss_from_cookie_http(&self.http, &current_cookie_header, site_base_url)
+                .await
             {
-                for (k, v) in parse_cookie_header(&bootstrapped.cookie_header) {
-                    cred.cookies.insert(k, v);
+                Ok(bootstrapped) => {
+                    session_verified = true;
+                    for (k, v) in parse_cookie_header(&bootstrapped.cookie_header) {
+                        cred.cookies.insert(k, v);
+                    }
+                    if bootstrapped.vm_id.is_some() {
+                        cred.vm_id = bootstrapped.vm_id;
+                    }
+                    if discovered_email.is_none() {
+                        discovered_email = bootstrapped.discovered_email;
+                    }
+                    cred.wss_expires = get_wss_expiry_unix_secs(&bootstrapped.wss_url);
+                    cred.wss_url = Some(bootstrapped.wss_url);
                 }
-                if cred.vm_id.is_none() {
-                    cred.vm_id = bootstrapped.vm_id;
+                Err((UpstreamFailureKind::AuthInvalid, _)) if !session_verified => {
+                    if strict_network {
+                        return Err(GatewayError::AccountReauthRequired);
+                    }
+                    return Ok((cred, None));
                 }
-                if discovered_email.is_none() {
-                    discovered_email = bootstrapped.discovered_email;
-                }
-                cred.wss_expires = get_wss_expiry_unix_secs(&bootstrapped.wss_url);
-                cred.wss_url = Some(bootstrapped.wss_url);
+                Err(_) => {}
             }
+        }
+
+        // Tier 3: Headless Chromium CDP fallback when HTTP/SSR is blocked by Cloudflare
+        if cred.wss_url.is_none()
+            && let Some(engine) = self.headless_engine.as_ref().or(self.login_engine.as_ref())
+        {
+            let ctx_key = format!("muse-refresh-{}", Uuid::new_v4());
+            match extract_wss_via_chromium(&**engine, &ctx_key, &cred.cookies).await {
+                Ok(bootstrapped) => {
+                    session_verified = true;
+                    for (k, v) in parse_cookie_header(&bootstrapped.cookie_header) {
+                        cred.cookies.insert(k, v);
+                    }
+                    if bootstrapped.vm_id.is_some() {
+                        cred.vm_id = bootstrapped.vm_id;
+                    }
+                    if discovered_email.is_none() {
+                        discovered_email = bootstrapped.discovered_email;
+                    }
+                    cred.wss_expires = get_wss_expiry_unix_secs(&bootstrapped.wss_url);
+                    cred.wss_url = Some(bootstrapped.wss_url);
+                }
+                Err((UpstreamFailureKind::AuthInvalid, _)) if !session_verified => {
+                    if strict_network {
+                        return Err(GatewayError::AccountReauthRequired);
+                    }
+                }
+                Err(_) => {}
+            }
+        }
+
+        if cred.wss_url.is_none()
+            && let Some((prev_wss, prev_exp)) = previous_valid_wss
+        {
+            cred.wss_url = Some(prev_wss);
+            cred.wss_expires = prev_exp;
+        }
+
+        if strict_network && !session_verified && cred.wss_url.is_none() {
+            return Err(GatewayError::OAuthExchangeFailed(
+                "muse_session_renewal_failed".to_owned(),
+            ));
         }
 
         if let Some(vm) = &cred.vm_id {
@@ -248,7 +299,7 @@ impl MuseOAuthDriver {
             let _ = self
                 .http
                 .post(&self.vm_wake_api_url)
-                .header("Origin", SITE_URL)
+                .header("Origin", site_base_url)
                 .header("Referer", NEW_THREAD_URL)
                 .header("Cookie", updated_cookie_header)
                 .json(&serde_json::json!({
@@ -263,7 +314,7 @@ impl MuseOAuthDriver {
         Ok((cred, discovered_email))
     }
 
-    fn build_exchanged_account(
+    pub(crate) fn build_exchanged_account(
         cred: MuseAccountCredential,
         discovered_email: Option<String>,
     ) -> Result<ExchangedOAuthAccount, GatewayError> {
@@ -451,6 +502,13 @@ impl OAuthVendorDriver for MuseOAuthDriver {
         if cred.vm_id.is_none() {
             cred.vm_id = current.account_context_id.clone();
         }
+        let now_epoch = unix_seconds().unwrap_or(0);
+        if cred
+            .cookie_expires
+            .is_some_and(|exp| (exp as i64) <= now_epoch)
+        {
+            cred.cookie_expires = None;
+        }
         let (verified_cred, email) = self.verify_and_renew_session(cred, true).await?;
         Self::build_exchanged_account(verified_cred, email)
     }
@@ -487,5 +545,20 @@ impl OAuthVendorDriver for MuseOAuthDriver {
 
     fn extra_headers_for(&self, _bundle: &OAuthTokenBundle) -> Vec<(String, String)> {
         Vec::new()
+    }
+
+    fn proactive_refresh_margin_secs(&self, default_margin_secs: i64) -> i64 {
+        default_margin_secs.max(1800)
+    }
+
+    fn can_self_heal_reauth(&self, bundle: &OAuthTokenBundle, last_error: Option<&str>) -> bool {
+        last_error != Some("account_reauth_required")
+            && parse_accounts(&bundle.access_token)
+                .first()
+                .is_some_and(|c| has_required_cookies(&c.cookies))
+    }
+
+    fn is_transient_refresh_error(&self, err: &GatewayError) -> bool {
+        matches!(err, GatewayError::OAuthExchangeFailed(_))
     }
 }

@@ -9,7 +9,7 @@ use reqwest::header::{HeaderMap, SET_COOKIE};
 use serde_json::Value;
 use uuid::Uuid;
 
-pub(crate) use self::bootstrap::fetch_wss_from_cookie_http;
+pub(crate) use self::bootstrap::{fetch_wss_from_cookie_http, parse_session_json};
 use super::config::{format_cookie_header, parse_cookie_header};
 
 pub(crate) const DEFAULT_USER_AGENT: &str = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36";
