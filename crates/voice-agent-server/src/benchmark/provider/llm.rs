@@ -27,6 +27,7 @@ pub async fn run_llm_provider(
     let mut finished = false;
     while let Some(event) = stream.next().await {
         match event? {
+            LlmEvent::Activity => {}
             LlmEvent::TextDelta(text) => {
                 text_delta_count += 1;
                 output_chars += text.chars().count();

@@ -26,15 +26,21 @@ use crate::providers::llm::{LlmRequest, ReferenceImage};
 const CHAT_POLL_INTERVAL: Duration = Duration::from_millis(400);
 const ONLINE_IDLE_DEBOUNCE: Duration = Duration::from_millis(3500);
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum ChatSignal {
+    Delta(String),
+    Activity,
+}
+
 pub(crate) async fn run_chat_turn_once<F>(
     pool: &Arc<SharedMusePool>,
     request: &LlmRequest,
     images: &[ReferenceImage],
     timeout_duration: Duration,
-    mut on_delta: F,
+    mut on_signal: F,
 ) -> Result<String, WorkflowFailure>
 where
-    F: FnMut(String) + Send,
+    F: FnMut(ChatSignal) + Send,
 {
     let flattened = flatten_messages(request);
     if flattened.trim().is_empty() {
@@ -56,7 +62,7 @@ where
         images,
         &prior_turns,
         last_user.as_deref(),
-        &mut on_delta,
+        &mut on_signal,
         timeout_duration,
     )
     .await;
@@ -73,11 +79,11 @@ async fn execute_chat_turn_on_lease<F>(
     images: &[ReferenceImage],
     prior_turns: &[ConversationTurn],
     last_user: Option<&str>,
-    on_delta: &mut F,
+    on_signal: &mut F,
     timeout_duration: Duration,
 ) -> Result<String, WorkflowFailure>
 where
-    F: FnMut(String) + Send,
+    F: FnMut(ChatSignal) + Send,
 {
     let (effective_prompt, images_to_send) = if let Some(hot) = lease.matched_hot()
         && let Some(lu) = last_user
@@ -150,6 +156,7 @@ where
     let mut should_poll_history = false;
     let mut debounce_deadline: Option<Instant> = None;
     let mut finish_after_poll = false;
+    let mut completed = false;
     let expected_user_turns = lease
         .matched_hot()
         .map(|hot| hot.turns.len() + 1)
@@ -171,6 +178,7 @@ where
                     {
                         unchanged_ticks = 0;
                         debounce_deadline = None;
+                        on_signal(ChatSignal::Activity);
                         if ev_name == "approvals.snapshot" || ev_name.contains("approval") {
                             handle_chat_approval(lease, &ev).await;
                         }
@@ -187,6 +195,7 @@ where
                             debounce_deadline = None;
                             unchanged_ticks = 0;
                             should_poll_history = true;
+                            on_signal(ChatSignal::Activity);
                         }
                         continue;
                     }
@@ -206,7 +215,7 @@ where
                             last_polled_text = emitted_text.clone();
                             unchanged_ticks = 0;
                             debounce_deadline = None;
-                            on_delta(chunk.to_string());
+                            on_signal(ChatSignal::Delta(chunk.to_string()));
                         }
                     } else if ev_name == "delta.presentation" {
                         let p = ev.payload();
@@ -225,6 +234,7 @@ where
                                 unchanged_ticks = 0;
                                 message_done_seen = false;
                                 debounce_deadline = None;
+                                on_signal(ChatSignal::Activity);
                             } else if matches!(code, "online" | "idle")
                                 && session_completed
                                 && !emitted_text.trim().is_empty()
@@ -237,7 +247,8 @@ where
                         if let Some((kind, reason)) = classify_assistant_error(&done_text) {
                             return Err(WorkflowFailure::Upstream(kind, reason));
                         }
-                        if reconcile_and_emit_history_text(&mut emitted_text, &done_text, on_delta) {
+                        let mut emit_delta = |d| on_signal(ChatSignal::Delta(d));
+                        if reconcile_and_emit_history_text(&mut emitted_text, &done_text, &mut emit_delta) {
                             last_polled_text = emitted_text.clone();
                             unchanged_ticks = 0;
                         }
@@ -302,7 +313,8 @@ where
                     if let Some((kind, reason)) = classify_assistant_error(&history_text) {
                         return Err(WorkflowFailure::Upstream(kind, reason));
                     }
-                    if reconcile_and_emit_history_text(&mut emitted_text, &history_text, on_delta) {
+                    let mut emit_delta = |d| on_signal(ChatSignal::Delta(d));
+                    if reconcile_and_emit_history_text(&mut emitted_text, &history_text, &mut emit_delta) {
                         unchanged_ticks = 0;
                         last_polled_text = history_text.clone();
                     }
@@ -319,6 +331,10 @@ where
                         "working" | "making_something" | "responding" | "thinking" | "running"
                     );
 
+                if is_agent_working || active_tools {
+                    on_signal(ChatSignal::Activity);
+                }
+
                 if !emitted_text.is_empty() && history_text == last_polled_text {
                     if !is_agent_working {
                         unchanged_ticks += 1;
@@ -331,12 +347,14 @@ where
                 if finish_after_poll {
                     finish_after_poll = false;
                     if !emitted_text.trim().is_empty() && !active_tools && !is_agent_working {
+                        completed = true;
                         break;
                     }
                 }
 
                 if !emitted_text.trim().is_empty() && !active_tools && !is_agent_working {
                     if session_completed && is_assistant_completed {
+                        completed = true;
                         break;
                     }
                     if !session_running_seen
@@ -344,6 +362,7 @@ where
                         && (message_done_seen
                             || matches!(latest_activity_code.as_str(), "idle" | "online"))
                     {
+                        completed = true;
                         break;
                     }
                     let required_ticks = if is_all_completed {
@@ -352,13 +371,21 @@ where
                         25
                     };
                     if unchanged_ticks >= required_ticks {
+                        completed = true;
                         break;
                     }
                 }
             } else if (session_completed || message_done_seen) && !emitted_text.trim().is_empty() {
+                completed = true;
                 break;
             }
         }
+    }
+
+    if !completed {
+        return Err(WorkflowFailure::Timeout(
+            "Muse chat stream timed out before completion".to_string(),
+        ));
     }
 
     let final_text = emitted_text.trim().to_string();

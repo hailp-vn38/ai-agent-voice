@@ -20,7 +20,8 @@ use super::super::{
     muse::{
         pool::{SharedMusePool, UpstreamFailureKind, job_entry},
         workflow::{
-            MediaBatch, MediaKind, WorkflowFailure, run_chat_turn_once, run_media_turn_once,
+            ChatSignal, MediaBatch, MediaKind, WorkflowFailure, run_chat_turn_once,
+            run_media_turn_once,
         },
     },
 };
@@ -90,7 +91,14 @@ impl LlmGatewayProvider {
         is_pool: bool,
         max_attempts: usize,
     ) -> LlmEventStream {
-        let timeout = Duration::from_millis(effective_cfg.timeout_ms.max(1_000));
+        let timeout = if effective_cfg.timeout_profile.is_some()
+            || effective_cfg.max_total_ms.is_some()
+            || effective_cfg.timeout_ms >= 60_000
+        {
+            effective_cfg.resolved_limits().max_total + Duration::from_secs(30)
+        } else {
+            Duration::from_millis(effective_cfg.timeout_ms.max(1_000))
+        };
         let req_clone = request.clone();
         let hub = Arc::clone(&self.hub);
         let http = self.http.clone();
@@ -99,7 +107,7 @@ impl LlmGatewayProvider {
         let err_slot = Arc::clone(&self.last_error_detail);
         let (tx, mut rx) = mpsc::unbounded_channel::<Result<LlmEvent, LlmError>>();
 
-        tokio::spawn(async move {
+        let join_handle = tokio::spawn(async move {
             let mut current_lease = lease;
             for attempt in 0..max_attempts {
                 let mut refreshed_in_attempt = false;
@@ -113,9 +121,17 @@ impl LlmGatewayProvider {
                     let emitted_delta = Arc::new(AtomicBool::new(false));
                     let emitted_flag = Arc::clone(&emitted_delta);
                     let tx_delta = tx.clone();
-                    let res = run_chat_turn_once(&pool, &req_clone, &[], timeout, move |delta| {
-                        emitted_flag.store(true, Ordering::Relaxed);
-                        let _ = tx_delta.send(Ok(LlmEvent::TextDelta(delta)));
+                    let mut activity = super::ActivityThrottle::new();
+                    let res = run_chat_turn_once(&pool, &req_clone, &[], timeout, move |signal| {
+                        match signal {
+                            ChatSignal::Delta(delta) => {
+                                emitted_flag.store(true, Ordering::Relaxed);
+                                let _ = tx_delta.send(Ok(LlmEvent::TextDelta(delta)));
+                            }
+                            ChatSignal::Activity => {
+                                activity.maybe_emit(&tx_delta);
+                            }
+                        }
                     })
                     .await;
 
@@ -174,8 +190,12 @@ impl LlmGatewayProvider {
                 }
             }
         });
+        let abort_guard = tokio_util::task::AbortOnDropHandle::new(join_handle);
 
-        let stream = futures_util::stream::poll_fn(move |cx| rx.poll_recv(cx));
+        let stream = futures_util::stream::poll_fn(move |cx| {
+            let _keep_alive = &abort_guard;
+            rx.poll_recv(cx)
+        });
         Box::pin(stream)
     }
 

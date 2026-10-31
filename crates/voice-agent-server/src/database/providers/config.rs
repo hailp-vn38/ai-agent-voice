@@ -135,6 +135,14 @@ struct OpenAi {
     model: String,
     #[serde(default = "default_timeout")]
     timeout_ms: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    timeout_profile: Option<crate::providers::llm::gateway::TimeoutProfile>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    first_byte_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    idle_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    max_total_ms: Option<u64>,
     #[serde(default)]
     max_tokens: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -153,6 +161,15 @@ impl OpenAi {
         matches!(self.base_url.scheme(), "http" | "https")
             && string(&self.model, 256)
             && (1..=600_000).contains(&self.timeout_ms)
+            && crate::providers::llm::gateway::valid_timeout_bounds(
+                self.timeout_profile,
+                crate::providers::llm::gateway::CustomLimits {
+                    first_byte_ms: self.first_byte_ms,
+                    idle_ms: self.idle_ms,
+                    max_total_ms: self.max_total_ms,
+                },
+                self.timeout_ms,
+            )
             && crate::providers::llm::valid_generation_bounds(
                 self.max_tokens,
                 self.context_limit_tokens,

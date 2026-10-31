@@ -1,5 +1,3 @@
-use std::time::Duration;
-
 use orchestrator_agent_rs::{LlmBackend, LlmProviderConfig, ProviderAuth};
 use serde_json::{Value, json};
 
@@ -20,6 +18,10 @@ pub struct ResolvedLlmProvider {
     pub api_key: Option<SecretString>,
     pub gateway_binding: Option<crate::services::llm_gateway::GatewayBinding>,
     pub timeout_ms: u64,
+    pub timeout_profile: Option<crate::providers::llm::gateway::TimeoutProfile>,
+    pub first_byte_ms: Option<u64>,
+    pub idle_ms: Option<u64>,
+    pub max_total_ms: Option<u64>,
     pub max_tokens: u32,
     pub context_limit_tokens: usize,
     pub reasoning_effort: Option<String>,
@@ -248,6 +250,10 @@ impl ResolvedLlmProvider {
                     base_url,
                     model: bare_model.to_owned(),
                     timeout_ms: self.timeout_ms.max(1_000),
+                    timeout_profile: self.timeout_profile,
+                    first_byte_ms: self.first_byte_ms,
+                    idle_ms: self.idle_ms,
+                    max_total_ms: self.max_total_ms,
                     max_tokens,
                     context_limit_tokens,
                     reasoning_effort: self.reasoning_effort.clone(),
@@ -277,6 +283,10 @@ impl ResolvedLlmProvider {
                     model: self.model.clone(),
                     base_url,
                     timeout_ms: self.timeout_ms.max(1_000),
+                    timeout_profile: self.timeout_profile,
+                    first_byte_ms: self.first_byte_ms,
+                    idle_ms: self.idle_ms,
+                    max_total_ms: self.max_total_ms,
                     max_tokens,
                     context_limit_tokens,
                     reasoning_effort: self.reasoning_effort.clone(),
@@ -306,6 +316,23 @@ impl ResolvedLlmProvider {
             }
             _ => Err(crate::providers::LlmError::Failed),
         }
+    }
+
+    pub fn resolved_limits(&self) -> orchestrator_agent_rs::RequestLimits {
+        let default_profile = if self.is_muse_provider() {
+            crate::providers::llm::gateway::TimeoutProfile::Agentic
+        } else {
+            crate::providers::llm::gateway::TimeoutProfile::Standard
+        };
+        crate::providers::llm::gateway::resolve(
+            Some(self.timeout_profile.unwrap_or(default_profile)),
+            crate::providers::llm::gateway::CustomLimits {
+                first_byte_ms: self.first_byte_ms,
+                idle_ms: self.idle_ms,
+                max_total_ms: self.max_total_ms,
+            },
+            self.timeout_ms.max(1_000),
+        )
     }
 
     pub fn to_json_summary(&self) -> Value {
@@ -357,7 +384,7 @@ impl ResolvedLlmProvider {
             backend: LlmBackend::OpenAiCompatible,
             endpoint: Some(self.base_url.clone()),
             auth,
-            request_timeout: Duration::from_millis(self.timeout_ms.max(1_000)),
+            limits: self.resolved_limits(),
         }
     }
 }

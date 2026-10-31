@@ -202,6 +202,7 @@ pub type LlmEventStream = Pin<Box<dyn Stream<Item = Result<LlmEvent, LlmError>> 
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum LlmEvent {
+    Activity,
     TextDelta(String),
     ToolCall(ToolCall),
     Finished,
@@ -623,6 +624,7 @@ pub(crate) async fn collect_chat_stream(mut stream: LlmEventStream) -> Result<Ll
     let mut text = String::new();
     while let Some(item) = stream.next().await {
         match item? {
+            LlmEvent::Activity => {}
             LlmEvent::TextDelta(delta) => text.push_str(&delta),
             LlmEvent::ToolCall(_) => return Err(LlmError::Rejected),
             LlmEvent::Finished => break,

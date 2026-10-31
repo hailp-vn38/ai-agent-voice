@@ -17,6 +17,14 @@ pub struct OpenAiConfig {
     #[serde(default = "default_llm_timeout_ms")]
     pub timeout_ms: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timeout_profile: Option<crate::providers::llm::gateway::TimeoutProfile>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub first_byte_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub idle_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_total_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_tokens: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub context_limit_tokens: Option<u32>,
@@ -37,6 +45,10 @@ impl Default for OpenAiConfig {
             base_url: default_openai_base_url(),
             model: default_openai_model(),
             timeout_ms: default_llm_timeout_ms(),
+            timeout_profile: None,
+            first_byte_ms: None,
+            idle_ms: None,
+            max_total_ms: None,
             max_tokens: None,
             context_limit_tokens: None,
             reasoning_effort: None,

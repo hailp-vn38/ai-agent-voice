@@ -10,6 +10,8 @@ mod wire_openai;
 #[cfg(test)]
 mod tests;
 
-pub use config::LlmGatewayConfig;
+pub use config::{
+    CustomLimits, LlmGatewayConfig, TIMEOUT_PROFILES, TimeoutProfile, resolve, valid_timeout_bounds,
+};
 pub(crate) use provider::LlmGatewayFactory;
 pub use provider::LlmGatewayProvider;

@@ -72,6 +72,10 @@ impl GatewayOrchestratorExecutor {
             model: resolved.model.clone(),
             base_url,
             timeout_ms: resolved.timeout_ms.max(1_000),
+            timeout_profile: resolved.timeout_profile,
+            first_byte_ms: resolved.first_byte_ms,
+            idle_ms: resolved.idle_ms,
+            max_total_ms: resolved.max_total_ms,
             max_tokens: Some(resolved.clamped_max_tokens()),
             context_limit_tokens: Some(resolved.clamped_context_limit_tokens()),
             reasoning_effort: resolved.reasoning_effort.clone(),
@@ -266,6 +270,9 @@ impl CustomModelExecutor for GatewayOrchestratorExecutor {
                 }
             };
             match event {
+                LlmEvent::Activity => {
+                    sink(StreamEvent::Activity);
+                }
                 LlmEvent::TextDelta(delta) => {
                     if !delta.is_empty() {
                         sink(StreamEvent::TextDelta(delta.clone()));

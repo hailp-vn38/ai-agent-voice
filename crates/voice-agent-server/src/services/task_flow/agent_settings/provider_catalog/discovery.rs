@@ -123,6 +123,10 @@ fn collect_config_llm_providers(
                     api_key,
                     gateway_binding: openai.gateway_binding.clone(),
                     timeout_ms: openai.timeout_ms,
+                    timeout_profile: openai.timeout_profile,
+                    first_byte_ms: openai.first_byte_ms,
+                    idle_ms: openai.idle_ms,
+                    max_total_ms: openai.max_total_ms,
                     max_tokens: openai.max_tokens.unwrap_or(orch_cfg.max_output_tokens),
                     context_limit_tokens: openai
                         .context_limit_tokens
@@ -147,6 +151,10 @@ fn collect_config_llm_providers(
                     )),
                     gateway_binding: None,
                     timeout_ms: free.timeout_ms,
+                    timeout_profile: None,
+                    first_byte_ms: None,
+                    idle_ms: None,
+                    max_total_ms: None,
                     max_tokens: free.max_tokens.unwrap_or(orch_cfg.max_output_tokens),
                     context_limit_tokens: free
                         .context_limit_tokens
@@ -203,6 +211,10 @@ fn collect_config_llm_providers(
                     api_key: None,
                     gateway_binding: Some(gw.gateway_binding.clone()),
                     timeout_ms: gw.timeout_ms,
+                    timeout_profile: gw.timeout_profile,
+                    first_byte_ms: gw.first_byte_ms,
+                    idle_ms: gw.idle_ms,
+                    max_total_ms: gw.max_total_ms,
                     max_tokens: gw.max_tokens.unwrap_or(orch_cfg.max_output_tokens),
                     context_limit_tokens: gw
                         .context_limit_tokens
@@ -254,6 +266,13 @@ async fn collect_db_llm_providers(
             .get("timeout_ms")
             .and_then(Value::as_u64)
             .unwrap_or(orch_cfg.request_timeout_ms);
+        let timeout_profile = parsed
+            .get("timeout_profile")
+            .and_then(Value::as_str)
+            .and_then(crate::providers::llm::gateway::TimeoutProfile::parse);
+        let first_byte_ms = parsed.get("first_byte_ms").and_then(Value::as_u64);
+        let idle_ms = parsed.get("idle_ms").and_then(Value::as_u64);
+        let max_total_ms = parsed.get("max_total_ms").and_then(Value::as_u64);
         let max_tokens = parsed
             .get("max_tokens")
             .and_then(Value::as_u64)
@@ -364,6 +383,10 @@ async fn collect_db_llm_providers(
             api_key,
             gateway_binding,
             timeout_ms,
+            timeout_profile,
+            first_byte_ms,
+            idle_ms,
+            max_total_ms,
             max_tokens,
             context_limit_tokens,
             reasoning_effort,

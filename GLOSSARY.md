@@ -110,6 +110,22 @@ _Avoid_: Agent Run, LLM Run, Voice Session
 Một lần thực thi có giới hạn bước của Root Orchestrator hoặc Sub-Agent trên một Agent Session để hoàn thành nhiệm vụ được giao hoặc một lượt Task Follow-up.
 _Avoid_: registered Voice Agent, Job Step, Voice Session
 
+**Waiting Retry**:
+Trạng thái tạm dừng bền vững của một Agent Run khi gặp lỗi nhà cung cấp hoặc giới hạn tốc độ có thể phục hồi, lưu thời điểm thử lại kế tiếp và nhả slot thực thi mà không kết thúc lượt hiện tại.
+_Avoid_: failed run, in-memory sleep retry, provider-layer retry
+
+**Job Budget**:
+Giới hạn tài nguyên cho toàn bộ vòng đời của một Background Task gồm thời gian chạy tích lũy, thời hạn tổng thể và khoảng dự trữ để dừng có kiểm soát kèm kết quả từng phần.
+_Avoid_: per-request timeout, single-attempt step limit
+
+**Tool Operation**:
+Tiến trình bền vững của một lần thực thi công cụ có khả năng nối lại qua các giai đoạn gửi yêu cầu, xử lý từ xa, tải dữ liệu và chốt Job Artifact.
+_Avoid_: Tool Call, Tool Execution Status, in-memory future
+
+**Request Limits**:
+Bộ ba giới hạn thời gian của một lượt gọi mô hình ngôn ngữ gồm ngưỡng chờ tín hiệu đầu tiên, khoảng lặng tối đa giữa hai tín hiệu hoạt động và tổng thời lượng tối đa của lượt gọi.
+_Avoid_: uniform wall-clock timeout, socket read timeout
+
 **Delegated Task Prompt**:
 Chỉ dẫn nhiệm vụ đầy đủ do Root Orchestrator biên soạn và truyền cho Sub-Agent dưới dạng thông điệp người dùng mở đầu thông qua công cụ `subagent`.
 _Avoid_: Parent Session dump, permission grant
@@ -289,6 +305,14 @@ _Avoid_: Secret Reference, inline credential, OAuth token
 **OAuth Login Session**:
 Phiên đăng nhập tạm thời được khởi tạo khi Admin bắt đầu luồng ủy quyền OAuth trên trình duyệt (qua mã PKCE hoặc mã thiết bị), tồn tại cho đến khi đổi thành công thành một Gateway Account hoặc hết hạn.
 _Avoid_: Admin Session, Voice Session, Gateway Account
+
+**Job Session**:
+Phiên làm việc từ xa trên nhà cung cấp tác nhân được gắn với một Background Task xuyên suốt nhiều lần gọi công cụ để duy trì ngữ cảnh sửa lỗi, chia lô và thu hồi kết quả cho đến khi công việc kết thúc.
+_Avoid_: Agent Session, Voice Session, single-call operation session
+
+**Continuation Key**:
+Định danh ổn định theo phạm vi Background Task dùng để gắn kết các lần gọi công cụ kế tiếp vào cùng một Job Session và Gateway Account đã ghim.
+_Avoid_: remote session ID, tool invocation ID, turn ID
 
 ## Database Backup & Transactional Restore
 

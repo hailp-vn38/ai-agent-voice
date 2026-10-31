@@ -1,7 +1,9 @@
-import { mount } from '@vue/test-utils'
-import { describe, expect, it } from 'vitest'
+import { flushPromises, mount } from '@vue/test-utils'
+import { describe, expect, it, vi } from 'vitest'
 import ProviderFormModal from './ProviderFormModal.vue'
+import ProviderConfigEditor from '@/components/providers/ProviderConfigEditor.vue'
 import ProviderTestPanel from '@/components/providers/ProviderTestPanel.vue'
+import { providerAdaptersApi } from '@/api/provider-adapters'
 
 const provider = { id: 'llm_test', name: 'LLM', type: 'llm' as const, adapter: 'openai', model: 'test', description: '', status: 'ready' as const, credential: { id: 'credential', masked_key: 'sk-...7A91', key_version: 1, status: 'active' as const } }
 const stubs = { BaseModal: { template: '<div><slot /></div>' }, Button: { template: '<button><slot /></button>' } }
@@ -57,3 +59,76 @@ it('locks config edits and submit while keeping the saved diagnostic available',
   expect(test.props('savedKey')).toBe('config:llm:primary')
   expect(test.props('draft')).toBeUndefined()
 })
+
+it('hides custom timeout fields unless timeout_profile is custom and preserves legacy timeout_ms', async () => {
+  vi.spyOn(providerAdaptersApi, 'get').mockResolvedValue({
+    adapter: 'llm_gateway',
+    provider_type: 'llm',
+    display_name: 'OAuth LLM Gateway',
+    description: '',
+    config_schema: {
+      fields: [
+        { key: 'gateway_binding', label: 'Binding', type: 'string', required: true },
+        { key: 'model', label: 'Model', type: 'string', required: true },
+        { key: 'timeout_ms', label: 'Timeout (ms)', type: 'integer', required: false },
+        {
+          key: 'timeout_profile',
+          label: 'Timeout profile',
+          type: 'select',
+          required: false,
+          options: ['interactive', 'standard', 'agentic', 'custom'],
+        },
+        { key: 'first_byte_ms', label: 'First-byte timeout (ms)', type: 'integer', required: false },
+        { key: 'idle_ms', label: 'Idle timeout (ms)', type: 'integer', required: false },
+        { key: 'max_total_ms', label: 'Max total timeout (ms)', type: 'integer', required: false },
+      ],
+    },
+    capabilities: {},
+  } as never)
+
+  const wrapper = mount(ProviderFormModal, {
+    props: {
+      modelValue: true,
+      provider: {
+        ...provider,
+        adapter: 'llm_gateway',
+        configJson: {
+          gateway_binding: 'pool:openai_codex',
+          model: 'gpt-5.3-codex',
+          timeout_ms: 60000,
+          timeout_profile: 'standard',
+        },
+      },
+    },
+    global: { stubs: { ...stubs, ProviderTestPanel: true } },
+  })
+  await flushPromises()
+
+  const editor = wrapper.getComponent(ProviderConfigEditor)
+  const keysStandard = (editor.props('schema')?.fields ?? []).map((f: { key: string }) => f.key)
+  expect(keysStandard).toContain('timeout_profile')
+  expect(keysStandard).not.toContain('first_byte_ms')
+  expect(keysStandard).not.toContain('idle_ms')
+  expect(keysStandard).not.toContain('max_total_ms')
+
+  await wrapper.setProps({
+    provider: {
+      ...provider,
+      adapter: 'llm_gateway',
+      configJson: {
+        gateway_binding: 'pool:openai_codex',
+        model: 'gpt-5.3-codex',
+        timeout_ms: 60000,
+        timeout_profile: 'custom',
+        first_byte_ms: 45000,
+      },
+    },
+  })
+  await flushPromises()
+
+  const keysCustom = (editor.props('schema')?.fields ?? []).map((f: { key: string }) => f.key)
+  expect(keysCustom).toContain('first_byte_ms')
+  expect(keysCustom).toContain('idle_ms')
+  expect(keysCustom).toContain('max_total_ms')
+})
+

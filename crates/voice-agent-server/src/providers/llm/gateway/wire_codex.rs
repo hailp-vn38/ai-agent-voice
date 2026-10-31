@@ -429,6 +429,7 @@ async fn open_sse_stream_internal(
         let mut next_tool_index: u64 = 0;
         let mut emitted_text = false;
         let mut seen_events: Vec<String> = Vec::new();
+        let mut activity = super::provider::ActivityThrottle::new();
 
         loop {
             let chunk_opt = match resp.chunk().await {
@@ -457,7 +458,11 @@ async fn open_sse_stream_internal(
             }
 
             while let Some(line) = drain_next_sse_line(&mut raw_buf) {
-                if line.is_empty() || line.starts_with(':') || line.starts_with("event:") {
+                if line.is_empty() {
+                    continue;
+                }
+                if line.starts_with(':') || line.starts_with("event:") {
+                    activity.maybe_emit(&tx);
                     continue;
                 }
                 let Some(data) = line.strip_prefix("data:") else {
@@ -489,6 +494,7 @@ async fn open_sse_stream_internal(
                 };
 
                 if let Some(event_type) = val.get("type").and_then(Value::as_str) {
+                    activity.maybe_emit(&tx);
                     if seen_events.len() < 16 && !seen_events.iter().any(|s| s == event_type) {
                         seen_events.push(event_type.to_owned());
                     }

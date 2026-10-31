@@ -139,3 +139,52 @@ async fn diagnostic_acknowledges_rejection_but_not_ambiguous_stream_failure() {
         );
     }
 }
+
+#[tokio::test(start_paused = true)]
+async fn voice_ignores_activity() {
+    struct ActivityPulseLlm;
+
+    #[async_trait::async_trait]
+    impl LlmProvider for ActivityPulseLlm {
+        fn adapter(&self) -> &'static str {
+            "activity-pulse"
+        }
+
+        async fn stream(&self, _: LlmRequest) -> Result<LlmEventStream, LlmError> {
+            let s = stream::unfold(0u32, |step| async move {
+                if step < 10 {
+                    tokio::time::sleep(Duration::from_millis(200)).await;
+                    Some((Ok(LlmEvent::Activity), step + 1))
+                } else if step == 10 {
+                    Some((Ok(LlmEvent::TextDelta("late".into())), step + 1))
+                } else if step == 11 {
+                    Some((Ok(LlmEvent::Finished), step + 1))
+                } else {
+                    None
+                }
+            });
+            Ok(Box::pin(s))
+        }
+    }
+
+    let runtime = LlmRuntime::new(Arc::new(ActivityPulseLlm), 1, Duration::from_secs(1));
+    let mut events = runtime.register_session("session", 1);
+    let identity = WorkerIdentity::new("session", 1, 1);
+
+    runtime
+        .start(
+            identity.clone(),
+            LlmRequest::text_turn("hello".into()),
+            CancellationToken::new(),
+        )
+        .expect("the operation starts");
+
+    assert_eq!(
+        events.recv().await,
+        Some(LlmRuntimeEvent::Failed {
+            identity,
+            reason: LlmFailureReason::TimedOut,
+        })
+    );
+}
+

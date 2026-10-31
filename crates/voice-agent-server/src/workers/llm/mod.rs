@@ -407,6 +407,7 @@ impl ProviderDiagnosticOperation for LlmDiagnosticOperation {
             tokio::select! {
                 _ = cancellation.cancelled() => return Err(ProviderDiagnosticOperationError::Failed),
                 item = stream.next() => match item {
+                    Some(Ok(LlmEvent::Activity)) => {}
                     Some(Ok(LlmEvent::TextDelta(delta))) => {
                         let Some(next_length) = text.len().checked_add(delta.len()) else {
                             return Err(ProviderDiagnosticOperationError::InvalidResponse);
@@ -479,6 +480,7 @@ async fn run_operation(
         tokio::select! {
             _ = cancellation.cancelled() => return LlmRuntimeEvent::Cancelled { identity },
             item = stream.next() => match item {
+                Some(Ok(LlmEvent::Activity)) => {}
                 Some(Ok(LlmEvent::TextDelta(text))) => {
                     if ttft_ms.is_none() {
                         ttft_ms = Some(started_at.elapsed().as_millis() as u64);

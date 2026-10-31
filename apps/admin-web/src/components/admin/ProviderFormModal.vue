@@ -109,13 +109,19 @@ const currentVendorPoolModels = computed<GatewayPoolModelView[]>(() => {
   return poolModelsForVendor(resolveVendorForBinding(binding))
 })
 
+const CUSTOM_TIMEOUT_FIELDS = new Set(['first_byte_ms', 'idle_ms', 'max_total_ms'])
+
 const filteredSchema = computed(() => {
   if (!descriptor.value?.config_schema) return undefined
-  if (!supportsGatewayBinding.value) return descriptor.value.config_schema
+  const isCustomTimeout = form.configJson.timeout_profile === 'custom'
   return {
     ...descriptor.value.config_schema,
     fields: (descriptor.value.config_schema.fields ?? [])
-      .filter((f) => f.key !== 'gateway_binding')
+      .filter((f) => {
+        if (supportsGatewayBinding.value && f.key === 'gateway_binding') return false
+        if (CUSTOM_TIMEOUT_FIELDS.has(f.key) && !isCustomTimeout) return false
+        return true
+      })
       .map((f) =>
         f.key === 'model' && isUsingGateway.value
           ? { ...f, type: 'select' as const, enum_source: 'models' as const }
@@ -335,6 +341,11 @@ function submit() {
   const nextConfig = { ...form.configJson }
   if (supportsGatewayBinding.value && authSource.value === 'static_api_key') {
     delete nextConfig.gateway_binding
+  }
+  if (nextConfig.timeout_profile && nextConfig.timeout_profile !== 'custom') {
+    delete nextConfig.first_byte_ms
+    delete nextConfig.idle_ms
+    delete nextConfig.max_total_ms
   }
   const usingGateway =
     form.adapter === 'llm_gateway' ||

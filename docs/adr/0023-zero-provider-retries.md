@@ -10,3 +10,7 @@ Ngoại lệ có giới hạn cho `LlmGatewayProvider` ([ADR-0130](0130-internal
 ## Reminder delivery attempts (proposed)
 
 Retry bền vững ở cấp Reminder được đề xuất trong [ADR-0090](0090-reminder-playback-ack-and-bounded-attempts.md). Mỗi attempt là một logical TTS operation mới; không thay đổi lệnh cấm retry bên trong provider operation hoặc MCP call. Đây là thiết kế chưa triển khai.
+
+## Agent Run durable retry for Background Tasks
+
+Đối với Background Task, việc thử lại bền vững khi gặp lỗi LLM tạm thời hoặc hết hạn mức được thực hiện ở tầng điều phối Agent Run (`waiting_retry` và fast retry trước khi commit step) theo [ADR-0133](0133-durable-waiting-retry-and-job-budgets.md), trong khi Voice Session vẫn giữ nguyên nguyên tắc một lần gọi và không retry ở tầng provider.

@@ -149,6 +149,10 @@ async fn llm_gateway_provider_streams_anthropic_and_rotates_on_429_without_retry
         model: "claude-sonnet-4-20250514".to_owned(),
         base_url: Some(Url::parse(&format!("http://{addr}/v1")).expect("url")),
         timeout_ms: 5_000,
+        timeout_profile: None,
+        first_byte_ms: None,
+        idle_ms: None,
+        max_total_ms: None,
         max_tokens: Some(512),
         context_limit_tokens: None,
         reasoning_effort: None,
@@ -208,6 +212,10 @@ async fn openai_adapter_with_gateway_binding_delegates_to_llm_gateway_provider_a
         gateway_binding: Some(GatewayBinding::Pool(GatewayVendor::OpenaiCodex)),
         model: "gpt-5.3-codex".to_owned(),
         timeout_ms: 5_000,
+        timeout_profile: None,
+        first_byte_ms: None,
+        idle_ms: None,
+        max_total_ms: None,
         max_tokens: Some(512),
         context_limit_tokens: None,
         reasoning_effort: None,
@@ -559,6 +567,10 @@ admin_token = "gw-draft-test-token"
         api_key: None,
         gateway_binding: Some(GatewayBinding::Pool(GatewayVendor::OpenaiCodex)),
         timeout_ms: 5_000,
+        timeout_profile: None,
+        first_byte_ms: None,
+        idle_ms: None,
+        max_total_ms: None,
         max_tokens: 1024,
         context_limit_tokens: 128_000,
         reasoning_effort: None,
@@ -584,6 +596,10 @@ admin_token = "gw-draft-test-token"
         api_key: None,
         gateway_binding: Some(GatewayBinding::Pool(GatewayVendor::Anthropic)),
         timeout_ms: 5_000,
+        timeout_profile: None,
+        first_byte_ms: None,
+        idle_ms: None,
+        max_total_ms: None,
         max_tokens: 1024,
         context_limit_tokens: 128_000,
         reasoning_effort: None,
@@ -763,6 +779,10 @@ async fn llm_gateway_provider_executes_muse_chat_vision_image_video_and_rotates_
         model: "muse-chat".to_owned(),
         base_url: None,
         timeout_ms: 10_000,
+        timeout_profile: None,
+        first_byte_ms: None,
+        idle_ms: None,
+        max_total_ms: None,
         max_tokens: None,
         context_limit_tokens: None,
         reasoning_effort: None,
@@ -905,6 +925,10 @@ async fn llm_gateway_rejection_does_not_leave_provider_test_busy() {
         model: "claude-sonnet-4-20250514".to_owned(),
         base_url: Some(Url::parse(&format!("http://{addr}/v1")).expect("url")),
         timeout_ms: 5_000,
+        timeout_profile: None,
+        first_byte_ms: None,
+        idle_ms: None,
+        max_total_ms: None,
         max_tokens: Some(512),
         context_limit_tokens: None,
         reasoning_effort: None,
@@ -1118,6 +1142,10 @@ async fn llm_gateway_gemini_antigravity_streams_tools_vision_and_auto_refreshes_
         model: "Gemini-3.8-flash".to_owned(),
         base_url: Some(Url::parse(&format!("http://{addr}/v1internal")).expect("url")),
         timeout_ms: 5_000,
+        timeout_profile: None,
+        first_byte_ms: None,
+        idle_ms: None,
+        max_total_ms: None,
         max_tokens: Some(65_000),
         context_limit_tokens: Some(1_000_000),
         reasoning_effort: None,
@@ -1156,6 +1184,7 @@ async fn llm_gateway_gemini_antigravity_streams_tools_vision_and_auto_refreshes_
     let mut tool_calls = Vec::new();
     while let Some(ev) = stream.next().await {
         match ev.expect("stream event") {
+            LlmEvent::Activity => {}
             LlmEvent::TextDelta(delta) => text.push_str(&delta),
             LlmEvent::ToolCall(tc) => tool_calls.push(tc),
             LlmEvent::Finished => break,
@@ -1292,6 +1321,10 @@ async fn llm_gateway_gemini_403_does_not_mark_upstream_unauthorized_and_pool_fai
         model: "gemini-3.8-flash-medium".to_owned(),
         base_url: Some(Url::parse(&format!("http://{addr}")).expect("url")),
         timeout_ms: 5_000,
+        timeout_profile: None,
+        first_byte_ms: None,
+        idle_ms: None,
+        max_total_ms: None,
         max_tokens: Some(512),
         context_limit_tokens: None,
         reasoning_effort: None,
@@ -1329,6 +1362,10 @@ async fn llm_gateway_gemini_403_does_not_mark_upstream_unauthorized_and_pool_fai
         model: "gemini-3.8-flash-medium".to_owned(),
         base_url: Some(Url::parse(&format!("http://{addr}")).expect("url")),
         timeout_ms: 5_000,
+        timeout_profile: None,
+        first_byte_ms: None,
+        idle_ms: None,
+        max_total_ms: None,
         max_tokens: Some(512),
         context_limit_tokens: None,
         reasoning_effort: None,
@@ -1386,3 +1423,88 @@ async fn llm_gateway_gemini_403_does_not_mark_upstream_unauthorized_and_pool_fai
     assert_eq!(v2_after.status, GatewayAccountStatus::Active);
     assert_eq!(v2_after.last_error, None);
 }
+
+#[tokio::test]
+async fn codex_reasoning_activity() {
+    let hub = create_test_hub().await;
+    let ch = hub
+        .start_oauth_login(StartOAuthLoginRequest {
+            vendor: GatewayVendor::OpenaiCodex,
+            label: "Codex Activity".to_owned(),
+            redirect_uri: None,
+        })
+        .await
+        .expect("start codex");
+    hub.complete_oauth_login(
+        &ch.session_id,
+        OAuthCallbackSubmission {
+            callback_url_or_code: "codex_act_1".to_owned(),
+            state: None,
+        },
+    )
+    .await
+    .expect("complete codex");
+
+    let app = Router::new().route(
+        "/backend-api/codex/responses",
+        post(|| async move {
+            let sse = concat!(
+                "data: {\"type\":\"response.reasoning_summary_text.delta\",\"delta\":\"thinking step 1\"}\n\n",
+                "data: {\"type\":\"response.output_text.delta\",\"delta\":\"Ket qua\"}\n\n",
+                "data: [DONE]\n\n"
+            );
+            (
+                StatusCode::OK,
+                [("content-type", "text/event-stream")],
+                sse,
+            )
+                .into_response()
+        }),
+    );
+
+    let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+    let addr = listener.local_addr().expect("addr");
+    tokio::spawn(async move {
+        let _ = axum::serve(listener, app).await;
+    });
+
+    let cfg = LlmGatewayConfig {
+        gateway_binding: GatewayBinding::Pool(GatewayVendor::OpenaiCodex),
+        model: "gpt-5.3-codex".to_owned(),
+        base_url: Some(Url::parse(&format!("http://{addr}/backend-api/codex")).expect("url")),
+        timeout_ms: 5_000,
+        timeout_profile: None,
+        first_byte_ms: None,
+        idle_ms: None,
+        max_total_ms: None,
+        max_tokens: Some(512),
+        context_limit_tokens: None,
+        reasoning_effort: None,
+        temperature_percent: None,
+        tags: Some(vec!["chat".to_owned()]),
+        account_concurrency: None,
+        cdp_port: None,
+        headless: None,
+    };
+    let provider = LlmGatewayProvider::with_hub(&cfg, Arc::clone(&hub)).expect("provider");
+    let mut stream = provider
+        .stream(LlmRequest::text_turn("hello".to_owned()))
+        .await
+        .expect("open stream");
+
+    let mut events = Vec::new();
+    while let Some(ev) = stream.next().await {
+        let ev = ev.expect("event");
+        let is_done = matches!(ev, LlmEvent::Finished);
+        events.push(ev);
+        if is_done {
+            break;
+        }
+    }
+    assert!(
+        events.contains(&LlmEvent::Activity),
+        "reasoning SSE event must emit LlmEvent::Activity"
+    );
+    assert!(events.contains(&LlmEvent::TextDelta("Ket qua".to_owned())));
+}
+

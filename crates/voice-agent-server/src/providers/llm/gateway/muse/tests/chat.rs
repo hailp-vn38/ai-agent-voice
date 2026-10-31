@@ -319,3 +319,157 @@ async fn chat_stream_waits_for_in_progress_assistant_and_reconciles_full_history
         .expect("turn 2 invoke");
     assert_eq!(reply2, LlmOutput::Text(turn2_reply.to_string()));
 }
+
+#[tokio::test]
+async fn muse_truncated_is_error() {
+    let user_text = "[User]\nViết bài phân tích dài";
+    let in_progress_poll = vec![
+        json!({
+            "event_name": "message.user",
+            "payload": { "display_text": user_text }
+        }),
+        json!({
+            "event_name": "message.assistant",
+            "payload": {
+                "status": "in_progress",
+                "display_text": "Một nửa câu bị đứt giữa chừng"
+            }
+        }),
+    ];
+
+    let turn = FakeStreamTurn {
+        status: 200,
+        assigned_session_id: Some("sess-trunc-1".to_string()),
+        events: vec![
+            json!({
+                "type": "event",
+                "event": "sessions.updated",
+                "payload": {
+                    "change": "updated",
+                    "session": {
+                        "session_id": "sess-trunc-1",
+                        "status": "running"
+                    }
+                }
+            }),
+            json!({
+                "type": "event",
+                "event": "delta.text_append",
+                "payload": { "text": "Một nửa câu bị đứt giữa chừng" }
+            }),
+            json!({
+                "type": "event",
+                "event": "agent.status",
+                "payload": {
+                    "chat_context": { "chat_id": "sess-trunc-1" },
+                    "status": "online",
+                    "activity_code": "working"
+                }
+            }),
+        ],
+        history_polls: VecDeque::from(vec![in_progress_poll]),
+    };
+
+    let acc = FakeVmAccount::new(vec![turn]);
+    let transport = FakeMuseVmTransport::new(vec![Arc::clone(&acc)]);
+    let mut provider = build_gateway_muse_provider(&[SINGLE_COOKIE], transport).await;
+    provider.config.timeout_ms = 1_000;
+
+    let res = provider
+        .invoke(LlmOperation::Chat {
+            request: LlmRequest::text_turn("Viết bài phân tích dài".to_string()),
+            reasoning: false,
+        })
+        .await;
+    assert_eq!(
+        res,
+        Err(crate::providers::llm::LlmError::TimedOut),
+        "truncated stream that never reaches a confirmed completion state must return TimedOut"
+    );
+}
+
+#[tokio::test]
+async fn muse_stream_drop_aborts() {
+    let user_text = "[User]\nViết báo cáo";
+    let in_progress_poll = vec![
+        json!({
+            "event_name": "message.user",
+            "payload": { "display_text": user_text }
+        }),
+        json!({
+            "event_name": "message.assistant",
+            "payload": {
+                "status": "in_progress",
+                "display_text": "Đang bắt đầu..."
+            }
+        }),
+    ];
+
+    let turn = FakeStreamTurn {
+        status: 200,
+        assigned_session_id: Some("sess-drop-1".to_string()),
+        events: vec![
+            json!({
+                "type": "event",
+                "event": "sessions.updated",
+                "payload": {
+                    "change": "updated",
+                    "session": {
+                        "session_id": "sess-drop-1",
+                        "status": "running"
+                    }
+                }
+            }),
+            json!({
+                "type": "event",
+                "event": "delta.text_append",
+                "payload": { "text": "Đang bắt đầu..." }
+            }),
+            json!({
+                "type": "event",
+                "event": "agent.status",
+                "payload": {
+                    "chat_context": { "chat_id": "sess-drop-1" },
+                    "status": "online",
+                    "activity_code": "working"
+                }
+            }),
+        ],
+        history_polls: VecDeque::from(vec![in_progress_poll]),
+    };
+
+    let acc = FakeVmAccount::new(vec![turn]);
+    let transport = FakeMuseVmTransport::new(vec![Arc::clone(&acc)]);
+    let provider = build_gateway_muse_provider(&[SINGLE_COOKIE], transport).await;
+
+    let mut stream = provider
+        .stream(LlmRequest::text_turn("Viết báo cáo".to_string()))
+        .await
+        .expect("open stream");
+
+    // Read until we see the first delta so we know the VM lease and session are active
+    let mut saw_delta = false;
+    while let Some(item) = stream.next().await {
+        if let Ok(LlmEvent::TextDelta(text)) = item {
+            assert_eq!(text, "Đang bắt đầu...");
+            saw_delta = true;
+            break;
+        }
+    }
+    assert!(saw_delta);
+
+    // Drop the stream before the turn completes: AbortOnDropHandle must abort the task and drop VmOperationLease
+    drop(stream);
+
+    for _ in 0..20 {
+        if acc.deleted_sessions().iter().any(|s| s == "sess-drop-1") {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    assert!(
+        acc.deleted_sessions().iter().any(|s| s == "sess-drop-1"),
+        "dropping the stream must abort the background task and delete the remote session"
+    );
+}
+

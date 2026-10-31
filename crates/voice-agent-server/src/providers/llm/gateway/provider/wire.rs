@@ -1,10 +1,39 @@
-use std::sync::{Arc, Mutex};
+use std::{
+    sync::{Arc, Mutex},
+    time::Duration,
+};
 
 use serde_json::{Value, json};
+use tokio::{sync::mpsc, time::Instant};
 
-use crate::{providers::llm::LlmError, services::llm_gateway::GatewayLease};
+use crate::{
+    providers::llm::{LlmError, LlmEvent},
+    services::llm_gateway::GatewayLease,
+};
 
 pub(crate) type ErrorDetailSlot = Arc<Mutex<Option<String>>>;
+
+pub(crate) struct ActivityThrottle {
+    last_emitted: Option<Instant>,
+}
+
+impl ActivityThrottle {
+    pub(crate) fn new() -> Self {
+        Self { last_emitted: None }
+    }
+
+    pub(crate) fn maybe_emit(&mut self, tx: &mpsc::UnboundedSender<Result<LlmEvent, LlmError>>) {
+        let now = Instant::now();
+        let should_emit = match self.last_emitted {
+            None => true,
+            Some(prev) => now.duration_since(prev) >= Duration::from_secs(1),
+        };
+        if should_emit {
+            self.last_emitted = Some(now);
+            let _ = tx.send(Ok(LlmEvent::Activity));
+        }
+    }
+}
 
 pub(crate) fn new_error_detail_slot() -> ErrorDetailSlot {
     Arc::new(Mutex::new(None))

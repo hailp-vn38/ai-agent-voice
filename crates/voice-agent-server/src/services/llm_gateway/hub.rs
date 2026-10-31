@@ -802,6 +802,10 @@ impl LlmGatewayHub {
             model: model_trimmed.to_owned(),
             base_url,
             timeout_ms,
+            timeout_profile: None,
+            first_byte_ms: None,
+            idle_ms: None,
+            max_total_ms: None,
             max_tokens: req
                 .max_tokens
                 .or_else(|| preset.and_then(|p| p.default_max_tokens)),

@@ -82,6 +82,7 @@ pub(crate) async fn request_hatch_token_with_retry(
     for t_attempt in 0..2 {
         let token_resp = http
             .post(format!("{base}/api/hatch/token"))
+            .timeout(std::time::Duration::from_secs(30))
             .header(COOKIE, current_cookie.as_str())
             .header(USER_AGENT, DEFAULT_USER_AGENT)
             .header(ORIGIN, base)
@@ -134,6 +135,7 @@ pub(crate) async fn fetch_wss_from_cookie_http(
     // Tier 1: REST API (/api/session?vm_state=live -> /api/hatch/token)
     let session_resp = http
         .get(format!("{base}/api/session?vm_state=live"))
+        .timeout(std::time::Duration::from_secs(30))
         .header(COOKIE, &current_cookie)
         .header(USER_AGENT, DEFAULT_USER_AGENT)
         .header(ORIGIN, base)
@@ -178,6 +180,7 @@ pub(crate) async fn fetch_wss_from_cookie_http(
     // Tier 2: SSR HTML / Next.js RSC Flight Stream
     let page_resp = http
         .get(format!("{base}/"))
+        .timeout(std::time::Duration::from_secs(30))
         .header(COOKIE, &current_cookie)
         .header(USER_AGENT, DEFAULT_USER_AGENT)
         .send()

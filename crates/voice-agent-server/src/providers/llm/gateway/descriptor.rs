@@ -8,7 +8,7 @@ use crate::providers::{
     registry::ProviderAdapterRegistration,
 };
 
-use super::config::ADAPTER_NAME;
+use super::config::{ADAPTER_NAME, TIMEOUT_PROFILES};
 
 const FIELDS: &[ProviderConfigField] = &[
     field(
@@ -49,6 +49,37 @@ const FIELDS: &[ProviderConfigField] = &[
         None,
         Some(1_000),
         Some(600_000),
+        None,
+    ),
+    select_field("timeout_profile", "Timeout profile", TIMEOUT_PROFILES),
+    field(
+        "first_byte_ms",
+        "First-byte timeout (ms)",
+        ConfigFieldType::Integer,
+        false,
+        None,
+        Some(1_000),
+        Some(3_600_000),
+        None,
+    ),
+    field(
+        "idle_ms",
+        "Idle stream timeout (ms)",
+        ConfigFieldType::Integer,
+        false,
+        None,
+        Some(1_000),
+        Some(3_600_000),
+        None,
+    ),
+    field(
+        "max_total_ms",
+        "Max total request timeout (ms)",
+        ConfigFieldType::Integer,
+        false,
+        None,
+        Some(1_000),
+        Some(7_200_000),
         None,
     ),
     field(

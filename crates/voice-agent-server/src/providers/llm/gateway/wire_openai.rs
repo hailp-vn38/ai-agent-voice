@@ -144,6 +144,7 @@ pub(crate) async fn open_sse_stream(
     tokio::spawn(async move {
         let mut raw_buf: Vec<u8> = Vec::new();
         let mut pending_tools: BTreeMap<u64, (String, String, String)> = BTreeMap::new();
+        let mut activity = super::provider::ActivityThrottle::new();
 
         loop {
             let chunk_opt = match resp.chunk().await {
@@ -162,7 +163,11 @@ pub(crate) async fn open_sse_stream(
             }
 
             while let Some(line) = drain_next_sse_line(&mut raw_buf) {
-                if line.is_empty() || line.starts_with(':') {
+                if line.is_empty() {
+                    continue;
+                }
+                activity.maybe_emit(&tx);
+                if line.starts_with(':') {
                     continue;
                 }
                 let Some(data) = line.strip_prefix("data:") else {

@@ -32,9 +32,9 @@ use super::{
 };
 
 pub(crate) use wire::{
-    ErrorDetailSlot, WireError, apply_lease_headers, check_wire_status, drain_next_sse_line,
-    extract_sse_error_detail, new_error_detail_slot, parse_tool_arguments, record_wire_detail,
-    summarize_error_body,
+    ActivityThrottle, ErrorDetailSlot, WireError, apply_lease_headers, check_wire_status,
+    drain_next_sse_line, extract_sse_error_detail, new_error_detail_slot, parse_tool_arguments,
+    record_wire_detail, summarize_error_body,
 };
 
 fn default_tags_for_config(config: &LlmGatewayConfig) -> Vec<LlmCapabilityTag> {
@@ -104,8 +104,11 @@ impl LlmGatewayProvider {
         if !config.valid() {
             return Err(LlmError::Failed);
         }
+        let limits = config.resolved_limits();
+        let read_timeout = limits.first_byte.max(limits.idle) + Duration::from_secs(30);
         let http = reqwest::Client::builder()
-            .timeout(Duration::from_millis(config.timeout_ms.max(1_000)))
+            .connect_timeout(Duration::from_secs(15))
+            .read_timeout(read_timeout)
             .build()
             .map_err(|_| LlmError::Failed)?;
         Ok(Self {
@@ -146,6 +149,10 @@ impl LlmGatewayProvider {
             model: config.model.clone(),
             base_url,
             timeout_ms: config.timeout_ms,
+            timeout_profile: config.timeout_profile,
+            first_byte_ms: config.first_byte_ms,
+            idle_ms: config.idle_ms,
+            max_total_ms: config.max_total_ms,
             max_tokens: config.max_tokens,
             context_limit_tokens: config.context_limit_tokens,
             reasoning_effort: config.reasoning_effort.clone(),
@@ -271,7 +278,10 @@ impl LlmProvider for LlmGatewayProvider {
                 mime_type,
             } => {
                 self.ensure_tag(LlmCapabilityTag::Vision)?;
-                self.run_vision(&prompt, &image_bytes, &mime_type).await
+                let max_total = self.config.resolved_limits().max_total;
+                tokio::time::timeout(max_total, self.run_vision(&prompt, &image_bytes, &mime_type))
+                    .await
+                    .map_err(|_| LlmError::TimedOut)?
             }
             LlmOperation::ImageGeneration {
                 prompt,
