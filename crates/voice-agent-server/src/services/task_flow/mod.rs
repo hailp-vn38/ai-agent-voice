@@ -227,8 +227,7 @@ async fn init_orchestrator_and_task_manager(
     let llm_cfg = LlmConfig { providers };
     let ctx_limit = cfg.context_limit_tokens;
 
-    let mut orch_cfg = OrchestratorConfig::new(llm_cfg, agents, &cfg.store_dir)
-        .with_project_instructions(engine.config().schema_path());
+    let mut orch_cfg = OrchestratorConfig::new(llm_cfg, agents, &cfg.store_dir);
     if let Some(ref skills_dir) = cfg.skills_dir {
         orch_cfg = orch_cfg.with_skills_dir(skills_dir);
     }

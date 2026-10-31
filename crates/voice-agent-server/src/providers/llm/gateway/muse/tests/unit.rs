@@ -222,6 +222,35 @@ fn flatten_messages_and_media_prompts_preserve_structure() {
     assert!(flat.contains("[System]\nBe concise."));
     assert!(flat.contains("[User]\nHello!"));
 
+    let orch_req = LlmRequest {
+        messages: vec![
+            ChatMessage::System {
+                content: "<!-- base-instructions-version: 1 -->\n# Orchestrator base instructions\n\nTrả lời cuối cùng là văn bản rõ ràng. `completed` chỉ nghĩa là lượt chạy đã kết thúc,\n  không chứng nhận yêu cầu nghiệp vụ đã đạt; hãy nêu rõ phần chưa làm được.\n\nBạn tìm kiếm tổng hợp thông tin sau đó trả lời bằng một tin nhắn\n\n<project_instructions>\n# Wiki Schema — Research Deep-Dive\n</project_instructions>\n\n<available_skills>\n  <skill><id>wiki-taxonomy</id></skill>\n</available_skills>".to_string(),
+            },
+            ChatMessage::User {
+                content: "Tìm thông tin về Chiến tranh Triều Tiên.".to_string(),
+            },
+        ],
+        tools: Vec::new(),
+    };
+    let orch_flat = flatten_messages(&orch_req);
+    assert!(
+        !orch_flat.contains("Orchestrator base instructions"),
+        "Orchestrator base boilerplate must be stripped for Muse prompt"
+    );
+    assert!(
+        !orch_flat.contains("<project_instructions>"),
+        "Wiki project_instructions must be stripped for Muse prompt"
+    );
+    assert!(
+        !orch_flat.contains("<available_skills>"),
+        "available_skills XML must be stripped for Muse prompt"
+    );
+    assert!(orch_flat.contains(
+        "[System]\nBạn tìm kiếm tổng hợp thông tin sau đó trả lời bằng một tin nhắn"
+    ));
+    assert!(orch_flat.contains("[User]\nTìm thông tin về Chiến tranh Triều Tiên."));
+
     let img_prompt = format_image_prompt("A neon city", 1920, 1080, true);
     assert!(img_prompt.contains("aspect ratio 16:9"));
     assert!(img_prompt.contains("solid, uniform, flat pure-white (#FFFFFF) studio background"));

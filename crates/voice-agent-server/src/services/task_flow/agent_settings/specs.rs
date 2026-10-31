@@ -119,6 +119,7 @@ const WIKI_INGESTOR_TOOLS: &[&str] = &[
     "wiki_multi_get",
     "wiki_query",
     "wiki_metadata",
+    "wiki_schema",
     "wiki_ingest_source",
     "wiki_write_file",
     "wiki_patch_file",

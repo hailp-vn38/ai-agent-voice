@@ -61,11 +61,53 @@ pub fn format_video_prompt(prompt: &str, width: u32, height: u32, duration_secs:
     }
 }
 
+const ORCHESTRATOR_BASE_PREFIX: &str = "<!-- base-instructions-version:";
+const ORCHESTRATOR_BASE_END_MARKER: &str =
+    "không chứng nhận yêu cầu nghiệp vụ đã đạt; hãy nêu rõ phần chưa làm được.";
+
+fn remove_xml_section(input: &str, open_tag: &str, close_tag: &str) -> String {
+    let mut out = input.to_string();
+    while let Some(start) = out.find(open_tag) {
+        if let Some(rel_end) = out[start..].find(close_tag) {
+            let end = start + rel_end + close_tag.len();
+            out.replace_range(start..end, "");
+        } else {
+            break;
+        }
+    }
+    out
+}
+
+pub(crate) fn strip_orchestrator_system_boilerplate(raw: &str) -> String {
+    let mut cleaned = remove_xml_section(
+        raw,
+        "<project_instructions>",
+        "</project_instructions>",
+    );
+    cleaned = remove_xml_section(&cleaned, "<available_skills>", "</available_skills>");
+    let trimmed = cleaned.trim();
+    if trimmed.starts_with(ORCHESTRATOR_BASE_PREFIX)
+        && let Some(idx) = trimmed.find(ORCHESTRATOR_BASE_END_MARKER)
+    {
+        return trimmed[idx + ORCHESTRATOR_BASE_END_MARKER.len()..]
+            .trim()
+            .to_string();
+    }
+    trimmed.to_string()
+}
+
 pub fn flatten_messages(request: &LlmRequest) -> String {
     let mut blocks: Vec<(&'static str, String)> = Vec::new();
     for msg in &request.messages {
         let (label, text) = match msg {
-            ChatMessage::System { content } => ("System", content.trim()),
+            ChatMessage::System { content } => {
+                let sanitized = strip_orchestrator_system_boilerplate(content);
+                if sanitized.is_empty() {
+                    continue;
+                }
+                blocks.push(("System", sanitized));
+                continue;
+            }
             ChatMessage::User { content } => ("User", content.trim()),
             ChatMessage::AssistantText { content } => ("Assistant", content.trim()),
             ChatMessage::AssistantToolCalls { calls } => {
