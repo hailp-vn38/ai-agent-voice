@@ -14,7 +14,7 @@ use super::super::proto::{
 pub(in crate::providers::llm::gateway) use super::fixtures::{
     FakeStreamTurn, SECOND_COOKIE, SINGLE_COOKIE, VALID_MP4_BYTES, VALID_PNG_BYTES,
 };
-pub(super) use super::fixtures::make_test_rgba_png;
+pub(super) use super::fixtures::{make_test_rgba_png, mp4_with_duration};
 use crate::config::DatabaseConfig;
 use crate::database::Database;
 use crate::database::credentials::CredentialCipher;

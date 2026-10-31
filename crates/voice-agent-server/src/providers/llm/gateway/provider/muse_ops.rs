@@ -249,6 +249,7 @@ impl LlmGatewayProvider {
         formatted_prompt: &str,
         images: &[ReferenceImage],
         transparent_background: bool,
+        target_duration_secs: Option<u32>,
         required_tag: &'static str,
     ) -> Result<LlmOutput, LlmError> {
         let lease = self
@@ -276,6 +277,7 @@ impl LlmGatewayProvider {
                 formatted_prompt,
                 images,
                 transparent_background,
+                target_duration_secs,
                 timeout,
             )
             .await

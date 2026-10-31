@@ -290,6 +290,7 @@ impl LlmProvider for LlmGatewayProvider {
                     &formatted,
                     &reference_images,
                     transparent_background,
+                    None,
                     LlmCapabilityTag::Image.as_str(),
                 )
                 .await
@@ -309,6 +310,7 @@ impl LlmProvider for LlmGatewayProvider {
                     &formatted,
                     &images,
                     false,
+                    Some(duration_secs),
                     LlmCapabilityTag::Video.as_str(),
                 )
                 .await

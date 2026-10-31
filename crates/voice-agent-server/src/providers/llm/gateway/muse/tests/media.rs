@@ -6,7 +6,7 @@ use serde_json::json;
 use super::super::workflow::decode_uncompressed_or_simple_png;
 use super::harness::{
     FakeMuseVmTransport, FakeStreamTurn, FakeVmAccount, SINGLE_COOKIE, VALID_MP4_BYTES,
-    VALID_PNG_BYTES, build_gateway_muse_provider, make_test_rgba_png,
+    VALID_PNG_BYTES, build_gateway_muse_provider, make_test_rgba_png, mp4_with_duration,
 };
 use crate::providers::llm::{LlmOperation, LlmOutput, LlmProvider, MediaPart, ReferenceImage};
 
@@ -543,4 +543,71 @@ async fn video_generation_waits_across_commentary_and_message_to_presentation_ga
         )
         .unwrap()
     );
+}
+
+fn single_video_history(text: &str, path: &str) -> Vec<Vec<serde_json::Value>> {
+    vec![vec![
+        json!({ "role": "user", "display_text": "prompt" }),
+        json!({ "role": "assistant", "status": "completed", "display_text": text }),
+        json!({
+            "event_name": "delta.presentation",
+            "payload": { "kind": "video", "data": { "videos": [ { "path": path } ] } }
+        }),
+    ]]
+}
+
+fn stream_texts(acc: &FakeVmAccount) -> Vec<String> {
+    acc.stream_requests()
+        .iter()
+        .map(|r| r["items"][0]["text"].as_str().unwrap_or("").to_string())
+        .collect()
+}
+
+#[tokio::test]
+async fn short_video_is_repaired_in_the_same_session_until_target_duration_is_met() {
+    let short = mp4_with_duration(40);
+    let full = mp4_with_duration(50);
+    let turn1 = FakeStreamTurn::media_reply(
+        vec![],
+        single_video_history("Beat 4 failed, here is what I have", "sandbox:///home/user/a.mp4"),
+        vec![],
+    );
+    let turn2 = FakeStreamTurn::media_reply(
+        vec![],
+        single_video_history("Merged all beats [ALL_MEDIA_ATTACHED]", "sandbox:///home/user/b.mp4"),
+        vec![],
+    );
+    let acc = FakeVmAccount::new(vec![turn1, turn2])
+        .with_file("/home/user/a.mp4", short)
+        .with_file("/home/user/b.mp4", full.clone());
+    let transport = FakeMuseVmTransport::new(vec![Arc::clone(&acc)]);
+    let provider = build_gateway_muse_provider(&[SINGLE_COOKIE], transport).await;
+
+    let output = provider
+        .invoke(LlmOperation::VideoGeneration {
+            prompt: "50s football recap".to_string(),
+            width: 1080,
+            height: 1920,
+            duration_secs: 50,
+            first_frame: None,
+        })
+        .await
+        .expect("repaired video succeeds");
+
+    let reqs = acc.stream_requests();
+    assert_eq!(reqs.len(), 2, "one repair turn must follow the short result");
+    assert_eq!(
+        reqs[0]["session_id"], reqs[1]["session_id"],
+        "repair must reuse the same Muse session"
+    );
+    assert!(
+        stream_texts(&acc)[1].contains("MISSING_DURATION"),
+        "repair prompt names the shortfall"
+    );
+    let LlmOutput::Media { bytes, .. } = output else {
+        panic!("expected media output");
+    };
+    assert_eq!(bytes, full, "the full-length video replaces the short one");
+    tokio::task::yield_now().await;
+    assert_eq!(acc.deleted_sessions().len(), 1, "session deleted once, after the repair");
 }

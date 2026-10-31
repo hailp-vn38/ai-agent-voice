@@ -26,6 +26,10 @@ use crate::providers::llm::{LlmOutput, MediaPart, ReferenceImage};
 const MEDIA_POLL_INTERVAL: Duration = Duration::from_millis(400);
 const MAX_IMAGE_FILE_BYTES: usize = 50 * 1024 * 1024;
 const MAX_VIDEO_FILE_BYTES: usize = 150 * 1024 * 1024;
+/// Follow-up turns (same Muse session) allowed when the delivered video is shorter than requested.
+const MAX_DURATION_REPAIRS: usize = 2;
+/// A video up to this many seconds short still counts as complete (half of one 10s Muse clip).
+const DURATION_SHORTFALL_TOLERANCE_SECS: u32 = 5;
 
 const VIDEO_ATTACH_FOLLOWUP_PROMPT: &str = "You have not attached the final video file(s) to this chat thread yet. Do NOT ask any questions. Generate and attach the final MP4 video file(s) directly into this chat message now, and end your message with [ALL_MEDIA_ATTACHED] once every video is attached.";
 const IMAGE_ATTACH_FOLLOWUP_PROMPT: &str = "You have not attached the generated image to this chat thread yet. Generate and attach the image file directly into this chat message now, and end your message with [ALL_MEDIA_ATTACHED].";
@@ -36,6 +40,7 @@ pub(crate) async fn run_media_turn_once(
     formatted_prompt: &str,
     images: &[ReferenceImage],
     transparent_background: bool,
+    target_duration_secs: Option<u32>,
     timeout_duration: Duration,
 ) -> Result<LlmOutput, WorkflowFailure> {
     if formatted_prompt.trim().is_empty() {
@@ -52,6 +57,7 @@ pub(crate) async fn run_media_turn_once(
         images,
         kind,
         transparent_background,
+        target_duration_secs,
         timeout_duration,
     )
     .await;
@@ -62,12 +68,19 @@ pub(crate) async fn run_media_turn_once(
     res
 }
 
+/// Result of one Muse chat turn: what the poll loop saw when the turn settled (or the deadline hit).
+struct CollectedTurn {
+    ready_candidates: Vec<ReadyMediaCandidate>,
+    assistant_bubbles: Vec<String>,
+}
+
 async fn execute_media_turn_on_lease(
     lease: &mut VmOperationLease,
     prompt: &str,
     images: &[ReferenceImage],
     kind: MediaKind,
     transparent_background: bool,
+    target_duration_secs: Option<u32>,
     timeout_duration: Duration,
 ) -> Result<LlmOutput, WorkflowFailure> {
     let mut items = Vec::with_capacity(images.len() + 1);
@@ -85,8 +98,181 @@ async fn execute_media_turn_on_lease(
 
     let mut event_rx = lease.client().subscribe_events();
     send_media_stream_request(lease, items).await?;
-
     let deadline = Instant::now() + timeout_duration;
+
+    let mut repairs_used = 0usize;
+    let mut best: Option<BestVideo> = None;
+    loop {
+        let turn = match collect_media_turn(lease, &mut event_rx, kind, deadline).await {
+            Ok(turn) => turn,
+            Err(WorkflowFailure::Timeout(_)) if best.is_some() => break,
+            Err(err) => return Err(err),
+        };
+        let selected = select_effective_ready_attachments(&turn.ready_candidates);
+        if selected.is_empty() {
+            if best.is_some() {
+                break;
+            }
+            return Err(WorkflowFailure::Timeout(format!(
+                "Muse {kind:?} generation timed out without producing any downloadable file path"
+            )));
+        }
+        let assistant_message = format_clean_assistant_bubbles(&turn.assistant_bubbles);
+
+        if matches!(kind, MediaKind::Image) {
+            return finish_image(lease, &selected, transparent_background, assistant_message)
+                .await;
+        }
+
+        let parts = download_video_parts(lease, &selected).await?;
+        let total_secs = total_duration_secs(&parts);
+        let is_better = best.as_ref().is_none_or(|b| {
+            total_secs.unwrap_or(0) >= b.total_secs.unwrap_or(0)
+        });
+        if is_better {
+            best = Some(BestVideo {
+                parts,
+                total_secs,
+                assistant_message,
+            });
+        }
+
+        let best_total = best.as_ref().and_then(|b| b.total_secs);
+        let shortfall = video_shortfall_secs(target_duration_secs, best_total);
+        if shortfall == 0
+            || repairs_used >= MAX_DURATION_REPAIRS
+            || Instant::now() >= deadline
+        {
+            break;
+        }
+        repairs_used += 1;
+        let followup = video_repair_prompt(
+            target_duration_secs.unwrap_or_default(),
+            best_total.unwrap_or_default(),
+            shortfall,
+        );
+        send_media_stream_request(lease, vec![json!({ "type": "text", "text": followup })])
+            .await?;
+    }
+
+    let Some(best) = best else {
+        return Err(WorkflowFailure::Timeout(format!(
+            "Muse {kind:?} generation timed out without producing any downloadable file path"
+        )));
+    };
+    lease.finish_clean(None);
+    LlmOutput::from_media_parts(best.parts, best.assistant_message).ok_or_else(|| {
+        WorkflowFailure::Upstream(
+            UpstreamFailureKind::Transient,
+            "no video parts downloaded".to_string(),
+        )
+    })
+}
+
+struct BestVideo {
+    parts: Vec<MediaPart>,
+    total_secs: Option<u32>,
+    assistant_message: Option<String>,
+}
+
+fn total_duration_secs(parts: &[MediaPart]) -> Option<u32> {
+    parts.iter().try_fold(0u32, |acc, part| {
+        orchestrator_flow_rs::inspect_mp4_duration_secs(&part.bytes)
+            .map(|secs| acc.saturating_add(secs))
+    })
+}
+
+/// Seconds missing from the delivered video; 0 when no target, unknown duration, or within tolerance.
+fn video_shortfall_secs(target: Option<u32>, actual: Option<u32>) -> u32 {
+    match (target, actual) {
+        (Some(target), Some(actual))
+            if actual.saturating_add(DURATION_SHORTFALL_TOLERANCE_SECS) < target =>
+        {
+            target - actual
+        }
+        _ => 0,
+    }
+}
+
+fn video_repair_prompt(target: u32, actual: u32, missing: u32) -> String {
+    format!(
+        "MISSING_DURATION: the video you attached is only {actual}s but {target}s was requested ({missing}s missing). Do NOT ask questions and do NOT start over. Reuse the clips already generated in this chat, generate ONLY the missing beats, merge everything in order into ONE continuous video of ~{target}s, attach only that merged file, and end your message with {MEDIA_DONE_MARKER}."
+    )
+}
+
+async fn download_video_parts(
+    lease: &mut VmOperationLease,
+    selected: &[ReadyMediaCandidate],
+) -> Result<Vec<MediaPart>, WorkflowFailure> {
+    let mut parts = Vec::with_capacity(selected.len());
+    for item in selected {
+        let raw_bytes = lease
+            .client()
+            .read_file(&item.path, MAX_VIDEO_FILE_BYTES)
+            .await?;
+        if raw_bytes.is_empty() {
+            return Err(WorkflowFailure::Upstream(
+                UpstreamFailureKind::Transient,
+                format!("Muse /fs/read returned empty video for {}", item.path),
+            ));
+        }
+        let mime_type = sniff_media_mime_type(&raw_bytes, "video/mp4", MediaKind::Video);
+        parts.push(MediaPart {
+            bytes: raw_bytes,
+            mime_type,
+        });
+    }
+    Ok(parts)
+}
+
+async fn finish_image(
+    lease: &mut VmOperationLease,
+    selected: &[ReadyMediaCandidate],
+    transparent_background: bool,
+    assistant_message: Option<String>,
+) -> Result<LlmOutput, WorkflowFailure> {
+    let chosen = selected.last().expect("selected is non-empty");
+    let raw_bytes = lease
+        .client()
+        .read_file(&chosen.path, MAX_IMAGE_FILE_BYTES)
+        .await?;
+    if raw_bytes.is_empty() {
+        return Err(WorkflowFailure::Upstream(
+            UpstreamFailureKind::Transient,
+            format!("Muse /fs/read returned empty image for {}", chosen.path),
+        ));
+    }
+    let (final_bytes, final_mime) = if transparent_background {
+        let processed = remove_background_to_rgba_png(&raw_bytes)?;
+        let mime = sniff_media_mime_type(&processed, "image/png", MediaKind::Image);
+        (processed, mime)
+    } else {
+        let mime = sniff_media_mime_type(&raw_bytes, "image/webp", MediaKind::Image);
+        (raw_bytes, mime)
+    };
+    lease.finish_clean(None);
+    LlmOutput::from_media_parts(
+        vec![MediaPart {
+            bytes: final_bytes,
+            mime_type: final_mime,
+        }],
+        assistant_message,
+    )
+    .ok_or_else(|| {
+        WorkflowFailure::Upstream(
+            UpstreamFailureKind::Transient,
+            "empty image media parts".to_string(),
+        )
+    })
+}
+
+/// Drives one chat turn to completion (or the deadline) and reports what Muse produced.
+async fn collect_media_turn(
+    lease: &mut VmOperationLease,
+    event_rx: &mut tokio::sync::broadcast::Receiver<VmStreamEvent>,
+    kind: MediaKind,
+    deadline: Instant,
+) -> Result<CollectedTurn, WorkflowFailure> {
     let mut poll_interval = tokio::time::interval(MEDIA_POLL_INTERVAL);
     poll_interval.tick().await;
 
@@ -287,79 +473,10 @@ async fn execute_media_turn_on_lease(
         }
     }
 
-    let selected = select_effective_ready_attachments(&ready_candidates);
-    if selected.is_empty() {
-        return Err(WorkflowFailure::Timeout(format!(
-            "Muse {kind:?} generation timed out without producing any downloadable file path"
-        )));
-    }
-
-    let assistant_message = format_clean_assistant_bubbles(&assistant_bubbles);
-
-    match kind {
-        MediaKind::Image => {
-            let chosen = selected.last().expect("selected is non-empty");
-            let raw_bytes = lease
-                .client()
-                .read_file(&chosen.path, MAX_IMAGE_FILE_BYTES)
-                .await?;
-            if raw_bytes.is_empty() {
-                return Err(WorkflowFailure::Upstream(
-                    UpstreamFailureKind::Transient,
-                    format!("Muse /fs/read returned empty image for {}", chosen.path),
-                ));
-            }
-            let (final_bytes, final_mime) = if transparent_background {
-                let processed = remove_background_to_rgba_png(&raw_bytes)?;
-                let mime = sniff_media_mime_type(&processed, "image/png", MediaKind::Image);
-                (processed, mime)
-            } else {
-                let mime = sniff_media_mime_type(&raw_bytes, "image/webp", MediaKind::Image);
-                (raw_bytes, mime)
-            };
-            lease.finish_clean(None);
-            LlmOutput::from_media_parts(
-                vec![MediaPart {
-                    bytes: final_bytes,
-                    mime_type: final_mime,
-                }],
-                assistant_message,
-            )
-            .ok_or_else(|| {
-                WorkflowFailure::Upstream(
-                    UpstreamFailureKind::Transient,
-                    "empty image media parts".to_string(),
-                )
-            })
-        }
-        MediaKind::Video => {
-            let mut parts = Vec::with_capacity(selected.len());
-            for item in &selected {
-                let raw_bytes = lease
-                    .client()
-                    .read_file(&item.path, MAX_VIDEO_FILE_BYTES)
-                    .await?;
-                if raw_bytes.is_empty() {
-                    return Err(WorkflowFailure::Upstream(
-                        UpstreamFailureKind::Transient,
-                        format!("Muse /fs/read returned empty video for {}", item.path),
-                    ));
-                }
-                let mime_type = sniff_media_mime_type(&raw_bytes, "video/mp4", MediaKind::Video);
-                parts.push(MediaPart {
-                    bytes: raw_bytes,
-                    mime_type,
-                });
-            }
-            lease.finish_clean(None);
-            LlmOutput::from_media_parts(parts, assistant_message).ok_or_else(|| {
-                WorkflowFailure::Upstream(
-                    UpstreamFailureKind::Transient,
-                    "no video parts downloaded".to_string(),
-                )
-            })
-        }
-    }
+    Ok(CollectedTurn {
+        ready_candidates,
+        assistant_bubbles,
+    })
 }
 
 async fn send_media_stream_request(

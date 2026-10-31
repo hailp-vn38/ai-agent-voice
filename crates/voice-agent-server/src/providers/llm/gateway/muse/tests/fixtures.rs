@@ -20,6 +20,17 @@ pub(in crate::providers::llm::gateway) const VALID_MP4_BYTES: &[u8] = &[
     b'm', b'p', b'4', b'2', b'i', b's', b'o', b'm',
 ];
 
+/// Synthetic MP4 whose duration `inspect_mp4_duration_secs` reads from the `mdat` `dur=Ns` marker.
+pub(in crate::providers::llm::gateway) fn mp4_with_duration(secs: u32) -> Vec<u8> {
+    let mut out = VALID_MP4_BYTES.to_vec();
+    let payload = format!("dur={secs}s");
+    let len = (8 + payload.len()) as u32;
+    out.extend_from_slice(&len.to_be_bytes());
+    out.extend_from_slice(b"mdat");
+    out.extend_from_slice(payload.as_bytes());
+    out
+}
+
 #[derive(Clone)]
 pub(in crate::providers::llm::gateway) struct FakeStreamTurn {
     pub status: u32,
