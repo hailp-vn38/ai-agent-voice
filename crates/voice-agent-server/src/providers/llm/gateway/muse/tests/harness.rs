@@ -32,6 +32,7 @@ pub(in crate::providers::llm::gateway) struct FakeVmAccount {
     decided_approvals: Mutex<Vec<(String, String)>>,
     deleted_sessions: Mutex<Vec<String>>,
     active_history: Mutex<VecDeque<Vec<Value>>>,
+    stream_delay: Mutex<Option<std::time::Duration>>,
 }
 
 impl FakeVmAccount {
@@ -44,7 +45,13 @@ impl FakeVmAccount {
             decided_approvals: Mutex::new(Vec::new()),
             deleted_sessions: Mutex::new(Vec::new()),
             active_history: Mutex::new(VecDeque::new()),
+            stream_delay: Mutex::new(None),
         })
+    }
+
+    pub fn with_stream_delay(self: &Arc<Self>, delay: std::time::Duration) -> Arc<Self> {
+        *self.stream_delay.lock().unwrap() = Some(delay);
+        Arc::clone(self)
     }
 
     pub fn with_file(self: &Arc<Self>, path: &str, bytes: Vec<u8>) -> Arc<Self> {
@@ -232,6 +239,10 @@ impl MuseVmSender for FakeVmSender {
                 }
                 send_json_response(&self.tx, stream_id, 200, &json!({ "ok": true }));
             } else if path == "/chat/stream" {
+                let maybe_delay = *self.account.stream_delay.lock().unwrap();
+                if let Some(delay) = maybe_delay {
+                    tokio::time::sleep(delay).await;
+                }
                 let body_json: Value =
                     serde_json::from_slice(&req.body).unwrap_or_else(|_| json!({}));
                 self.account
@@ -436,7 +447,7 @@ pub(super) async fn build_gateway_muse_provider(
         gateway_binding: GatewayBinding::Pool(GatewayVendor::Muse),
         model: "muse-chat".to_string(),
         base_url: None,
-        timeout_ms: 5_000,
+        timeout_ms: 10_000,
         timeout_profile: None,
         first_byte_ms: None,
         idle_ms: None,

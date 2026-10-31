@@ -9,19 +9,23 @@ use std::{
 use tokio::sync::mpsc;
 
 use crate::{
-    providers::llm::{LlmError, LlmEvent, LlmEventStream, LlmOutput, LlmRequest, ReferenceImage},
+    providers::llm::{
+        DurableMediaProvider, LlmCapabilityTag, LlmError, LlmEvent, LlmEventStream, LlmOperation,
+        LlmOutput, LlmProvider, LlmRequest, OperationJournal, OperationState, ReferenceImage,
+    },
     services::llm_gateway::{
-        GatewayBinding, GatewayCallOutcome, GatewayLease, GatewayVendor, LlmGatewayHub,
+        GatewayBinding, GatewayCallOutcome, GatewayError, GatewayLease, GatewayVendor,
+        LlmGatewayHub,
     },
 };
 
 use super::super::{
     config::LlmGatewayConfig,
     muse::{
-        pool::{SharedMusePool, UpstreamFailureKind, job_entry},
+        pool::{SharedMusePool, UpstreamFailureKind, VideoRequestSignature, job_entry},
         workflow::{
-            ChatSignal, MediaBatch, MediaKind, WorkflowFailure, run_chat_turn_once,
-            run_media_turn_once,
+            ChatSignal, MediaBatch, MediaKind, WorkflowFailure, count_remote_user_turns,
+            format_video_batches, resume_media_turn_once, run_chat_turn_once, run_media_turn_once,
         },
     },
 };
@@ -204,6 +208,7 @@ impl LlmGatewayProvider {
         initial_lease: GatewayLease,
         is_pool: bool,
         max_attempts: usize,
+        started_running: &AtomicBool,
         mut op: F,
     ) -> Result<T, LlmError>
     where
@@ -224,7 +229,9 @@ impl LlmGatewayProvider {
                         return Ok(output);
                     }
                     Err(failure) => {
+                        let already_running = started_running.load(Ordering::Relaxed);
                         if !refreshed_in_attempt
+                            && !already_running
                             && matches!(
                                 failure,
                                 WorkflowFailure::Upstream(UpstreamFailureKind::AuthInvalid, _)
@@ -246,6 +253,7 @@ impl LlmGatewayProvider {
                             current_lease.account_key, failure
                         );
                         let can_failover = is_pool
+                            && !already_running
                             && is_retryable_muse_failure(&failure)
                             && attempt + 1 < max_attempts;
                         let err = report_muse_failure_to_hub(
@@ -269,6 +277,7 @@ impl LlmGatewayProvider {
         Err(LlmError::Failed)
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(super) async fn run_muse_media(
         &self,
         kind: MediaKind,
@@ -276,30 +285,41 @@ impl LlmGatewayProvider {
         images: &[ReferenceImage],
         transparent_background: bool,
         continuation_key: Option<String>,
+        request_sig: Option<VideoRequestSignature>,
+        existing_op: Option<&orchestrator_agent_rs::ToolOperation>,
+        journal: Option<&dyn OperationJournal>,
         required_tag: &'static str,
     ) -> Result<LlmOutput, LlmError> {
         let job = continuation_key.as_deref().map(job_entry);
-        // Keep a job on the account that already holds its Muse session.
-        let pinned = job
-            .as_ref()
-            .and_then(|entry| entry.account_hint())
-            .and_then(|account_key| {
-                self.hub
+        // Keep a job on the account that already holds its Muse session. If that account is
+        // temporarily unavailable, surface a transient error rather than falling back to the pool
+        // and orphaning the remote session.
+        let pinned_account = existing_op
+            .and_then(|op| op.account_key.clone())
+            .or_else(|| job.as_ref().and_then(|entry| entry.account_hint()));
+        let (lease, is_pool) = match pinned_account {
+            Some(account_key) => {
+                let lease = self
+                    .hub
                     .acquire_lease(&GatewayBinding::Account(account_key))
-                    .ok()
-            })
-            .filter(|lease| lease.vendor == GatewayVendor::Muse);
-        let lease = match pinned {
-            Some(lease) => lease,
-            None => self
-                .hub
-                .acquire_lease(&self.config.gateway_binding)
-                .map_err(|_| LlmError::Rejected)?,
+                    .map_err(|err| match err {
+                        GatewayError::AccountReauthRequired => LlmError::Unauthorized,
+                        _ => LlmError::Transient,
+                    })?;
+                (lease, false)
+            }
+            None => {
+                let lease = self
+                    .hub
+                    .acquire_lease(&self.config.gateway_binding)
+                    .map_err(|_| LlmError::Rejected)?;
+                let is_pool = matches!(self.config.gateway_binding, GatewayBinding::Pool(_));
+                (lease, is_pool)
+            }
         };
         if lease.vendor != GatewayVendor::Muse {
             return Err(LlmError::UnsupportedCapability(required_tag));
         }
-        let is_pool = matches!(self.config.gateway_binding, GatewayBinding::Pool(_));
         let max_attempts = if is_pool {
             MAX_POOL_FAILOVER_ATTEMPTS
         } else {
@@ -312,21 +332,189 @@ impl LlmGatewayProvider {
             MediaKind::Image => 180_000,
         };
         let timeout = Duration::from_millis(self.config.timeout_ms.max(min_timeout_ms));
-        self.execute_muse_with_auth_refresh_and_failover(lease, is_pool, max_attempts, |pool| {
-            let job = job.clone();
-            async move {
-                run_media_turn_once(
-                    &pool,
-                    kind,
-                    batches,
-                    images,
-                    transparent_background,
-                    job,
-                    timeout,
+        let deadline = tokio::time::Instant::now() + timeout;
+        let started_running = Arc::new(AtomicBool::new(false));
+        let started_flag = Arc::clone(&started_running);
+        self.execute_muse_with_auth_refresh_and_failover(
+            lease,
+            is_pool,
+            max_attempts,
+            &started_running,
+            |pool| {
+                let job = job.clone();
+                let request_sig = request_sig.clone();
+                let started_flag = Arc::clone(&started_flag);
+                async move {
+                    run_media_turn_once(
+                        &pool,
+                        kind,
+                        batches,
+                        images,
+                        transparent_background,
+                        job,
+                        request_sig,
+                        deadline,
+                        &started_flag,
+                        existing_op,
+                        journal,
+                    )
+                    .await
+                }
+            },
+        )
+        .await
+    }
+}
+
+#[async_trait::async_trait]
+impl DurableMediaProvider for LlmGatewayProvider {
+    async fn submit(
+        &self,
+        op: &LlmOperation,
+        existing: Option<&orchestrator_agent_rs::ToolOperation>,
+        io: &dyn OperationJournal,
+    ) -> Result<LlmOutput, LlmError> {
+        match op {
+            LlmOperation::VideoGeneration {
+                prompt,
+                width,
+                height,
+                duration_secs,
+                first_frame,
+                continuation_key,
+            } => {
+                self.ensure_tag(LlmCapabilityTag::Video)?;
+                let Some(batches) =
+                    format_video_batches(prompt, *width, *height, *duration_secs)
+                else {
+                    return Err(LlmError::Rejected);
+                };
+                let images = first_frame.clone().into_iter().collect::<Vec<_>>();
+                let request_sig = Some(VideoRequestSignature {
+                    prompt: prompt.clone(),
+                    duration_secs: *duration_secs,
+                });
+                self.run_muse_media(
+                    MediaKind::Video,
+                    &batches,
+                    &images,
+                    false,
+                    continuation_key.clone(),
+                    request_sig,
+                    existing,
+                    Some(io),
+                    LlmCapabilityTag::Video.as_str(),
                 )
                 .await
             }
-        })
+            _ => self.execute_operation(op.clone()).await,
+        }
+    }
+
+    async fn reconcile_submitting(&self, op: &orchestrator_agent_rs::ToolOperation) -> Option<u32> {
+        let account_key = op.account_key.as_deref()?;
+        let remote_sid = op.remote_session_id.as_deref()?;
+        let lease = match self
+            .hub
+            .acquire_lease(&GatewayBinding::Account(account_key.to_string()))
+        {
+            Ok(lease) => lease,
+            Err(GatewayError::AccountCoolingDown) => {
+                self.hub.acquire_account_for_polling(account_key).ok()?
+            }
+            Err(_) => return None,
+        };
+        if lease.vendor != GatewayVendor::Muse {
+            return None;
+        }
+        let pool = self.muse_pool_for_lease(&self.config, &lease);
+        let mut vm_lease = pool
+            .acquire_existing_session(remote_sid.to_string())
+            .await
+            .ok()?;
+        vm_lease.retain_session();
+        let count = count_remote_user_turns(&mut vm_lease).await;
+        vm_lease.finish_clean(None);
+        count
+    }
+
+    async fn resume(
+        &self,
+        state: &OperationState,
+        io: &dyn OperationJournal,
+    ) -> Result<LlmOutput, LlmError> {
+        self.ensure_tag(LlmCapabilityTag::Video)?;
+        let Some(batches) = format_video_batches(
+            &state.prompt,
+            state.width,
+            state.height,
+            state.duration_secs,
+        ) else {
+            return Err(LlmError::Rejected);
+        };
+        let account_key = state
+            .operation
+            .account_key
+            .clone()
+            .or_else(|| {
+                state
+                    .continuation_key
+                    .as_deref()
+                    .and_then(|k| job_entry(k).account_hint())
+            })
+            .ok_or(LlmError::Transient)?;
+        let lease = match self
+            .hub
+            .acquire_lease(&GatewayBinding::Account(account_key.clone()))
+        {
+            Ok(lease) => lease,
+            Err(GatewayError::AccountCoolingDown) => self
+                .hub
+                .acquire_account_for_polling(&account_key)
+                .map_err(|_| LlmError::Transient)?,
+            Err(GatewayError::AccountReauthRequired) => return Err(LlmError::Unauthorized),
+            Err(_) => return Err(LlmError::Transient),
+        };
+        if lease.vendor != GatewayVendor::Muse {
+            return Err(LlmError::UnsupportedCapability(
+                LlmCapabilityTag::Video.as_str(),
+            ));
+        }
+        let extra_batches = batches.len().saturating_sub(1) as u64;
+        let min_timeout_ms = 900_000 + 800_000 * extra_batches;
+        let timeout = Duration::from_millis(self.config.timeout_ms.max(min_timeout_ms));
+        let deadline = tokio::time::Instant::now() + timeout;
+        let pool = self.muse_pool_for_lease(&self.config, &lease);
+        let job = state.continuation_key.as_deref().map(job_entry);
+        let request_sig = Some(VideoRequestSignature {
+            prompt: state.prompt.clone(),
+            duration_secs: state.duration_secs,
+        });
+        match resume_media_turn_once(
+            &pool,
+            &batches,
+            job,
+            request_sig,
+            deadline,
+            &state.operation,
+            Some(io),
+        )
         .await
+        {
+            Ok(output) => {
+                self.hub
+                    .report_outcome(&lease.account_key, GatewayCallOutcome::Success);
+                Ok(output)
+            }
+            Err(failure) => {
+                let failure_summary = format!(
+                    "Muse workflow resume failure on account '{}': {:?}",
+                    lease.account_key, failure
+                );
+                let err = report_muse_failure_to_hub(&self.hub, &lease.account_key, failure);
+                record_wire_detail(&self.last_error_detail, failure_summary);
+                Err(err)
+            }
+        }
     }
 }

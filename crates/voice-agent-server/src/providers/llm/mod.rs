@@ -547,7 +547,45 @@ impl LlmOutput {
 }
 
 #[async_trait::async_trait]
+pub trait OperationJournal: Send + Sync {
+    async fn record(&self, update: orchestrator_agent_rs::OperationUpdate);
+}
+
+#[derive(Clone, Debug)]
+pub struct OperationState {
+    pub operation: orchestrator_agent_rs::ToolOperation,
+    pub prompt: String,
+    pub width: u32,
+    pub height: u32,
+    pub duration_secs: u32,
+    pub first_frame: Option<ReferenceImage>,
+    pub continuation_key: Option<String>,
+}
+
+#[async_trait::async_trait]
+pub trait DurableMediaProvider: Send + Sync {
+    async fn submit(
+        &self,
+        op: &LlmOperation,
+        existing: Option<&orchestrator_agent_rs::ToolOperation>,
+        io: &dyn OperationJournal,
+    ) -> Result<LlmOutput, LlmError>;
+
+    async fn reconcile_submitting(&self, op: &orchestrator_agent_rs::ToolOperation) -> Option<u32>;
+
+    async fn resume(
+        &self,
+        state: &OperationState,
+        io: &dyn OperationJournal,
+    ) -> Result<LlmOutput, LlmError>;
+}
+
+#[async_trait::async_trait]
 pub trait LlmProvider: Send + Sync {
+    fn durable_media(&self) -> Option<&dyn DurableMediaProvider> {
+        None
+    }
+
     fn supports_tools(&self) -> bool {
         false
     }

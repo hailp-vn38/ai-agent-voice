@@ -250,6 +250,10 @@ async fn init_orchestrator_and_task_manager(
         builder = builder.register_tool(tool);
     }
     let orchestrator = Arc::new(builder.build().await?);
+    if let Ok(ops) = orchestrator.list_tool_operations().await {
+        crate::providers::llm::gateway::muse::pool::restore_job_sessions_from_operations(&ops)
+            .await;
+    }
 
     // Phase 2: Bind `Orchestrator` + `WikiAutoFlowBinding` and start `TaskManager`
     let task_manager = task_init
@@ -261,16 +265,17 @@ async fn init_orchestrator_and_task_manager(
         ))
         .start()
         .await?;
-    spawn_job_session_reaper(&task_manager);
+    spawn_job_session_reaper(&task_manager, &orchestrator);
 
     Ok((orchestrator, task_manager))
 }
 
-pub(crate) fn spawn_job_session_reaper(task_manager: &TaskManager) {
+pub(crate) fn spawn_job_session_reaper(task_manager: &TaskManager, orchestrator: &Arc<Orchestrator>) {
     let Ok(mut sub) = task_manager.subscribe() else {
         return;
     };
     if let Ok(handle) = tokio::runtime::Handle::try_current() {
+        let orch_events = Arc::clone(orchestrator);
         handle.spawn(async move {
             while let Some(item) = sub.recv().await {
                 if let orchestrator_flow_rs::TaskFeedItem::Event(
@@ -284,6 +289,44 @@ pub(crate) fn spawn_job_session_reaper(task_manager: &TaskManager) {
                             &task.session_id,
                         )
                         .await;
+                        if let Ok(ops) = orch_events.list_tool_operations().await {
+                            for summary in ops {
+                                if summary.operation.continuation_key.as_deref()
+                                    == Some(task.session_id.as_str())
+                                    && let Some(ref sid) = summary.operation.remote_session_id
+                                {
+                                    let _ = orch_events.mark_remote_session_deleted(sid).await;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        });
+
+        let orch_sweep = Arc::clone(orchestrator);
+        handle.spawn(async move {
+            let mut interval = tokio::time::interval(Duration::from_secs(300));
+            interval.tick().await;
+            loop {
+                interval.tick().await;
+                let _ = orch_sweep.sweep_stale_tool_operations().await;
+                crate::providers::llm::gateway::muse::pool::sweep_idle_job_sessions();
+                if let Ok(ops) = orch_sweep.list_tool_operations().await {
+                    for summary in ops {
+                        if !summary.root_has_active_work
+                            && summary.operation.remote_deleted_at.is_none()
+                        {
+                            if let Some(ref key) = summary.operation.continuation_key {
+                                crate::providers::llm::gateway::muse::pool::release_job_session(
+                                    key,
+                                )
+                                .await;
+                            }
+                            if let Some(ref sid) = summary.operation.remote_session_id {
+                                let _ = orch_sweep.mark_remote_session_deleted(sid).await;
+                            }
+                        }
                     }
                 }
             }

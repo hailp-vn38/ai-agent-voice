@@ -96,11 +96,13 @@ impl LlmGatewayProvider {
                 mime_type: mime_type.to_owned(),
             };
             let req = LlmRequest::text_turn(prompt.to_owned());
+            let started_running = std::sync::atomic::AtomicBool::new(false);
             let text = self
                 .execute_muse_with_auth_refresh_and_failover(
                     lease,
                     is_pool,
                     max_attempts,
+                    &started_running,
                     |pool| {
                         let req_ref = &req;
                         let img_slice = std::slice::from_ref(&ref_img);

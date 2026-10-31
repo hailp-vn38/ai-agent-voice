@@ -93,8 +93,9 @@ pub fn format_video_batches(
     for index in 0..batch_count {
         let first_beat = index * MUSE_MAX_CLIPS_PER_TURN + 1;
         let last_beat = ((index + 1) * MUSE_MAX_CLIPS_PER_TURN).min(total_beats);
+        let raw_rem = secs.saturating_sub(index * turn_secs);
         let batch_secs = ((last_beat - first_beat + 1) * MUSE_SINGLE_CLIP_LIMIT_SECS)
-            .min(secs - index * turn_secs);
+            .min(raw_rem.max(MUSE_SINGLE_CLIP_LIMIT_SECS));
         let scope = format!(
             "THIS TURN: generate ONLY beats {first_beat}-{last_beat} (~{batch_secs} seconds), each beat a ~{MUSE_SINGLE_CLIP_LIMIT_SECS}-second clip with synchronized audio/narration and subtitles. Do not skip or drop any beat in this range.\n\nMandatory workflow:\n1. Generate the clips for beats {first_beat}-{last_beat}.\n2. Concatenate/merge them in order into ONE single continuous video.\n3. Send ONLY that merged video as the file attachment in the chat — do NOT attach the individual clip parts.\n4. Only after the merged video is attached, send a final confirmation message ending with {MEDIA_DONE_MARKER}."
         );

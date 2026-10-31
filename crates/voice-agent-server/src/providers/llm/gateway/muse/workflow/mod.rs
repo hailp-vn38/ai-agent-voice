@@ -319,7 +319,9 @@ pub(crate) async fn handle_approval_event<F>(
 
 pub(crate) use self::chat::{ChatSignal, run_chat_turn_once};
 pub(crate) use self::media::MediaBatch;
-pub(crate) use self::media::run_media_turn_once;
+pub(crate) use self::media::{
+    count_remote_user_turns, resume_media_turn_once, run_media_turn_once,
+};
 #[cfg(test)]
 pub(crate) use self::png::{
     decode_uncompressed_or_simple_png, encode_rgba_png, remove_background_to_rgba_png,

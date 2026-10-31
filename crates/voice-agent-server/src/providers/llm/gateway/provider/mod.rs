@@ -12,9 +12,9 @@ use crate::{
     providers::{
         LlmFactory, ProviderLoadError,
         llm::{
-            LlmCapabilityTag, LlmError, LlmEventStream, LlmOperation, LlmOutput, LlmProvider,
-            LlmRequest, MAX_REFERENCE_IMAGES, capability_tags_support, collect_chat_stream,
-            effective_capability_tags,
+            DurableMediaProvider, LlmCapabilityTag, LlmError, LlmEventStream, LlmOperation,
+            LlmOutput, LlmProvider, LlmRequest, MAX_REFERENCE_IMAGES, capability_tags_support,
+            collect_chat_stream, effective_capability_tags,
         },
     },
     services::llm_gateway::{
@@ -27,6 +27,7 @@ use super::{
     config::{ADAPTER_NAME, LlmGatewayConfig},
     muse::{
         client::MuseVmTransport,
+        pool::VideoRequestSignature,
         workflow::{MediaBatch, MediaKind, format_image_prompt, format_video_batches},
     },
 };
@@ -228,6 +229,15 @@ impl LlmGatewayProvider {
 
 #[async_trait::async_trait]
 impl LlmProvider for LlmGatewayProvider {
+    fn durable_media(&self) -> Option<&dyn DurableMediaProvider> {
+        let is_muse = matches!(
+            &self.config.gateway_binding,
+            GatewayBinding::Pool(GatewayVendor::Muse)
+        ) || self.config.model.trim().starts_with("muse-")
+            || self.supports_tag(LlmCapabilityTag::Video);
+        is_muse.then_some(self as &dyn DurableMediaProvider)
+    }
+
     fn supports_tools(&self) -> bool {
         !matches!(
             &self.config.gateway_binding,
@@ -310,6 +320,9 @@ impl LlmProvider for LlmGatewayProvider {
                     &reference_images,
                     transparent_background,
                     None,
+                    None,
+                    None,
+                    None,
                     LlmCapabilityTag::Image.as_str(),
                 )
                 .await
@@ -329,12 +342,19 @@ impl LlmProvider for LlmGatewayProvider {
                     return Err(LlmError::Rejected);
                 };
                 let images = first_frame.into_iter().collect::<Vec<_>>();
+                let request_sig = Some(VideoRequestSignature {
+                    prompt,
+                    duration_secs,
+                });
                 self.run_muse_media(
                     MediaKind::Video,
                     &batches,
                     &images,
                     false,
                     continuation_key,
+                    request_sig,
+                    None,
+                    None,
                     LlmCapabilityTag::Video.as_str(),
                 )
                 .await

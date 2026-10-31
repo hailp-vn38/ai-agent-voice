@@ -5,8 +5,9 @@ use serde_json::json;
 
 use super::super::workflow::decode_uncompressed_or_simple_png;
 use super::harness::{
-    FakeMuseVmTransport, FakeStreamTurn, FakeVmAccount, SINGLE_COOKIE, VALID_MP4_BYTES,
-    VALID_PNG_BYTES, build_gateway_muse_provider, make_test_rgba_png, mp4_with_duration,
+    FakeMuseVmTransport, FakeStreamTurn, FakeVmAccount, SECOND_COOKIE, SINGLE_COOKIE,
+    VALID_MP4_BYTES, VALID_PNG_BYTES, build_gateway_muse_provider, make_test_rgba_png,
+    mp4_with_duration,
 };
 use crate::providers::llm::{LlmOperation, LlmOutput, LlmProvider, MediaPart, ReferenceImage};
 
@@ -896,3 +897,221 @@ async fn cancel_first_call_is_tracked() {
         "cancelled first call's session must still be tracked and deleted when the job ends"
     );
 }
+
+#[tokio::test]
+async fn shutdown_keeps_session() {
+    let stuck = FakeStreamTurn::media_reply(
+        vec![],
+        vec![vec![
+            json!({ "role": "user", "display_text": "prompt" }),
+            json!({ "role": "assistant", "status": "in_progress", "display_text": "working" }),
+        ]],
+        vec![],
+    );
+    let acc = FakeVmAccount::new(vec![stuck]);
+    let transport = FakeMuseVmTransport::new(vec![Arc::clone(&acc)]);
+    let provider = build_gateway_muse_provider(&[SINGLE_COOKIE], transport).await;
+
+    let call = invoke_video(&provider, Some("job-shutdown-keep"));
+    let _ = tokio::time::timeout(std::time::Duration::from_millis(50), call).await;
+    for _ in 0..20 {
+        tokio::task::yield_now().await;
+    }
+
+    assert_eq!(acc.stream_requests().len(), 1);
+    assert!(
+        acc.deleted_sessions().is_empty(),
+        "dropping the in-flight call on shutdown must keep the remote Muse session alive"
+    );
+}
+
+#[tokio::test]
+async fn restart_restores_job_session() {
+    let acc = FakeVmAccount::new(vec![full_video_turn("sandbox:///home/user/restored.mp4")])
+        .with_file("/home/user/restored.mp4", mp4_with_duration(30));
+    let transport = FakeMuseVmTransport::new(vec![Arc::clone(&acc)]);
+    let provider = build_gateway_muse_provider(&[SINGLE_COOKIE], transport).await;
+
+    let account_key = provider
+        .hub
+        .acquire_lease(&crate::services::llm_gateway::GatewayBinding::Pool(
+            crate::services::llm_gateway::GatewayVendor::Muse,
+        ))
+        .expect("lease")
+        .account_key;
+
+    let summary = orchestrator_agent_rs::ToolOperationSummary {
+        operation: orchestrator_agent_rs::ToolOperation {
+            id: "op-restored-1".to_string(),
+            invocation_id: "inv-restored-1".to_string(),
+            provider_ref: Some("muse".to_string()),
+            account_key: Some(account_key.clone()),
+            remote_session_id: Some("sess-from-db-99".to_string()),
+            continuation_key: Some("job-restored-1".to_string()),
+            batch_index: 1,
+            repairs_used: 0,
+            batch_paths_json: None,
+            user_turns_before: Some(0),
+            request_json: Some(
+                json!({
+                    "prompt": "recap",
+                    "duration_secs": 30
+                })
+                .to_string(),
+            ),
+            status: orchestrator_agent_rs::ToolOperationStatus::Committed,
+            artifact_ids_json: None,
+            result_json: None,
+            remote_deleted_at: None,
+            last_activity_at: 100,
+            deadline_at: 1000,
+            created_at: 100,
+        },
+        root_session_id: "job-restored-1".to_string(),
+        root_has_active_work: true,
+        invocation_status: "succeeded".to_string(),
+    };
+
+    super::super::pool::restore_job_sessions_from_operations(&[summary]).await;
+
+    invoke_video(&provider, Some("job-restored-1"))
+        .await
+        .expect("subsequent call in restored job succeeds");
+
+    let reqs = acc.stream_requests();
+    assert_eq!(reqs.len(), 1);
+    assert_eq!(
+        reqs[0]["session_id"].as_str(),
+        Some("sess-from-db-99"),
+        "restored job session must be reused by the next video call"
+    );
+}
+
+#[tokio::test]
+async fn retry_with_new_request_not_recovered() {
+    let stuck = FakeStreamTurn::media_reply(
+        vec![],
+        vec![vec![
+            json!({ "role": "user", "display_text": "prompt" }),
+            json!({ "role": "assistant", "status": "in_progress", "display_text": "working" }),
+        ]],
+        vec![],
+    );
+    let old_video = mp4_with_duration(30);
+    let new_video = mp4_with_duration(40);
+    let acc = FakeVmAccount::new(vec![
+        stuck,
+        full_video_turn("sandbox:///home/user/new.mp4"),
+    ])
+    .with_file("/home/user/old.mp4", old_video)
+    .with_file("/home/user/new.mp4", new_video.clone());
+    let transport = FakeMuseVmTransport::new(vec![Arc::clone(&acc)]);
+    let provider = build_gateway_muse_provider(&[SINGLE_COOKIE], transport).await;
+    tokio::time::pause();
+
+    let first = invoke_video(&provider, Some("job-new-req")).await;
+    assert!(matches!(first, Err(crate::providers::llm::LlmError::Timeout)));
+
+    // Even if the old 30s video finished in history, the next call asks for a different prompt/duration (40s).
+    acc.set_history_polls(single_video_history(
+        "done [ALL_MEDIA_ATTACHED]",
+        "sandbox:///home/user/old.mp4",
+    ));
+
+    let second = provider
+        .invoke(LlmOperation::VideoGeneration {
+            prompt: "completely different 40s video".to_string(),
+            width: 1080,
+            height: 1920,
+            duration_secs: 40,
+            first_frame: None,
+            continuation_key: Some("job-new-req".to_string()),
+        })
+        .await
+        .expect("new request succeeds");
+
+    let (parts, _) = second.into_media_parts().expect("media parts");
+    assert_eq!(parts[0].bytes, new_video);
+    assert_eq!(
+        acc.stream_requests().len(),
+        2,
+        "a different prompt/duration must send a new /chat/stream request instead of recovering the old video"
+    );
+}
+
+#[tokio::test]
+async fn no_failover_while_running() {
+    // Account 1 accepts /chat/stream (HTTP 200 -> operation is now `running`), then fails mid-poll
+    // with a quota error bubble. Because the operation already entered `running`, the provider must
+    // NOT failover to Account 2 and start a duplicate video.
+    let running_then_quota_fail = FakeStreamTurn::media_reply(
+        vec![],
+        vec![vec![
+            json!({ "role": "user", "display_text": "prompt" }),
+            json!({
+                "role": "assistant",
+                "status": "completed",
+                "display_text": "You have reached your daily limit. Please try again tomorrow."
+            }),
+        ]],
+        vec![],
+    );
+    let acc1 = FakeVmAccount::new(vec![running_then_quota_fail]);
+    let acc2 = FakeVmAccount::new(vec![full_video_turn("sandbox:///home/user/acc2.mp4")])
+        .with_file("/home/user/acc2.mp4", mp4_with_duration(30));
+    let transport = FakeMuseVmTransport::new(vec![Arc::clone(&acc1), Arc::clone(&acc2)]);
+    let provider =
+        build_gateway_muse_provider(&[SINGLE_COOKIE, SECOND_COOKIE], transport).await;
+
+    let res = invoke_video(&provider, Some("job-no-failover")).await;
+    assert!(
+        matches!(res, Err(crate::providers::llm::LlmError::RateLimited { .. })),
+        "expected RateLimited from Account 1, got {res:?}"
+    );
+    assert_eq!(acc1.stream_requests().len(), 1);
+    assert!(
+        acc2.stream_requests().is_empty(),
+        "must not failover to Account 2 once the operation has entered `running`"
+    );
+}
+
+#[tokio::test]
+async fn shared_deadline() {
+    // Account 1 spends 500s before failing `/chat/stream` with HTTP 429 (still `submitting`, not `running`).
+    // Failover to Account 2 is allowed, but Account 2 shares the original 900s deadline (only 400s left),
+    // instead of receiving a fresh 900s deadline.
+    let mut pre_running_429 = FakeStreamTurn::media_reply(vec![], vec![], vec![]);
+    pre_running_429.status = 429;
+    let acc1 = FakeVmAccount::new(vec![pre_running_429])
+        .with_stream_delay(std::time::Duration::from_secs(500));
+
+    let stuck = FakeStreamTurn::media_reply(
+        vec![],
+        vec![vec![
+            json!({ "role": "user", "display_text": "prompt" }),
+            json!({ "role": "assistant", "status": "in_progress", "display_text": "working" }),
+        ]],
+        vec![],
+    );
+    let acc2 = FakeVmAccount::new(vec![stuck]);
+    let transport = FakeMuseVmTransport::new(vec![Arc::clone(&acc1), Arc::clone(&acc2)]);
+    let provider =
+        build_gateway_muse_provider(&[SINGLE_COOKIE, SECOND_COOKIE], transport).await;
+
+    tokio::time::pause();
+    let start = tokio::time::Instant::now();
+    let res = invoke_video(&provider, None).await;
+    let elapsed = start.elapsed();
+
+    assert!(
+        matches!(res, Err(crate::providers::llm::LlmError::Timeout)),
+        "expected Timeout on Account 2, got {res:?}"
+    );
+    assert_eq!(acc1.stream_requests().len(), 1);
+    assert_eq!(acc2.stream_requests().len(), 1);
+    assert!(
+        elapsed < std::time::Duration::from_secs(950),
+        "failover must share the single 900s deadline instead of granting another 900s (elapsed={elapsed:?})"
+    );
+}
+

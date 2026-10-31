@@ -328,6 +328,19 @@ fn map_llm_error_to_media_backend_error(
     }
 }
 
+struct CatalogJournalBridge(
+    Option<std::sync::Arc<dyn orchestrator_flow_rs::VideoOperationJournal>>,
+);
+
+#[async_trait::async_trait]
+impl crate::providers::OperationJournal for CatalogJournalBridge {
+    async fn record(&self, update: orchestrator_agent_rs::OperationUpdate) {
+        if let Some(ref inner) = self.0 {
+            let _ = inner.advance(update).await;
+        }
+    }
+}
+
 #[async_trait::async_trait]
 impl orchestrator_flow_rs::VideoGeneratorBackend for CatalogMediaBackend {
     fn video_constraints(&self) -> orchestrator_flow_rs::VideoProviderConstraints {
@@ -375,16 +388,122 @@ impl orchestrator_flow_rs::VideoGeneratorBackend for CatalogMediaBackend {
                 bytes: img.bytes.clone(),
                 mime_type: img.mime_type.clone(),
             });
-        let invoke_fut = provider.invoke(crate::providers::LlmOperation::VideoGeneration {
+        let llm_op = crate::providers::LlmOperation::VideoGeneration {
             prompt: req.prompt.clone(),
             width,
             height,
             duration_secs,
             first_frame,
             continuation_key: req.continuation_key.clone(),
-        });
+        };
+        let journal_bridge = CatalogJournalBridge(ctx.journal.clone());
+        let invoke_fut = async {
+            if let Some(durable) = provider.durable_media() {
+                durable
+                    .submit(&llm_op, ctx.operation.as_ref(), &journal_bridge)
+                    .await
+            } else {
+                provider.invoke(llm_op).await
+            }
+        };
         let output = tokio::select! {
             res = invoke_fut => res.map_err(map_llm_error_to_media_backend_error)?,
+            () = ctx.cancel.token().cancelled() => {
+                return Err(orchestrator_flow_rs::MediaBackendError::new(
+                    "CANCELLED",
+                    "video generation was cancelled before the provider finished",
+                    false,
+                ));
+            }
+        };
+        build_generated_video_payload(
+            req,
+            &resolved.provider_ref,
+            &constraints,
+            width,
+            height,
+            duration_secs,
+            output,
+        )
+        .map_err(orchestrator_flow_rs::MediaBackendError::from)
+    }
+
+    async fn reconcile_submitting(
+        &self,
+        _req: &orchestrator_flow_rs::VideoGenerationRequest,
+        op: &orchestrator_agent_rs::ToolOperation,
+        _ctx: &orchestrator_flow_rs::MediaCallContext,
+    ) -> orchestrator_flow_rs::SubmittingReconciliation {
+        let Some(resolved) = self.select_provider("video_create", "video") else {
+            return orchestrator_flow_rs::SubmittingReconciliation::Unreadable;
+        };
+        let Ok(provider) = resolved.to_llm_provider() else {
+            return orchestrator_flow_rs::SubmittingReconciliation::Unreadable;
+        };
+        let Some(durable) = provider.durable_media() else {
+            return orchestrator_flow_rs::SubmittingReconciliation::Unreadable;
+        };
+        match durable.reconcile_submitting(op).await {
+            Some(remote_turns) => {
+                orchestrator_flow_rs::SubmittingReconciliation::RemoteUserTurns(remote_turns)
+            }
+            None => orchestrator_flow_rs::SubmittingReconciliation::Unreadable,
+        }
+    }
+
+    async fn resume_video(
+        &self,
+        req: &orchestrator_flow_rs::VideoGenerationRequest,
+        op: &orchestrator_agent_rs::ToolOperation,
+        ctx: &orchestrator_flow_rs::MediaCallContext,
+    ) -> Result<
+        orchestrator_flow_rs::GeneratedVideoPayload,
+        orchestrator_flow_rs::MediaBackendError,
+    > {
+        let Some(resolved) = self.select_provider("video_create", "video") else {
+            return Err(orchestrator_flow_rs::MediaBackendError::new(
+                "TOOL_OUTCOME_UNKNOWN",
+                "no video provider available to resume in-flight operation",
+                false,
+            ));
+        };
+        let constraints = resolved.video_constraints();
+        let (width, height) = req.effective_dimensions();
+        let duration_secs = req.duration_secs.max(1);
+        let provider = resolved.to_llm_provider().map_err(|e| {
+            orchestrator_flow_rs::MediaBackendError::new(
+                "VIDEO_GENERATION_FAILED",
+                e.to_string(),
+                false,
+            )
+        })?;
+        let Some(durable) = provider.durable_media() else {
+            return Err(orchestrator_flow_rs::MediaBackendError::new(
+                "TOOL_OUTCOME_UNKNOWN",
+                "video provider does not support resuming an in-flight operation",
+                false,
+            ));
+        };
+        let first_frame = req
+            .first_frame
+            .as_ref()
+            .map(|img| crate::providers::ReferenceImage {
+                bytes: img.bytes.clone(),
+                mime_type: img.mime_type.clone(),
+            });
+        let state = crate::providers::OperationState {
+            operation: op.clone(),
+            prompt: req.prompt.clone(),
+            width,
+            height,
+            duration_secs,
+            first_frame,
+            continuation_key: req.continuation_key.clone(),
+        };
+        let journal_bridge = CatalogJournalBridge(ctx.journal.clone());
+        let resume_fut = durable.resume(&state, &journal_bridge);
+        let output = tokio::select! {
+            res = resume_fut => res.map_err(map_llm_error_to_media_backend_error)?,
             () = ctx.cancel.token().cancelled() => {
                 return Err(orchestrator_flow_rs::MediaBackendError::new(
                     "CANCELLED",

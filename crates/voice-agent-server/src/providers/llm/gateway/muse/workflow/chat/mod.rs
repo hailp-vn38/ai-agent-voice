@@ -303,6 +303,11 @@ where
                     expected_user_turns,
                     &effective_prompt,
                 ) {
+                    if message_done_seen && !session_running_seen && !emitted_text.trim().is_empty()
+                    {
+                        completed = true;
+                        break;
+                    }
                     finish_after_poll = false;
                     continue;
                 }
@@ -326,10 +331,11 @@ where
                     (session_completed || is_assistant_completed) && !active_tools;
                 let is_agent_working = active_tools
                     || (!turn_events.is_empty() && !is_all_completed)
-                    || matches!(
-                        latest_activity_code.as_str(),
-                        "working" | "making_something" | "responding" | "thinking" | "running"
-                    );
+                    || (!is_all_completed
+                        && matches!(
+                            latest_activity_code.as_str(),
+                            "working" | "making_something" | "responding" | "thinking" | "running"
+                        ));
 
                 if is_agent_working || active_tools {
                     on_signal(ChatSignal::Activity);

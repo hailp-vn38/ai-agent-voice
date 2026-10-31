@@ -19,6 +19,12 @@ pub(super) const JOB_SESSION_TTL: Duration = Duration::from_secs(60 * 60);
 /// Upper bound on tracked jobs; the least recently used idle entry is evicted beyond this.
 const MAX_JOB_ENTRIES: usize = 256;
 
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub(crate) struct VideoRequestSignature {
+    pub prompt: String,
+    pub duration_secs: u32,
+}
+
 #[derive(Clone)]
 pub(crate) struct JobSession {
     /// Gateway account that owns the VM holding the session; reuse is only valid on this account.
@@ -27,20 +33,29 @@ pub(crate) struct JobSession {
     /// The previous call on this session gave up at its deadline, so Muse may still finish (or
     /// have finished) its video; the next call should look at the chat before asking again.
     pub last_timed_out: bool,
-    client: Arc<MuseVmClient>,
+    /// Prompt and duration of the timed-out request (from `request_json`), so recovery only
+    /// triggers when the retry is for the same request.
+    pub timed_out_request: Option<VideoRequestSignature>,
+    /// File paths of earlier batches that already completed before the previous call timed out.
+    pub batch_paths: Vec<String>,
+    client: Option<Arc<MuseVmClient>>,
 }
 
 impl JobSession {
     pub fn new(
         account_key: String,
         session_id: String,
-        client: Arc<MuseVmClient>,
+        client: Option<Arc<MuseVmClient>>,
         last_timed_out: bool,
+        timed_out_request: Option<VideoRequestSignature>,
+        batch_paths: Vec<String>,
     ) -> Self {
         Self {
             account_key,
             session_id,
             last_timed_out,
+            timed_out_request,
+            batch_paths,
             client,
         }
     }
@@ -137,15 +152,107 @@ pub(crate) fn job_entry(key: &str) -> Arc<JobEntry> {
 }
 
 fn delete_in_background(session: &JobSession) {
-    if !session.client.is_connected() {
+    let Some(ref client) = session.client else {
+        return;
+    };
+    if !client.is_connected() {
         return;
     }
     if let Ok(handle) = tokio::runtime::Handle::try_current() {
-        let client = Arc::clone(&session.client);
+        let client = Arc::clone(client);
         let session_id = session.session_id.clone();
         handle.spawn(async move {
             let _ = client.delete_session(&session_id).await;
         });
+    }
+}
+
+/// Sweeps in-RAM `JOB_ENTRIES` that have been idle longer than `JOB_SESSION_TTL` even when no new
+/// video call arrives.
+pub(crate) fn sweep_idle_job_sessions() {
+    let now = Instant::now();
+    let mut expired: Vec<JobSession> = Vec::new();
+    {
+        let mut map = JOB_ENTRIES.lock().unwrap_or_else(|e| e.into_inner());
+        map.retain(|_, entry| {
+            if entry.idle_for(now) < JOB_SESSION_TTL {
+                return true;
+            }
+            match entry.gate.try_lock() {
+                Ok(mut slot) => {
+                    expired.extend(slot.take());
+                    false
+                }
+                Err(_) => true,
+            }
+        });
+    }
+    for session in expired {
+        delete_in_background(&session);
+    }
+}
+
+/// Restores a job's retained Muse session into the in-RAM registry from a persisted
+/// `tool_operations` record after server restart.
+pub(crate) async fn restore_job_session(
+    key: &str,
+    account_key: String,
+    session_id: String,
+    last_timed_out: bool,
+    timed_out_request: Option<VideoRequestSignature>,
+    batch_paths: Vec<String>,
+) {
+    let entry = job_entry(key);
+    entry.set_account_hint(Some(account_key.clone()));
+    let mut slot = entry.lock().await;
+    *slot = Some(JobSession::new(
+        account_key,
+        session_id,
+        None,
+        last_timed_out,
+        timed_out_request,
+        batch_paths,
+    ));
+}
+
+pub(crate) async fn restore_job_sessions_from_operations(
+    ops: &[orchestrator_agent_rs::ToolOperationSummary],
+) {
+    for summary in ops {
+        if !summary.root_has_active_work && summary.operation.remote_deleted_at.is_some() {
+            continue;
+        }
+        if summary.operation.remote_deleted_at.is_some() {
+            continue;
+        }
+        let op = &summary.operation;
+        let (Some(cont_key), Some(acc_key), Some(sess_id)) = (
+            op.continuation_key.as_deref(),
+            op.account_key.as_ref(),
+            op.remote_session_id.as_ref(),
+        ) else {
+            continue;
+        };
+        let timed_out_req = op
+            .request_json
+            .as_deref()
+            .and_then(|s| serde_json::from_str::<VideoRequestSignature>(s).ok());
+        let batch_paths = op
+            .batch_paths_json
+            .as_deref()
+            .and_then(|s| serde_json::from_str::<Vec<String>>(s).ok())
+            .unwrap_or_default();
+        let last_timed_out =
+            op.status == orchestrator_agent_rs::ToolOperationStatus::Expired;
+        restore_job_session(
+            cont_key,
+            acc_key.clone(),
+            sess_id.clone(),
+            last_timed_out,
+            timed_out_req,
+            batch_paths,
+        )
+        .await;
     }
 }
 
@@ -161,8 +268,9 @@ pub(crate) async fn release_job_session(key: &str) {
     entry.set_account_hint(None);
     let mut slot = entry.lock().await;
     if let Some(session) = slot.take()
-        && session.client.is_connected()
+        && let Some(ref client) = session.client
+        && client.is_connected()
     {
-        let _ = session.client.delete_session(&session.session_id).await;
+        let _ = client.delete_session(&session.session_id).await;
     }
 }

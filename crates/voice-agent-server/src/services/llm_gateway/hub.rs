@@ -384,6 +384,38 @@ impl LlmGatewayHub {
         }
     }
 
+    /// Acquires the credential for `account_key` even when the account is in quota/rate-limit
+    /// cooldown, so an in-flight Muse session can still be polled or reconciled without spending
+    /// new generation quota.
+    pub fn acquire_account_for_polling(
+        &self,
+        account_key: &str,
+    ) -> Result<GatewayLease, GatewayError> {
+        let guard = self.snapshot.read().unwrap_or_else(|p| p.into_inner());
+        let acc = guard
+            .accounts
+            .get(account_key)
+            .ok_or(GatewayError::AccountNotFound)?;
+        if !acc.enabled || acc.status == GatewayAccountStatus::Disabled {
+            return Err(GatewayError::AccountDisabled);
+        }
+        if acc.status == GatewayAccountStatus::ReauthRequired {
+            return Err(GatewayError::AccountReauthRequired);
+        }
+        let bundle = acc
+            .bundle
+            .as_ref()
+            .ok_or(GatewayError::AccountReauthRequired)?;
+        Ok(GatewayLease {
+            account_key: acc.account_key.clone(),
+            vendor: acc.vendor,
+            access_token: SecretString::new(bundle.access_token.clone()),
+            base_url: acc.vendor.default_base_url().to_owned(),
+            extra_headers: acc.extra_headers.clone(),
+            account_context_id: bundle.account_context_id.clone(),
+        })
+    }
+
     /// Updates in-RAM cooldown or reauth state immediately after an upstream LLM call completes.
     pub fn report_outcome(&self, account_key: &str, outcome: GatewayCallOutcome) {
         let now = Instant::now();

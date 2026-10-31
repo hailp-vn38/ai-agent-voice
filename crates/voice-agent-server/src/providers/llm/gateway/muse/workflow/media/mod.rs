@@ -14,7 +14,8 @@ use self::candidates::{
 };
 use super::super::client::VmStreamEvent;
 use super::super::pool::{
-    JobEntry, JobSession, SharedMusePool, UpstreamFailureKind, VmOperationLease,
+    JobEntry, JobSession, SharedMusePool, UpstreamFailureKind, VideoRequestSignature,
+    VmOperationLease,
 };
 use super::super::proto::SERVICE_DAEMON;
 use super::png::remove_background_to_rgba_png;
@@ -23,7 +24,7 @@ use super::{
     extract_history_turn_events, extract_turn_assistant_messages, has_active_tool_task,
     is_last_assistant_completed,
 };
-use crate::providers::llm::{LlmOutput, MediaPart, ReferenceImage};
+use crate::providers::llm::{LlmOutput, MediaPart, OperationJournal, ReferenceImage};
 
 const MEDIA_POLL_INTERVAL: Duration = Duration::from_millis(400);
 const MAX_IMAGE_FILE_BYTES: usize = 50 * 1024 * 1024;
@@ -52,10 +53,19 @@ pub(crate) async fn run_media_turn_once(
     images: &[ReferenceImage],
     transparent_background: bool,
     job: Option<Arc<JobEntry>>,
-    timeout_duration: Duration,
+    request_sig: Option<VideoRequestSignature>,
+    deadline: Instant,
+    started_running: &std::sync::atomic::AtomicBool,
+    existing_op: Option<&orchestrator_agent_rs::ToolOperation>,
+    journal: Option<&dyn OperationJournal>,
 ) -> Result<LlmOutput, WorkflowFailure> {
     if batches.is_empty() || batches.iter().any(|b| b.prompt.trim().is_empty()) {
         return Err(WorkflowFailure::Rejected("empty media prompt".to_string()));
+    }
+    if Instant::now() >= deadline {
+        return Err(WorkflowFailure::Timeout(
+            "Muse media operation exceeded its shared deadline before starting".to_string(),
+        ));
     }
     // Calls of one job run one at a time so they never interleave inside the shared session.
     let mut gate = match &job {
@@ -68,11 +78,11 @@ pub(crate) async fn run_media_turn_once(
         .filter(|session| {
             pool.gateway_account_key().as_deref() == Some(session.account_key.as_str())
         });
-    let mut lease = match &retained {
-        Some(session) => {
-            pool.acquire_existing_session(session.session_id.clone())
-                .await
-        }
+    let forced_sid = existing_op
+        .and_then(|op| op.remote_session_id.clone())
+        .or_else(|| retained.as_ref().map(|s| s.session_id.clone()));
+    let mut lease = match forced_sid {
+        Some(sid) => pool.acquire_existing_session(sid).await,
         None => pool.acquire_fresh().await,
     }
     .map_err(|(kind, reason)| WorkflowFailure::Upstream(kind, reason))?;
@@ -85,18 +95,34 @@ pub(crate) async fn run_media_turn_once(
         **slot = Some(JobSession::new(
             account_key.to_string(),
             lease.session_id().to_string(),
-            Arc::clone(lease.client()),
+            Some(Arc::clone(lease.client())),
             retained.as_ref().is_some_and(|s| s.last_timed_out),
+            retained.as_ref().and_then(|s| s.timed_out_request.clone()),
+            retained
+                .as_ref()
+                .map(|s| s.batch_paths.clone())
+                .unwrap_or_default(),
         ));
         entry.set_account_hint(Some(account_key.to_string()));
     }
 
     let recovered = match &retained {
-        Some(session) if session.last_timed_out && matches!(kind, MediaKind::Video) => {
-            recover_finished_video(&mut lease, batches).await
+        Some(session)
+            if session.last_timed_out
+                && matches!(kind, MediaKind::Video)
+                && (session.timed_out_request.is_none()
+                    || session.timed_out_request == request_sig) =>
+        {
+            let expected_secs = session
+                .timed_out_request
+                .as_ref()
+                .map(|r| r.duration_secs)
+                .or_else(|| request_sig.as_ref().map(|r| r.duration_secs));
+            recover_finished_video(&mut lease, &session.batch_paths, expected_secs, batches).await
         }
         _ => None,
     };
+    let mut completed_batch_paths: Vec<String> = Vec::new();
     let res = match recovered {
         Some(output) => Ok(output),
         None => {
@@ -106,30 +132,198 @@ pub(crate) async fn run_media_turn_once(
                 images,
                 kind,
                 transparent_background,
-                timeout_duration,
+                deadline,
+                started_running,
+                journal,
+                &mut completed_batch_paths,
             )
             .await
         }
     };
 
     if let Err(WorkflowFailure::Upstream(err_kind, _)) = &res {
+        let was_running = started_running.load(std::sync::atomic::Ordering::Relaxed);
         lease.fail_account(*err_kind).await;
-        if let (Some(entry), Some(slot)) = (&job, gate.as_mut()) {
+        if !was_running
+            && let (Some(entry), Some(slot)) = (&job, gate.as_mut())
+        {
             **slot = None;
             entry.set_account_hint(None);
         }
     } else if let (Some(entry), Some(slot)) = (&job, gate.as_mut())
         && let Some(account_key) = lease.account_key()
     {
+        let timed_out = matches!(res, Err(WorkflowFailure::Timeout(_)));
         **slot = Some(JobSession::new(
             account_key.to_string(),
             lease.session_id().to_string(),
-            Arc::clone(lease.client()),
-            matches!(res, Err(WorkflowFailure::Timeout(_))),
+            Some(Arc::clone(lease.client())),
+            timed_out,
+            if timed_out { request_sig } else { None },
+            if timed_out {
+                completed_batch_paths
+            } else {
+                Vec::new()
+            },
         ));
         entry.set_account_hint(Some(account_key.to_string()));
     }
     res
+}
+
+pub(crate) async fn resume_media_turn_once(
+    pool: &Arc<SharedMusePool>,
+    batches: &[MediaBatch],
+    job: Option<Arc<JobEntry>>,
+    request_sig: Option<VideoRequestSignature>,
+    deadline: Instant,
+    op: &orchestrator_agent_rs::ToolOperation,
+    journal: Option<&dyn OperationJournal>,
+) -> Result<LlmOutput, WorkflowFailure> {
+    let Some(ref remote_sid) = op.remote_session_id else {
+        return Err(WorkflowFailure::Rejected(
+            "cannot resume operation without remote_session_id".to_string(),
+        ));
+    };
+    let mut gate = match &job {
+        Some(entry) => Some(entry.lock().await),
+        None => None,
+    };
+    let mut lease = pool
+        .acquire_existing_session(remote_sid.clone())
+        .await
+        .map_err(|(k, r)| WorkflowFailure::Upstream(k, r))?;
+    if job.is_some() {
+        lease.retain_session();
+    }
+    if let (Some(entry), Some(slot)) = (&job, gate.as_mut())
+        && let Some(account_key) = lease.account_key()
+    {
+        **slot = Some(JobSession::new(
+            account_key.to_string(),
+            lease.session_id().to_string(),
+            Some(Arc::clone(lease.client())),
+            false,
+            None,
+            Vec::new(),
+        ));
+        entry.set_account_hint(Some(account_key.to_string()));
+    }
+
+    let mut completed_paths: Vec<String> = op
+        .batch_paths_json
+        .as_deref()
+        .and_then(|s| serde_json::from_str::<Vec<String>>(s).ok())
+        .unwrap_or_default();
+
+    if op.status == orchestrator_agent_rs::ToolOperationStatus::Downloading {
+        let mut all_parts = download_video_paths(&mut lease, &completed_paths).await?;
+        let mut message = None;
+        if all_parts.is_empty() {
+            if let Some((parts, msg)) = inspect_and_download_latest_turn(&mut lease).await? {
+                all_parts = parts;
+                message = msg;
+            }
+        }
+        lease.finish_clean(None);
+        return LlmOutput::from_media_parts(all_parts, message).ok_or_else(|| {
+            WorkflowFailure::Upstream(
+                UpstreamFailureKind::Transient,
+                "no video parts downloaded on resume".to_string(),
+            )
+        });
+    }
+
+    let mut event_rx = lease.client().subscribe_events();
+    let mut all_parts = download_video_paths(&mut lease, &completed_paths).await?;
+    let mut messages: Vec<String> = Vec::new();
+    let start_index = (op.batch_index as usize).min(batches.len());
+    let mut total_repairs = op.repairs_used;
+
+    for (index, batch) in batches.iter().enumerate().skip(start_index) {
+        if index > start_index {
+            send_media_stream_request(&mut lease, build_turn_items(&[], &batch.prompt)).await?;
+            if let Some(io) = journal {
+                io.record(orchestrator_agent_rs::OperationUpdate {
+                    status: Some(orchestrator_agent_rs::ToolOperationStatus::Running),
+                    batch_index: Some(index as u32),
+                    ..Default::default()
+                })
+                .await;
+            }
+        }
+        let initial_repairs = if index == start_index {
+            op.repairs_used as usize
+        } else {
+            0
+        };
+        let outcome = run_media_batch(
+            &mut lease,
+            &mut event_rx,
+            MediaKind::Video,
+            batch.target_secs,
+            false,
+            deadline,
+            initial_repairs,
+        )
+        .await;
+        match outcome {
+            Ok(BatchOutput::Image(output)) => return Ok(output),
+            Ok(BatchOutput::Video(best)) => {
+                total_repairs = total_repairs.saturating_add(best.repairs_used as u32);
+                completed_paths.extend(best.paths);
+                all_parts.extend(best.parts);
+                messages.extend(best.assistant_message);
+                if let Some(io) = journal {
+                    let paths_json = serde_json::to_string(&completed_paths).unwrap_or_default();
+                    io.record(orchestrator_agent_rs::OperationUpdate {
+                        batch_index: Some((index + 1) as u32),
+                        repairs_used: Some(total_repairs),
+                        batch_paths_json: Some(paths_json),
+                        ..Default::default()
+                    })
+                    .await;
+                }
+            }
+            Err(WorkflowFailure::Timeout(_)) if !all_parts.is_empty() => break,
+            Err(err) => {
+                if let (Some(entry), Some(slot)) = (&job, gate.as_mut())
+                    && let Some(account_key) = lease.account_key()
+                    && matches!(err, WorkflowFailure::Timeout(_))
+                {
+                    **slot = Some(JobSession::new(
+                        account_key.to_string(),
+                        lease.session_id().to_string(),
+                        Some(Arc::clone(lease.client())),
+                        true,
+                        request_sig,
+                        completed_paths,
+                    ));
+                    entry.set_account_hint(Some(account_key.to_string()));
+                }
+                return Err(err);
+            }
+        }
+    }
+
+    if let Some(io) = journal {
+        let paths_json = serde_json::to_string(&completed_paths).unwrap_or_default();
+        io.record(orchestrator_agent_rs::OperationUpdate {
+            status: Some(orchestrator_agent_rs::ToolOperationStatus::Downloading),
+            batch_paths_json: Some(paths_json),
+            ..Default::default()
+        })
+        .await;
+    }
+
+    lease.finish_clean(None);
+    let message = (!messages.is_empty()).then(|| messages.join("\n\n"));
+    LlmOutput::from_media_parts(all_parts, message).ok_or_else(|| {
+        WorkflowFailure::Upstream(
+            UpstreamFailureKind::Transient,
+            "no video parts downloaded".to_string(),
+        )
+    })
 }
 
 /// Result of one Muse chat turn: what the poll loop saw when the turn settled (or the deadline hit).
@@ -144,16 +338,40 @@ async fn execute_media_turn_on_lease(
     images: &[ReferenceImage],
     kind: MediaKind,
     transparent_background: bool,
-    timeout_duration: Duration,
+    deadline: Instant,
+    started_running: &std::sync::atomic::AtomicBool,
+    journal: Option<&dyn OperationJournal>,
+    completed_batch_paths: &mut Vec<String>,
 ) -> Result<LlmOutput, WorkflowFailure> {
     let mut event_rx = lease.client().subscribe_events();
-    let deadline = Instant::now() + timeout_duration;
+
+    if let Some(io) = journal {
+        let turns_before = count_remote_user_turns(lease).await.unwrap_or(0);
+        io.record(orchestrator_agent_rs::OperationUpdate {
+            status: Some(orchestrator_agent_rs::ToolOperationStatus::Submitting),
+            account_key: lease.account_key().map(str::to_string),
+            remote_session_id: Some(lease.session_id().to_string()),
+            user_turns_before: Some(turns_before),
+            ..Default::default()
+        })
+        .await;
+    }
 
     let mut all_parts: Vec<MediaPart> = Vec::new();
     let mut messages: Vec<String> = Vec::new();
+    let mut total_repairs = 0u32;
     for (index, batch) in batches.iter().enumerate() {
         let batch_images = if index == 0 { images } else { &[] };
         send_media_stream_request(lease, build_turn_items(batch_images, &batch.prompt)).await?;
+        started_running.store(true, std::sync::atomic::Ordering::Relaxed);
+        if let Some(io) = journal {
+            io.record(orchestrator_agent_rs::OperationUpdate {
+                status: Some(orchestrator_agent_rs::ToolOperationStatus::Running),
+                batch_index: Some(index as u32),
+                ..Default::default()
+            })
+            .await;
+        }
         let outcome = run_media_batch(
             lease,
             &mut event_rx,
@@ -161,18 +379,42 @@ async fn execute_media_turn_on_lease(
             batch.target_secs,
             transparent_background,
             deadline,
+            0,
         )
         .await;
         match outcome {
             Ok(BatchOutput::Image(output)) => return Ok(output),
             Ok(BatchOutput::Video(best)) => {
+                total_repairs = total_repairs.saturating_add(best.repairs_used as u32);
+                completed_batch_paths.extend(best.paths);
                 all_parts.extend(best.parts);
                 messages.extend(best.assistant_message);
+                if let Some(io) = journal {
+                    let paths_json =
+                        serde_json::to_string(completed_batch_paths).unwrap_or_default();
+                    io.record(orchestrator_agent_rs::OperationUpdate {
+                        batch_index: Some((index + 1) as u32),
+                        repairs_used: Some(total_repairs),
+                        batch_paths_json: Some(paths_json),
+                        ..Default::default()
+                    })
+                    .await;
+                }
             }
             // Earlier batches already produced footage: hand it back instead of discarding it.
             Err(WorkflowFailure::Timeout(_)) if !all_parts.is_empty() => break,
             Err(err) => return Err(err),
         }
+    }
+
+    if let Some(io) = journal {
+        let paths_json = serde_json::to_string(completed_batch_paths).unwrap_or_default();
+        io.record(orchestrator_agent_rs::OperationUpdate {
+            status: Some(orchestrator_agent_rs::ToolOperationStatus::Downloading),
+            batch_paths_json: Some(paths_json),
+            ..Default::default()
+        })
+        .await;
     }
 
     lease.finish_clean(None);
@@ -215,8 +457,9 @@ async fn run_media_batch(
     target_duration_secs: Option<u32>,
     transparent_background: bool,
     deadline: Instant,
+    initial_repairs: usize,
 ) -> Result<BatchOutput, WorkflowFailure> {
-    let mut repairs_used = 0usize;
+    let mut repairs_used = initial_repairs;
     let mut best: Option<BestVideo> = None;
     loop {
         let turn = match collect_media_turn(lease, event_rx, kind, deadline).await {
@@ -241,6 +484,7 @@ async fn run_media_batch(
             return Ok(BatchOutput::Image(output));
         }
 
+        let paths: Vec<String> = selected.iter().map(|c| c.path.clone()).collect();
         let parts = download_video_parts(lease, &selected).await?;
         let total_secs = total_duration_secs(&parts);
         let is_better = best
@@ -248,9 +492,11 @@ async fn run_media_batch(
             .is_none_or(|b| total_secs.unwrap_or(0) >= b.total_secs.unwrap_or(0));
         if is_better {
             best = Some(BestVideo {
+                paths,
                 parts,
                 total_secs,
                 assistant_message,
+                repairs_used: repairs_used.saturating_sub(initial_repairs),
             });
         }
 
@@ -260,6 +506,9 @@ async fn run_media_batch(
             break;
         }
         repairs_used += 1;
+        if let Some(ref mut b) = best {
+            b.repairs_used = repairs_used.saturating_sub(initial_repairs);
+        }
         let followup = video_repair_prompt(
             target_duration_secs.unwrap_or_default(),
             best_total.unwrap_or_default(),
@@ -276,9 +525,11 @@ async fn run_media_batch(
 }
 
 struct BestVideo {
+    paths: Vec<String>,
     parts: Vec<MediaPart>,
     total_secs: Option<u32>,
     assistant_message: Option<String>,
+    repairs_used: usize,
 }
 
 fn total_duration_secs(parts: &[MediaPart]) -> Option<u32> {
@@ -585,13 +836,29 @@ async fn collect_media_turn(
     })
 }
 
-/// After a timed-out call, checks the job's chat for a video Muse finished in the meantime. Returns
-/// it only when it covers the whole requested duration, so a half-finished render is never
-/// handed over as the answer.
-async fn recover_finished_video(
+async fn download_video_paths(
     lease: &mut VmOperationLease,
-    batches: &[MediaBatch],
-) -> Option<LlmOutput> {
+    paths: &[String],
+) -> Result<Vec<MediaPart>, WorkflowFailure> {
+    let mut parts = Vec::with_capacity(paths.len());
+    for path in paths {
+        let raw_bytes = lease.client().read_file(path, MAX_VIDEO_FILE_BYTES).await?;
+        if raw_bytes.is_empty() {
+            return Err(WorkflowFailure::Upstream(
+                UpstreamFailureKind::Transient,
+                format!("Muse /fs/read returned empty video for {path}"),
+            ));
+        }
+        let mime_type = sniff_media_mime_type(&raw_bytes, "video/mp4", MediaKind::Video);
+        parts.push(MediaPart {
+            bytes: raw_bytes,
+            mime_type,
+        });
+    }
+    Ok(parts)
+}
+
+pub(crate) async fn count_remote_user_turns(lease: &mut VmOperationLease) -> Option<u32> {
     let history_path = format!("/chat/history?session_id={}", lease.session_id());
     let resp = lease
         .client()
@@ -609,25 +876,87 @@ async fn recover_finished_video(
         return None;
     }
     let history_json = resp.json().ok()?;
+    let evs = history_json
+        .get("result")
+        .and_then(|r| r.get("chat_events"))
+        .or_else(|| history_json.get("chat_events"))
+        .and_then(Value::as_array)?;
+    let count = evs
+        .iter()
+        .filter(|e| {
+            let p = e.get("payload").unwrap_or(e);
+            e.get("role").and_then(Value::as_str) == Some("user")
+                || p.get("role").and_then(Value::as_str) == Some("user")
+                || e.get("event_name").and_then(Value::as_str) == Some("message.user")
+                || e.get("event").and_then(Value::as_str) == Some("message.user")
+        })
+        .count();
+    u32::try_from(count).ok()
+}
+
+async fn inspect_and_download_latest_turn(
+    lease: &mut VmOperationLease,
+) -> Result<Option<(Vec<MediaPart>, Option<String>)>, WorkflowFailure> {
+    let history_path = format!("/chat/history?session_id={}", lease.session_id());
+    let Ok(resp) = lease
+        .client()
+        .send_request(
+            "GET",
+            &history_path,
+            None,
+            SERVICE_DAEMON,
+            Duration::from_secs(15),
+            false,
+        )
+        .await
+    else {
+        return Ok(None);
+    };
+    if resp.status != 200 {
+        return Ok(None);
+    }
+    let Ok(history_json) = resp.json() else {
+        return Ok(None);
+    };
     let turn_events = extract_history_turn_events(&history_json);
     if turn_events.is_empty() || has_active_tool_task(&turn_events) {
-        return None;
+        return Ok(None);
     }
     let bubbles = extract_turn_assistant_messages(&turn_events);
     let candidates =
         extract_candidates_from_stream_and_history(MediaKind::Video, &[], &turn_events, &bubbles);
     let selected = select_effective_ready_attachments(&candidates);
     if selected.is_empty() {
-        return None;
+        return Ok(None);
     }
-    let parts = download_video_parts(lease, &selected).await.ok()?;
-    let wanted: u32 = batches.iter().filter_map(|b| b.target_secs).sum();
+    let parts = download_video_parts(lease, &selected).await?;
+    Ok(Some((parts, format_clean_assistant_bubbles(&bubbles))))
+}
+
+/// After a timed-out call, checks the job's chat for a video Muse finished in the meantime. Returns
+/// it only when it covers the whole requested duration, so a half-finished render is never
+/// handed over as the answer.
+async fn recover_finished_video(
+    lease: &mut VmOperationLease,
+    prior_batch_paths: &[String],
+    expected_duration_secs: Option<u32>,
+    batches: &[MediaBatch],
+) -> Option<LlmOutput> {
+    let mut parts = if prior_batch_paths.is_empty() {
+        Vec::new()
+    } else {
+        download_video_paths(lease, prior_batch_paths).await.ok()?
+    };
+    let (latest_parts, message) = inspect_and_download_latest_turn(lease).await.ok()??;
+    parts.extend(latest_parts);
+    let wanted: u32 = expected_duration_secs
+        .unwrap_or_else(|| batches.iter().filter_map(|b| b.target_secs).sum());
     let total = total_duration_secs(&parts)?;
     if wanted == 0 || video_shortfall_secs(Some(wanted), Some(total)) > 0 {
         return None;
     }
     lease.finish_clean(None);
-    LlmOutput::from_media_parts(parts, format_clean_assistant_bubbles(&bubbles))
+    LlmOutput::from_media_parts(parts, message)
 }
 
 async fn send_media_stream_request(
