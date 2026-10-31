@@ -19,11 +19,11 @@ impl WorkflowFailure {
     pub fn into_llm_error(self) -> crate::providers::llm::LlmError {
         match self {
             WorkflowFailure::Rejected(reason) => {
-                tracing::debug!(reason = %reason, "Muse workflow rejected request");
+                tracing::warn!(reason = %reason, "Muse workflow rejected request");
                 crate::providers::llm::LlmError::Rejected
             }
             WorkflowFailure::Upstream(kind, reason) => {
-                tracing::debug!(?kind, reason = %reason, "Muse workflow upstream failure");
+                tracing::warn!(?kind, reason = %reason, "Muse workflow upstream failure");
                 match kind {
                     UpstreamFailureKind::QuotaExceeded => {
                         crate::providers::llm::LlmError::RateLimited {
@@ -37,7 +37,7 @@ impl WorkflowFailure {
                 }
             }
             WorkflowFailure::Timeout(reason) => {
-                tracing::debug!(reason = %reason, "Muse workflow timed out");
+                tracing::warn!(reason = %reason, "Muse workflow timed out");
                 crate::providers::llm::LlmError::Timeout
             }
         }
@@ -325,5 +325,5 @@ pub(crate) use self::png::{
     decode_uncompressed_or_simple_png, encode_rgba_png, remove_background_to_rgba_png,
 };
 #[cfg(test)]
-pub(crate) use self::prompt::flatten_messages;
-pub(crate) use self::prompt::{format_image_prompt, format_video_batches, format_video_prompt};
+pub(crate) use self::prompt::{flatten_messages, format_video_prompt};
+pub(crate) use self::prompt::{format_image_prompt, format_video_batches};

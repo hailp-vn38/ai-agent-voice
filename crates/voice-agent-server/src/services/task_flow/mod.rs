@@ -261,8 +261,34 @@ async fn init_orchestrator_and_task_manager(
         ))
         .start()
         .await?;
+    spawn_job_session_reaper(&task_manager);
 
     Ok((orchestrator, task_manager))
+}
+
+pub(crate) fn spawn_job_session_reaper(task_manager: &TaskManager) {
+    let Ok(mut sub) = task_manager.subscribe() else {
+        return;
+    };
+    if let Ok(handle) = tokio::runtime::Handle::try_current() {
+        handle.spawn(async move {
+            while let Some(item) = sub.recv().await {
+                if let orchestrator_flow_rs::TaskFeedItem::Event(
+                    orchestrator_flow_rs::TaskEvent::TaskTerminal { task },
+                ) = item
+                {
+                    let is_shutdown = task.status == orchestrator_flow_rs::TaskStatus::Interrupted
+                        && task.error_code.as_deref() == Some("SHUTTING_DOWN");
+                    if !is_shutdown {
+                        crate::providers::llm::gateway::muse::pool::release_job_session(
+                            &task.session_id,
+                        )
+                        .await;
+                    }
+                }
+            }
+        });
+    }
 }
 
 /// Triggers an explicit Wiki ingestion/curation task for a source via [`TaskManager`].

@@ -148,3 +148,21 @@ fn delete_in_background(session: &JobSession) {
         });
     }
 }
+
+/// Releases and deletes the retained Muse session for a finished job (`key` = `root_session_id`).
+pub(crate) async fn release_job_session(key: &str) {
+    let removed = {
+        let mut map = JOB_ENTRIES.lock().unwrap_or_else(|e| e.into_inner());
+        map.remove(key)
+    };
+    let Some(entry) = removed else {
+        return;
+    };
+    entry.set_account_hint(None);
+    let mut slot = entry.lock().await;
+    if let Some(session) = slot.take()
+        && session.client.is_connected()
+    {
+        let _ = session.client.delete_session(&session.session_id).await;
+    }
+}

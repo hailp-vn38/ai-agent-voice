@@ -110,34 +110,41 @@ async fn catalog_media_backend_and_reasoning_tag_wire_provider_capabilities() {
     );
 
     let backend = CatalogMediaBackend::from_catalog(catalog).with_settings(settings);
+    let call_ctx = orchestrator_flow_rs::MediaCallContext::default();
     let img = backend
-        .generate_image(&ImageGenerationRequest {
-            prompt: "A diagram".into(),
-            title: None,
-            filename: "diagram.png".into(),
-            format: "png".into(),
-            width: 256,
-            height: 256,
-            svg_content: None,
-            reference_images: Vec::new(),
-            transparent_background: false,
-        })
+        .generate_image(
+            &ImageGenerationRequest {
+                prompt: "A diagram".into(),
+                title: None,
+                filename: "diagram.png".into(),
+                format: "png".into(),
+                width: 256,
+                height: 256,
+                svg_content: None,
+                reference_images: Vec::new(),
+                transparent_background: false,
+            },
+            &call_ctx,
+        )
         .await
         .unwrap();
     assert_eq!(img.provider, "llm_media");
     assert_eq!(img.bytes, b"UPSTREAM_PNG_BYTES");
 
     let vid = backend
-        .generate_video(&VideoGenerationRequest {
-            prompt: "A rack flythrough".into(),
-            title: Some("Flythrough".into()),
-            filename: "flythrough.mp4".into(),
-            width: 640,
-            height: 360,
-            duration_secs: 4,
-            first_frame: None,
-            continuation_key: None,
-        })
+        .generate_video(
+            &VideoGenerationRequest {
+                prompt: "A rack flythrough".into(),
+                title: Some("Flythrough".into()),
+                filename: "flythrough.mp4".into(),
+                width: 640,
+                height: 360,
+                duration_secs: 4,
+                first_frame: None,
+                continuation_key: None,
+            },
+            &call_ctx,
+        )
         .await
         .unwrap();
     assert_eq!(vid.provider, "llm_media");
@@ -225,32 +232,38 @@ async fn catalog_media_backend_and_reasoning_tag_wire_provider_capabilities() {
     // Fallback when catalog has no image/video/audio tagged provider
     let empty_backend = CatalogMediaBackend::from_catalog(Vec::new());
     let fallback_img = empty_backend
-        .generate_image(&ImageGenerationRequest {
-            prompt: "Fallback".into(),
-            title: None,
-            filename: "fallback.png".into(),
-            format: "png".into(),
-            width: 64,
-            height: 64,
-            svg_content: None,
-            reference_images: Vec::new(),
-            transparent_background: false,
-        })
+        .generate_image(
+            &ImageGenerationRequest {
+                prompt: "Fallback".into(),
+                title: None,
+                filename: "fallback.png".into(),
+                format: "png".into(),
+                width: 64,
+                height: 64,
+                svg_content: None,
+                reference_images: Vec::new(),
+                transparent_background: false,
+            },
+            &call_ctx,
+        )
         .await
         .unwrap();
     assert_eq!(fallback_img.provider, "builtin_png_renderer");
 
     let fallback_vid = empty_backend
-        .generate_video(&VideoGenerationRequest {
-            prompt: "Fallback video".into(),
-            title: None,
-            filename: "fallback.mp4".into(),
-            width: 64,
-            height: 64,
-            duration_secs: 2,
-            first_frame: None,
-            continuation_key: None,
-        })
+        .generate_video(
+            &VideoGenerationRequest {
+                prompt: "Fallback video".into(),
+                title: None,
+                filename: "fallback.mp4".into(),
+                width: 64,
+                height: 64,
+                duration_secs: 2,
+                first_frame: None,
+                continuation_key: None,
+            },
+            &call_ctx,
+        )
         .await
         .unwrap();
     assert_eq!(fallback_vid.provider, "builtin_mp4_renderer");
@@ -258,17 +271,20 @@ async fn catalog_media_backend_and_reasoning_tag_wire_provider_capabilities() {
 
     // Default dimensions when width/height are 0 (1024x1024 for PNG, 640x360 for MP4)
     let default_dim_img = backend
-        .generate_image(&ImageGenerationRequest {
-            prompt: "Default size diagram".into(),
-            title: None,
-            filename: "default-size.png".into(),
-            format: "png".into(),
-            width: 0,
-            height: 0,
-            svg_content: None,
-            reference_images: Vec::new(),
-            transparent_background: false,
-        })
+        .generate_image(
+            &ImageGenerationRequest {
+                prompt: "Default size diagram".into(),
+                title: None,
+                filename: "default-size.png".into(),
+                format: "png".into(),
+                width: 0,
+                height: 0,
+                svg_content: None,
+                reference_images: Vec::new(),
+                transparent_background: false,
+            },
+            &call_ctx,
+        )
         .await
         .unwrap();
     assert_eq!(

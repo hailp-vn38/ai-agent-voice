@@ -508,7 +508,7 @@ fn muse_gateway_provider_in_catalog_supports_media_and_custom_executor() {
     // 3. Verify `build_generated_video_payload` converts multi-part `LlmOutput::Media` + `assistant_message`
     // into `GeneratedVideoPayload` with accurate clip durations parsed via `inspect_mp4_duration_secs`.
     let mut mvhd_10s = Vec::new();
-    let mvhd_body_len = 4 + 16 + 4; // version/flags + 4 u32s + duration
+    let mvhd_body_len = 4 + 8 + 4 + 4; // version/flags + creation/modification + timescale + duration
     let mvhd_box_len = (8 + mvhd_body_len) as u32;
     let moov_box_len = 8 + mvhd_box_len;
     mvhd_10s.extend_from_slice(&20u32.to_be_bytes());

@@ -79,6 +79,17 @@ pub(crate) async fn run_media_turn_once(
     if job.is_some() {
         lease.retain_session();
     }
+    if let (Some(entry), Some(slot)) = (&job, gate.as_mut())
+        && let Some(account_key) = lease.account_key()
+    {
+        **slot = Some(JobSession::new(
+            account_key.to_string(),
+            lease.session_id().to_string(),
+            Arc::clone(lease.client()),
+            retained.as_ref().is_some_and(|s| s.last_timed_out),
+        ));
+        entry.set_account_hint(Some(account_key.to_string()));
+    }
 
     let recovered = match &retained {
         Some(session) if session.last_timed_out && matches!(kind, MediaKind::Video) => {

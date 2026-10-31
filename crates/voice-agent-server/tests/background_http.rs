@@ -247,6 +247,8 @@ fn project_task_events_preserves_subagent_sequence_numbers_when_root_continues()
         related_wiki_links: Vec::new(),
         error_code: None,
         error_message: None,
+        wait_reason: None,
+        next_attempt_at: None,
         created_at: 1_700_000_000_000,
         started_at: Some(1_700_000_000_000),
         updated_at: 1_700_000_000_000,
@@ -271,6 +273,8 @@ fn project_task_events_preserves_subagent_sequence_numbers_when_root_continues()
             total_tokens: 30,
             error_code: None,
             error_message: None,
+            retry_reason: None,
+            next_attempt_at: None,
         }),
         invocations: vec![TaskToolInvocationView {
             invocation_id: "inv-child-1".into(),
@@ -310,6 +314,8 @@ fn project_task_events_preserves_subagent_sequence_numbers_when_root_continues()
                 total_tokens: 25,
                 error_code: None,
                 error_message: None,
+                retry_reason: None,
+                next_attempt_at: None,
             }),
             invocations: vec![TaskToolInvocationView {
                 invocation_id: "inv-root-1".into(),
@@ -357,6 +363,8 @@ fn project_task_events_preserves_subagent_sequence_numbers_when_root_continues()
                 total_tokens: 55,
                 error_code: None,
                 error_message: None,
+                retry_reason: None,
+                next_attempt_at: None,
             }),
             invocations: vec![
                 TaskToolInvocationView {

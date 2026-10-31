@@ -13,7 +13,7 @@ use tokio::sync::Notify;
 use uuid::Uuid;
 
 use self::account::{AccountStatus, MuseAccountState};
-pub(crate) use self::job_sessions::{JobEntry, JobSession, job_entry};
+pub(crate) use self::job_sessions::{JobEntry, JobSession, job_entry, release_job_session};
 pub(crate) use self::lease::VmOperationLease;
 pub(crate) use self::types::{ConversationTurn, HotConversation, UpstreamFailureKind};
 use super::cdp::BrowserEngine;

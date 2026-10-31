@@ -836,3 +836,63 @@ async fn retry_after_timeout_recovers_a_video_that_finished_late_without_a_new_r
         "recovery must not send another generation request"
     );
 }
+
+#[tokio::test]
+async fn job_terminal_deletes_session() {
+    let acc = FakeVmAccount::new(vec![full_video_turn("sandbox:///home/user/a.mp4")])
+        .with_file("/home/user/a.mp4", mp4_with_duration(30));
+    let transport = FakeMuseVmTransport::new(vec![Arc::clone(&acc)]);
+    let provider = build_gateway_muse_provider(&[SINGLE_COOKIE], transport).await;
+
+    invoke_video(&provider, Some("job-terminal"))
+        .await
+        .expect("video call succeeds");
+    assert!(
+        acc.deleted_sessions().is_empty(),
+        "session is retained while the job is active"
+    );
+
+    super::super::pool::release_job_session("job-terminal").await;
+
+    assert_eq!(
+        acc.deleted_sessions().len(),
+        1,
+        "session must be deleted on the VM when the job reaches terminal state"
+    );
+}
+
+#[tokio::test]
+async fn cancel_first_call_is_tracked() {
+    let stuck = FakeStreamTurn::media_reply(
+        vec![],
+        vec![vec![
+            json!({ "role": "user", "display_text": "prompt" }),
+            json!({ "role": "assistant", "status": "in_progress", "display_text": "working" }),
+        ]],
+        vec![],
+    );
+    let acc = FakeVmAccount::new(vec![stuck]);
+    let transport = FakeMuseVmTransport::new(vec![Arc::clone(&acc)]);
+    let provider = build_gateway_muse_provider(&[SINGLE_COOKIE], transport).await;
+
+    // Start the first video call and cancel (drop) its future after it sends /chat/stream.
+    let call = invoke_video(&provider, Some("job-cancel-first"));
+    let _ = tokio::time::timeout(std::time::Duration::from_millis(50), call).await;
+    assert_eq!(
+        acc.stream_requests().len(),
+        1,
+        "first call started and sent /chat/stream before being cancelled"
+    );
+    assert!(
+        acc.deleted_sessions().is_empty(),
+        "dropping a single tool call keeps the job session until the job terminates"
+    );
+
+    super::super::pool::release_job_session("job-cancel-first").await;
+
+    assert_eq!(
+        acc.deleted_sessions().len(),
+        1,
+        "cancelled first call's session must still be tracked and deleted when the job ends"
+    );
+}

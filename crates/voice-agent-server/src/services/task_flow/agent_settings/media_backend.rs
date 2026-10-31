@@ -246,12 +246,13 @@ impl orchestrator_flow_rs::ImageGeneratorBackend for CatalogMediaBackend {
     async fn generate_image(
         &self,
         req: &orchestrator_flow_rs::ImageGenerationRequest,
+        ctx: &orchestrator_flow_rs::MediaCallContext,
     ) -> Result<orchestrator_flow_rs::GeneratedImagePayload, String> {
         if req.is_svg() {
-            return self.default_image.generate_image(req).await;
+            return self.default_image.generate_image(req, ctx).await;
         }
         let Some(resolved) = self.select_provider("image_create", "image") else {
-            return self.default_image.generate_image(req).await;
+            return self.default_image.generate_image(req, ctx).await;
         };
         let (width, height) = req.effective_dimensions();
         let provider = resolved.to_llm_provider().map_err(|e| e.to_string())?;
@@ -263,16 +264,19 @@ impl orchestrator_flow_rs::ImageGeneratorBackend for CatalogMediaBackend {
                 mime_type: img.mime_type.clone(),
             })
             .collect();
-        let output = provider
-            .invoke(crate::providers::LlmOperation::ImageGeneration {
-                prompt: req.prompt.clone(),
-                width,
-                height,
-                reference_images,
-                transparent_background: req.transparent_background,
-            })
-            .await
-            .map_err(|e| e.to_string())?;
+        let invoke_fut = provider.invoke(crate::providers::LlmOperation::ImageGeneration {
+            prompt: req.prompt.clone(),
+            width,
+            height,
+            reference_images,
+            transparent_background: req.transparent_background,
+        });
+        let output = tokio::select! {
+            res = invoke_fut => res.map_err(|e| e.to_string())?,
+            () = ctx.cancel.token().cancelled() => {
+                return Err("CANCELLED: image generation was cancelled".to_owned());
+            }
+        };
         let crate::providers::LlmOutput::Media {
             bytes, mime_type, ..
         } = output
@@ -297,6 +301,33 @@ impl orchestrator_flow_rs::ImageGeneratorBackend for CatalogMediaBackend {
     }
 }
 
+fn map_llm_error_to_media_backend_error(
+    err: crate::providers::LlmError,
+) -> orchestrator_flow_rs::MediaBackendError {
+    use crate::providers::LlmError;
+    use orchestrator_flow_rs::MediaBackendError;
+    match err {
+        LlmError::Timeout => MediaBackendError::new(
+            "VIDEO_GENERATION_TIMEOUT",
+            "the video provider did not finish in time",
+            true,
+        ),
+        LlmError::RateLimited { .. } => {
+            MediaBackendError::new("PROVIDER_RATE_LIMITED", err.to_string(), true)
+        }
+        LlmError::Unauthorized => {
+            MediaBackendError::new("PROVIDER_AUTH_FAILED", err.to_string(), false)
+        }
+        LlmError::Transient => {
+            MediaBackendError::new("PROVIDER_UNAVAILABLE", err.to_string(), true)
+        }
+        LlmError::Rejected => {
+            MediaBackendError::new("VIDEO_GENERATION_REJECTED", err.to_string(), false)
+        }
+        other => MediaBackendError::new("VIDEO_GENERATION_FAILED", other.to_string(), false),
+    }
+}
+
 #[async_trait::async_trait]
 impl orchestrator_flow_rs::VideoGeneratorBackend for CatalogMediaBackend {
     fn video_constraints(&self) -> orchestrator_flow_rs::VideoProviderConstraints {
@@ -309,20 +340,34 @@ impl orchestrator_flow_rs::VideoGeneratorBackend for CatalogMediaBackend {
     async fn generate_video(
         &self,
         req: &orchestrator_flow_rs::VideoGenerationRequest,
-    ) -> Result<orchestrator_flow_rs::GeneratedVideoPayload, String> {
+        ctx: &orchestrator_flow_rs::MediaCallContext,
+    ) -> Result<
+        orchestrator_flow_rs::GeneratedVideoPayload,
+        orchestrator_flow_rs::MediaBackendError,
+    > {
         let Some(resolved) = self.select_provider("video_create", "video") else {
-            return self.default_video.generate_video(req).await;
+            return self.default_video.generate_video(req, ctx).await;
         };
         let constraints = resolved.video_constraints();
         let (width, height) = req.effective_dimensions();
         let duration_secs = req.duration_secs.max(1);
         if duration_secs > constraints.max_total_duration_secs.max(1) {
-            return Err(format!(
-                "duration_secs={duration_secs} exceeds max_total_duration_secs={} for {}",
-                constraints.max_total_duration_secs, resolved.provider_ref
+            return Err(orchestrator_flow_rs::MediaBackendError::new(
+                "INVALID_ARGUMENT",
+                format!(
+                    "duration_secs={duration_secs} exceeds max_total_duration_secs={} for {}",
+                    constraints.max_total_duration_secs, resolved.provider_ref
+                ),
+                false,
             ));
         }
-        let provider = resolved.to_llm_provider().map_err(|e| e.to_string())?;
+        let provider = resolved.to_llm_provider().map_err(|e| {
+            orchestrator_flow_rs::MediaBackendError::new(
+                "VIDEO_GENERATION_FAILED",
+                e.to_string(),
+                false,
+            )
+        })?;
         let first_frame = req
             .first_frame
             .as_ref()
@@ -330,20 +375,24 @@ impl orchestrator_flow_rs::VideoGeneratorBackend for CatalogMediaBackend {
                 bytes: img.bytes.clone(),
                 mime_type: img.mime_type.clone(),
             });
-        let output = provider
-            .invoke(crate::providers::LlmOperation::VideoGeneration {
-                prompt: req.prompt.clone(),
-                width,
-                height,
-                duration_secs,
-                first_frame,
-                continuation_key: req.continuation_key.clone(),
-            })
-            .await
-            .map_err(|e| match e {
-                crate::providers::LlmError::Timeout => "TIMEOUT: the video provider did not finish in time. The partial work is kept for this job, so calling video_create again continues it instead of starting over.".to_owned(),
-                other => other.to_string(),
-            })?;
+        let invoke_fut = provider.invoke(crate::providers::LlmOperation::VideoGeneration {
+            prompt: req.prompt.clone(),
+            width,
+            height,
+            duration_secs,
+            first_frame,
+            continuation_key: req.continuation_key.clone(),
+        });
+        let output = tokio::select! {
+            res = invoke_fut => res.map_err(map_llm_error_to_media_backend_error)?,
+            () = ctx.cancel.token().cancelled() => {
+                return Err(orchestrator_flow_rs::MediaBackendError::new(
+                    "CANCELLED",
+                    "video generation was cancelled before the provider finished",
+                    false,
+                ));
+            }
+        };
         build_generated_video_payload(
             req,
             &resolved.provider_ref,
@@ -353,16 +402,17 @@ impl orchestrator_flow_rs::VideoGeneratorBackend for CatalogMediaBackend {
             duration_secs,
             output,
         )
+        .map_err(orchestrator_flow_rs::MediaBackendError::from)
     }
 }
 
 pub(crate) fn build_generated_video_payload(
     req: &orchestrator_flow_rs::VideoGenerationRequest,
     provider_ref: &str,
-    constraints: &orchestrator_flow_rs::VideoProviderConstraints,
+    _constraints: &orchestrator_flow_rs::VideoProviderConstraints,
     width: u32,
     height: u32,
-    duration_secs: u32,
+    _duration_secs: u32,
     output: crate::providers::LlmOutput,
 ) -> Result<orchestrator_flow_rs::GeneratedVideoPayload, String> {
     let Some((parts, assistant_message)) = output.into_media_parts() else {
@@ -374,17 +424,12 @@ pub(crate) fn build_generated_video_payload(
     let base_stem = orchestrator_flow_rs::normalize_video_stem(&req.filename, "video");
     let safe_name = format!("{base_stem}.mp4");
     let total_clips = parts.len();
-    let fallback_clip_duration = if total_clips > 1 {
-        constraints.max_clip_duration_secs.max(1)
-    } else {
-        duration_secs.min(constraints.max_clip_duration_secs.max(1))
-    };
     let clips: Vec<orchestrator_flow_rs::GeneratedVideoClip> = parts
         .into_iter()
         .enumerate()
         .map(|(idx, part)| {
-            let clip_duration = orchestrator_flow_rs::inspect_mp4_duration_secs(&part.bytes)
-                .unwrap_or(fallback_clip_duration);
+            let clip_duration =
+                orchestrator_flow_rs::inspect_mp4_duration_secs(&part.bytes).unwrap_or(0);
             let clip_filename = if total_clips == 1 {
                 safe_name.clone()
             } else {
@@ -413,7 +458,7 @@ pub(crate) fn build_generated_video_payload(
         bytes: first_bytes,
         width,
         height,
-        duration_secs: total_duration.max(1),
+        duration_secs: total_duration,
         provider: provider_ref.to_owned(),
         clips,
         provider_message: assistant_message,

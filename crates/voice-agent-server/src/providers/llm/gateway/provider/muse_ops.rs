@@ -241,6 +241,10 @@ impl LlmGatewayProvider {
                             current_lease = refreshed_lease;
                             continue;
                         }
+                        let failure_summary = format!(
+                            "Muse workflow failure on account '{}': {:?}",
+                            current_lease.account_key, failure
+                        );
                         let can_failover = is_pool
                             && is_retryable_muse_failure(&failure)
                             && attempt + 1 < max_attempts;
@@ -256,6 +260,7 @@ impl LlmGatewayProvider {
                             current_lease = next_lease;
                             break;
                         }
+                        record_wire_detail(&self.last_error_detail, failure_summary);
                         return Err(err);
                     }
                 }
