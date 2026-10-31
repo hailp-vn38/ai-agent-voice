@@ -96,6 +96,15 @@ describe('Agent Job admin clients', () => {
     expect(new Headers(init.headers).get('Idempotency-Key')).toBe('retry-once')
     expect(JSON.parse(String(init.body))).toEqual({ confirm_safe_read_only: true })
   })
+  it('resumes a waiting Job via POST /api/admin/jobs/{id}/resume', async () => {
+    const fetch = vi.fn().mockResolvedValue(json({ id: 'job-wait-1', status: 'running' }))
+    vi.stubGlobal('fetch', fetch)
+    const resumed = await agentJobsApi.resumeJob('job-wait-1')
+    expect(resumed.status).toBe('running')
+    expect(fetch.mock.calls[0]?.[0]).toContain('/api/admin/jobs/job-wait-1/resume')
+    const init = fetch.mock.calls[0]?.[1] as RequestInit
+    expect(init.method).toBe('POST')
+  })
   it('reads incremental durable Job events with a per-Job cursor', async () => {
     const fetch = vi.fn().mockResolvedValue(json({ items: [{ sequence: 3, event_type: 'plan_rejected', payload: { code: 'proposal_not_json' } }] }))
     vi.stubGlobal('fetch', fetch)

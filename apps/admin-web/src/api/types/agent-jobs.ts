@@ -122,7 +122,7 @@ export interface AgentRunView {
   goal_excerpt: string
   result?: Record<string, unknown> | null
   messages?: AgentMessageView[]
-  status: 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled' | 'interrupted'
+  status: 'queued' | 'running' | 'waiting_retry' | 'waiting_user' | 'succeeded' | 'failed' | 'cancelled' | 'interrupted'
   run_index: number
   llm_rounds: number
   tool_calls: number
@@ -130,6 +130,8 @@ export interface AgentRunView {
   output_tokens: number | null
   started_at: string | null
   finished_at: string | null
+  next_attempt_at?: number | null
+  retry_reason?: string | null
   error_code?: string | null
   error_message?: string | null
   provider_id?: string | null
@@ -143,7 +145,7 @@ export interface CoverageView {
   verified_capabilities_count: number
   missing_sources_count: number
 }
-export type JobStatus = 'queued' | 'planning' | 'running' | 'cancelling' | 'succeeded' | 'partial_success' | 'failed' | 'cancelled'
+export type JobStatus = 'queued' | 'planning' | 'running' | 'waiting' | 'cancelling' | 'succeeded' | 'partial_success' | 'failed' | 'cancelled' | 'stopped'
 export type StepStatus = 'pending' | 'running' | 'succeeded' | 'failed' | 'skipped' | 'cancelled'
 export interface JobStep {
   step_key: string
@@ -244,6 +246,9 @@ export interface AdminJob {
   plan_revision: number
   retry_of_job_id: string | null
   result: Record<string, unknown> | null
+  output_preview?: string | null
+  wait_reason?: string | null
+  next_attempt_at?: number | null
   budget_used: Record<string, unknown>
   steps: JobStep[]
   artifacts: JobArtifact[]

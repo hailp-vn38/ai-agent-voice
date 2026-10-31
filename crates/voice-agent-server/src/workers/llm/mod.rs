@@ -312,8 +312,13 @@ impl LlmRuntime {
                 Err(LlmInvokeError::UnsupportedCapability(tag))
             }
             Ok(Err(LlmError::Rejected)) => Err(LlmInvokeError::Rejected),
-            Ok(Err(LlmError::Failed)) => Err(LlmInvokeError::Failed),
-            Ok(Err(LlmError::TimedOut)) | Err(_) => Err(LlmInvokeError::Timeout),
+            Ok(Err(
+                LlmError::Failed
+                | LlmError::RateLimited { .. }
+                | LlmError::Transient
+                | LlmError::Unauthorized,
+            )) => Err(LlmInvokeError::Failed),
+            Ok(Err(LlmError::Timeout)) | Err(_) => Err(LlmInvokeError::Timeout),
         }
     }
 

@@ -145,7 +145,8 @@ impl LlmGatewayProvider {
                 Err(
                     WireError::RateLimited { .. }
                     | WireError::Unauthorized
-                    | WireError::HttpRejected,
+                    | WireError::HttpRejected
+                    | WireError::HttpUnavailable,
                 ) if is_pool && attempt + 1 < max_attempts => {
                     if let Ok(next_lease) = self.hub.acquire_lease(&self.config.gateway_binding)
                         && next_lease.account_key != current_lease.account_key

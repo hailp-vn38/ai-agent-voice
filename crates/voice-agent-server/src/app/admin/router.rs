@@ -169,6 +169,7 @@ fn background_routes() -> Router<AppState> {
             get(background::artifact),
         )
         .route("/jobs/{id}/cancel", axum::routing::post(background::cancel))
+        .route("/jobs/{id}/resume", axum::routing::post(background::resume))
         .route("/jobs/{id}/retry", axum::routing::post(background::retry))
 }
 

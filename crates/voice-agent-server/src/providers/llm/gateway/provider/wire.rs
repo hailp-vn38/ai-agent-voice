@@ -116,20 +116,32 @@ pub(crate) fn extract_sse_error_detail(val: &Value) -> Option<String> {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum NoLeaseKind {
+    CoolingDown,
+    NeedsReauth,
+    Unavailable,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum WireError {
-    NoLease,
+    NoLease(NoLeaseKind),
     RateLimited { retry_after_secs: Option<u64> },
     Unauthorized,
     HttpRejected,
+    HttpUnavailable,
     Other,
 }
 
 impl WireError {
     pub(crate) fn into_llm_error(self) -> LlmError {
         match self {
-            Self::NoLease | Self::RateLimited { .. } | Self::Unauthorized | Self::HttpRejected => {
-                LlmError::Rejected
-            }
+            Self::RateLimited { retry_after_secs } => LlmError::RateLimited { retry_after_secs },
+            Self::NoLease(NoLeaseKind::CoolingDown) => LlmError::RateLimited {
+                retry_after_secs: None,
+            },
+            Self::NoLease(NoLeaseKind::NeedsReauth) | Self::Unauthorized => LlmError::Unauthorized,
+            Self::NoLease(NoLeaseKind::Unavailable) | Self::HttpRejected => LlmError::Rejected,
+            Self::HttpUnavailable => LlmError::Transient,
             Self::Other => LlmError::Failed,
         }
     }
@@ -161,8 +173,11 @@ pub(crate) fn check_wire_status(resp: reqwest::Response) -> Result<reqwest::Resp
     if matches!(status.as_u16(), 401 | 403) {
         return Err(WireError::Unauthorized);
     }
-    if matches!(status.as_u16(), 408 | 504) {
+    if status.as_u16() == 408 {
         return Err(WireError::Other);
+    }
+    if status.is_server_error() {
+        return Err(WireError::HttpUnavailable);
     }
     if !status.is_success() {
         return Err(WireError::HttpRejected);

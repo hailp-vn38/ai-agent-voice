@@ -604,9 +604,15 @@ pub enum LlmError {
     Rejected,
     #[error("LLM provider does not support capability tag `{0}`")]
     UnsupportedCapability(&'static str),
+    #[error("LLM provider rate limited (retry_after_secs={retry_after_secs:?})")]
+    RateLimited { retry_after_secs: Option<u64> },
+    #[error("LLM provider transient upstream error")]
+    Transient,
     /// The provider did not finish before its deadline; the work may still complete upstream.
     #[error("LLM operation timed out")]
-    TimedOut,
+    Timeout,
+    #[error("LLM provider authentication failed")]
+    Unauthorized,
 }
 
 pub struct UnavailableLlm;

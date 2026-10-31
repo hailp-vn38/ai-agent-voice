@@ -109,8 +109,12 @@ export function mapActivityStatusToNodeState(status: ActivityStatus | string | n
     case 'interrupted':
       return 'failed'
     case 'queued':
+    case 'waiting':
+    case 'waiting_retry':
+    case 'waiting_user':
     case 'pending':
     case 'cancelled':
+    case 'stopped':
     case 'skipped':
     default:
       return 'pending'

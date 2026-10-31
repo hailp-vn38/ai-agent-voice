@@ -134,6 +134,9 @@ export const agentJobsApi = {
   cancelJob(id: string) {
     return requestJson<AdminJob>(jobPath(id) + '/cancel', jsonRequest('POST', {}))
   },
+  resumeJob(id: string) {
+    return requestJson<AdminJob>(jobPath(id) + '/resume', jsonRequest('POST', {}))
+  },
   deleteJob(id: string) {
     return requestJson<void>(jobPath(id), { method: 'DELETE' })
   },

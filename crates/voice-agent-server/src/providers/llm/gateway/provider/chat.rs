@@ -8,7 +8,9 @@ use crate::{
 use super::super::{
     config::LlmGatewayConfig, wire_anthropic, wire_codex, wire_gemini, wire_openai,
 };
-use super::{LlmGatewayProvider, MAX_POOL_FAILOVER_ATTEMPTS, WireError, record_wire_detail};
+use super::{
+    LlmGatewayProvider, MAX_POOL_FAILOVER_ATTEMPTS, NoLeaseKind, WireError, record_wire_detail,
+};
 
 impl LlmGatewayProvider {
     async fn dispatch_chat_wire(
@@ -56,15 +58,25 @@ impl LlmGatewayProvider {
         let lease = self
             .hub
             .acquire_lease(&effective_cfg.gateway_binding)
-            .map_err(|_| {
+            .map_err(|err| {
                 record_wire_detail(
                     &self.last_error_detail,
                     format!(
-                        "no active OAuth account lease available for gateway binding '{}'",
-                        effective_cfg.gateway_binding.as_config_string()
+                        "no active OAuth account lease available for gateway binding '{}' ({})",
+                        effective_cfg.gateway_binding.as_config_string(),
+                        err.code()
                     ),
                 );
-                WireError::NoLease
+                let kind = match err {
+                    crate::services::llm_gateway::GatewayError::AccountCoolingDown => {
+                        NoLeaseKind::CoolingDown
+                    }
+                    crate::services::llm_gateway::GatewayError::AccountReauthRequired => {
+                        NoLeaseKind::NeedsReauth
+                    }
+                    _ => NoLeaseKind::Unavailable,
+                };
+                WireError::NoLease(kind)
             })?;
         let is_pool = matches!(effective_cfg.gateway_binding, GatewayBinding::Pool(_));
         let max_attempts = if is_pool {
@@ -112,7 +124,8 @@ impl LlmGatewayProvider {
                 Err(
                     err @ (WireError::RateLimited { .. }
                     | WireError::Unauthorized
-                    | WireError::HttpRejected),
+                    | WireError::HttpRejected
+                    | WireError::HttpUnavailable),
                 ) if is_pool && attempt + 1 < max_attempts => {
                     if let Ok(next_lease) = self.hub.acquire_lease(&effective_cfg.gateway_binding)
                         && next_lease.account_key != current_lease.account_key

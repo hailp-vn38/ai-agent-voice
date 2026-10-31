@@ -32,9 +32,9 @@ use super::{
 };
 
 pub(crate) use wire::{
-    ActivityThrottle, ErrorDetailSlot, WireError, apply_lease_headers, check_wire_status,
-    drain_next_sse_line, extract_sse_error_detail, new_error_detail_slot, parse_tool_arguments,
-    record_wire_detail, summarize_error_body,
+    ActivityThrottle, ErrorDetailSlot, NoLeaseKind, WireError, apply_lease_headers,
+    check_wire_status, drain_next_sse_line, extract_sse_error_detail, new_error_detail_slot,
+    parse_tool_arguments, record_wire_detail, summarize_error_body,
 };
 
 fn default_tags_for_config(config: &LlmGatewayConfig) -> Vec<LlmCapabilityTag> {
@@ -215,7 +215,12 @@ impl LlmGatewayProvider {
                 self.hub
                     .report_outcome(account_key, GatewayCallOutcome::Unauthorized);
             }
-            Err(WireError::NoLease | WireError::HttpRejected | WireError::Other) => {}
+            Err(
+                WireError::NoLease(_)
+                | WireError::HttpRejected
+                | WireError::HttpUnavailable
+                | WireError::Other,
+            ) => {}
         }
         result
     }
@@ -281,7 +286,7 @@ impl LlmProvider for LlmGatewayProvider {
                 let max_total = self.config.resolved_limits().max_total;
                 tokio::time::timeout(max_total, self.run_vision(&prompt, &image_bytes, &mime_type))
                     .await
-                    .map_err(|_| LlmError::TimedOut)?
+                    .map_err(|_| LlmError::Timeout)?
             }
             LlmOperation::ImageGeneration {
                 prompt,

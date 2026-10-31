@@ -242,8 +242,11 @@ async fn check_codex_response_status(
     if matches!(status.as_u16(), 401 | 403) {
         return Err(WireError::Unauthorized);
     }
-    if matches!(status.as_u16(), 408 | 504) {
+    if status.as_u16() == 408 {
         return Err(WireError::Other);
+    }
+    if status.is_server_error() {
+        return Err(WireError::HttpUnavailable);
     }
     Err(WireError::HttpRejected)
 }

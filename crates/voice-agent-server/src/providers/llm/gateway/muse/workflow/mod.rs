@@ -24,11 +24,21 @@ impl WorkflowFailure {
             }
             WorkflowFailure::Upstream(kind, reason) => {
                 tracing::debug!(?kind, reason = %reason, "Muse workflow upstream failure");
-                crate::providers::llm::LlmError::Failed
+                match kind {
+                    UpstreamFailureKind::QuotaExceeded => {
+                        crate::providers::llm::LlmError::RateLimited {
+                            retry_after_secs: Some(3600),
+                        }
+                    }
+                    UpstreamFailureKind::Transient => crate::providers::llm::LlmError::Transient,
+                    UpstreamFailureKind::AuthInvalid => {
+                        crate::providers::llm::LlmError::Unauthorized
+                    }
+                }
             }
             WorkflowFailure::Timeout(reason) => {
                 tracing::debug!(reason = %reason, "Muse workflow timed out");
-                crate::providers::llm::LlmError::TimedOut
+                crate::providers::llm::LlmError::Timeout
             }
         }
     }

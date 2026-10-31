@@ -34,7 +34,7 @@ export function projectLlmRuns(
   agentRuns?: AgentRunView[],
 ): LlmRun[] {
   const runs = new Map<string, LlmRun>()
-  const terminal = ['succeeded', 'partial_success', 'failed', 'cancelled'].includes(status)
+  const terminal = ['succeeded', 'partial_success', 'failed', 'cancelled', 'stopped'].includes(status)
   const orderedEvents = [...events].sort((a, b) => a.sequence - b.sequence)
   const hasExplicitLlmEvents = orderedEvents.some(event => event.event_type === 'llm_run_started')
   const agentRunById = new Map((agentRuns ?? []).map(run => [run.agent_run_id, run]))

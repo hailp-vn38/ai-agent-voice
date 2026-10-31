@@ -55,11 +55,11 @@ pub fn resolve(
     custom: CustomLimits,
     legacy_timeout_ms: u64,
 ) -> RequestLimits {
-    let (base_first_byte_ms, base_idle_ms, base_max_total_ms) = match profile {
-        Some(TimeoutProfile::Interactive) => (30_000, 30_000, 120_000),
-        Some(TimeoutProfile::Agentic) => (180_000, 180_000, 1_800_000),
+    let (base_first_byte_ms, base_idle_ms, base_max_total_ms, fast_retries) = match profile {
+        Some(TimeoutProfile::Interactive) => (30_000, 30_000, 120_000, 2),
+        Some(TimeoutProfile::Agentic) => (180_000, 180_000, 1_800_000, 1),
         Some(TimeoutProfile::Standard) | Some(TimeoutProfile::Custom) | None => {
-            (120_000, 90_000, 600_000)
+            (120_000, 90_000, 600_000, 2)
         }
     };
     let first_byte_ms = custom.first_byte_ms.unwrap_or(base_first_byte_ms);
@@ -71,6 +71,7 @@ pub fn resolve(
         first_byte: Duration::from_millis(first_byte_ms),
         idle: Duration::from_millis(idle_ms),
         max_total: Duration::from_millis(max_total_ms),
+        fast_retries,
     }
 }
 

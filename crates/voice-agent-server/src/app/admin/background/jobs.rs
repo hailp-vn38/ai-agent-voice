@@ -211,10 +211,12 @@ fn parse_status_filter(status: Option<&str>) -> Option<TaskStatus> {
     match status?.trim() {
         "queued" => Some(TaskStatus::Queued),
         "running" | "planning" | "cancelling" => Some(TaskStatus::Running),
+        "waiting" => Some(TaskStatus::Waiting),
         "succeeded" | "completed" | "partial_success" => Some(TaskStatus::Completed),
         "failed" => Some(TaskStatus::Failed),
         "cancelled" => Some(TaskStatus::Cancelled),
         "interrupted" => Some(TaskStatus::Interrupted),
+        "stopped" => Some(TaskStatus::Stopped),
         _ => None,
     }
 }
@@ -362,6 +364,24 @@ pub(in crate::app::admin) async fn cancel(
         Err(resp) => return resp,
     };
     match tm.cancel_task_any_scope(&id).await {
+        Ok(task) => {
+            let detail = tm.get_task_detail_any_scope(&task.id).await.ok();
+            Json(project_task_to_admin_job(&task, detail.as_ref())).into_response()
+        }
+        Err(e) => task_failure(&request, e),
+    }
+}
+
+pub(in crate::app::admin) async fn resume(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    request: Request,
+) -> Response {
+    let tm = match task_manager(&state, &request) {
+        Ok(tm) => tm,
+        Err(resp) => return resp,
+    };
+    match tm.resume_waiting_task_any_scope(&id).await {
         Ok(task) => {
             let detail = tm.get_task_detail_any_scope(&task.id).await.ok();
             Json(project_task_to_admin_job(&task, detail.as_ref())).into_response()

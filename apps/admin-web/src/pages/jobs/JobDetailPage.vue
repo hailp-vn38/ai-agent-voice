@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { AlertTriangle, FolderOpen, RefreshCw, RotateCcw, Square, Trash2, Workflow } from '@lucide/vue'
+import { AlertTriangle, FolderOpen, Play, RefreshCw, RotateCcw, Square, Trash2, Workflow } from '@lucide/vue'
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { agentJobsApi } from '@/api/agent-jobs'
@@ -42,8 +42,21 @@ let mounted = false
 let eventCursor = 0
 let retryRequest = { id: '', key: '' }
 
-const isTerminal = (status: JobStatus) => ['succeeded', 'partial_success', 'failed', 'cancelled'].includes(status)
-const canRetry = computed(() => job.value && job.value.execution_mode !== 'knowledge_ingest_v3' && ['failed', 'cancelled'].includes(job.value.status))
+const isTerminal = (status: JobStatus) => ['succeeded', 'partial_success', 'failed', 'cancelled', 'stopped'].includes(status)
+const canRetry = computed(() => job.value && job.value.execution_mode !== 'knowledge_ingest_v3' && ['failed', 'cancelled', 'stopped'].includes(job.value.status))
+const canResume = computed(() => job.value?.status === 'waiting')
+const waitingReason = computed(() => job.value?.wait_reason || job.value?.agent_runs?.find(r => r.retry_reason)?.retry_reason || 'retry')
+const waitingBannerText = computed(() => {
+  if (job.value?.status !== 'waiting') return ''
+  const reason = waitingReason.value
+  const nextMs = job.value.next_attempt_at ?? job.value.agent_runs?.find(r => r.next_attempt_at)?.next_attempt_at ?? null
+  if (nextMs && Number.isFinite(nextMs) && nextMs > 0) {
+    const stamp = new Date(nextMs < 1e11 ? nextMs * 1000 : nextMs)
+    const time = Number.isFinite(stamp.getTime()) ? stamp.toLocaleTimeString() : String(nextMs)
+    return t('jobUi.waitingSchedule', { reason, time })
+  }
+  return t('jobUi.waitingUserNotice', { reason })
+})
 const unknownOutcome = computed(() => job.value?.steps.some(step => step.attempt_state === 'unknown_outcome') ?? false)
 
 const activityFilter = ref<ActivityFilter>({ kind: 'all' })
@@ -73,7 +86,7 @@ watch(filteredActivity, rows => {
 
 const tone = (status: JobStatus): 'success' | 'danger' | 'secondary' | 'outline' =>
   status === 'succeeded' ? 'success' : status === 'failed' ? 'danger' :
-    status === 'partial_success' || status === 'cancelled' ? 'outline' : 'secondary'
+    status === 'partial_success' || status === 'cancelled' || status === 'stopped' ? 'outline' : 'secondary'
 const statusLabel = (status: JobStatus) => t(('jobUi.jobStatus.' + status) as 'jobUi.jobStatus.queued')
 async function load(resetEvents = false) {
   controller?.abort()
@@ -122,6 +135,20 @@ async function cancel() {
   try {
     job.value = await agentJobsApi.cancelJob(job.value.id)
     notice.value = t('jobUi.cancelAccepted')
+    await load()
+  } catch (cause) {
+    error.value = formatApiError(cause)
+  } finally {
+    busy.value = false
+  }
+}
+async function resume() {
+  if (!job.value || busy.value) return
+  busy.value = true
+  error.value = ''
+  try {
+    job.value = await agentJobsApi.resumeJob(job.value.id)
+    notice.value = t('jobUi.resumeAccepted')
     await load()
   } catch (cause) {
     error.value = formatApiError(cause)
@@ -222,6 +249,7 @@ onBeforeUnmount(() => {
         <Badge v-if="job" :variant="tone(job.status)">{{ statusLabel(job.status) }}</Badge>
         <Button v-if="job?.artifacts?.length" variant="outline" data-job-open-artifacts @click="router.push({ name: 'artifacts', query: { job_id: job.id } })"><FolderOpen class="size-4" />{{ t('jobUi.artifacts') }} ({{ job.artifacts.length }})</Button>
         <Button variant="outline" :disabled="refreshing || loading || busy" @click="load()"><RefreshCw class="size-4" :class="{ 'animate-spin': refreshing }" />{{ t('jobUi.refresh') }}</Button>
+        <Button v-if="canResume" data-job-resume :disabled="busy" @click="resume"><Play class="size-4" />{{ t('jobUi.resumeJob') }}</Button>
         <Button v-if="job && !isTerminal(job.status) && job.status !== 'cancelling'" variant="outline" :disabled="busy" @click="cancel"><Square class="size-4" />{{ t('jobUi.cancelJob') }}</Button>
         <Button v-if="canRetry" :disabled="busy" @click="retryOpen = true"><RotateCcw class="size-4" />{{ t('jobUi.retryJob') }}</Button>
         <Button v-if="job && isTerminal(job.status)" variant="outline" class="text-danger" :disabled="busy || loading || refreshing" @click="deleteOpen = true"><Trash2 class="size-4" />{{ t('jobUi.deleteJob') }}</Button>
@@ -268,6 +296,16 @@ onBeforeUnmount(() => {
 
     <template v-if="job && !loading">
       <KnowledgeJobState v-if="job.execution_mode === 'knowledge_ingest_v3'" :job="job" @changed="load()" />
+      <div v-if="job.status === 'waiting'" data-job-waiting-banner role="status" class="rounded-xl border border-amber-500/30 bg-amber-500/5 p-4 text-sm">
+        <div class="flex flex-wrap items-center justify-between gap-2">
+          <div class="flex items-center gap-2 font-semibold text-amber-600 dark:text-amber-400">
+            <AlertTriangle class="size-4" />
+            <span>{{ waitingBannerText }}</span>
+          </div>
+          <Button size="sm" :disabled="busy" @click="resume"><Play class="size-3.5" />{{ t('jobUi.resumeJob') }}</Button>
+        </div>
+        <p class="mt-1.5 text-xs text-muted-foreground">{{ t('jobUi.longWaitNotice', { reason: waitingReason }) }}</p>
+      </div>
       <div v-if="job.error_code || job.error_message || unknownOutcome" role="alert" class="rounded-xl border border-danger/30 bg-danger/5 p-4">
         <div class="flex items-center gap-2 font-semibold text-danger"><AlertTriangle class="size-4" />{{ t('jobUi.executionWarning') }}</div>
         <p v-if="job.error_code" class="mt-2 break-all font-mono text-xs font-semibold text-danger">{{ job.error_code }}</p>

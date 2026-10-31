@@ -14,7 +14,7 @@ use crate::{
     config::LlmGatewayConfig,
     providers::llm::{
         ChatMessage, LlmError, LlmEvent, LlmGatewayProvider, LlmRequest, ToolCall, ToolDefinition,
-        gateway::provider::WireError,
+        gateway::provider::{NoLeaseKind, WireError},
     },
     services::llm_gateway::{LlmGatewayHub, SharedGatewayHub},
 };
@@ -216,29 +216,24 @@ impl CustomModelExecutor for GatewayOrchestratorExecutor {
                         WireError::Unauthorized => format!(
                             "OAuth gateway HTTP 401/403 unauthorized (binding='{binding_label}', model='{model_label}')"
                         ),
-                        WireError::NoLease => format!(
-                            "no active OAuth account lease available (binding='{binding_label}', model='{model_label}')"
+                        WireError::NoLease(kind) => format!(
+                            "no active OAuth account lease available (binding='{binding_label}', model='{model_label}', kind={kind:?})"
                         ),
                         WireError::RateLimited { retry_after_secs } => format!(
                             "upstream HTTP 429 rate limited (binding='{binding_label}', model='{model_label}', retry_after={retry_after_secs:?}s)"
                         ),
                         WireError::HttpRejected => format!(
-                            "upstream HTTP request rejected (binding='{binding_label}', model='{model_label}')"
+                            "upstream HTTP 4xx request rejected (binding='{binding_label}', model='{model_label}')"
+                        ),
+                        WireError::HttpUnavailable => format!(
+                            "upstream HTTP 5xx service unavailable (binding='{binding_label}', model='{model_label}')"
                         ),
                         WireError::Other => format!(
                             "upstream HTTP transport/gateway failure (binding='{binding_label}', model='{model_label}')"
                         ),
                     };
                     self.set_error_detail(wire_detail.unwrap_or(fallback));
-                    match err {
-                        WireError::Unauthorized => GatewayError::Auth,
-                        WireError::NoLease
-                        | WireError::RateLimited { .. }
-                        | WireError::HttpRejected
-                        | WireError::Other => {
-                            GatewayError::Provider
-                        }
-                    }
+                    map_wire_error_to_gateway(err)
                 })?
             }
         };
@@ -257,16 +252,16 @@ impl CustomModelExecutor for GatewayOrchestratorExecutor {
             };
             let event = match item {
                 Ok(ev) => ev,
-                Err(_) => {
+                Err(llm_err) => {
                     let detail = self.provider.take_last_error_detail().unwrap_or_else(|| {
                         format!(
-                            "SSE stream failed mid-response after {} chars and {} tool calls (binding='{binding_label}', model='{model_label}')",
+                            "SSE stream failed mid-response after {} chars and {} tool calls (binding='{binding_label}', model='{model_label}', error={llm_err:?})",
                             raw_text.len(),
                             tool_calls.len()
                         )
                     });
                     self.set_error_detail(detail);
-                    return Err(GatewayError::Protocol);
+                    return Err(map_stream_llm_error_to_gateway(llm_err));
                 }
             };
             match event {
@@ -336,5 +331,95 @@ impl CustomModelExecutor for GatewayOrchestratorExecutor {
             tool_calls,
             usage: None,
         })
+    }
+}
+
+pub(crate) fn map_wire_error_to_gateway(err: WireError) -> GatewayError {
+    match err {
+        WireError::NoLease(NoLeaseKind::CoolingDown) => GatewayError::RateLimited {
+            retry_after_secs: None,
+        },
+        WireError::RateLimited { retry_after_secs } => {
+            GatewayError::RateLimited { retry_after_secs }
+        }
+        WireError::NoLease(NoLeaseKind::NeedsReauth) | WireError::Unauthorized => {
+            GatewayError::Auth
+        }
+        WireError::HttpRejected => GatewayError::InvalidRequest,
+        WireError::NoLease(NoLeaseKind::Unavailable)
+        | WireError::HttpUnavailable
+        | WireError::Other => GatewayError::Provider,
+    }
+}
+
+pub(crate) fn map_stream_llm_error_to_gateway(err: LlmError) -> GatewayError {
+    match err {
+        LlmError::RateLimited { retry_after_secs } => {
+            GatewayError::RateLimited { retry_after_secs }
+        }
+        LlmError::Unauthorized => GatewayError::Auth,
+        LlmError::Timeout => GatewayError::Timeout,
+        LlmError::Transient => GatewayError::Provider,
+        LlmError::Rejected | LlmError::UnsupportedCapability(_) => GatewayError::InvalidRequest,
+        LlmError::Failed => GatewayError::Protocol,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn executor_maps_wire_errors() {
+        assert_eq!(
+            map_wire_error_to_gateway(WireError::RateLimited {
+                retry_after_secs: Some(42)
+            }),
+            GatewayError::RateLimited {
+                retry_after_secs: Some(42)
+            }
+        );
+        assert_eq!(
+            map_wire_error_to_gateway(WireError::NoLease(NoLeaseKind::CoolingDown)),
+            GatewayError::RateLimited {
+                retry_after_secs: None
+            }
+        );
+        assert_eq!(
+            map_wire_error_to_gateway(WireError::NoLease(NoLeaseKind::NeedsReauth)),
+            GatewayError::Auth
+        );
+        assert_eq!(
+            map_wire_error_to_gateway(WireError::HttpRejected),
+            GatewayError::InvalidRequest
+        );
+        assert_eq!(
+            map_wire_error_to_gateway(WireError::HttpUnavailable),
+            GatewayError::Provider
+        );
+        assert_ne!(
+            map_wire_error_to_gateway(WireError::HttpUnavailable),
+            map_wire_error_to_gateway(WireError::HttpRejected)
+        );
+        assert_eq!(
+            map_stream_llm_error_to_gateway(LlmError::RateLimited {
+                retry_after_secs: Some(3600)
+            }),
+            GatewayError::RateLimited {
+                retry_after_secs: Some(3600)
+            }
+        );
+        assert_eq!(
+            map_stream_llm_error_to_gateway(LlmError::Timeout),
+            GatewayError::Timeout
+        );
+        assert_eq!(
+            map_stream_llm_error_to_gateway(LlmError::Transient),
+            GatewayError::Provider
+        );
+        assert_eq!(
+            map_stream_llm_error_to_gateway(LlmError::Unauthorized),
+            GatewayError::Auth
+        );
     }
 }

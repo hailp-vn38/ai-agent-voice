@@ -42,17 +42,17 @@ const goal = ref('')
 const wavAttachments = ref<PendingWavAttachment[]>([])
 const wavDragActive = ref(false)
 const wavInputRef = ref<HTMLInputElement | null>(null)
-const statusOptions: JobStatus[] = ['queued', 'planning', 'running', 'cancelling', 'succeeded', 'partial_success', 'failed', 'cancelled']
+const statusOptions: JobStatus[] = ['queued', 'planning', 'running', 'waiting', 'cancelling', 'succeeded', 'partial_success', 'failed', 'cancelled', 'stopped']
 let controller: AbortController | undefined
 let creation = { sig: '', key: '' }
 
-const activeCount = computed(() => jobs.value.filter(job => ['queued', 'planning', 'running', 'cancelling'].includes(job.status)).length)
+const activeCount = computed(() => jobs.value.filter(job => ['queued', 'planning', 'running', 'waiting', 'cancelling'].includes(job.status)).length)
 const completedCount = computed(() => jobs.value.filter(job => ['succeeded', 'partial_success'].includes(job.status)).length)
 const failedCount = computed(() => jobs.value.filter(job => job.status === 'failed').length)
 const allSelected = computed(() => jobs.value.length > 0 && jobs.value.every(job => selectedIds.value.includes(job.id)))
 const tone = (status: JobStatus): 'success' | 'danger' | 'secondary' | 'outline' =>
   status === 'succeeded' ? 'success' : status === 'failed' ? 'danger' :
-    status === 'partial_success' || status === 'cancelled' ? 'outline' : 'secondary'
+    status === 'partial_success' || status === 'cancelled' || status === 'stopped' ? 'outline' : 'secondary'
 const label = (status: JobStatus) => t(('jobUi.jobStatus.' + status) as 'jobUi.jobStatus.queued')
 function date(value: string) {
   const stamp = new Date(value)

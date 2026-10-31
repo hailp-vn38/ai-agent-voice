@@ -331,6 +331,23 @@ impl LlmGatewayHub {
                     .filter(|acc| acc.is_ready_for_lease(now))
                     .collect();
                 if ready.is_empty() {
+                    let enabled_accounts: Vec<&LoadedGatewayAccount> = keys
+                        .iter()
+                        .filter_map(|k| guard.accounts.get(k))
+                        .filter(|acc| acc.enabled && acc.status != GatewayAccountStatus::Disabled)
+                        .collect();
+                    if enabled_accounts.iter().any(|acc| {
+                        acc.status == GatewayAccountStatus::Active
+                            && acc.bundle.is_some()
+                            && acc.cooldown_remaining_secs(now) > 0
+                    }) {
+                        return Err(GatewayError::AccountCoolingDown);
+                    }
+                    if enabled_accounts.iter().any(|acc| {
+                        acc.status == GatewayAccountStatus::ReauthRequired || acc.bundle.is_none()
+                    }) {
+                        return Err(GatewayError::AccountReauthRequired);
+                    }
                     return Err(GatewayError::PoolExhausted);
                 }
                 let quotas_guard = self.quotas.read().unwrap_or_else(|p| p.into_inner());

@@ -7,15 +7,19 @@ fn map_task_status_to_admin_job_status(status: TaskStatus) -> &'static str {
     match status {
         TaskStatus::Queued => "queued",
         TaskStatus::Running => "running",
+        TaskStatus::Waiting => "waiting",
         TaskStatus::Completed => "succeeded",
         TaskStatus::Failed | TaskStatus::Interrupted => "failed",
         TaskStatus::Cancelled => "cancelled",
+        TaskStatus::Stopped => "stopped",
     }
 }
 
 fn map_agent_run_status(status: &str) -> &'static str {
     match status {
         "running" => "running",
+        "waiting_retry" => "waiting_retry",
+        "waiting_user" => "waiting_user",
         "completed" => "succeeded",
         "cancelled" => "cancelled",
         "interrupted" => "interrupted",
@@ -142,6 +146,8 @@ pub fn project_task_to_admin_job(task: &TaskView, detail: Option<&TaskDetailView
                 "output_tokens": output_tokens,
                 "started_at": started_at_str,
                 "finished_at": finished_at_str,
+                "next_attempt_at": session.latest_run.as_ref().and_then(|r| r.next_attempt_at),
+                "retry_reason": session.latest_run.as_ref().and_then(|r| r.retry_reason.as_deref()),
                 "error_code": session.latest_run.as_ref().and_then(|r| r.error_code.as_deref()),
                 "error_message": session.latest_run.as_ref().and_then(|r| r.error_message.as_deref()),
             }));
@@ -246,6 +252,8 @@ pub fn project_task_to_admin_job(task: &TaskView, detail: Option<&TaskDetailView
         "active_tool": task.active_tool,
         "progress_summary": task.progress_summary,
         "output_preview": task.output_preview,
+        "wait_reason": task.wait_reason,
+        "next_attempt_at": task.next_attempt_at,
         "related_wiki_links": task.related_wiki_links,
         "created_at": created_at_sec.to_string(),
         "started_at": started_at_str,
@@ -367,7 +375,10 @@ fn push_session_events<'a>(
     }
 
     if let Some(ref run) = session.latest_run
-        && run.status != "running"
+        && !matches!(
+            run.status.as_str(),
+            "running" | "waiting_retry" | "waiting_user"
+        )
     {
         *seq += 1;
         let mut finish_payload = json!({

@@ -383,8 +383,8 @@ async fn muse_truncated_is_error() {
         .await;
     assert_eq!(
         res,
-        Err(crate::providers::llm::LlmError::TimedOut),
-        "truncated stream that never reaches a confirmed completion state must return TimedOut"
+        Err(crate::providers::llm::LlmError::Timeout),
+        "truncated stream that never reaches a confirmed completion state must return Timeout"
     );
 }
 

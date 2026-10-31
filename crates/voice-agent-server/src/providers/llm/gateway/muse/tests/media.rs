@@ -789,8 +789,8 @@ async fn video_timeout_is_reported_as_timed_out_and_keeps_the_job_session() {
     let res = invoke_video(&provider, Some("job-timeout")).await;
 
     assert!(
-        matches!(res, Err(crate::providers::llm::LlmError::TimedOut)),
-        "a deadline hit must surface as TimedOut, got {res:?}"
+        matches!(res, Err(crate::providers::llm::LlmError::Timeout)),
+        "a deadline hit must surface as Timeout, got {res:?}"
     );
     for _ in 0..20 {
         tokio::task::yield_now().await;
@@ -818,7 +818,7 @@ async fn retry_after_timeout_recovers_a_video_that_finished_late_without_a_new_r
     tokio::time::pause();
 
     let first = invoke_video(&provider, Some("job-late")).await;
-    assert!(matches!(first, Err(crate::providers::llm::LlmError::TimedOut)));
+    assert!(matches!(first, Err(crate::providers::llm::LlmError::Timeout)));
 
     // Muse finishes the video after the first call gave up.
     acc.set_history_polls(single_video_history(
