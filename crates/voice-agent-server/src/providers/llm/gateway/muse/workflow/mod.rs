@@ -106,7 +106,7 @@ pub(crate) fn extract_history_turn_events(history_json: &Value) -> Vec<Value> {
     });
 
     match last_user_idx {
-        Some(idx) if idx + 1 <= evs.len() => evs[idx + 1..].to_vec(),
+        Some(idx) if idx < evs.len() => evs[idx + 1..].to_vec(),
         _ => Vec::new(),
     }
 }
