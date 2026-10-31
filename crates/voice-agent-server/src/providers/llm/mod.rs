@@ -603,6 +603,9 @@ pub enum LlmError {
     Rejected,
     #[error("LLM provider does not support capability tag `{0}`")]
     UnsupportedCapability(&'static str),
+    /// The provider did not finish before its deadline; the work may still complete upstream.
+    #[error("LLM operation timed out")]
+    TimedOut,
 }
 
 pub struct UnavailableLlm;

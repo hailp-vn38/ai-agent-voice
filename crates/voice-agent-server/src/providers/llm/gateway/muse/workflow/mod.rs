@@ -28,7 +28,7 @@ impl WorkflowFailure {
             }
             WorkflowFailure::Timeout(reason) => {
                 tracing::debug!(reason = %reason, "Muse workflow timed out");
-                crate::providers::llm::LlmError::Failed
+                crate::providers::llm::LlmError::TimedOut
             }
         }
     }

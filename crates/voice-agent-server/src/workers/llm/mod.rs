@@ -313,7 +313,7 @@ impl LlmRuntime {
             }
             Ok(Err(LlmError::Rejected)) => Err(LlmInvokeError::Rejected),
             Ok(Err(LlmError::Failed)) => Err(LlmInvokeError::Failed),
-            Err(_) => Err(LlmInvokeError::Timeout),
+            Ok(Err(LlmError::TimedOut)) | Err(_) => Err(LlmInvokeError::Timeout),
         }
     }
 

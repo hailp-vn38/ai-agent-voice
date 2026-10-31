@@ -340,7 +340,10 @@ impl orchestrator_flow_rs::VideoGeneratorBackend for CatalogMediaBackend {
                 continuation_key: req.continuation_key.clone(),
             })
             .await
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| match e {
+                crate::providers::LlmError::TimedOut => "TIMEOUT: the video provider did not finish in time. The partial work is kept for this job, so calling video_create again continues it instead of starting over.".to_owned(),
+                other => other.to_string(),
+            })?;
         build_generated_video_payload(
             req,
             &resolved.provider_ref,

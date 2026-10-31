@@ -769,3 +769,34 @@ async fn video_longer_than_two_batches_is_rejected_without_calling_muse() {
     assert!(res.is_err(), "130s exceeds the 120s Muse limit");
     assert!(acc.stream_requests().is_empty(), "nothing is sent to Muse");
 }
+
+#[tokio::test]
+async fn video_timeout_is_reported_as_timed_out_and_keeps_the_job_session() {
+    let stuck = FakeStreamTurn::media_reply(
+        vec![],
+        vec![vec![
+            json!({ "role": "user", "display_text": "prompt" }),
+            json!({ "role": "assistant", "status": "in_progress", "display_text": "working" }),
+        ]],
+        vec![],
+    );
+    let acc = FakeVmAccount::new(vec![stuck]);
+    let transport = FakeMuseVmTransport::new(vec![Arc::clone(&acc)]);
+    let provider = build_gateway_muse_provider(&[SINGLE_COOKIE], transport).await;
+    // Virtual time only after setup, so the 15-minute video deadline elapses instantly.
+    tokio::time::pause();
+
+    let res = invoke_video(&provider, Some("job-timeout")).await;
+
+    assert!(
+        matches!(res, Err(crate::providers::llm::LlmError::TimedOut)),
+        "a deadline hit must surface as TimedOut, got {res:?}"
+    );
+    for _ in 0..20 {
+        tokio::task::yield_now().await;
+    }
+    assert!(
+        acc.deleted_sessions().is_empty(),
+        "the job session survives a timeout so the retry can continue it"
+    );
+}
