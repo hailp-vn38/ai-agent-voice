@@ -1,11 +1,26 @@
 <script setup lang="ts">
 import {
-  Activity, ArrowLeft, ArrowRight, BookOpen, Bot, Columns2, Cpu, Eye,
-  ExternalLink, FileText, Pencil, Plus, RefreshCw, RotateCcw, Save,
-  Settings2, Sliders, Trash2, Wrench, Workflow,
+  ArrowLeft,
+  ArrowRight,
+  BookOpen,
+  Bot,
+  Columns2,
+  Cpu,
+  Eye,
+  ExternalLink,
+  LayoutDashboard,
+  Pencil,
+  Plus,
+  RefreshCw,
+  RotateCcw,
+  Save,
+  Sliders,
+  Trash2,
+  Workflow,
 } from '@lucide/vue'
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+
 import { agentJobsApi } from '@/api/agent-jobs'
 import { formatApiError, isApiError } from '@/api/errors'
 import type {
@@ -53,6 +68,7 @@ const error = ref('')
 const notice = ref('')
 const unavailable = ref(false)
 const promptMode = ref<'edit' | 'preview' | 'split'>('edit')
+const activeSection = ref<'overview' | 'model' | 'prompt' | 'tools' | 'skills'>('overview')
 
 const form = ref<{
   enabled: boolean
@@ -167,6 +183,33 @@ const flowSubagents = computed(() => {
 })
 
 const activeSubagents = computed(() => flowSubagents.value.filter(a => a.enabled))
+
+const anchorItems = computed(() => {
+  const base: Array<{
+    key: 'overview' | 'model' | 'prompt' | 'tools' | 'skills'
+    label: string
+    icon: unknown
+  }> = [
+    { key: 'overview', label: t('jobUi.agentNavOverview'), icon: LayoutDashboard },
+    { key: 'model', label: t('jobUi.agentNavModel'), icon: Cpu },
+    { key: 'prompt', label: t('jobUi.agentNavPrompt'), icon: Pencil },
+    { key: 'tools', label: t('jobUi.agentNavTools'), icon: Sliders },
+  ]
+  if (!isPrimary.value) {
+    base.push({ key: 'skills', label: t('jobUi.agentNavSkills'), icon: BookOpen })
+  }
+  return base
+})
+
+function scrollToSection(key: 'overview' | 'model' | 'prompt' | 'tools' | 'skills') {
+  activeSection.value = key
+  if (typeof document !== 'undefined') {
+    const el = document.getElementById(`agent-section-${key}`)
+    if (el && typeof el.scrollIntoView === 'function') {
+      el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    }
+  }
+}
 
 const currentAgentUpdate = computed<BackgroundAgentConfigUpdate | undefined>(() => {
   const spec = agentSpec.value
@@ -326,6 +369,7 @@ async function save() {
       ...result,
       llm_providers: result.llm_providers ?? settings.value.llm_providers,
       agents: result.agents ?? settings.value.agents,
+      skills: result.skills ?? settings.value.skills,
     }
     const updatedSpec = (settings.value.agents ?? []).find(a => a.id === spec.id)
     if (updatedSpec) populateForm(updatedSpec)
@@ -357,7 +401,7 @@ async function deleteCustomSubagent() {
   notice.value = ''
   try {
     await agentJobsApi.deleteSubagent(spec.id, settings.value.revision)
-    await router.push({ name: 'jobs-settings' })
+    await router.push({ name: 'jobs-settings-agents' })
   } catch (cause) {
     error.value = formatApiError(cause)
     if (isApiError(cause) && cause.status === 409) {
@@ -373,6 +417,7 @@ watch(
   () => {
     notice.value = ''
     error.value = ''
+    activeSection.value = 'overview'
     const existing = agentsCatalog.value.find(a => a.id === agentId.value)
     if (existing) {
       populateForm(existing)
@@ -387,27 +432,42 @@ onBeforeUnmount(() => controller?.abort())
 </script>
 
 <template>
-  <main class="mx-auto max-w-7xl space-y-5">
+  <section class="space-y-4">
     <DetailHeader
-      :title="agentSpec ? agentSpec.id : (agentId || t('jobUi.agentModalTitle'))"
-      :back-label="t('jobUi.background')"
-      @back="router.push({ name: 'jobs-settings' })"
+      :title="agentSpec ? agentSpec.id : agentId || t('jobUi.agentModalTitle')"
+      :back-label="t('jobUi.agentsPageTitle')"
+      @back="router.push({ name: 'jobs-settings-agents' })"
     >
       <template #icon>
-        <span class="flex size-11 shrink-0 items-center justify-center rounded-xl border border-studio-violet/20 bg-studio-violet/10 text-studio-violet">
-          <Bot v-if="isPrimary" class="size-5" aria-hidden="true" />
-          <Cpu v-else class="size-5" aria-hidden="true" />
+        <span
+          class="flex size-9 shrink-0 items-center justify-center rounded-xl border border-studio-violet/20 bg-studio-violet/10 text-studio-violet"
+        >
+          <Bot v-if="isPrimary" class="size-4.5" aria-hidden="true" />
+          <Cpu v-else class="size-4.5" aria-hidden="true" />
         </span>
       </template>
       <template v-if="agentSpec" #details>
         <div class="flex flex-wrap items-center gap-x-2 gap-y-1">
+          <span class="font-semibold uppercase tracking-wider text-studio-violet">
+            {{ t('jobUi.agentDetailEyebrow') }}
+          </span>
+          <span aria-hidden="true">·</span>
           <Badge :variant="isPrimary ? 'default' : 'secondary'">
             {{ isPrimary ? t('jobUi.primaryAgent') : t('jobUi.subagentRole') }}
           </Badge>
-          <span>{{ agentSpec.flow_id === 'daily' ? t('jobUi.flowDailyShort') : t('jobUi.flowWikiShort') }}</span>
+          <span>
+            {{
+              agentSpec.flow_id === 'daily'
+                ? t('jobUi.flowDailyShort')
+                : t('jobUi.flowWikiShort')
+            }}
+          </span>
           <template v-if="agentSpec.parent_id">
             <span aria-hidden="true">·</span>
-            <span>{{ t('jobUi.parentCoordinator') }}: <code class="font-mono font-semibold text-foreground">{{ agentSpec.parent_id }}</code></span>
+            <span>
+              {{ t('jobUi.parentCoordinator') }}:
+              <code class="font-mono font-semibold text-foreground">{{ agentSpec.parent_id }}</code>
+            </span>
           </template>
           <span aria-hidden="true">·</span>
           <Badge :variant="form.enabled ? 'success' : 'outline'">
@@ -431,10 +491,12 @@ onBeforeUnmount(() => controller?.abort())
           :disabled="loading || saving || deleting"
           @click="router.push({ name: 'providers', query: { type: 'llm' } })"
         >
-          <ExternalLink class="size-4" aria-hidden="true" />{{ t('jobUi.manageProviders') }}
+          <ExternalLink class="size-4" aria-hidden="true" />
+          {{ t('jobUi.manageProviders') }}
         </Button>
         <Button variant="outline" size="sm" :disabled="loading || saving || deleting" @click="load">
-          <RefreshCw class="size-4" :class="{ 'animate-spin': loading }" aria-hidden="true" />{{ t('jobUi.refresh') }}
+          <RefreshCw class="size-4" :class="{ 'animate-spin': loading }" aria-hidden="true" />
+          {{ t('jobUi.refresh') }}
         </Button>
         <Button
           v-if="agentSpec && !isCustomSubagent"
@@ -444,7 +506,8 @@ onBeforeUnmount(() => controller?.abort())
           data-reset-agent-default
           @click="resetToDefault"
         >
-          <RotateCcw class="size-4" aria-hidden="true" />{{ t('jobUi.resetAgentDefault') }}
+          <RotateCcw class="size-4" aria-hidden="true" />
+          {{ t('jobUi.resetAgentDefault') }}
         </Button>
         <Button
           v-if="agentSpec && isCustomSubagent"
@@ -456,7 +519,8 @@ onBeforeUnmount(() => controller?.abort())
           data-delete-custom-subagent
           @click="deleteCustomSubagent"
         >
-          <Trash2 class="size-4" aria-hidden="true" />{{ t('jobUi.subagentDelete') }}
+          <Trash2 class="size-4" aria-hidden="true" />
+          {{ t('jobUi.subagentDelete') }}
         </Button>
         <Button
           v-if="agentSpec"
@@ -465,254 +529,384 @@ onBeforeUnmount(() => controller?.abort())
           data-save-agent-config
           @click="save"
         >
-          <Save class="size-4" aria-hidden="true" />{{ t('jobUi.save') }}
+          <Save class="size-4" aria-hidden="true" />
+          {{ t('jobUi.save') }}
         </Button>
       </template>
     </DetailHeader>
 
-    <div v-if="error" role="alert" class="rounded-lg border border-danger/30 bg-danger/5 p-4 text-sm text-danger">
+    <div
+      v-if="error"
+      role="alert"
+      class="rounded-lg border border-danger/30 bg-danger/5 p-3.5 text-sm text-danger"
+    >
       <p class="font-medium">{{ unavailable ? t('jobUi.backendPending') : t('jobUi.loadFailed') }}</p>
       <p class="mt-1 break-words">{{ error }}</p>
     </div>
-    <p v-if="notice" role="status" class="rounded-lg border border-success/30 bg-success/5 p-3 text-sm text-success-foreground">
+    <p
+      v-if="notice"
+      role="status"
+      class="rounded-lg border border-success/30 bg-success/5 p-3 text-sm text-success-foreground"
+    >
       {{ notice }}
     </p>
 
-    <div v-if="loading && !settings" class="studio-panel p-10 text-center text-sm text-muted-foreground" role="status">
+    <div
+      v-if="loading && !settings"
+      class="studio-panel p-6 text-center text-sm text-muted-foreground"
+      role="status"
+    >
       {{ t('common.loading') }}
     </div>
 
-    <section v-else-if="!loading && !agentSpec" class="studio-panel space-y-4 p-10 text-center">
-      <h2 class="text-xl font-semibold">{{ t('jobUi.agentNotFound') }}</h2>
-      <p class="text-sm text-muted-foreground">{{ t('jobUi.agentNotFoundHint') }}</p>
-      <Button variant="outline" @click="router.push({ name: 'jobs-settings' })">
-        <ArrowLeft class="size-4" aria-hidden="true" />{{ t('jobUi.backToJobSettings') }}
+    <section v-else-if="!loading && !agentSpec" class="studio-panel space-y-3 p-6 text-center">
+      <h2 class="text-lg font-semibold">{{ t('jobUi.agentNotFound') }}</h2>
+      <p class="text-xs text-muted-foreground">{{ t('jobUi.agentNotFoundHint') }}</p>
+      <Button variant="outline" size="sm" @click="router.push({ name: 'jobs-settings-agents' })">
+        <ArrowLeft class="size-4" aria-hidden="true" />
+        {{ t('jobUi.agentsPageTitle') }}
       </Button>
     </section>
 
     <template v-else-if="agentSpec">
-      <!-- Quick Agent Switcher Bar -->
-      <nav
-        v-if="agentsCatalog.length > 1"
-        class="studio-panel flex flex-col gap-3 p-3.5 sm:flex-row sm:items-center sm:justify-between"
-        :aria-label="t('jobUi.quickSwitchAgent')"
-      >
-        <div class="flex flex-wrap items-center gap-2">
-          <span class="px-1 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-            Flow 1:
-          </span>
-          <button
-            v-for="item in dailyFlowAgents"
-            :key="item.id"
-            type="button"
-            class="inline-flex cursor-pointer items-center gap-1.5 rounded-lg border px-2.5 py-1 text-xs transition-colors"
-            :class="
-              item.id === agentSpec.id
-                ? 'border-studio-violet/40 bg-studio-violet/15 font-semibold text-studio-violet'
-                : 'border-border/70 bg-surface/60 text-foreground hover:bg-accent/50'
-            "
-            @click="switchAgent(item.id)"
+      <!-- Detail Grid: Sticky Anchor Nav (Left) + Stacked Groupboxes (Right) -->
+      <div class="grid items-start gap-4 lg:grid-cols-[185px_minmax(0,1fr)]">
+        <!-- Sticky Anchor Nav + Quick Flow Agent Switcher -->
+        <aside class="space-y-3 lg:sticky lg:top-4">
+          <nav
+            class="flex gap-1 overflow-x-auto lg:flex-col"
+            aria-label="Agent configuration sections"
+            data-anchor-nav
           >
-            <span
-              class="size-1.5 rounded-full"
-              :class="item.enabled ? 'bg-success' : 'bg-muted-foreground/50'"
-              aria-hidden="true"
-            />
-            <span class="font-mono">{{ item.id }}</span>
-          </button>
-        </div>
+            <button
+              v-for="item in anchorItems"
+              :key="item.key"
+              type="button"
+              :data-tab="item.key"
+              class="inline-flex cursor-pointer items-center gap-2 rounded-lg px-3 py-2 text-left text-xs transition-colors whitespace-nowrap"
+              :class="
+                activeSection === item.key
+                  ? 'bg-studio-violet/15 font-semibold text-studio-violet'
+                  : 'text-muted-foreground hover:bg-accent/50 hover:text-foreground'
+              "
+              @click="scrollToSection(item.key)"
+            >
+              <component :is="item.icon" class="size-3.5 shrink-0" aria-hidden="true" />
+              <span>{{ item.label }}</span>
+            </button>
+          </nav>
 
-        <div v-if="wikiFlowAgents.length > 0" class="flex flex-wrap items-center gap-2">
-          <span class="px-1 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-            Flow 2:
-          </span>
-          <button
-            v-for="item in wikiFlowAgents"
-            :key="item.id"
-            type="button"
-            class="inline-flex cursor-pointer items-center gap-1.5 rounded-lg border px-2.5 py-1 text-xs transition-colors"
-            :class="
-              item.id === agentSpec.id
-                ? 'border-studio-violet/40 bg-studio-violet/15 font-semibold text-studio-violet'
-                : 'border-border/70 bg-surface/60 text-foreground hover:bg-accent/50'
-            "
-            @click="switchAgent(item.id)"
+          <!-- Compact Quick Agent Switcher -->
+          <div
+            v-if="agentsCatalog.length > 1"
+            class="hidden rounded-xl border border-border/70 bg-card p-2.5 lg:block"
+            :aria-label="t('jobUi.quickSwitchAgent')"
           >
-            <span
-              class="size-1.5 rounded-full"
-              :class="item.enabled ? 'bg-success' : 'bg-muted-foreground/50'"
-              aria-hidden="true"
-            />
-            <span class="font-mono">{{ item.id }}</span>
-          </button>
-        </div>
-      </nav>
-
-      <!-- Top Summary Stat Cards (consistent with ProviderDetailPage) -->
-      <div class="grid gap-3 sm:grid-cols-2 xl:grid-cols-4" aria-label="Agent configuration summary">
-        <section class="studio-panel flex flex-col justify-between px-4 py-3.5">
-          <div class="flex items-start justify-between gap-2">
-            <div>
-              <p class="text-xs text-muted-foreground">{{ t('jobUi.agentStatusCard') }}</p>
-              <div class="mt-2 flex items-center gap-2 font-semibold">
+            <div class="mb-1.5 px-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+              {{ t('jobUi.flowDailyLabel') }}
+            </div>
+            <div class="space-y-0.5">
+              <button
+                v-for="item in dailyFlowAgents"
+                :key="item.id"
+                type="button"
+                class="flex w-full cursor-pointer items-center gap-1.5 rounded-md px-2 py-1 text-left font-mono text-[11px] transition-colors"
+                :class="
+                  item.id === agentSpec.id
+                    ? 'bg-studio-violet/15 font-semibold text-studio-violet'
+                    : 'text-muted-foreground hover:bg-accent/40 hover:text-foreground'
+                "
+                @click="switchAgent(item.id)"
+              >
                 <span
-                  class="size-2 rounded-full"
-                  :class="form.enabled ? 'bg-success' : 'bg-muted-foreground'"
+                  class="size-1.5 shrink-0 rounded-full"
+                  :class="item.enabled ? 'bg-success' : 'bg-muted-foreground/45'"
                   aria-hidden="true"
                 />
-                <span>{{ form.enabled ? t('jobUi.on') : t('jobUi.off') }}</span>
+                <span class="truncate">{{ item.id }}</span>
+              </button>
+            </div>
+
+            <template v-if="wikiFlowAgents.length > 0">
+              <div class="mt-2.5 mb-1.5 border-t border-border/60 pt-2 px-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                {{ t('jobUi.flowWikiLabel') }}
+              </div>
+              <div class="space-y-0.5">
+                <button
+                  v-for="item in wikiFlowAgents"
+                  :key="item.id"
+                  type="button"
+                  class="flex w-full cursor-pointer items-center gap-1.5 rounded-md px-2 py-1 text-left font-mono text-[11px] transition-colors"
+                  :class="
+                    item.id === agentSpec.id
+                      ? 'bg-studio-violet/15 font-semibold text-studio-violet'
+                      : 'text-muted-foreground hover:bg-accent/40 hover:text-foreground'
+                  "
+                  @click="switchAgent(item.id)"
+                >
+                  <span
+                    class="size-1.5 shrink-0 rounded-full"
+                    :class="item.enabled ? 'bg-success' : 'bg-muted-foreground/45'"
+                    aria-hidden="true"
+                  />
+                  <span class="truncate">{{ item.id }}</span>
+                </button>
+              </div>
+            </template>
+          </div>
+        </aside>
+
+        <!-- Stacked Form Groupboxes -->
+        <div class="min-w-0 space-y-4">
+          <!-- Groupbox 1: Overview & Status -->
+          <section
+            id="agent-section-overview"
+            class="studio-panel space-y-3.5 p-4"
+            aria-labelledby="agent-overview-heading"
+          >
+            <div class="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <h2 id="agent-overview-heading" class="text-sm font-semibold">
+                  {{ t('jobUi.agentOverviewBoxTitle') }}
+                </h2>
+                <p class="mt-0.5 text-xs text-muted-foreground">
+                  {{ t('jobUi.agentOverviewBoxSubtitle') }}
+                </p>
+              </div>
+
+              <label
+                class="flex items-center gap-2 text-xs font-medium"
+                :class="isPrimary ? 'cursor-not-allowed opacity-70' : 'cursor-pointer'"
+                :title="isPrimary ? t('jobUi.primaryAlwaysActive') : t('jobUi.subagentToggleHint')"
+              >
+                <span>{{ t('jobUi.agentEnableToggle') }}</span>
+                <span class="relative inline-flex shrink-0 items-center">
+                  <input
+                    v-model="form.enabled"
+                    type="checkbox"
+                    role="switch"
+                    :aria-label="t('jobUi.agentStatusCard')"
+                    :data-agent-toggle="agentSpec.id"
+                    class="peer sr-only"
+                    :disabled="isPrimary || saving"
+                  />
+                  <span
+                    aria-hidden="true"
+                    class="h-5 w-9 rounded-full bg-muted-foreground/40 transition-colors peer-checked:bg-primary peer-focus-visible:outline-2 peer-focus-visible:outline-offset-2 peer-focus-visible:outline-ring peer-disabled:opacity-40"
+                  />
+                  <span
+                    aria-hidden="true"
+                    class="pointer-events-none absolute left-[2px] size-4 rounded-full bg-white shadow transition-transform peer-checked:translate-x-4"
+                  />
+                </span>
+              </label>
+            </div>
+
+            <div class="grid gap-3.5 sm:grid-cols-2">
+              <div class="space-y-1.5">
+                <label class="block text-xs font-semibold">Agent ID</label>
+                <input
+                  class="admin-input h-9 font-mono text-xs"
+                  :value="agentSpec.id"
+                  readonly
+                />
+              </div>
+
+              <div class="space-y-1.5">
+                <label class="block text-xs font-semibold">Flow</label>
+                <input
+                  class="admin-input h-9 text-xs"
+                  :value="
+                    agentSpec.flow_id === 'daily'
+                      ? t('jobUi.flowDailyLabel')
+                      : t('jobUi.flowWikiLabel')
+                  "
+                  readonly
+                />
               </div>
             </div>
-            <label v-if="!isPrimary" class="relative inline-flex cursor-pointer items-center">
-              <input
-                v-model="form.enabled"
-                type="checkbox"
-                role="switch"
-                :aria-label="t('jobUi.agentStatusCard')"
-                class="peer sr-only"
-                :disabled="saving"
-              />
-              <span
-                aria-hidden="true"
-                class="h-6 w-11 rounded-full bg-muted-foreground/40 transition-colors peer-checked:bg-primary peer-focus-visible:outline-2 peer-focus-visible:outline-offset-2 peer-focus-visible:outline-ring peer-disabled:opacity-40"
-              />
-              <span
-                aria-hidden="true"
-                class="pointer-events-none absolute left-[3px] size-[18px] rounded-full bg-white shadow transition-transform peer-checked:translate-x-[18px]"
-              />
-            </label>
-          </div>
-          <p class="mt-2 text-xs text-muted-foreground">
-            {{ isPrimary ? t('jobUi.primaryAlwaysActive') : t('jobUi.subagentToggleHint') }}
-          </p>
-        </section>
 
-        <section class="studio-panel flex flex-col justify-between px-4 py-3.5">
-          <div>
-            <p class="text-xs text-muted-foreground">{{ t('jobUi.effectiveModelCard') }}</p>
-            <p class="mt-2 truncate font-mono text-base font-semibold">
-              {{ selectedProvider?.model ?? agentSpec.effective_model }}
-            </p>
-          </div>
-          <p class="mt-2 truncate text-xs text-muted-foreground">
-            {{
-              form.provider_ref
-                ? `${t('jobUi.dedicatedProviderOverride')} (${form.provider_ref})`
-                : `${t('jobUi.inheritProvider')} (${fallbackProviderRef ?? agentSpec.effective_provider_ref})`
-            }}
-          </p>
-        </section>
-
-        <section class="studio-panel flex flex-col justify-between px-4 py-3.5">
-          <div>
-            <p class="text-xs text-muted-foreground">{{ t('jobUi.executionBudgetCard') }}</p>
-            <div class="mt-2 flex items-baseline gap-2">
-              <span class="font-mono text-lg font-semibold tabular-nums">{{ form.steps }}</span>
-              <span class="text-xs text-muted-foreground">
-                / 100 ({{ t('jobUi.defaultValue') }}: {{ agentSpec.default_steps }})
-              </span>
-            </div>
-          </div>
-          <p class="mt-2 text-xs text-muted-foreground">
-            ctx: {{ selectedProvider?.context_limit_tokens ?? '—' }} · max_tokens: {{ selectedProvider?.max_tokens ?? '—' }}
-          </p>
-        </section>
-
-        <section class="studio-panel flex flex-col justify-between px-4 py-3.5">
-          <div>
-            <p class="text-xs text-muted-foreground">{{ t('jobUi.capabilitiesCard') }}</p>
-            <p v-if="!isPrimary" class="mt-2 font-mono text-base font-semibold tabular-nums">
-              {{ form.allowed_tools.length }}/{{ domainTools.length }} tools ·
-              {{ form.allowed_skills.length }}/{{ agentSpec.available_skills.length }} skills
-            </p>
-            <p v-else class="mt-2 font-mono text-base font-semibold tabular-nums">
-              {{ activeSubagents.length }}/{{ flowSubagents.length }} {{ t('jobUi.subagentsAllowed') }}
-            </p>
-          </div>
-          <p class="mt-2 text-xs text-muted-foreground">
-            {{
-              capabilityEntries.length > 0
-                ? `${capabilityEntries.length} capability-routed media tools`
-                : `${t('jobUi.allowedCapabilityTags')}: ${allowedCapabilityTags.join(', ')}`
-            }}
-          </p>
-        </section>
-      </div>
-
-      <!-- Main 2-Column Studio Workspace -->
-      <div class="grid items-start gap-5 xl:grid-cols-[minmax(0,1.4fr)_minmax(360px,0.95fr)]">
-        <!-- Left Column: Role Description & System Prompt Studio -->
-        <div class="min-w-0 space-y-5">
-          <section class="studio-panel space-y-3 p-5" aria-labelledby="agent-description-heading">
-            <div class="flex flex-wrap items-start justify-between gap-3">
-              <div class="flex items-start gap-2.5">
-                <span class="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-lg bg-studio-violet/10 text-studio-violet">
-                  <Bot class="size-4" aria-hidden="true" />
-                </span>
-                <div>
-                  <h2 id="agent-description-heading" class="font-semibold">
-                    {{ t('jobUi.agentDescriptionLabel') }}
-                  </h2>
-                  <p class="mt-0.5 text-xs text-muted-foreground">
-                    {{ t('jobUi.agentDescriptionHint') }}
-                  </p>
+            <div class="space-y-1.5">
+              <div class="flex flex-wrap items-center justify-between gap-2">
+                <label class="text-xs font-semibold">
+                  {{ t('jobUi.agentDescriptionLabel') }}
+                </label>
+                <div class="flex items-center gap-2">
+                  <span class="font-mono text-[11px] text-muted-foreground">
+                    {{ form.description.length }} / 1024
+                  </span>
+                  <Button
+                    v-if="!isCustomSubagent && isDescriptionModified"
+                    size="sm"
+                    variant="ghost"
+                    type="button"
+                    class="h-6 px-2 text-xs"
+                    @click="form.description = agentSpec.default_description"
+                  >
+                    <RotateCcw class="size-3" aria-hidden="true" />
+                    {{ t('jobUi.restoreDefault') }}
+                  </Button>
                 </div>
               </div>
-              <div class="flex items-center gap-2">
-                <span class="font-mono text-xs text-muted-foreground">
-                  {{ form.description.length }} / 1024
-                </span>
-                <Button
-                  v-if="!isCustomSubagent && isDescriptionModified"
-                  size="sm"
-                  variant="ghost"
-                  type="button"
-                  @click="form.description = agentSpec.default_description"
-                >
-                  <RotateCcw class="size-3.5" aria-hidden="true" />{{ t('jobUi.restoreDefault') }}
-                </Button>
-              </div>
-            </div>
-
-            <label class="block">
-              <span class="sr-only">{{ t('jobUi.agentDescriptionLabel') }}</span>
               <textarea
                 v-model="form.description"
-                rows="4"
+                rows="3"
                 maxlength="1024"
-                class="admin-textarea text-sm leading-relaxed"
+                class="admin-textarea text-xs leading-relaxed"
                 data-agent-description
                 :disabled="saving"
               />
-            </label>
+            </div>
           </section>
 
-          <section class="studio-panel space-y-4 p-5" aria-labelledby="agent-system-prompt-heading">
-            <div class="flex flex-wrap items-start justify-between gap-3">
-              <div class="flex items-start gap-2.5">
-                <span class="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-lg bg-studio-violet/10 text-studio-violet">
-                  <FileText class="size-4" aria-hidden="true" />
-                </span>
-                <div>
-                  <div class="flex flex-wrap items-center gap-2">
-                    <h2 id="agent-system-prompt-heading" class="font-semibold">
-                      {{ t('jobUi.systemPromptLabel') }}
-                    </h2>
-                    <Badge v-if="!isCustomSubagent" :variant="isPromptModified ? 'secondary' : 'outline'">
-                      {{ isPromptModified ? t('jobUi.customizedBadge') : t('jobUi.defaultBadge') }}
+          <!-- Groupbox 2: Model & Execution -->
+          <section
+            id="agent-section-model"
+            class="studio-panel space-y-3.5 p-4"
+            aria-labelledby="agent-llm-execution-heading"
+          >
+            <div class="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <h2 id="agent-llm-execution-heading" class="text-sm font-semibold">
+                  {{ t('jobUi.agentModelBoxTitle') }}
+                </h2>
+                <p class="mt-0.5 text-xs text-muted-foreground">
+                  {{ t('jobUi.agentModelBoxSubtitle') }}
+                </p>
+              </div>
+              <Badge variant="default">
+                {{ selectedProvider?.model ?? agentSpec.effective_model }}
+              </Badge>
+            </div>
+
+            <div class="grid gap-3.5 sm:grid-cols-2">
+              <label class="block space-y-1.5">
+                <span class="block text-xs font-semibold">{{ t('jobUi.providers') }}</span>
+                <select
+                  v-model="form.provider_ref"
+                  class="admin-input h-9 text-xs"
+                  data-agent-provider
+                  :disabled="saving"
+                >
+                  <option :value="null">
+                    {{ t('jobUi.inheritProvider') }} ({{ fallbackProviderRef }})
+                  </option>
+                  <option
+                    v-for="option in agentProviderOptions"
+                    :key="option.ref"
+                    :value="option.ref"
+                  >
+                    {{ formatProviderOptionLabel(option) }}
+                  </option>
+                </select>
+              </label>
+
+              <div class="space-y-1.5">
+                <div class="flex items-center justify-between gap-2">
+                  <label for="agent-steps-number" class="text-xs font-semibold">
+                    {{ t('jobUi.stepsLimit') }} · {{ form.steps }}
+                  </label>
+                  <div class="flex items-center gap-1.5">
+                    <Badge v-if="!isCustomSubagent" variant="outline">
+                      {{ t('jobUi.defaultValue') }}: {{ agentSpec.default_steps }}
                     </Badge>
+                    <Button
+                      v-if="!isCustomSubagent && form.steps !== agentSpec.default_steps"
+                      size="sm"
+                      variant="ghost"
+                      type="button"
+                      class="h-6 px-2 text-xs"
+                      @click="form.steps = agentSpec.default_steps"
+                    >
+                      <RotateCcw class="size-3" aria-hidden="true" />
+                      {{ t('jobUi.restoreDefault') }}
+                    </Button>
                   </div>
-                  <p class="mt-0.5 text-xs text-muted-foreground">
-                    {{ t('jobUi.systemPromptHint') }}
-                  </p>
+                </div>
+                <div class="flex items-center gap-2.5">
+                  <input
+                    v-model.number="form.steps"
+                    type="range"
+                    min="1"
+                    max="100"
+                    class="flex-1 accent-primary"
+                    :aria-label="t('jobUi.stepsLimit')"
+                    :disabled="saving"
+                  />
+                  <input
+                    id="agent-steps-number"
+                    v-model.number="form.steps"
+                    type="number"
+                    min="1"
+                    max="100"
+                    class="admin-input h-9 w-20 text-center font-mono text-xs"
+                    data-agent-steps
+                    :disabled="saving"
+                  />
                 </div>
               </div>
+            </div>
+
+            <!-- Compact Effective Provider Metadata -->
+            <div class="flex flex-wrap items-center justify-between gap-2 border-t border-border/60 pt-3 text-xs">
+              <div class="flex flex-wrap items-center gap-1.5">
+                <span class="text-muted-foreground">{{ t('jobUi.allowedCapabilityTags') }}:</span>
+                <Badge v-for="tag in allowedCapabilityTags" :key="tag" variant="outline">
+                  tag: {{ tag }}
+                </Badge>
+              </div>
+
+              <div v-if="selectedProvider" class="flex flex-wrap items-center gap-2 font-mono text-[11px] text-muted-foreground">
+                <span>
+                  {{ selectedProvider.name }} ({{ selectedProvider.ref }})
+                </span>
+                <span v-if="selectedProvider.base_url">
+                  · {{ redactEndpoint(selectedProvider.base_url) }}
+                </span>
+                <span>
+                  · ctx: {{ selectedProvider.context_limit_tokens ?? '—' }} · max_tokens: {{ selectedProvider.max_tokens ?? '—' }}
+                </span>
+              </div>
+            </div>
+          </section>
+
+          <!-- Groupbox 3: System Prompt -->
+          <section
+            id="agent-section-prompt"
+            class="studio-panel space-y-3 p-4"
+            aria-labelledby="agent-system-prompt-heading"
+          >
+            <div class="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <div class="flex flex-wrap items-center gap-2">
+                  <h2 id="agent-system-prompt-heading" class="text-sm font-semibold">
+                    {{ t('jobUi.systemPromptLabel') }}
+                  </h2>
+                  <Badge v-if="!isCustomSubagent" :variant="isPromptModified ? 'secondary' : 'outline'">
+                    {{ isPromptModified ? t('jobUi.customizedBadge') : t('jobUi.defaultBadge') }}
+                  </Badge>
+                </div>
+                <p class="mt-0.5 text-xs text-muted-foreground">
+                  {{ t('jobUi.systemPromptHint') }}
+                </p>
+              </div>
+              <Badge variant="outline">Markdown</Badge>
+            </div>
+
+            <div class="flex flex-wrap items-center justify-between gap-2 border-b border-border/70 pb-2.5">
+              <span class="font-mono text-xs text-muted-foreground">
+                SYSTEM_PROMPT.md · data/orchestrator-prompts/{{ agentSpec.id }}.md
+              </span>
 
               <div class="flex flex-wrap items-center gap-2">
+                <span class="font-mono text-[11px] text-muted-foreground tabular-nums">
+                  {{ promptLineCount }} {{ t('jobUi.promptLines') }} · {{ form.system_prompt.length }} {{ t('jobUi.promptChars') }}
+                </span>
+
                 <div class="inline-flex rounded-lg border border-border/80 bg-surface p-0.5 text-xs">
                   <button
                     type="button"
-                    class="inline-flex cursor-pointer items-center gap-1.5 rounded-md px-2.5 py-1 font-medium transition-colors"
+                    class="inline-flex cursor-pointer items-center gap-1 rounded-md px-2.5 py-1 font-medium transition-colors"
                     :class="
                       promptMode === 'edit'
                         ? 'bg-card text-studio-violet shadow-xs'
@@ -720,11 +914,12 @@ onBeforeUnmount(() => controller?.abort())
                     "
                     @click="promptMode = 'edit'"
                   >
-                    <Pencil class="size-3.5" aria-hidden="true" />{{ t('jobUi.promptModeEdit') }}
+                    <Pencil class="size-3" aria-hidden="true" />
+                    {{ t('jobUi.promptModeEdit') }}
                   </button>
                   <button
                     type="button"
-                    class="inline-flex cursor-pointer items-center gap-1.5 rounded-md px-2.5 py-1 font-medium transition-colors"
+                    class="inline-flex cursor-pointer items-center gap-1 rounded-md px-2.5 py-1 font-medium transition-colors"
                     :class="
                       promptMode === 'preview'
                         ? 'bg-card text-studio-violet shadow-xs'
@@ -732,11 +927,12 @@ onBeforeUnmount(() => controller?.abort())
                     "
                     @click="promptMode = 'preview'"
                   >
-                    <Eye class="size-3.5" aria-hidden="true" />{{ t('jobUi.promptModePreview') }}
+                    <Eye class="size-3" aria-hidden="true" />
+                    {{ t('jobUi.promptModePreview') }}
                   </button>
                   <button
                     type="button"
-                    class="inline-flex cursor-pointer items-center gap-1.5 rounded-md px-2.5 py-1 font-medium transition-colors"
+                    class="inline-flex cursor-pointer items-center gap-1 rounded-md px-2.5 py-1 font-medium transition-colors"
                     :class="
                       promptMode === 'split'
                         ? 'bg-card text-studio-violet shadow-xs'
@@ -744,7 +940,8 @@ onBeforeUnmount(() => controller?.abort())
                     "
                     @click="promptMode = 'split'"
                   >
-                    <Columns2 class="size-3.5" aria-hidden="true" />{{ t('jobUi.promptModeSplit') }}
+                    <Columns2 class="size-3" aria-hidden="true" />
+                    {{ t('jobUi.promptModeSplit') }}
                   </button>
                 </div>
 
@@ -753,24 +950,23 @@ onBeforeUnmount(() => controller?.abort())
                   size="sm"
                   variant="ghost"
                   type="button"
+                  class="h-7 px-2 text-xs"
                   @click="form.system_prompt = agentSpec.default_system_prompt"
                 >
-                  <RotateCcw class="size-3.5" aria-hidden="true" />{{ t('jobUi.restoreDefault') }}
+                  <RotateCcw class="size-3" aria-hidden="true" />
+                  {{ t('jobUi.restoreDefault') }}
                 </Button>
               </div>
             </div>
 
-            <div
-              v-if="promptMode === 'edit'"
-              class="space-y-2"
-            >
+            <div v-if="promptMode === 'edit'">
               <label class="block">
                 <span class="sr-only">{{ t('jobUi.systemPromptLabel') }}</span>
                 <textarea
                   v-model="form.system_prompt"
-                  rows="24"
+                  rows="16"
                   spellcheck="false"
-                  class="admin-textarea min-h-[520px] font-mono text-xs leading-relaxed"
+                  class="admin-textarea min-h-[300px] font-mono text-xs leading-relaxed"
                   data-agent-system-prompt
                   :disabled="saving"
                 />
@@ -779,413 +975,227 @@ onBeforeUnmount(() => controller?.abort())
 
             <div
               v-else-if="promptMode === 'preview'"
-              class="prompt-markdown-preview max-h-[720px] min-h-[520px] overflow-y-auto rounded-xl border border-border/70 bg-surface/60 p-5 text-sm leading-relaxed"
+              class="prompt-markdown-preview max-h-[540px] min-h-[300px] overflow-y-auto rounded-xl border border-border/70 bg-surface/60 p-4 text-xs leading-relaxed"
               data-agent-prompt-preview
               v-html="renderedPromptHtml"
             />
 
-            <div
-              v-else
-              class="grid gap-4 lg:grid-cols-2"
-            >
+            <div v-else class="grid gap-3 lg:grid-cols-2">
               <label class="block">
                 <span class="sr-only">{{ t('jobUi.systemPromptLabel') }}</span>
                 <textarea
                   v-model="form.system_prompt"
-                  rows="24"
+                  rows="16"
                   spellcheck="false"
-                  class="admin-textarea min-h-[520px] font-mono text-xs leading-relaxed"
+                  class="admin-textarea min-h-[300px] font-mono text-xs leading-relaxed"
                   data-agent-system-prompt
                   :disabled="saving"
                 />
               </label>
               <div
-                class="prompt-markdown-preview max-h-[680px] min-h-[520px] overflow-y-auto rounded-xl border border-border/70 bg-surface/60 p-4 text-sm leading-relaxed"
+                class="prompt-markdown-preview max-h-[540px] min-h-[300px] overflow-y-auto rounded-xl border border-border/70 bg-surface/60 p-4 text-xs leading-relaxed"
                 data-agent-prompt-preview
                 v-html="renderedPromptHtml"
               />
             </div>
-
-            <div class="flex flex-wrap items-center justify-between gap-2 border-t pt-3 text-xs text-muted-foreground">
-              <span>
-                {{ promptLineCount }} {{ t('jobUi.promptLines') }} ·
-                {{ form.system_prompt.length }} {{ t('jobUi.promptChars') }}
-              </span>
-              <span class="font-mono">data/orchestrator-prompts/{{ agentSpec.id }}.md</span>
-            </div>
           </section>
-        </div>
 
-        <!-- Right Column: LLM Provider, Steps, Tool Providers, Allowed Tools & Skills -->
-        <div class="min-w-0 space-y-5">
-          <!-- LLM Provider & Execution Budget -->
-          <section class="studio-panel space-y-4 p-5" aria-labelledby="agent-llm-execution-heading">
-            <div class="flex items-start gap-2.5">
-              <span class="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-lg bg-studio-violet/10 text-studio-violet">
-                <Settings2 class="size-4" aria-hidden="true" />
-              </span>
-              <div>
-                <h2 id="agent-llm-execution-heading" class="font-semibold">
-                  {{ t('jobUi.llmAndExecutionTitle') }}
-                </h2>
-                <p class="mt-0.5 text-xs text-muted-foreground">
-                  {{ t('jobUi.llmAndExecutionHint') }}
-                </p>
-              </div>
-            </div>
-
-            <label class="block space-y-1.5">
-              <span class="text-sm font-medium">{{ t('jobUi.providers') }}</span>
-              <select
-                v-model="form.provider_ref"
-                class="admin-input"
-                data-agent-provider
-                :disabled="saving"
-              >
-                <option :value="null">
-                  {{ t('jobUi.inheritProvider') }} ({{ fallbackProviderRef }})
-                </option>
-                <option
-                  v-for="option in agentProviderOptions"
-                  :key="option.ref"
-                  :value="option.ref"
-                >
-                  {{ formatProviderOptionLabel(option) }}
-                </option>
-              </select>
-            </label>
-
-            <div class="flex flex-wrap items-center gap-1.5 text-xs">
-              <span class="text-muted-foreground">{{ t('jobUi.allowedCapabilityTags') }}:</span>
-              <Badge v-for="tag in allowedCapabilityTags" :key="tag" variant="outline">
-                tag: {{ tag }}
-              </Badge>
-            </div>
-
-            <div
-              v-if="selectedProvider"
-              class="space-y-3 rounded-xl border border-border/70 bg-surface/60 p-4 text-xs"
-            >
+          <!-- Groupbox 4: Tools & Permissions (Subagent) OR Delegated Sub-Agents (Root Agent) -->
+          <section
+            id="agent-section-tools"
+            class="studio-panel space-y-3.5 p-4"
+            aria-labelledby="agent-allowed-tools-heading"
+          >
+            <template v-if="!isPrimary">
               <div class="flex flex-wrap items-center justify-between gap-2">
-                <div class="flex items-center gap-2">
-                  <Activity class="size-4 text-studio-violet" aria-hidden="true" />
-                  <span class="font-semibold text-foreground">{{ t('jobUi.effectiveProviderDetails') }}</span>
+                <div>
+                  <h2 id="agent-allowed-tools-heading" class="text-sm font-semibold">
+                    {{ t('jobUi.agentToolsBoxTitle') }}
+                  </h2>
+                  <p class="mt-0.5 text-xs text-muted-foreground">
+                    {{ t('jobUi.agentToolsBoxSubtitle') }}
+                  </p>
                 </div>
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  @click="
-                    router.push(
-                      selectedProvider.source === 'database'
-                        ? `/providers/${selectedProvider.ref}`
-                        : { name: 'providers', query: { type: 'llm' } },
-                    )
-                  "
-                >
-                  <ExternalLink class="size-3.5" aria-hidden="true" />{{ t('jobUi.manageProviders') }}
-                </Button>
-              </div>
 
-              <dl class="grid grid-cols-[110px_minmax(0,1fr)] gap-x-3 gap-y-2">
-                <dt class="text-muted-foreground">Provider</dt>
-                <dd class="truncate font-medium text-foreground">
-                  {{ selectedProvider.name }}
-                  <span class="font-mono text-muted-foreground">({{ selectedProvider.ref }})</span>
-                </dd>
-                <dt class="text-muted-foreground">Model</dt>
-                <dd class="break-all font-mono text-foreground">{{ selectedProvider.model || '—' }}</dd>
-                <dt class="text-muted-foreground">Adapter / Source</dt>
-                <dd class="font-mono text-foreground">
-                  {{ selectedProvider.adapter || 'openai' }} · {{ selectedProvider.source }}
-                </dd>
-                <template v-if="selectedProvider.base_url">
-                  <dt class="text-muted-foreground">Endpoint</dt>
-                  <dd class="break-all font-mono text-foreground">
-                    {{ redactEndpoint(selectedProvider.base_url) }}
-                  </dd>
-                </template>
-                <dt class="text-muted-foreground">Token limits</dt>
-                <dd class="font-mono text-foreground">
-                  ctx: {{ selectedProvider.context_limit_tokens ?? '—' }} ·
-                  max_tokens: {{ selectedProvider.max_tokens ?? '—' }}
-                </dd>
-                <template v-if="selectedProvider.reasoning_effort || selectedProvider.temperature_percent != null">
-                  <dt class="text-muted-foreground">Inference</dt>
-                  <dd class="font-mono text-foreground">
-                    <span v-if="selectedProvider.reasoning_effort">
-                      reasoning: {{ selectedProvider.reasoning_effort }}
-                    </span>
-                    <span v-if="selectedProvider.reasoning_effort && selectedProvider.temperature_percent != null"> · </span>
-                    <span v-if="selectedProvider.temperature_percent != null">
-                      temp: {{ (selectedProvider.temperature_percent / 100).toFixed(2) }}
-                    </span>
-                  </dd>
-                </template>
-              </dl>
-
-              <div v-if="selectedProvider.tags?.length" class="flex flex-wrap gap-1.5 border-t border-border/60 pt-2.5">
-                <Badge v-for="tag in selectedProvider.tags" :key="tag" variant="secondary">
-                  tag: {{ tag }}
-                </Badge>
-              </div>
-            </div>
-
-            <div class="space-y-2 border-t pt-4">
-              <div class="flex flex-wrap items-center justify-between gap-2">
-                <label for="agent-steps-number" class="text-sm font-medium">
-                  {{ t('jobUi.stepsLimit') }} (1 - 100)
-                </label>
-                <div class="flex items-center gap-2">
-                  <Badge v-if="!isCustomSubagent" variant="outline">
-                    {{ t('jobUi.defaultValue') }}: {{ agentSpec.default_steps }}
+                <div class="flex items-center gap-1.5">
+                  <Badge variant="secondary" class="tabular-nums">
+                    {{ form.allowed_tools.length }}/{{ domainTools.length }} tools
                   </Badge>
                   <Button
-                    v-if="!isCustomSubagent && form.steps !== agentSpec.default_steps"
+                    v-if="domainTools.length > 0"
                     size="sm"
                     variant="ghost"
                     type="button"
-                    @click="form.steps = agentSpec.default_steps"
+                    class="h-7 px-2 text-xs"
+                    :disabled="saving || form.allowed_tools.length === domainTools.length"
+                    @click="selectAllTools"
                   >
-                    <RotateCcw class="size-3.5" aria-hidden="true" />{{ t('jobUi.restoreDefault') }}
+                    {{ t('jobUi.selectAll') }}
+                  </Button>
+                  <Button
+                    v-if="!isCustomSubagent && !sameStringArray(form.allowed_tools, defaultDomainTools)"
+                    size="sm"
+                    variant="ghost"
+                    type="button"
+                    class="h-7 px-2 text-xs"
+                    :disabled="saving"
+                    @click="resetDefaultTools"
+                  >
+                    <RotateCcw class="size-3" aria-hidden="true" />
+                    {{ t('jobUi.restoreDefault') }}
                   </Button>
                 </div>
               </div>
-              <div class="flex items-center gap-3">
-                <input
-                  v-model.number="form.steps"
-                  type="range"
-                  min="1"
-                  max="100"
-                  class="flex-1 accent-primary"
-                  :aria-label="t('jobUi.stepsLimit')"
-                  :disabled="saving"
-                />
-                <input
-                  id="agent-steps-number"
-                  v-model.number="form.steps"
-                  type="number"
-                  min="1"
-                  max="100"
-                  class="admin-input w-24 text-center font-mono"
-                  data-agent-steps
-                  :disabled="saving"
-                />
-              </div>
-              <p class="text-xs text-muted-foreground">{{ t('jobUi.stepsLimitHint') }}</p>
-            </div>
-          </section>
 
-          <!-- Tool Providers by Capability Tag (e.g. media_creator) -->
-          <section
-            v-if="capabilityEntries.length > 0"
-            class="studio-panel space-y-4 p-5"
-            aria-labelledby="agent-tool-providers-heading"
-          >
-            <div class="flex items-start gap-2.5">
-              <span class="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-lg bg-studio-violet/10 text-studio-violet">
-                <Sliders class="size-4" aria-hidden="true" />
-              </span>
-              <div>
-                <h2 id="agent-tool-providers-heading" class="font-semibold">
-                  {{ t('jobUi.toolProviders') }}
-                </h2>
-                <p class="mt-0.5 text-xs text-muted-foreground">
-                  {{ t('jobUi.toolProvidersHint') }}
-                </p>
-              </div>
-            </div>
-
-            <div class="space-y-3">
-              <div
-                v-for="[toolName, requiredTag] in capabilityEntries"
-                :key="toolName"
-                class="space-y-2 rounded-xl border border-border/70 bg-surface/60 p-3.5 text-xs"
-              >
-                <div class="flex flex-wrap items-center justify-between gap-2">
-                  <div class="flex items-center gap-2">
-                    <code class="rounded bg-muted px-2 py-0.5 font-semibold text-foreground">{{ toolName }}</code>
-                    <Badge variant="outline">tag: {{ requiredTag }}</Badge>
-                  </div>
-                  <span
-                    v-if="agentSpec.effective_tool_providers?.[toolName]"
-                    class="font-mono text-muted-foreground"
-                  >
-                    {{ t('jobUi.effectiveToolProvider') }}:
-                    <strong class="text-foreground">{{ agentSpec.effective_tool_providers[toolName] }}</strong>
-                  </span>
-                </div>
-                <select
-                  v-model="form.tool_providers[toolName]"
-                  :data-tool-provider="toolName"
-                  class="admin-input h-9 text-xs"
-                  :disabled="saving"
+              <div v-if="domainTools.length > 0" class="flex flex-wrap gap-2">
+                <label
+                  v-for="tool in domainTools"
+                  :key="tool"
+                  class="inline-flex cursor-pointer items-center gap-2 rounded-lg border px-2.5 py-1.5 text-xs transition-colors"
+                  :class="
+                    form.allowed_tools.includes(tool)
+                      ? 'border-studio-violet/40 bg-studio-violet/10 font-medium text-studio-violet'
+                      : 'border-border/75 bg-surface/50 text-foreground hover:bg-accent/40'
+                  "
                 >
-                  <option value="">
-                    {{ t('jobUi.autoToolProvider') }} ({{ requiredTag }})
-                  </option>
-                  <option
-                    v-for="option in providerOptionsForTag(providerOptions, requiredTag)"
-                    :key="option.ref"
-                    :value="option.ref"
-                  >
-                    {{ formatProviderOptionLabel(option) }}
-                  </option>
-                </select>
-              </div>
-            </div>
-          </section>
-
-          <!-- Sub-Agent Allowed Tools OR Root Agent Delegated Sub-Agents -->
-          <section
-            v-if="!isPrimary && domainTools.length > 0"
-            class="studio-panel space-y-4 p-5"
-            aria-labelledby="agent-allowed-tools-heading"
-          >
-            <div class="flex flex-wrap items-start justify-between gap-2">
-              <div class="flex items-start gap-2.5">
-                <span class="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-lg bg-studio-violet/10 text-studio-violet">
-                  <Wrench class="size-4" aria-hidden="true" />
-                </span>
-                <div>
-                  <div class="flex items-center gap-2">
-                    <h2 id="agent-allowed-tools-heading" class="font-semibold">
-                      {{ t('jobUi.toolsAllowed') }}
-                    </h2>
-                    <Badge variant="secondary" class="tabular-nums">
-                      {{ form.allowed_tools.length }}/{{ domainTools.length }}
-                    </Badge>
-                  </div>
-                  <p class="mt-0.5 text-xs text-muted-foreground">
-                    {{ t('jobUi.toolsAllowedHint') }}
-                  </p>
-                </div>
-              </div>
-
-              <div class="flex items-center gap-1.5">
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  type="button"
-                  :disabled="saving || form.allowed_tools.length === domainTools.length"
-                  @click="selectAllTools"
-                >
-                  {{ t('jobUi.selectAll') }}
-                </Button>
-                <Button
-                  v-if="!isCustomSubagent && !sameStringArray(form.allowed_tools, defaultDomainTools)"
-                  size="sm"
-                  variant="ghost"
-                  type="button"
-                  :disabled="saving"
-                  @click="resetDefaultTools"
-                >
-                  <RotateCcw class="size-3.5" aria-hidden="true" />{{ t('jobUi.restoreDefault') }}
-                </Button>
-              </div>
-            </div>
-
-            <div class="grid gap-2 sm:grid-cols-2">
-              <label
-                v-for="tool in domainTools"
-                :key="tool"
-                class="flex cursor-pointer items-center justify-between gap-2 rounded-xl border p-3 text-xs transition-colors"
-                :class="
-                  form.allowed_tools.includes(tool)
-                    ? 'border-studio-violet/35 bg-studio-violet/5'
-                    : 'border-border/70 bg-surface/40 opacity-75 hover:opacity-100'
-                "
-              >
-                <div class="flex min-w-0 items-center gap-2.5">
                   <input
                     type="checkbox"
-                    class="size-4 shrink-0 accent-primary"
+                    class="size-3.5 shrink-0 accent-primary"
                     :checked="form.allowed_tools.includes(tool)"
                     :disabled="saving"
                     @change="toggleTool(tool, ($event.target as HTMLInputElement).checked)"
                   />
-                  <code class="truncate font-medium">{{ tool }}</code>
-                </div>
-              </label>
-            </div>
-          </section>
+                  <code class="font-mono text-[11px]">{{ tool }}</code>
+                </label>
+              </div>
 
-          <section
-            v-else-if="isPrimary && flowSubagents.length > 0"
-            class="studio-panel space-y-4 p-5"
-            aria-labelledby="root-delegation-heading"
-          >
-            <div class="flex items-start justify-between gap-2">
-              <div class="flex items-start gap-2.5">
-                <span class="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-lg bg-studio-violet/10 text-studio-violet">
-                  <Workflow class="size-4" aria-hidden="true" />
-                </span>
-                <div>
-                  <div class="flex items-center gap-2">
-                    <h2 id="root-delegation-heading" class="font-semibold">
-                      {{ t('jobUi.rootDelegationTitle') }}
-                    </h2>
-                    <Badge variant="secondary" class="tabular-nums">
-                      {{ activeSubagents.length }}/{{ flowSubagents.length }}
-                    </Badge>
+              <!-- Capability-routed Tool Providers (e.g. media_creator / media_processor) -->
+              <div
+                v-if="capabilityEntries.length > 0"
+                class="space-y-2.5 border-t border-border/60 pt-3.5"
+              >
+                <div class="flex items-center justify-between gap-2">
+                  <h3 class="text-xs font-semibold">{{ t('jobUi.toolProviders') }}</h3>
+                </div>
+                <div class="grid gap-3 sm:grid-cols-2">
+                  <div
+                    v-for="[toolName, requiredTag] in capabilityEntries"
+                    :key="toolName"
+                    class="space-y-1.5 rounded-xl border border-border/70 bg-surface/60 p-3 text-xs"
+                  >
+                    <div class="flex flex-wrap items-center justify-between gap-1.5">
+                      <div class="flex items-center gap-1.5">
+                        <code class="rounded bg-muted px-1.5 py-0.5 font-semibold text-foreground">
+                          {{ toolName }}
+                        </code>
+                        <Badge variant="outline">tag: {{ requiredTag }}</Badge>
+                      </div>
+                      <span
+                        v-if="agentSpec.effective_tool_providers?.[toolName]"
+                        class="font-mono text-[11px] text-muted-foreground"
+                      >
+                        {{ t('jobUi.effectiveToolProvider') }}:
+                        <strong class="text-foreground">
+                          {{ agentSpec.effective_tool_providers[toolName] }}
+                        </strong>
+                      </span>
+                    </div>
+                    <select
+                      v-model="form.tool_providers[toolName]"
+                      :data-tool-provider="toolName"
+                      class="admin-input h-8 text-xs"
+                      :disabled="saving"
+                    >
+                      <option value="">
+                        {{ t('jobUi.autoToolProvider') }} ({{ requiredTag }})
+                      </option>
+                      <option
+                        v-for="option in providerOptionsForTag(providerOptions, requiredTag)"
+                        :key="option.ref"
+                        :value="option.ref"
+                      >
+                        {{ formatProviderOptionLabel(option) }}
+                      </option>
+                    </select>
                   </div>
-                  <p class="mt-0.5 text-xs text-muted-foreground">
-                    {{ t('jobUi.rootDelegationHint') }}
-                  </p>
                 </div>
               </div>
-            </div>
 
-            <ul class="divide-y divide-border/70 rounded-xl border border-border/70 bg-surface/40">
-              <li
-                v-for="sub in flowSubagents"
-                :key="sub.id"
-                class="flex items-center justify-between gap-3 p-3.5"
-              >
-                <div class="min-w-0 flex-1 space-y-1">
-                  <div class="flex flex-wrap items-center gap-2">
-                    <code class="rounded bg-muted px-2 py-0.5 text-xs font-semibold">{{ sub.id }}</code>
-                    <Badge :variant="sub.enabled ? 'success' : 'outline'">
-                      {{ sub.enabled ? t('jobUi.on') : t('jobUi.off') }}
-                    </Badge>
-                    <Badge variant="outline">model: {{ sub.effective_model }}</Badge>
+              <p class="text-[11px] text-muted-foreground">
+                {{ t('jobUi.toolProvidersHint') }}
+              </p>
+            </template>
+
+            <template v-else>
+              <div class="flex items-center justify-between gap-2">
+                <div class="flex items-center gap-2">
+                  <Workflow class="size-4 text-studio-violet" aria-hidden="true" />
+                  <div>
+                    <h2 id="agent-allowed-tools-heading" class="text-sm font-semibold">
+                      {{ t('jobUi.rootDelegationTitle') }}
+                    </h2>
+                    <p class="mt-0.5 text-xs text-muted-foreground">
+                      {{ t('jobUi.rootDelegationHint') }}
+                    </p>
                   </div>
-                  <p class="line-clamp-2 text-xs text-muted-foreground">{{ sub.description }}</p>
                 </div>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  @click="switchAgent(sub.id)"
+                <Badge variant="secondary" class="tabular-nums">
+                  {{ activeSubagents.length }}/{{ flowSubagents.length }}
+                </Badge>
+              </div>
+
+              <ul class="divide-y divide-border/70 rounded-xl border border-border/70 bg-surface/40">
+                <li
+                  v-for="sub in flowSubagents"
+                  :key="sub.id"
+                  class="flex items-center justify-between gap-3 px-3.5 py-2.5"
                 >
-                  {{ t('jobUi.configureAgent') }}<ArrowRight class="size-3.5" aria-hidden="true" />
-                </Button>
-              </li>
-            </ul>
+                  <div class="min-w-0 flex-1 space-y-0.5">
+                    <div class="flex flex-wrap items-center gap-1.5">
+                      <code class="rounded bg-muted px-1.5 py-0.5 text-xs font-semibold">
+                        {{ sub.id }}
+                      </code>
+                      <Badge :variant="sub.enabled ? 'success' : 'outline'">
+                        {{ sub.enabled ? t('jobUi.on') : t('jobUi.off') }}
+                      </Badge>
+                      <Badge variant="outline">model: {{ sub.effective_model }}</Badge>
+                    </div>
+                    <p class="truncate text-xs text-muted-foreground">{{ sub.description }}</p>
+                  </div>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    class="h-7 px-2.5 text-xs"
+                    @click="switchAgent(sub.id)"
+                  >
+                    {{ t('jobUi.configureAgent') }}
+                    <ArrowRight class="size-3.5" aria-hidden="true" />
+                  </Button>
+                </li>
+              </ul>
+            </template>
           </section>
 
-          <!-- Sub-Agent Allowed Skills -->
+          <!-- Groupbox 5: Allowed Skills (Subagent) -->
           <section
             v-if="!isPrimary"
-            class="studio-panel space-y-4 p-5"
+            id="agent-section-skills"
+            class="studio-panel space-y-3.5 p-4"
             aria-labelledby="agent-allowed-skills-heading"
           >
-            <div class="flex flex-wrap items-start justify-between gap-2">
-              <div class="flex items-start gap-2.5">
-                <span class="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-lg bg-studio-violet/10 text-studio-violet">
-                  <BookOpen class="size-4" aria-hidden="true" />
-                </span>
-                <div>
-                  <div class="flex items-center gap-2">
-                    <h2 id="agent-allowed-skills-heading" class="font-semibold">
-                      {{ t('jobUi.skillsAllowed') }}
-                    </h2>
-                    <Badge variant="secondary" class="tabular-nums">
-                      {{ form.allowed_skills.length }}/{{ agentSpec.available_skills.length }}
-                    </Badge>
-                  </div>
-                  <p class="mt-0.5 text-xs text-muted-foreground">
-                    {{ t('jobUi.skillsAllowedHint') }}
-                  </p>
+            <div class="flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <div class="flex items-center gap-2">
+                  <h2 id="agent-allowed-skills-heading" class="text-sm font-semibold">
+                    {{ t('jobUi.skillsAllowed') }}
+                  </h2>
+                  <Badge variant="secondary" class="tabular-nums">
+                    {{ form.allowed_skills.length }}/{{ agentSpec.available_skills.length }}
+                  </Badge>
                 </div>
+                <p class="mt-0.5 text-xs text-muted-foreground">
+                  {{ t('jobUi.skillsAllowedHint') }}
+                </p>
               </div>
 
               <div class="flex flex-wrap items-center gap-1.5">
@@ -1193,89 +1203,85 @@ onBeforeUnmount(() => controller?.abort())
                   size="sm"
                   variant="outline"
                   type="button"
+                  class="h-7 px-2.5 text-xs"
                   :disabled="saving"
                   data-agent-create-skill
                   @click="openCreateSkillModal"
                 >
-                  <Plus class="size-3.5" aria-hidden="true" />{{ t('jobUi.skillAdd') }}
+                  <Plus class="size-3.5" aria-hidden="true" />
+                  {{ t('jobUi.skillAdd') }}
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  type="button"
+                  class="h-7 px-2.5 text-xs"
+                  data-page="skills"
+                  @click="router.push({ name: 'jobs-settings-skills' })"
+                >
+                  {{ t('jobUi.manageSkillLibrary') }}
+                  <ArrowRight class="size-3.5" aria-hidden="true" />
                 </Button>
                 <Button
                   size="sm"
                   variant="ghost"
                   type="button"
-                  :disabled="saving || form.allowed_skills.length === agentSpec.available_skills.length"
+                  class="h-7 px-2 text-xs"
+                  :disabled="
+                    saving || form.allowed_skills.length === agentSpec.available_skills.length
+                  "
                   @click="selectAllSkills"
                 >
                   {{ t('jobUi.selectAll') }}
                 </Button>
                 <Button
-                  v-if="!isCustomSubagent && !sameStringArray(form.allowed_skills, agentSpec.default_allowed_skills ?? [])"
+                  v-if="
+                    !isCustomSubagent &&
+                    !sameStringArray(form.allowed_skills, agentSpec.default_allowed_skills ?? [])
+                  "
                   size="sm"
                   variant="ghost"
                   type="button"
+                  class="h-7 px-2 text-xs"
                   :disabled="saving"
                   @click="resetDefaultSkills"
                 >
-                  <RotateCcw class="size-3.5" aria-hidden="true" />{{ t('jobUi.restoreDefault') }}
+                  <RotateCcw class="size-3" aria-hidden="true" />
+                  {{ t('jobUi.restoreDefault') }}
                 </Button>
               </div>
             </div>
 
-            <div class="grid gap-2 sm:grid-cols-2">
+            <div class="flex flex-wrap gap-2">
               <div
                 v-for="skill in agentSpec.available_skills"
                 :key="skill"
-                class="flex items-start justify-between gap-2 rounded-xl border p-3 text-xs transition-colors"
+                class="inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs transition-colors"
                 :class="
                   form.allowed_skills.includes(skill)
-                    ? 'border-studio-violet/35 bg-studio-violet/5'
-                    : 'border-border/70 bg-surface/40 opacity-75 hover:opacity-100'
+                    ? 'border-studio-violet/40 bg-studio-violet/10 font-medium text-studio-violet'
+                    : 'border-border/75 bg-surface/50 text-foreground hover:bg-accent/40'
                 "
               >
-                <label class="flex min-w-0 flex-1 cursor-pointer items-start gap-2.5">
+                <label class="inline-flex cursor-pointer items-center gap-2">
                   <input
                     type="checkbox"
-                    class="mt-0.5 size-4 shrink-0 accent-primary"
+                    class="size-3.5 shrink-0 accent-primary"
                     :checked="form.allowed_skills.includes(skill)"
                     :disabled="saving"
                     @change="toggleSkill(skill, ($event.target as HTMLInputElement).checked)"
                   />
-                  <div class="min-w-0 flex-1 space-y-1">
-                    <div class="flex flex-wrap items-center gap-1.5">
-                      <code class="truncate font-medium">{{ skill }}</code>
-                      <Badge
-                        v-if="findSkillSummary(skill)"
-                        :variant="findSkillSummary(skill)?.is_builtin ? 'secondary' : 'outline'"
-                      >
-                        {{ findSkillSummary(skill)?.is_builtin ? t('jobUi.skillBuiltinBadge') : t('jobUi.skillCustomBadge') }}
-                      </Badge>
-                      <Badge
-                        v-if="(agentSpec.default_allowed_skills ?? []).includes(skill)"
-                        variant="outline"
-                      >
-                        {{ t('jobUi.skillAgentDefaultBadge') }}
-                      </Badge>
-                    </div>
-                    <p
-                      v-if="findSkillSummary(skill)?.description"
-                      class="line-clamp-2 text-[11px] text-muted-foreground"
-                    >
-                      {{ findSkillSummary(skill)?.description }}
-                    </p>
-                  </div>
+                  <code class="font-mono text-[11px]">{{ skill }}</code>
                 </label>
-
-                <Button
-                  size="sm"
-                  variant="outline"
+                <button
                   type="button"
-                  class="shrink-0"
+                  class="ml-1 inline-flex cursor-pointer items-center rounded px-1 py-0.5 text-[11px] text-muted-foreground hover:bg-accent hover:text-foreground"
                   :title="t('jobUi.skillViewEdit')"
                   :data-agent-edit-skill="skill"
                   @click="openEditSkillModal(skill)"
                 >
-                  <Eye class="size-3.5" aria-hidden="true" />{{ t('jobUi.skillViewEditShort') }}
-                </Button>
+                  <Eye class="size-3" aria-hidden="true" />
+                </button>
               </div>
             </div>
           </section>
@@ -1291,7 +1297,7 @@ onBeforeUnmount(() => controller?.abort())
       @saved="onSkillSaved"
       @deleted="onSkillDeleted"
     />
-  </main>
+  </section>
 </template>
 
 <style scoped>
@@ -1304,9 +1310,15 @@ onBeforeUnmount(() => controller?.abort())
   margin-bottom: 0.5rem;
   color: var(--foreground);
 }
-.prompt-markdown-preview :deep(h1) { font-size: 1.25rem; }
-.prompt-markdown-preview :deep(h2) { font-size: 1.1rem; }
-.prompt-markdown-preview :deep(h3) { font-size: 1rem; }
+.prompt-markdown-preview :deep(h1) {
+  font-size: 1.25rem;
+}
+.prompt-markdown-preview :deep(h2) {
+  font-size: 1.1rem;
+}
+.prompt-markdown-preview :deep(h3) {
+  font-size: 1rem;
+}
 .prompt-markdown-preview :deep(p) {
   margin: 0.5rem 0;
 }
@@ -1315,8 +1327,12 @@ onBeforeUnmount(() => controller?.abort())
   padding-left: 1.25rem;
   margin: 0.5rem 0;
 }
-.prompt-markdown-preview :deep(ul) { list-style: disc; }
-.prompt-markdown-preview :deep(ol) { list-style: decimal; }
+.prompt-markdown-preview :deep(ul) {
+  list-style: disc;
+}
+.prompt-markdown-preview :deep(ol) {
+  list-style: decimal;
+}
 .prompt-markdown-preview :deep(code) {
   font-size: 0.75rem;
   padding: 0.1rem 0.35rem;

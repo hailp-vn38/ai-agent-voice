@@ -1,261 +1,82 @@
 <script setup lang="ts">
 import {
-  Activity, ArrowRight, BookOpen, Bot, Cpu, ExternalLink, Pencil, Plus, RefreshCw,
-  Save, Settings2, Sliders, Trash2, Wrench,
+  Activity,
+  ArrowRight,
+  BookOpen,
+  Bot,
+  Cpu,
+  FileText,
+  RefreshCw,
+  Settings2,
 } from '@lucide/vue'
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
+
 import { agentJobsApi } from '@/api/agent-jobs'
-import type {
-  BackgroundAgentConfig, BackgroundAgentConfigUpdate, BackgroundProviderOption,
-  BackgroundSettings, BackgroundSettingsUpdate, JobSkillDetail, JobSkillSummary,
-} from '@/api/types/agent-jobs'
 import { formatApiError, isApiError } from '@/api/errors'
+import type { BackgroundSettings } from '@/api/types/agent-jobs'
 import DetailHeader from '@/components/admin/DetailHeader.vue'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { useI18n } from '@/composables/useI18n'
-import {
-  chatProviderOptions as filterChatProviderOptions,
-  domainToolsForAgent,
-  findProvider as findCatalogProvider,
-  formatProviderOptionLabel,
-  isAgentCustomizedFromDefault,
-  isAgentDirty as checkAgentDirty,
-  providerOptionsForAgent as filterProviderOptionsForAgent,
-  toAgentUpdate,
-} from './backgroundAgentUtils'
-import JobSkillEditorModal from './JobSkillEditorModal.vue'
-import SubagentCreateModal from './SubagentCreateModal.vue'
 
 const router = useRouter()
 const { t } = useI18n()
+
 const settings = ref<BackgroundSettings | null>(null)
-const draft = ref<BackgroundSettingsUpdate>({
-  enabled: false,
-  orchestrator_llm_provider: null,
-  worker_llm_provider: null,
-  agents: {},
-})
 const loading = ref(true)
-const saving = ref(false)
 const error = ref('')
-const notice = ref('')
 const unavailable = ref(false)
 
 let controller: AbortController | undefined
 
-const providerOptions = computed(() => settings.value?.llm_providers ?? [])
-const chatProviderOptions = computed(() => filterChatProviderOptions(providerOptions.value))
-function providerOptionsForAgent(agent: BackgroundAgentConfig | null): BackgroundProviderOption[] {
-  return filterProviderOptionsForAgent(providerOptions.value, agent)
-}
 const agentsCatalog = computed(() => settings.value?.agents ?? [])
 const skillsCatalog = computed(() => settings.value?.skills ?? [])
-const skillFilter = ref<'all' | 'builtin' | 'custom'>('all')
-const builtinSkillsCount = computed(() => skillsCatalog.value.filter(s => s.is_builtin).length)
-const customSkillsCount = computed(() => skillsCatalog.value.filter(s => !s.is_builtin).length)
-const filteredSkillsCatalog = computed(() => {
-  if (skillFilter.value === 'builtin') return skillsCatalog.value.filter(s => s.is_builtin)
-  if (skillFilter.value === 'custom') return skillsCatalog.value.filter(s => !s.is_builtin)
-  return skillsCatalog.value
+
+const rootAgentsCount = computed(
+  () => agentsCatalog.value.filter(a => a.mode === 'primary').length,
+)
+const subagentsCount = computed(
+  () => agentsCatalog.value.filter(a => a.mode !== 'primary').length,
+)
+const customSkillsCount = computed(
+  () => skillsCatalog.value.filter(s => !s.is_builtin).length,
+)
+const flowCount = computed(() => {
+  const flows = new Set(agentsCatalog.value.map(a => a.flow_id))
+  return flows.size || 2
 })
-const dailyFlowAgents = computed(() => agentsCatalog.value.filter(a => a.flow_id === 'daily'))
-const wikiFlowAgents = computed(() => agentsCatalog.value.filter(a => a.flow_id === 'wiki'))
-
-const skillModalOpen = ref(false)
-const skillModalMode = ref<'create' | 'edit'>('create')
-const activeSkillId = ref<string | null>(null)
-const subagentModalOpen = ref(false)
-const subagentModalFlow = ref<'daily' | 'wiki'>('daily')
-
-function openCreateSubagentModal(flowId: 'daily' | 'wiki') {
-  subagentModalFlow.value = flowId
-  subagentModalOpen.value = true
-}
-
-function onSubagentCreated(updated: BackgroundSettings, createdId: string) {
-  const wasDirty = dirty.value
-  subagentModalOpen.value = false
-  settings.value = {
-    ...updated,
-    llm_providers: updated.llm_providers ?? settings.value?.llm_providers ?? [],
-    agents: updated.agents ?? settings.value?.agents ?? [],
-  }
-  if (!wasDirty) {
-    restore(settings.value)
-  } else {
-    if (!draft.value.agents) draft.value.agents = {}
-    const createdAgent = (settings.value.agents ?? []).find(a => a.id === createdId)
-    if (createdAgent) {
-      draft.value.agents[createdId] = toAgentUpdate(createdAgent)
-    }
-  }
-  notice.value = t('jobUi.subagentCreated')
-}
-
-async function deleteCustomSubagentFromCard(agent: BackgroundAgentConfig) {
-  if (agent.is_builtin !== false || !settings.value) return
-  if (typeof window !== 'undefined' && typeof window.confirm === 'function') {
-    const confirmed = window.confirm(t('jobUi.subagentDeleteConfirm', { id: agent.id }))
-    if (!confirmed) return
-  }
-  const wasDirty = dirty.value
-  error.value = ''
-  notice.value = ''
-  try {
-    const updated = await agentJobsApi.deleteSubagent(agent.id, settings.value.revision)
-    settings.value = {
-      ...updated,
-      llm_providers: updated.llm_providers ?? settings.value.llm_providers,
-      agents: updated.agents ?? settings.value.agents,
-    }
-    if (!wasDirty) {
-      restore(settings.value)
-    } else if (draft.value.agents) {
-      delete draft.value.agents[agent.id]
-    }
-    notice.value = t('jobUi.subagentDeleted')
-  } catch (cause) {
-    error.value = formatApiError(cause)
-    if (isApiError(cause) && cause.status === 409) {
-      await load()
-    }
-  }
-}
-
-function scrollToSkillCatalog() {
-  if (typeof document !== 'undefined') {
-    document.getElementById('job-skill-catalog')?.scrollIntoView({ behavior: 'smooth' })
-  }
-}
-
-function openCreateSkillModal() {
-  skillModalMode.value = 'create'
-  activeSkillId.value = null
-  skillModalOpen.value = true
-}
-
-function openEditSkillModal(id: string) {
-  skillModalMode.value = 'edit'
-  activeSkillId.value = id
-  skillModalOpen.value = true
-}
-
-async function refreshCatalogAfterSkillChange(deletedId?: string) {
-  const wasDirty = dirty.value
-  try {
-    const config = await agentJobsApi.settings()
-    settings.value = config
-    if (!wasDirty) {
-      restore(config)
-    } else if (deletedId && draft.value.agents) {
-      for (const ag of Object.values(draft.value.agents)) {
-        if (ag.allowed_skills) {
-          ag.allowed_skills = ag.allowed_skills.filter(s => s !== deletedId)
-        }
-      }
-    }
-  } catch (cause) {
-    error.value = formatApiError(cause)
-  }
-}
-
-async function onSkillSaved(_saved: JobSkillDetail) {
-  skillModalOpen.value = false
-  await refreshCatalogAfterSkillChange()
-  notice.value = t('jobUi.skillSaved')
-}
-
-async function onSkillDeleted(deletedId: string) {
-  skillModalOpen.value = false
-  await refreshCatalogAfterSkillChange(deletedId)
-  notice.value = t('jobUi.skillDeleted')
-}
-
-async function deleteCustomSkillFromCard(skill: JobSkillSummary) {
-  if (skill.is_builtin) return
-  if (typeof window !== 'undefined' && typeof window.confirm === 'function') {
-    const confirmed = window.confirm(t('jobUi.skillDeleteConfirm', { id: skill.id }))
-    if (!confirmed) return
-  }
-  error.value = ''
-  notice.value = ''
-  try {
-    await agentJobsApi.deleteSkill(skill.id, skill.etag)
-    await onSkillDeleted(skill.id)
-  } catch (cause) {
-    error.value = formatApiError(cause)
-  }
-}
-
-function findProvider(refId: string | null | undefined): BackgroundProviderOption | undefined {
-  return findCatalogProvider(providerOptions.value, refId)
-}
-
-function isAgentDirty(agent: BackgroundAgentConfig): boolean {
-  return checkAgentDirty(agent, draft.value.agents?.[agent.id])
-}
-
-const dirty = computed(() => {
-  if (!settings.value) return false
-  if (
-    settings.value.enabled !== draft.value.enabled ||
-    settings.value.orchestrator_llm_provider !== draft.value.orchestrator_llm_provider ||
-    settings.value.worker_llm_provider !== draft.value.worker_llm_provider
-  ) {
-    return true
-  }
-  return agentsCatalog.value.some(isAgentDirty)
+const configuredDefaultsCount = computed(() => {
+  if (!settings.value) return 0
+  let count = 0
+  if (settings.value.orchestrator_llm_provider) count++
+  if (settings.value.worker_llm_provider) count++
+  return count
 })
 
-const readyToSave = computed(() => Boolean(
-  settings.value && dirty.value && (!draft.value.enabled ||
-  (draft.value.orchestrator_llm_provider && draft.value.worker_llm_provider)),
-))
-
-function restore(value: BackgroundSettings) {
-  const agentDrafts: Record<string, BackgroundAgentConfigUpdate> = {}
-  for (const agent of value.agents ?? []) {
-    agentDrafts[agent.id] = toAgentUpdate(agent)
-  }
-  draft.value = {
-    enabled: value.enabled,
-    orchestrator_llm_provider: value.orchestrator_llm_provider,
-    worker_llm_provider: value.worker_llm_provider,
-    agents: agentDrafts,
-  }
-}
-
-function draftAgent(agent: BackgroundAgentConfig): BackgroundAgentConfigUpdate {
-  if (!draft.value.agents) draft.value.agents = {}
-  if (!draft.value.agents[agent.id]) {
-    draft.value.agents[agent.id] = toAgentUpdate(agent)
-  }
-  return draft.value.agents[agent.id]!
-}
-
-function effectiveProviderForAgent(agent: BackgroundAgentConfig): BackgroundProviderOption | undefined {
-  const d = draftAgent(agent)
-  const explicitRef = d.provider_ref
-  const fallbackRef = agent.mode === 'primary'
-    ? draft.value.orchestrator_llm_provider
-    : draft.value.worker_llm_provider
-  return findProvider(explicitRef || fallbackRef || agent.effective_provider_ref)
-}
-
-function activeSubagentsForRoot(root: BackgroundAgentConfig): string[] {
-  const flowSubagents = agentsCatalog.value.filter(
-    a => a.flow_id === root.flow_id && a.mode !== 'primary',
+const quickAgent = computed(() => {
+  const catalog = agentsCatalog.value
+  return (
+    catalog.find(a => a.id === 'source_collector') ??
+    catalog.find(a => a.id === 'wiki_researcher') ??
+    catalog.find(a => a.mode !== 'primary') ??
+    catalog[0] ?? {
+      id: 'source_collector',
+      flow_id: 'daily',
+    }
   )
-  return flowSubagents
-    .filter(sub => draftAgent(sub).enabled)
-    .map(sub => sub.id)
-}
+})
 
-function openConfigurePage(agent: BackgroundAgentConfig) {
-  void router.push({ name: 'jobs-settings-agent', params: { agentId: agent.id } })
-}
+const quickSkill = computed(() => {
+  const catalog = skillsCatalog.value
+  return (
+    catalog.find(s => s.id === 'wiki-query') ??
+    catalog[0] ?? {
+      id: 'wiki-query',
+      is_builtin: true,
+    }
+  )
+})
 
 async function load() {
   controller?.abort()
@@ -263,12 +84,10 @@ async function load() {
   controller = pending
   loading.value = true
   error.value = ''
-  notice.value = ''
   try {
     const config = await agentJobsApi.settings(pending.signal)
     if (pending.signal.aborted) return
     settings.value = config
-    restore(config)
     unavailable.value = false
   } catch (cause) {
     if (pending.signal.aborted) return
@@ -279,526 +98,332 @@ async function load() {
   }
 }
 
-async function save() {
-  if (!settings.value || !readyToSave.value || saving.value) return
-  saving.value = true
-  notice.value = ''
-  error.value = ''
-  try {
-    const payload: BackgroundSettingsUpdate = {
-      enabled: draft.value.enabled,
-      orchestrator_llm_provider: draft.value.orchestrator_llm_provider,
-      worker_llm_provider: draft.value.worker_llm_provider,
-      ...(draft.value.agents && Object.keys(draft.value.agents).length > 0
-        ? { agents: draft.value.agents }
-        : {}),
-    }
-    const result = await agentJobsApi.updateSettings(payload, settings.value.revision)
-    settings.value = {
-      ...result,
-      llm_providers: result.llm_providers ?? settings.value.llm_providers,
-      agents: result.agents ?? settings.value.agents,
-    }
-    restore(settings.value)
-    notice.value = t('jobUi.saved')
-  } catch (cause) {
-    error.value = formatApiError(cause)
-    if (isApiError(cause) && cause.status === 409) {
-      settings.value = null
-      await load()
-    }
-  } finally {
-    saving.value = false
-  }
-}
-
-onMounted(() => { void load() })
+onMounted(() => {
+  void load()
+})
 onBeforeUnmount(() => controller?.abort())
 </script>
 
 <template>
-  <section class="space-y-5">
-    <DetailHeader :title="t('jobUi.background')" :back-label="t('jobUi.jobs')" @back="router.push({ name: 'jobs' })">
+  <section class="space-y-4">
+    <DetailHeader
+      :title="t('jobUi.hubTitle')"
+      :back-label="t('jobUi.jobs')"
+      @back="router.push({ name: 'jobs' })"
+    >
       <template #icon>
-        <div class="grid size-10 shrink-0 place-items-center rounded-xl bg-studio-violet/10 text-studio-violet">
-          <Settings2 class="size-5" />
+        <div
+          class="grid size-9 shrink-0 place-items-center rounded-xl bg-studio-violet/12 text-studio-violet"
+        >
+          <Settings2 class="size-4.5" aria-hidden="true" />
         </div>
       </template>
       <template #details>
-        <span class="line-clamp-2">{{ t('jobUi.backgroundDescription') }}</span>
+        <div class="flex flex-wrap items-center gap-x-2 gap-y-1">
+          <span class="font-semibold uppercase tracking-wider text-studio-violet">
+            {{ t('jobUi.hubEyebrow') }}
+          </span>
+          <span aria-hidden="true">·</span>
+          <span>{{ t('jobUi.hubSubtitle') }}</span>
+        </div>
       </template>
       <template #actions>
-        <Button variant="outline" :disabled="loading || saving" @click="scrollToSkillCatalog">
-          <BookOpen class="size-4" />{{ t('jobUi.skillCatalogShort') }} ({{ skillsCatalog.length }})
-        </Button>
-        <Button variant="outline" :disabled="loading || saving" @click="router.push({ name: 'providers', query: { type: 'llm' } })">
-          <ExternalLink class="size-4" />{{ t('jobUi.manageProviders') }}
-        </Button>
-        <Button variant="outline" :disabled="loading || saving" @click="load">
-          <RefreshCw class="size-4" :class="{ 'animate-spin': loading }" />{{ t('jobUi.refresh') }}
-        </Button>
-        <Button :disabled="!readyToSave || saving" @click="save">
-          <Save class="size-4" />{{ t('jobUi.save') }}
+        <Button variant="outline" size="sm" :disabled="loading" @click="load">
+          <RefreshCw class="size-4" :class="{ 'animate-spin': loading }" aria-hidden="true" />
+          {{ t('jobUi.refresh') }}
         </Button>
       </template>
     </DetailHeader>
 
-    <div v-if="error" role="alert" class="rounded-lg border border-danger/30 bg-danger/5 p-4 text-sm text-danger">
+    <div
+      v-if="error"
+      role="alert"
+      class="rounded-lg border border-danger/30 bg-danger/5 p-3.5 text-sm text-danger"
+    >
       <p class="font-medium">{{ unavailable ? t('jobUi.backendPending') : t('jobUi.loadFailed') }}</p>
       <p class="mt-1 break-words">{{ error }}</p>
     </div>
-    <p v-if="notice" role="status" class="rounded-lg border border-success/30 bg-success/5 p-3 text-sm text-success-foreground">{{ notice }}</p>
 
-    <div class="rounded-xl border border-studio-violet/20 bg-studio-violet/5 p-4 text-sm text-foreground">
-      <strong>{{ t('jobUi.globalScope') }}</strong> {{ t('jobUi.allAgents') }}
+    <div
+      v-if="loading && !settings"
+      class="studio-panel p-6 text-center text-sm text-muted-foreground"
+      role="status"
+    >
+      {{ t('common.loading') }}
     </div>
-    <div v-if="loading" class="studio-panel p-8 text-center text-sm text-muted-foreground" role="status">{{ t('common.loading') }}</div>
 
-    <template v-if="settings && !loading">
-      <section class="studio-panel p-5">
-        <div class="flex flex-wrap items-center justify-between gap-5">
-          <div class="flex items-start gap-3">
-            <div class="grid size-10 shrink-0 place-items-center rounded-xl bg-studio-violet/10 text-studio-violet"><Activity class="size-5" /></div>
-            <div>
-              <h2 class="font-semibold">{{ t('jobUi.globalRuntime') }}</h2>
-              <p class="mt-1 text-sm text-muted-foreground">{{ t('jobUi.globalHint') }}</p>
-            </div>
-          </div>
-          <label class="flex cursor-pointer items-center gap-3 text-sm font-medium">
-            <span>{{ draft.enabled ? t('jobUi.on') : t('jobUi.off') }}</span>
-            <span class="relative inline-flex shrink-0 items-center">
-              <input v-model="draft.enabled" type="checkbox" role="switch" :aria-label="t('jobUi.globalRuntime')"
-                class="peer sr-only" :disabled="saving" />
-              <span aria-hidden="true" class="h-6 w-11 rounded-full bg-muted-foreground/40 transition-colors peer-checked:bg-primary peer-focus-visible:outline-2 peer-focus-visible:outline-offset-2 peer-focus-visible:outline-ring peer-disabled:opacity-40"></span>
-              <span aria-hidden="true" class="pointer-events-none absolute left-[3px] size-[18px] rounded-full bg-white shadow transition-transform peer-checked:translate-x-[18px]"></span>
-            </span>
-          </label>
-        </div>
-      </section>
-
-      <section class="studio-panel space-y-5 p-5">
-        <div class="flex flex-wrap items-center justify-between gap-2">
-          <h2 class="flex items-center gap-2 font-semibold"><Settings2 class="size-5 text-studio-violet" />{{ t('jobUi.providerConfiguration') }}</h2>
-          <span class="text-xs text-muted-foreground">{{ t('jobUi.deploymentWide') }}</span>
-        </div>
-        <div class="grid gap-4 md:grid-cols-2">
-          <div class="min-w-0 rounded-xl border bg-background p-4">
-            <div class="mb-4 flex items-center gap-3">
-              <span class="grid size-8 shrink-0 place-items-center rounded-lg bg-studio-violet/10 font-semibold text-studio-violet">1</span>
-              <div><h3 class="flex items-center gap-2 font-semibold"><Bot class="size-4" />{{ t('jobUi.orchestrator') }}</h3><p class="mt-1 text-xs text-muted-foreground">{{ t('jobUi.orchestratorHint') }}</p></div>
-            </div>
-            <label class="block space-y-2">
-              <span class="text-xs font-medium text-muted-foreground">{{ t('jobUi.providers') }}</span>
-              <select v-model="draft.orchestrator_llm_provider" class="admin-input" :disabled="saving">
-                <option :value="null">{{ t('jobUi.chooseProvider') }}</option>
-                <option v-for="option in chatProviderOptions" :key="option.ref" :value="option.ref">
-                  {{ formatProviderOptionLabel(option) }}
-                </option>
-                <option v-if="draft.orchestrator_llm_provider && !chatProviderOptions.some(p => p.ref === draft.orchestrator_llm_provider)"
-                  :value="draft.orchestrator_llm_provider">{{ draft.orchestrator_llm_provider }} ({{ t('jobUi.unavailable') }})</option>
-              </select>
-            </label>
-            <div v-if="findProvider(draft.orchestrator_llm_provider)" class="mt-3 flex flex-wrap gap-1.5 text-xs">
-              <Badge v-if="findProvider(draft.orchestrator_llm_provider)?.model" variant="secondary">
-                model: {{ findProvider(draft.orchestrator_llm_provider)?.model }}
-              </Badge>
-              <Badge v-for="tag in findProvider(draft.orchestrator_llm_provider)?.tags ?? []" :key="tag" variant="outline">
-                tag: {{ tag }}
-              </Badge>
-              <Badge v-if="findProvider(draft.orchestrator_llm_provider)?.max_tokens" variant="outline">
-                max_tokens: {{ findProvider(draft.orchestrator_llm_provider)?.max_tokens }}
-              </Badge>
-              <Badge v-if="findProvider(draft.orchestrator_llm_provider)?.context_limit_tokens" variant="outline">
-                ctx: {{ findProvider(draft.orchestrator_llm_provider)?.context_limit_tokens }}
-              </Badge>
-              <Badge v-if="findProvider(draft.orchestrator_llm_provider)?.reasoning_effort" variant="outline">
-                reasoning: {{ findProvider(draft.orchestrator_llm_provider)?.reasoning_effort }}
-              </Badge>
-            </div>
-            <p class="mt-3 text-xs text-muted-foreground">{{ t('jobUi.providerCatalogHint') }}</p>
-          </div>
-
-          <div class="min-w-0 rounded-xl border bg-background p-4">
-            <div class="mb-4 flex items-center gap-3">
-              <span class="grid size-8 shrink-0 place-items-center rounded-lg bg-studio-violet/10 font-semibold text-studio-violet">2</span>
-              <div><h3 class="flex items-center gap-2 font-semibold"><Cpu class="size-4" />{{ t('jobUi.worker') }}</h3><p class="mt-1 text-xs text-muted-foreground">{{ t('jobUi.workerHint') }}</p></div>
-            </div>
-            <label class="block space-y-2">
-              <span class="text-xs font-medium text-muted-foreground">{{ t('jobUi.providers') }}</span>
-              <select v-model="draft.worker_llm_provider" class="admin-input" :disabled="saving">
-                <option :value="null">{{ t('jobUi.chooseProvider') }}</option>
-                <option v-for="option in chatProviderOptions" :key="option.ref" :value="option.ref">
-                  {{ formatProviderOptionLabel(option) }}
-                </option>
-                <option v-if="draft.worker_llm_provider && !chatProviderOptions.some(p => p.ref === draft.worker_llm_provider)"
-                  :value="draft.worker_llm_provider">{{ draft.worker_llm_provider }} ({{ t('jobUi.unavailable') }})</option>
-              </select>
-            </label>
-            <div v-if="findProvider(draft.worker_llm_provider)" class="mt-3 flex flex-wrap gap-1.5 text-xs">
-              <Badge v-if="findProvider(draft.worker_llm_provider)?.model" variant="secondary">
-                model: {{ findProvider(draft.worker_llm_provider)?.model }}
-              </Badge>
-              <Badge v-for="tag in findProvider(draft.worker_llm_provider)?.tags ?? []" :key="tag" variant="outline">
-                tag: {{ tag }}
-              </Badge>
-              <Badge v-if="findProvider(draft.worker_llm_provider)?.max_tokens" variant="outline">
-                max_tokens: {{ findProvider(draft.worker_llm_provider)?.max_tokens }}
-              </Badge>
-              <Badge v-if="findProvider(draft.worker_llm_provider)?.context_limit_tokens" variant="outline">
-                ctx: {{ findProvider(draft.worker_llm_provider)?.context_limit_tokens }}
-              </Badge>
-              <Badge v-if="findProvider(draft.worker_llm_provider)?.reasoning_effort" variant="outline">
-                reasoning: {{ findProvider(draft.worker_llm_provider)?.reasoning_effort }}
-              </Badge>
-            </div>
-            <p class="mt-3 text-xs text-muted-foreground">{{ t('jobUi.providerCatalogHint') }}</p>
-          </div>
-        </div>
-        <div class="flex flex-wrap items-center justify-between gap-3 border-t pt-4">
+    <template v-else-if="settings">
+      <!-- Feature Banner: Background Runtime -->
+      <section
+        class="flex flex-wrap items-center justify-between gap-4 rounded-2xl border border-studio-violet/30 bg-linear-to-br from-card via-card to-studio-violet/10 p-4 shadow-xs"
+        data-hub-runtime-banner
+      >
+        <div class="flex items-start gap-3">
+          <span
+            class="grid size-9 shrink-0 place-items-center rounded-xl bg-studio-violet/15 text-studio-violet"
+          >
+            <Activity class="size-5" aria-hidden="true" />
+          </span>
           <div>
-            <p class="text-xs text-muted-foreground">{{ t('jobUi.sharedProviderHint') }}</p>
-            <p v-if="draft.enabled && (!draft.orchestrator_llm_provider || !draft.worker_llm_provider)" class="mt-1 text-xs text-warning">
-              {{ t('jobUi.providersRequired') }}
+            <h2 class="flex flex-wrap items-center gap-2 text-sm font-semibold">
+              <span>{{ t('jobUi.hubRuntimeTitle') }}</span>
+              <Badge :variant="settings.enabled ? 'success' : 'outline'">
+                {{ settings.enabled ? t('jobUi.hubRuntimeActive') : t('jobUi.hubRuntimeInactive') }}
+              </Badge>
+            </h2>
+            <p class="mt-0.5 text-xs text-muted-foreground">
+              {{ t('jobUi.hubRuntimeHint') }}
             </p>
           </div>
-          <Button :disabled="!readyToSave || saving" @click="save"><Save class="size-4" />{{ t('jobUi.save') }}</Button>
         </div>
+
+        <Button
+          size="sm"
+          data-page="runtime"
+          data-hub-runtime-btn
+          @click="router.push({ name: 'jobs-settings-runtime' })"
+        >
+          {{ t('jobUi.hubRuntimeAction') }}
+          <ArrowRight class="size-3.5" aria-hidden="true" />
+        </Button>
       </section>
 
-      <!-- Per-Flow Root Agent & Sub-Agent Configuration -->
-      <section v-for="group in [
-        { key: 'daily' as const, title: t('jobUi.flowDailyTitle'), hint: t('jobUi.flowDailyHint'), items: dailyFlowAgents },
-        { key: 'wiki' as const, title: t('jobUi.flowWikiTitle'), hint: t('jobUi.flowWikiHint'), items: wikiFlowAgents },
-      ]" :key="group.key" v-show="group.items.length > 0" class="studio-panel space-y-4 p-5">
-        <div class="flex flex-wrap items-start justify-between gap-3">
+      <!-- Configuration Categories -->
+      <div class="space-y-3">
+        <div class="flex flex-wrap items-center justify-between gap-2 pt-1">
           <div>
-            <h2 class="flex items-center gap-2 font-semibold">
-              <Sliders class="size-5 text-studio-violet" />{{ group.title }}
+            <h2 class="text-base font-semibold tracking-tight">
+              {{ t('jobUi.hubCategoriesTitle') }}
             </h2>
-            <p class="mt-1 text-xs text-muted-foreground">{{ group.hint }}</p>
+            <small class="text-xs text-muted-foreground">
+              {{ t('jobUi.hubCategoriesSubtitle') }}
+            </small>
           </div>
-          <div class="flex items-center gap-2">
-            <Badge variant="outline">{{ group.items.length }} agents</Badge>
-            <Button
-              size="sm"
-              variant="outline"
-              type="button"
-              :disabled="saving"
-              :data-subagent-create-btn="group.key"
-              @click="openCreateSubagentModal(group.key)"
-            >
-              <Plus class="size-3.5" />{{ t('jobUi.subagentAdd') }}
-            </Button>
+
+          <div class="flex flex-wrap items-center gap-1.5">
+            <Badge variant="default">{{ rootAgentsCount }} Root Agents</Badge>
+            <Badge variant="outline">{{ subagentsCount }} Subagents</Badge>
+            <Badge variant="outline">{{ skillsCatalog.length }} Skills</Badge>
           </div>
         </div>
 
-        <div class="space-y-4">
+        <div class="grid gap-3.5 md:grid-cols-2">
+          <!-- Tile 1: Agents & Subagents -->
           <div
-            v-for="agent in group.items.filter(a => a.mode === 'primary')"
-            :key="agent.id"
-            class="flex flex-col justify-between rounded-xl border border-studio-violet/30 bg-studio-violet/5 p-4"
+            role="button"
+            tabindex="0"
+            data-page="agents"
+            data-hub-tile="agents"
+            class="group studio-panel cursor-pointer p-4 transition-all hover:-translate-y-0.5 hover:border-studio-violet/45 hover:shadow-md"
+            @click="router.push({ name: 'jobs-settings-agents' })"
+            @keydown.enter.prevent="router.push({ name: 'jobs-settings-agents' })"
+            @keydown.space.prevent="router.push({ name: 'jobs-settings-agents' })"
           >
-            <div class="space-y-3">
-              <div class="flex flex-wrap items-center justify-between gap-2">
-                <div class="flex items-center gap-2">
-                  <button
-                    type="button"
-                    class="cursor-pointer rounded bg-muted px-2 py-0.5 font-mono text-sm font-semibold hover:text-studio-violet"
-                    @click="openConfigurePage(agent)"
-                  >
-                    {{ agent.id }}
-                  </button>
-                  <Badge variant="default">{{ t('jobUi.primaryAgent') }}</Badge>
-                  <Badge v-if="isAgentCustomizedFromDefault(agent, draftAgent(agent))" variant="outline">
-                    {{ t('jobUi.customizedBadge') }}
-                  </Badge>
-                </div>
-                <Button size="sm" variant="outline" :disabled="saving" @click="openConfigurePage(agent)">
-                  <Wrench class="size-3.5" />{{ t('jobUi.configureAgent') }}<ArrowRight class="size-3.5" />
-                </Button>
-              </div>
-              <p class="text-xs text-muted-foreground">
-                {{ draftAgent(agent).description || agent.description }}
-              </p>
-              <label class="block space-y-1">
-                <span class="text-xs font-medium text-muted-foreground">{{ t('jobUi.providers') }}</span>
-                <select
-                  v-model="draftAgent(agent).provider_ref"
-                  class="admin-input h-9 text-xs"
-                  :disabled="saving"
-                >
-                  <option :value="null">
-                    {{ t('jobUi.inheritProvider') }} ({{ draft.orchestrator_llm_provider }})
-                  </option>
-                  <option v-for="option in providerOptionsForAgent(agent)" :key="option.ref" :value="option.ref">
-                    {{ formatProviderOptionLabel(option) }}
-                  </option>
-                </select>
-              </label>
-            </div>
-            <div class="mt-3 flex flex-wrap items-center gap-1.5 border-t pt-3 text-xs">
-              <Badge variant="secondary">
-                model: {{ effectiveProviderForAgent(agent)?.model ?? agent.effective_model }}
-              </Badge>
-              <Badge variant="outline">
-                {{ t('jobUi.stepsLimit') }}: {{ draftAgent(agent).steps ?? agent.steps }}
-              </Badge>
-              <Badge v-if="effectiveProviderForAgent(agent)?.max_tokens" variant="outline">
-                max_tokens: {{ effectiveProviderForAgent(agent)?.max_tokens }}
-              </Badge>
-              <Badge variant="outline">
-                {{ t('jobUi.subagentsAllowed') }}: {{ activeSubagentsForRoot(agent).length }}
-              </Badge>
-            </div>
-          </div>
-
-          <div class="grid gap-4 lg:grid-cols-2">
-            <div
-              v-for="agent in group.items.filter(a => a.mode !== 'primary')"
-              :key="agent.id"
-              class="flex flex-col justify-between rounded-xl border bg-background p-4 transition-opacity"
-              :class="{ 'opacity-60': !draftAgent(agent).enabled }"
-            >
-              <div class="space-y-3">
-                <div class="flex flex-wrap items-center justify-between gap-2">
-                  <div class="flex items-center gap-2">
-                    <button
-                      type="button"
-                      class="cursor-pointer rounded bg-muted px-2 py-0.5 font-mono text-sm font-semibold hover:text-studio-violet"
-                      @click="openConfigurePage(agent)"
-                    >
-                      {{ agent.id }}
-                    </button>
-                    <Badge variant="secondary">{{ t('jobUi.subagentRole') }}</Badge>
-                    <Badge variant="outline">
-                      {{ agent.is_builtin === false ? t('jobUi.subagentCustomBadge') : t('jobUi.subagentBuiltinBadge') }}
-                    </Badge>
-                    <Badge v-if="agent.is_builtin !== false && isAgentCustomizedFromDefault(agent, draftAgent(agent))" variant="outline">
-                      {{ t('jobUi.customizedBadge') }}
-                    </Badge>
-                  </div>
-                  <div class="flex items-center gap-2">
-                    <label class="flex cursor-pointer items-center gap-2 text-xs font-medium">
-                      <span>{{ draftAgent(agent).enabled ? t('jobUi.on') : t('jobUi.off') }}</span>
-                      <input
-                        v-model="draftAgent(agent).enabled"
-                        type="checkbox"
-                        class="size-4 accent-primary"
-                        :disabled="saving"
-                      />
-                    </label>
-                    <Button size="sm" variant="outline" :disabled="saving" @click="openConfigurePage(agent)">
-                      <Wrench class="size-3.5" />{{ t('jobUi.configureAgent') }}<ArrowRight class="size-3.5" />
-                    </Button>
-                    <Button
-                      v-if="agent.is_builtin === false"
-                      size="sm"
-                      variant="outline"
-                      type="button"
-                      class="border-danger/40 text-danger hover:bg-danger/10"
-                      :disabled="saving"
-                      :data-subagent-delete-card="agent.id"
-                      @click="deleteCustomSubagentFromCard(agent)"
-                    >
-                      <Trash2 class="size-3.5" />{{ t('common.delete') }}
-                    </Button>
-                  </div>
-                </div>
-
-                <p class="line-clamp-2 text-xs text-muted-foreground">
-                  {{ draftAgent(agent).description || agent.description }}
-                </p>
-
-                <label class="block space-y-1">
-                  <span class="text-xs font-medium text-muted-foreground">{{ t('jobUi.providers') }}</span>
-                  <select
-                    v-model="draftAgent(agent).provider_ref"
-                    class="admin-input h-9 text-xs"
-                    :disabled="saving || !draftAgent(agent).enabled"
-                  >
-                    <option :value="null">
-                      {{ t('jobUi.inheritProvider') }} ({{ draft.worker_llm_provider }})
-                    </option>
-                    <option v-for="option in providerOptionsForAgent(agent)" :key="option.ref" :value="option.ref">
-                      {{ formatProviderOptionLabel(option) }}
-                    </option>
-                  </select>
-                </label>
-              </div>
-
-              <div class="mt-3 flex flex-wrap items-center gap-1.5 border-t pt-3 text-xs">
-                <Badge variant="secondary">
-                  model: {{ effectiveProviderForAgent(agent)?.model ?? agent.effective_model }}
-                </Badge>
-                <Badge variant="outline">
-                  {{ t('jobUi.stepsLimit') }}: {{ draftAgent(agent).steps ?? agent.steps }}
-                </Badge>
-                <Badge v-if="effectiveProviderForAgent(agent)?.max_tokens" variant="outline">
-                  max_tokens: {{ effectiveProviderForAgent(agent)?.max_tokens }}
-                </Badge>
-                <Badge variant="outline">
-                  {{ t('jobUi.toolsAllowed') }}: {{ (draftAgent(agent).allowed_tools ?? agent.allowed_tools).filter(t => t !== 'skill').length }}/{{ domainToolsForAgent(agent).length }}
-                </Badge>
-                <Badge variant="outline">
-                  {{ t('jobUi.skillsAllowed') }}: {{ (draftAgent(agent).allowed_skills ?? agent.allowed_skills).length }}/{{ agent.available_skills.length }}
-                </Badge>
-                <button
-                  v-for="skillId in (draftAgent(agent).allowed_skills ?? agent.allowed_skills)"
-                  :key="skillId"
-                  type="button"
-                  class="inline-flex cursor-pointer items-center gap-1 rounded-full border border-studio-violet/30 bg-studio-violet/10 px-2 py-0.5 font-mono text-[11px] font-medium text-studio-violet hover:bg-studio-violet/20"
-                  :title="t('jobUi.skillViewEdit')"
-                  @click="openEditSkillModal(skillId)"
-                >
-                  <BookOpen class="size-3" />{{ skillId }}
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      <!-- Job Skill Catalog (skills/) -->
-      <section id="job-skill-catalog" class="studio-panel space-y-4 p-5" data-skill-catalog>
-        <div class="flex flex-wrap items-start justify-between gap-3">
-          <div>
-            <h2 class="flex items-center gap-2 font-semibold">
-              <BookOpen class="size-5 text-studio-violet" />{{ t('jobUi.skillCatalogTitle') }}
-            </h2>
-            <p class="mt-1 text-xs text-muted-foreground">{{ t('jobUi.skillCatalogHint') }}</p>
-          </div>
-          <div class="flex flex-wrap items-center gap-2">
-            <div class="inline-flex rounded-lg border border-border bg-surface/80 p-0.5 text-xs" role="tablist">
-              <button
-                type="button"
-                role="tab"
-                :aria-selected="skillFilter === 'all'"
-                data-skill-filter="all"
-                class="rounded-md px-2.5 py-1 font-medium transition-colors"
-                :class="skillFilter === 'all' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground'"
-                @click="skillFilter = 'all'"
+            <div class="flex items-start justify-between">
+              <span
+                class="grid size-9 place-items-center rounded-xl bg-studio-violet/12 text-studio-violet"
               >
-                {{ t('jobUi.skillFilterAll') }} ({{ skillsCatalog.length }})
-              </button>
-              <button
-                type="button"
-                role="tab"
-                :aria-selected="skillFilter === 'builtin'"
-                data-skill-filter="builtin"
-                class="rounded-md px-2.5 py-1 font-medium transition-colors"
-                :class="skillFilter === 'builtin' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground'"
-                @click="skillFilter = 'builtin'"
-              >
-                {{ t('jobUi.skillFilterBuiltin') }} ({{ builtinSkillsCount }})
-              </button>
-              <button
-                type="button"
-                role="tab"
-                :aria-selected="skillFilter === 'custom'"
-                data-skill-filter="custom"
-                class="rounded-md px-2.5 py-1 font-medium transition-colors"
-                :class="skillFilter === 'custom' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground'"
-                @click="skillFilter = 'custom'"
-              >
-                {{ t('jobUi.skillFilterCustom') }} ({{ customSkillsCount }})
-              </button>
+                <Bot class="size-5" aria-hidden="true" />
+              </span>
+              <ArrowRight
+                class="size-4 text-muted-foreground transition-transform group-hover:translate-x-0.5 group-hover:text-studio-violet"
+                aria-hidden="true"
+              />
             </div>
-            <Button
-              size="sm"
-              type="button"
-              :disabled="saving"
-              data-skill-create-btn
-              @click="openCreateSkillModal"
-            >
-              <Plus class="size-4" />{{ t('jobUi.skillAdd') }}
-            </Button>
+            <h3 class="mt-3 text-base font-semibold tracking-tight">
+              {{ t('jobUi.hubTileAgentsTitle') }}
+            </h3>
+            <p class="mt-1 mb-3 max-w-md text-xs leading-relaxed text-muted-foreground">
+              {{ t('jobUi.hubTileAgentsDesc') }}
+            </p>
+            <Badge variant="outline">
+              {{ agentsCatalog.length }} agents · {{ flowCount }} flows
+            </Badge>
           </div>
-        </div>
 
-        <div class="grid gap-3 md:grid-cols-2">
+          <!-- Tile 2: Skill Library -->
           <div
-            v-for="skill in filteredSkillsCatalog"
-            :key="skill.id"
-            class="flex flex-col justify-between rounded-xl border bg-background p-4"
-            :data-skill-card="skill.id"
+            role="button"
+            tabindex="0"
+            data-page="skills"
+            data-hub-tile="skills"
+            class="group studio-panel cursor-pointer p-4 transition-all hover:-translate-y-0.5 hover:border-studio-violet/45 hover:shadow-md"
+            @click="router.push({ name: 'jobs-settings-skills' })"
+            @keydown.enter.prevent="router.push({ name: 'jobs-settings-skills' })"
+            @keydown.space.prevent="router.push({ name: 'jobs-settings-skills' })"
           >
-            <div class="space-y-2.5">
-              <div class="flex flex-wrap items-center justify-between gap-2">
-                <div class="flex flex-wrap items-center gap-1.5">
-                  <button
-                    type="button"
-                    class="cursor-pointer rounded bg-muted px-2 py-0.5 font-mono text-xs font-semibold hover:text-studio-violet"
-                    @click="openEditSkillModal(skill.id)"
-                  >
-                    {{ skill.id }}
-                  </button>
-                  <Badge :variant="skill.is_builtin ? 'secondary' : 'outline'">
-                    {{ skill.is_builtin ? t('jobUi.skillBuiltinBadge') : t('jobUi.skillCustomBadge') }}
-                  </Badge>
-                  <Badge v-if="skill.is_builtin && skill.is_modified" variant="outline">
-                    {{ t('jobUi.customizedBadge') }}
-                  </Badge>
-                </div>
-
-                <div class="flex items-center gap-1.5">
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    type="button"
-                    :data-skill-edit="skill.id"
-                    @click="openEditSkillModal(skill.id)"
-                  >
-                    <Pencil class="size-3.5" />{{ t('jobUi.skillViewEdit') }}
-                  </Button>
-                  <Button
-                    v-if="!skill.is_builtin"
-                    size="sm"
-                    variant="outline"
-                    type="button"
-                    class="border-danger/40 text-danger hover:bg-danger/10"
-                    :data-skill-delete-card="skill.id"
-                    @click="deleteCustomSkillFromCard(skill)"
-                  >
-                    <Trash2 class="size-3.5" />{{ t('common.delete') }}
-                  </Button>
-                </div>
-              </div>
-
-              <p class="text-xs font-medium text-foreground">{{ skill.name }}</p>
-              <p class="line-clamp-2 text-xs text-muted-foreground">{{ skill.description }}</p>
+            <div class="flex items-start justify-between">
+              <span
+                class="grid size-9 place-items-center rounded-xl bg-studio-cyan/12 text-studio-cyan"
+              >
+                <BookOpen class="size-5" aria-hidden="true" />
+              </span>
+              <ArrowRight
+                class="size-4 text-muted-foreground transition-transform group-hover:translate-x-0.5 group-hover:text-studio-violet"
+                aria-hidden="true"
+              />
             </div>
+            <h3 class="mt-3 text-base font-semibold tracking-tight">
+              {{ t('jobUi.hubTileSkillsTitle') }}
+            </h3>
+            <p class="mt-1 mb-3 max-w-md text-xs leading-relaxed text-muted-foreground">
+              {{ t('jobUi.hubTileSkillsDesc') }}
+            </p>
+            <Badge variant="outline">
+              {{ skillsCatalog.length }} skills · {{ customSkillsCount }} custom
+            </Badge>
+          </div>
 
-            <div class="mt-3 flex flex-wrap items-center gap-1.5 border-t pt-3 text-xs">
-              <span class="text-muted-foreground">{{ t('jobUi.skillUsedBy') }}:</span>
-              <template v-if="skill.used_by_agents.length > 0">
-                <Badge v-for="ag in skill.used_by_agents" :key="ag" variant="secondary">
-                  {{ ag }}
-                </Badge>
-              </template>
-              <span v-else class="text-muted-foreground">{{ t('jobUi.skillUnused') }}</span>
+          <!-- Tile 3: Runtime Settings -->
+          <div
+            role="button"
+            tabindex="0"
+            data-page="runtime"
+            data-hub-tile="runtime"
+            class="group studio-panel cursor-pointer p-4 transition-all hover:-translate-y-0.5 hover:border-studio-violet/45 hover:shadow-md"
+            @click="router.push({ name: 'jobs-settings-runtime' })"
+            @keydown.enter.prevent="router.push({ name: 'jobs-settings-runtime' })"
+            @keydown.space.prevent="router.push({ name: 'jobs-settings-runtime' })"
+          >
+            <div class="flex items-start justify-between">
+              <span class="grid size-9 place-items-center rounded-xl bg-success/12 text-success">
+                <Activity class="size-5" aria-hidden="true" />
+              </span>
+              <ArrowRight
+                class="size-4 text-muted-foreground transition-transform group-hover:translate-x-0.5 group-hover:text-studio-violet"
+                aria-hidden="true"
+              />
             </div>
+            <h3 class="mt-3 text-base font-semibold tracking-tight">
+              {{ t('jobUi.hubTileRuntimeTitle') }}
+            </h3>
+            <p class="mt-1 mb-3 max-w-md text-xs leading-relaxed text-muted-foreground">
+              {{ t('jobUi.hubTileRuntimeDesc') }}
+            </p>
+            <Badge :variant="settings.enabled ? 'success' : 'outline'">
+              {{ settings.enabled ? t('jobUi.on') : t('jobUi.off') }}
+            </Badge>
+          </div>
+
+          <!-- Tile 4: LLM & Providers -->
+          <div
+            role="button"
+            tabindex="0"
+            data-page="providers"
+            data-hub-tile="providers"
+            class="group studio-panel cursor-pointer p-4 transition-all hover:-translate-y-0.5 hover:border-studio-violet/45 hover:shadow-md"
+            @click="router.push({ name: 'jobs-settings-providers' })"
+            @keydown.enter.prevent="router.push({ name: 'jobs-settings-providers' })"
+            @keydown.space.prevent="router.push({ name: 'jobs-settings-providers' })"
+          >
+            <div class="flex items-start justify-between">
+              <span
+                class="grid size-9 place-items-center rounded-xl bg-warning/15 text-warning-foreground dark:text-warning"
+              >
+                <Cpu class="size-5" aria-hidden="true" />
+              </span>
+              <ArrowRight
+                class="size-4 text-muted-foreground transition-transform group-hover:translate-x-0.5 group-hover:text-studio-violet"
+                aria-hidden="true"
+              />
+            </div>
+            <h3 class="mt-3 text-base font-semibold tracking-tight">
+              {{ t('jobUi.hubTileProvidersTitle') }}
+            </h3>
+            <p class="mt-1 mb-3 max-w-md text-xs leading-relaxed text-muted-foreground">
+              {{ t('jobUi.hubTileProvidersDesc') }}
+            </p>
+            <Badge variant="outline">
+              {{ configuredDefaultsCount }} defaults configured
+            </Badge>
           </div>
         </div>
-      </section>
+      </div>
+
+      <!-- Quick Access -->
+      <div class="space-y-3 pt-1">
+        <h2 class="text-base font-semibold tracking-tight">
+          {{ t('jobUi.hubQuickAccessTitle') }}
+        </h2>
+
+        <div class="grid gap-3 md:grid-cols-3">
+          <!-- Quick Agent -->
+          <div
+            role="button"
+            tabindex="0"
+            data-quick-agent
+            class="studio-panel cursor-pointer p-3.5 transition-colors hover:border-studio-violet/45 hover:bg-accent/35"
+            @click="router.push({ name: 'jobs-settings-agent', params: { agentId: quickAgent.id } })"
+            @keydown.enter.prevent="
+              router.push({ name: 'jobs-settings-agent', params: { agentId: quickAgent.id } })
+            "
+            @keydown.space.prevent="
+              router.push({ name: 'jobs-settings-agent', params: { agentId: quickAgent.id } })
+            "
+          >
+            <div class="mb-2 flex items-center gap-2">
+              <Bot class="size-4 text-studio-violet" aria-hidden="true" />
+              <strong class="font-mono text-xs">{{ quickAgent.id }}</strong>
+            </div>
+            <p class="mb-2.5 text-xs text-muted-foreground">
+              {{ t('jobUi.hubQuickAgentDesc') }}
+            </p>
+            <Badge variant="outline">
+              {{ quickAgent.flow_id === 'wiki' ? 'Wiki Flow' : 'Daily Flow' }}
+            </Badge>
+          </div>
+
+          <!-- Quick Skill -->
+          <div
+            role="button"
+            tabindex="0"
+            data-quick-skill
+            class="studio-panel cursor-pointer p-3.5 transition-colors hover:border-studio-violet/45 hover:bg-accent/35"
+            @click="router.push({ name: 'jobs-settings-skill', params: { skillId: quickSkill.id } })"
+            @keydown.enter.prevent="
+              router.push({ name: 'jobs-settings-skill', params: { skillId: quickSkill.id } })
+            "
+            @keydown.space.prevent="
+              router.push({ name: 'jobs-settings-skill', params: { skillId: quickSkill.id } })
+            "
+          >
+            <div class="mb-2 flex items-center gap-2">
+              <FileText class="size-4 text-studio-cyan" aria-hidden="true" />
+              <strong class="font-mono text-xs">{{ quickSkill.id }}</strong>
+            </div>
+            <p class="mb-2.5 text-xs text-muted-foreground">
+              {{ t('jobUi.hubQuickSkillDesc') }}
+            </p>
+            <Badge variant="outline">
+              {{
+                quickSkill.is_builtin
+                  ? t('jobUi.skillBuiltinBadge')
+                  : t('jobUi.skillCustomBadge')
+              }}
+            </Badge>
+          </div>
+
+          <!-- Quick Default Models -->
+          <div
+            role="button"
+            tabindex="0"
+            data-quick-providers
+            class="studio-panel cursor-pointer p-3.5 transition-colors hover:border-studio-violet/45 hover:bg-accent/35"
+            @click="router.push({ name: 'jobs-settings-providers' })"
+            @keydown.enter.prevent="router.push({ name: 'jobs-settings-providers' })"
+            @keydown.space.prevent="router.push({ name: 'jobs-settings-providers' })"
+          >
+            <div class="mb-2 flex items-center gap-2">
+              <Cpu class="size-4 text-warning" aria-hidden="true" />
+              <strong class="text-xs">{{ t('jobUi.hubQuickProvidersTitle') }}</strong>
+            </div>
+            <p class="mb-2.5 text-xs text-muted-foreground">
+              {{ t('jobUi.hubQuickProvidersDesc') }}
+            </p>
+            <Badge variant="outline">{{ configuredDefaultsCount }} Providers</Badge>
+          </div>
+        </div>
+      </div>
     </template>
-
-    <JobSkillEditorModal
-      :open="skillModalOpen"
-      :mode="skillModalMode"
-      :skill-id="activeSkillId"
-      @close="skillModalOpen = false"
-      @saved="onSkillSaved"
-      @deleted="onSkillDeleted"
-    />
-
-    <SubagentCreateModal
-      :open="subagentModalOpen"
-      :initial-flow-id="subagentModalFlow"
-      :revision="settings?.revision ?? 1"
-      :providers="providerOptions"
-      :skills="skillsCatalog"
-      @close="subagentModalOpen = false"
-      @created="onSubagentCreated"
-    />
   </section>
 </template>

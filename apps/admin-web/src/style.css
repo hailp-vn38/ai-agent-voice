@@ -134,7 +134,7 @@
   }
 
   /* Unified custom scrollbar across the admin studio (Markdown reader, code blocks,
-     tables, sidebars, and modals). */
+     tables, sidebars, and modals) — hidden by default, shown on container hover. */
   *::-webkit-scrollbar {
     width: 6px;
     height: 6px;
@@ -149,8 +149,12 @@
   }
 
   *::-webkit-scrollbar-thumb {
-    background-color: color-mix(in oklab, var(--muted-foreground) 30%, transparent);
+    background-color: transparent;
     border-radius: 9999px;
+  }
+
+  *:hover::-webkit-scrollbar-thumb {
+    background-color: color-mix(in oklab, var(--muted-foreground) 30%, transparent);
   }
 
   *::-webkit-scrollbar-thumb:hover {
@@ -164,6 +168,10 @@
   @supports not selector(::-webkit-scrollbar) {
     * {
       scrollbar-width: thin;
+      scrollbar-color: transparent transparent;
+    }
+
+    *:hover {
       scrollbar-color: color-mix(in oklab, var(--muted-foreground) 35%, transparent) transparent;
     }
   }

@@ -73,6 +73,42 @@ const routes: RouteRecordRaw[] = [
     meta: { titleKey: 'nav.background' },
   },
   {
+    path: '/jobs/settings/runtime',
+    name: 'jobs-settings-runtime',
+    component: () => import('@/pages/background/BackgroundRuntimePage.vue'),
+    meta: { titleKey: 'jobUi.hubRuntimeTitle' },
+  },
+  {
+    path: '/jobs/settings/providers',
+    name: 'jobs-settings-providers',
+    component: () => import('@/pages/background/BackgroundProvidersPage.vue'),
+    meta: { titleKey: 'jobUi.hubProvidersTitle' },
+  },
+  {
+    path: '/jobs/settings/agents',
+    name: 'jobs-settings-agents',
+    component: () => import('@/pages/background/BackgroundAgentsPage.vue'),
+    meta: { titleKey: 'jobUi.hubAgentsTitle' },
+  },
+  {
+    path: '/jobs/settings/skills',
+    name: 'jobs-settings-skills',
+    component: () => import('@/pages/background/BackgroundSkillsPage.vue'),
+    meta: { titleKey: 'jobUi.hubSkillsTitle' },
+  },
+  {
+    path: '/jobs/settings/skills/new',
+    name: 'jobs-settings-skill-create',
+    component: () => import('@/pages/background/BackgroundSkillDetailPage.vue'),
+    meta: { titleKey: 'jobUi.skillCreateTitle' },
+  },
+  {
+    path: '/jobs/settings/skills/:skillId',
+    name: 'jobs-settings-skill',
+    component: () => import('@/pages/background/BackgroundSkillDetailPage.vue'),
+    meta: { titleKey: 'jobUi.hubSkillsTitle' },
+  },
+  {
     path: '/jobs/settings/agents/:agentId',
     alias: ['/jobs/settings/:agentId'],
     name: 'jobs-settings-agent',

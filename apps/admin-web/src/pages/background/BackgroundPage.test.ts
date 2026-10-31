@@ -3,21 +3,35 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { ref } from 'vue'
 import { setLocale } from '@/composables/useI18n'
 import BackgroundAgentDetailPage from './BackgroundAgentDetailPage.vue'
+import BackgroundAgentsPage from './BackgroundAgentsPage.vue'
 import BackgroundPage from './BackgroundPage.vue'
+import BackgroundProvidersPage from './BackgroundProvidersPage.vue'
+import BackgroundRuntimePage from './BackgroundRuntimePage.vue'
+import BackgroundSkillDetailPage from './BackgroundSkillDetailPage.vue'
+import BackgroundSkillsPage from './BackgroundSkillsPage.vue'
 
-const { navigateMock, requestMock, routeParams } = vi.hoisted(() => ({
+const { navigateMock, replaceMock, requestMock, routeParams } = vi.hoisted(() => ({
   navigateMock: vi.fn(),
+  replaceMock: vi.fn(),
   requestMock: vi.fn(),
-  routeParams: { agentId: 'wiki_researcher' },
+  routeParams: { agentId: 'wiki_researcher', skillId: 'wiki-query' },
 }))
 
 const reactiveAgentId = ref('wiki_researcher')
+const reactiveSkillId = ref('wiki-query')
+const reactiveRouteName = ref('jobs-settings-agent')
 
 vi.mock('vue-router', () => ({
-  useRouter: () => ({ push: navigateMock }),
+  useRouter: () => ({ push: navigateMock, replace: replaceMock }),
   useRoute: () => ({
+    get name() {
+      return reactiveRouteName.value
+    },
     get params() {
-      return { agentId: reactiveAgentId.value || routeParams.agentId }
+      return {
+        agentId: reactiveAgentId.value || routeParams.agentId,
+        skillId: reactiveSkillId.value || routeParams.skillId,
+      }
     },
     query: {},
   }),
@@ -205,11 +219,13 @@ const fixtureSettings = () => ({
   ],
 })
 
-describe('BackgroundPage & BackgroundAgentDetailPage subagent configuration', () => {
+describe('Jobs Settings Hub (Variant A) & Sub-pages', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     setLocale('en')
     reactiveAgentId.value = 'wiki_researcher'
+    reactiveSkillId.value = 'wiki-query'
+    reactiveRouteName.value = 'jobs-settings-agent'
     requestMock.mockImplementation((path: string) => {
       if (path === '/api/admin/background/settings') {
         return Promise.resolve(fixtureSettings())
@@ -218,26 +234,111 @@ describe('BackgroundPage & BackgroundAgentDetailPage subagent configuration', ()
     })
   })
 
-  it('renders Flow 1 (daily_root) on BackgroundPage and navigates to dedicated subagent config page on Configure', async () => {
+  it('renders Variant A Settings Hub on BackgroundPage and navigates to dedicated sub-pages', async () => {
     const wrapper = mount(BackgroundPage)
     await flushPromises()
 
-    expect(wrapper.text()).toContain(
-      'Flow 1 — Information Collection & Multi-Functional Assistant (daily_root)',
-    )
-    expect(wrapper.text()).toContain('daily_root')
-    expect(wrapper.text()).toContain('wiki_researcher')
-    expect(wrapper.text()).toContain('DeepSeek R1')
     expect(wrapper.find('[data-detail-header]').exists()).toBe(true)
+    expect(wrapper.find('[data-hub-runtime-banner]').exists()).toBe(true)
+    expect(wrapper.text()).toContain('Agents & Subagents')
+    expect(wrapper.text()).toContain('Skill Library')
+    expect(wrapper.text()).toContain('Runtime Settings')
+    expect(wrapper.text()).toContain('LLM & Providers')
 
     await wrapper.get('[data-detail-back]').trigger('click')
     expect(navigateMock).toHaveBeenCalledWith({ name: 'jobs' })
 
-    const configButtons = wrapper
-      .findAll('button')
-      .filter(b => b.text().includes('Configure'))
-    expect(configButtons.length).toBe(4)
-    await configButtons[1]!.trigger('click')
+    await wrapper.get('[data-hub-tile="agents"]').trigger('click')
+    expect(navigateMock).toHaveBeenCalledWith({ name: 'jobs-settings-agents' })
+
+    await wrapper.get('[data-hub-tile="skills"]').trigger('click')
+    expect(navigateMock).toHaveBeenCalledWith({ name: 'jobs-settings-skills' })
+
+    await wrapper.get('[data-hub-tile="runtime"]').trigger('click')
+    expect(navigateMock).toHaveBeenCalledWith({ name: 'jobs-settings-runtime' })
+
+    await wrapper.get('[data-hub-tile="providers"]').trigger('click')
+    expect(navigateMock).toHaveBeenCalledWith({ name: 'jobs-settings-providers' })
+
+    await wrapper.get('[data-quick-agent]').trigger('click')
+    expect(navigateMock).toHaveBeenCalledWith({
+      name: 'jobs-settings-agent',
+      params: { agentId: 'wiki_researcher' },
+    })
+
+    await wrapper.get('[data-quick-skill]').trigger('click')
+    expect(navigateMock).toHaveBeenCalledWith({
+      name: 'jobs-settings-skill',
+      params: { skillId: 'wiki-query' },
+    })
+  })
+
+  it('renders BackgroundRuntimePage and BackgroundProvidersPage and saves updates', async () => {
+    const runtimeWrapper = mount(BackgroundRuntimePage)
+    await flushPromises()
+
+    expect(runtimeWrapper.text()).toContain('Runtime Settings')
+    expect(runtimeWrapper.text()).toContain('Runtime readiness')
+    expect(runtimeWrapper.text()).toContain('v1')
+
+    const runtimeSwitch = runtimeWrapper.get('input[data-toggle="runtime"]')
+    await runtimeSwitch.setValue(false)
+    requestMock.mockImplementationOnce(() =>
+      Promise.resolve({
+        ...fixtureSettings(),
+        enabled: false,
+        revision: 2,
+      }),
+    )
+    await runtimeWrapper.get('[data-runtime-save]').trigger('click')
+    await flushPromises()
+
+    const runtimePut = requestMock.mock.calls.find(
+      c => c[0] === '/api/admin/background/settings' && c[1]?.method === 'PUT',
+    )
+    expect(runtimePut).toBeDefined()
+    expect(JSON.parse(String(runtimePut![1].body)).enabled).toBe(false)
+
+    // Test BackgroundProvidersPage
+    const providersWrapper = mount(BackgroundProvidersPage)
+    await flushPromises()
+
+    expect(providersWrapper.text()).toContain('Default LLM Providers')
+    expect(providersWrapper.text()).toContain('Orchestrator · Root Agents')
+    expect(providersWrapper.text()).toContain('Worker · Subagents')
+
+    await providersWrapper.get('select[data-orchestrator-provider]').setValue('llm_deepseek')
+    requestMock.mockImplementationOnce(() =>
+      Promise.resolve({
+        ...fixtureSettings(),
+        orchestrator_llm_provider: 'llm_deepseek',
+        revision: 3,
+      }),
+    )
+    await providersWrapper.get('[data-providers-save]').trigger('click')
+    await flushPromises()
+
+    const putCalls = requestMock.mock.calls.filter(
+      c => c[0] === '/api/admin/background/settings' && c[1]?.method === 'PUT',
+    )
+    expect(putCalls.length).toBe(2)
+    expect(JSON.parse(String(putCalls[1]![1].body)).orchestrator_llm_provider).toBe('llm_deepseek')
+  })
+
+  it('renders Flow 1 (daily_root) on BackgroundAgentsPage and navigates to dedicated subagent config page on Configure', async () => {
+    const wrapper = mount(BackgroundAgentsPage)
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('Daily Assistant')
+    expect(wrapper.text()).toContain('daily_root')
+    expect(wrapper.text()).toContain('wiki_researcher')
+    expect(wrapper.find('[data-detail-header]').exists()).toBe(true)
+
+    await wrapper.get('[data-detail-back]').trigger('click')
+    expect(navigateMock).toHaveBeenCalledWith({ name: 'jobs-settings' })
+
+    const configButton = wrapper.get('button[data-agent="wiki_researcher"]')
+    await configButton.trigger('click')
     expect(navigateMock).toHaveBeenCalledWith({
       name: 'jobs-settings-agent',
       params: { agentId: 'wiki_researcher' },
@@ -250,13 +351,14 @@ describe('BackgroundPage & BackgroundAgentDetailPage subagent configuration', ()
     await flushPromises()
 
     expect(wrapper.find('[data-detail-header]').exists()).toBe(true)
+    expect(wrapper.find('[data-anchor-nav]').exists()).toBe(true)
     expect(wrapper.text()).toContain('wiki_researcher')
     expect(wrapper.text()).toContain('Sub-Agent')
     expect(wrapper.text()).toContain('Coordinator: daily_root')
 
-    // Back button returns to jobs-settings
+    // Back button returns to jobs-settings-agents
     await wrapper.get('[data-detail-back]').trigger('click')
-    expect(navigateMock).toHaveBeenCalledWith({ name: 'jobs-settings' })
+    expect(navigateMock).toHaveBeenCalledWith({ name: 'jobs-settings-agents' })
 
     // Edit steps, description, and system prompt on the dedicated page
     const stepsInput = wrapper.get('input[data-agent-steps]')
@@ -354,7 +456,7 @@ describe('BackgroundPage & BackgroundAgentDetailPage subagent configuration', ()
     })
   })
 
-  it('manages Job Skills on BackgroundPage (view catalog, create custom, edit built-in + restore default, delete custom only)', async () => {
+  it('manages Job Skills on BackgroundSkillsPage and dedicated BackgroundSkillDetailPage', async () => {
     vi.spyOn(window, 'confirm').mockReturnValue(true)
 
     requestMock.mockImplementation((path: string, init?: RequestInit) => {
@@ -417,36 +519,44 @@ describe('BackgroundPage & BackgroundAgentDetailPage subagent configuration', ()
       return Promise.resolve({ items: [], total: 0, page: 1, page_size: 30 })
     })
 
-    const wrapper = mount(BackgroundPage)
+    const wrapper = mount(BackgroundSkillsPage)
     await flushPromises()
 
-    // Catalog renders both built-in and custom skills
+    // Catalog table renders both built-in and custom skills
     const catalog = wrapper.get('[data-skill-catalog]')
     expect(catalog.text()).toContain('wiki-query')
     expect(catalog.text()).toContain('Built-in')
     expect(catalog.text()).toContain('seo-audit')
     expect(catalog.text()).toContain('Custom')
 
-    // Built-in skill card must NOT render a delete button; custom skill card MUST render one
+    // Built-in skill row must NOT render a delete button; custom skill row MUST render one
     expect(wrapper.find('[data-skill-delete-card="wiki-query"]').exists()).toBe(false)
     expect(wrapper.find('[data-skill-delete-card="seo-audit"]').exists()).toBe(true)
 
-    // 1. Open Edit Modal for built-in skill wiki-query, verify no delete button, restore default, and save
+    // Clicking Details navigates to dedicated Skill Detail page
     await wrapper.get('[data-skill-edit="wiki-query"]').trigger('click')
+    expect(navigateMock).toHaveBeenCalledWith({
+      name: 'jobs-settings-skill',
+      params: { skillId: 'wiki-query' },
+    })
+
+    // 1. Mount BackgroundSkillDetailPage for built-in skill wiki-query, verify no delete button, restore default, and save
+    reactiveRouteName.value = 'jobs-settings-skill'
+    reactiveSkillId.value = 'wiki-query'
+    const detailWrapper = mount(BackgroundSkillDetailPage)
     await flushPromises()
 
-    expect(wrapper.find('[data-skill-editor-modal]').exists()).toBe(true)
-    expect(wrapper.find('[data-skill-delete]').exists()).toBe(false)
-    expect((wrapper.get('[data-skill-name-input]').element as HTMLInputElement).value).toBe(
-      'wiki-query-custom',
-    )
+    expect(detailWrapper.find('[data-skill-delete]').exists()).toBe(false)
+    expect(
+      (detailWrapper.get('[data-skill-name-input]').element as HTMLInputElement).value,
+    ).toBe('wiki-query-custom')
 
-    await wrapper.get('[data-skill-restore-default]').trigger('click')
-    expect((wrapper.get('[data-skill-name-input]').element as HTMLInputElement).value).toBe(
-      'wiki-query',
-    )
+    await detailWrapper.get('[data-skill-restore-default]').trigger('click')
+    expect(
+      (detailWrapper.get('[data-skill-name-input]').element as HTMLInputElement).value,
+    ).toBe('wiki-query')
 
-    await wrapper.get('[data-skill-save]').trigger('click')
+    await detailWrapper.get('[data-skill-save]').trigger('click')
     await flushPromises()
 
     const updateSkillCall = requestMock.mock.calls.find(
@@ -455,7 +565,7 @@ describe('BackgroundPage & BackgroundAgentDetailPage subagent configuration', ()
     expect(updateSkillCall).toBeDefined()
     expect(updateSkillCall![2]?.headers).toEqual({ 'If-Match': '"etag-wiki-query"' })
 
-    // 2. Open Create Modal, fill in new custom skill, and save
+    // 2. Open Create Modal on BackgroundSkillsPage, fill in new custom skill, and save
     await wrapper.get('[data-skill-create-btn]').trigger('click')
     await flushPromises()
 
@@ -472,7 +582,7 @@ describe('BackgroundPage & BackgroundAgentDetailPage subagent configuration', ()
     expect(createSkillCall).toBeDefined()
     expect(createSkillCall![2]?.headers).toEqual({ 'If-None-Match': '*' })
 
-    // 3. Delete custom skill from card
+    // 3. Delete custom skill from row
     await wrapper.get('[data-skill-delete-card="seo-audit"]').trigger('click')
     await flushPromises()
 
@@ -549,7 +659,7 @@ describe('BackgroundPage & BackgroundAgentDetailPage subagent configuration', ()
     expect(body.agents.wiki_researcher.allowed_skills).toContain('fact-check')
   })
 
-  it('creates and deletes a Custom Sub-Agent on BackgroundPage and BackgroundAgentDetailPage', async () => {
+  it('creates and deletes a Custom Sub-Agent on BackgroundAgentsPage and BackgroundAgentDetailPage', async () => {
     vi.spyOn(window, 'confirm').mockReturnValue(true)
 
     const customAgentEntry = {
@@ -604,7 +714,7 @@ describe('BackgroundPage & BackgroundAgentDetailPage subagent configuration', ()
       return Promise.resolve(fixtureSettings())
     })
 
-    const wrapper = mount(BackgroundPage)
+    const wrapper = mount(BackgroundAgentsPage)
     await flushPromises()
 
     // Built-in subagents must NOT show a delete button
@@ -654,14 +764,9 @@ describe('BackgroundPage & BackgroundAgentDetailPage subagent configuration', ()
     expect(createBody.flow_id).toBe('daily')
     expect(createBody.allowed_tools).toEqual(['skill', 'fetch_html', 'markdown_create'])
 
-    // Custom subagent card now renders with a delete button
+    // Custom subagent row now renders with a delete button
     expect(wrapper.text()).toContain('arxiv_digest')
     expect(wrapper.find('[data-subagent-delete-card="arxiv_digest"]').exists()).toBe(true)
-
-    // Make an unsaved draft edit on another agent (toggle global runtime off), then delete custom subagent from card
-    const globalSwitch = wrapper.get('input[role="switch"]')
-    await globalSwitch.setValue(false)
-    expect((globalSwitch.element as HTMLInputElement).checked).toBe(false)
 
     await wrapper.get('[data-subagent-delete-card="arxiv_digest"]').trigger('click')
     await flushPromises()
@@ -671,8 +776,6 @@ describe('BackgroundPage & BackgroundAgentDetailPage subagent configuration', ()
     )
     expect(deleteCall).toBeDefined()
     expect(deleteCall![2]?.revision).toBe(2)
-    // Unsaved draft edit on BackgroundPage is preserved after deleting custom subagent card
-    expect((wrapper.get('input[role="switch"]').element as HTMLInputElement).checked).toBe(false)
 
     // Also verify BackgroundAgentDetailPage renders delete button (and hides reset default) for custom subagent
     reactiveAgentId.value = 'arxiv_digest'
