@@ -11,7 +11,15 @@ import type {
 } from '@/api/types/llm-gateway'
 import { setLocale } from '@/composables/useI18n'
 
+import LlmGatewayAccountDetailPage from './LlmGatewayAccountDetailPage.vue'
+import LlmGatewayAccountsPage from './LlmGatewayAccountsPage.vue'
+import LlmGatewayConnectPage from './LlmGatewayConnectPage.vue'
+import LlmGatewayModelEditorPage from './LlmGatewayModelEditorPage.vue'
+import LlmGatewayModelsPage from './LlmGatewayModelsPage.vue'
 import LlmGatewayPage from './LlmGatewayPage.vue'
+import LlmGatewayPoolDetailPage from './LlmGatewayPoolDetailPage.vue'
+import LlmGatewayPoolsPage from './LlmGatewayPoolsPage.vue'
+import LlmGatewayQuotasPage from './LlmGatewayQuotasPage.vue'
 
 const sampleCodexModel: GatewayPoolModelView = {
   provider_key: 'llm_codex_pool_1',
@@ -66,8 +74,8 @@ const sampleVendors: GatewayVendorInfo[] = [
     default_base_url: 'https://muse.ai',
     pool_binding: 'pool:muse',
     total_accounts: 1,
-    active_accounts: 1,
-    cooling_down_accounts: 0,
+    active_accounts: 0,
+    cooling_down_accounts: 1,
     model_count: 0,
     models: [],
   },
@@ -104,8 +112,8 @@ const sampleAccounts: GatewayAccountView[] = [
     credential_metadata: { key_version: 1 },
     enabled: true,
     priority: 100,
-    status: 'active',
-    cooldown_remaining_secs: 0,
+    status: 'cooling_down',
+    cooldown_remaining_secs: 90,
     expires_at: 1793500000,
     last_refreshed_at: 1793000000,
     last_used_at: null,
@@ -120,30 +128,98 @@ const sampleAccounts: GatewayAccountView[] = [
   },
 ]
 
+const samplePoolDetail: GatewayPoolDetailView = {
+  vendor: 'openai_codex',
+  display_name: 'OpenAI Codex (ChatGPT)',
+  login_mode: 'pkce',
+  default_base_url: 'https://chatgpt.com/backend-api/codex',
+  pool_binding: 'pool:openai_codex',
+  total_accounts: 1,
+  active_accounts: 1,
+  cooling_down_accounts: 0,
+  reauth_required_accounts: 0,
+  disabled_accounts: 0,
+  accounts: [sampleAccounts[0]!],
+  models: [sampleCodexModel],
+  preset_models: [
+    {
+      model: 'gpt-5.6-terra',
+      display_name: 'GPT-5.6 Terra (Codex)',
+      tags: ['chat', 'reasoning', 'vision'],
+      supports_reasoning_effort: true,
+      default_max_tokens: 128000,
+      default_context_limit_tokens: 1050000,
+      default_reasoning_effort: 'high',
+      default_timeout_ms: 90000,
+    },
+  ],
+}
+
 function makeRouter() {
   return createRouter({
     history: createMemoryHistory(),
     routes: [
-      { path: '/llm-gateway', component: LlmGatewayPage },
+      { path: '/llm-gateway', name: 'llm-gateway', component: LlmGatewayPage },
+      { path: '/llm-gateway/pools', name: 'llm-gateway-pools', component: LlmGatewayPoolsPage },
+      {
+        path: '/llm-gateway/pools/:vendor',
+        name: 'llm-gateway-pool',
+        component: LlmGatewayPoolDetailPage,
+      },
+      {
+        path: '/llm-gateway/accounts',
+        name: 'llm-gateway-accounts',
+        component: LlmGatewayAccountsPage,
+      },
+      {
+        path: '/llm-gateway/accounts/:accountKey',
+        name: 'llm-gateway-account',
+        component: LlmGatewayAccountDetailPage,
+      },
+      {
+        path: '/llm-gateway/models',
+        name: 'llm-gateway-models',
+        component: LlmGatewayModelsPage,
+      },
+      {
+        path: '/llm-gateway/models/new',
+        name: 'llm-gateway-model-create',
+        component: LlmGatewayModelEditorPage,
+      },
+      {
+        path: '/llm-gateway/models/:providerKey',
+        name: 'llm-gateway-model',
+        component: LlmGatewayModelEditorPage,
+      },
+      {
+        path: '/llm-gateway/quotas',
+        name: 'llm-gateway-quotas',
+        component: LlmGatewayQuotasPage,
+      },
+      {
+        path: '/llm-gateway/connect',
+        name: 'llm-gateway-connect',
+        component: LlmGatewayConnectPage,
+      },
       { path: '/providers/:key', component: { template: '<div />' } },
     ],
   })
 }
 
-describe('LlmGatewayPage', () => {
+describe('LLM Gateway Hub (Variant A) & Sub-pages', () => {
   beforeEach(() => {
     setLocale('vi')
     vi.restoreAllMocks()
     vi.spyOn(llmGatewayApi, 'listVendors').mockResolvedValue({ vendors: sampleVendors })
     vi.spyOn(llmGatewayApi, 'listAccounts').mockResolvedValue({ accounts: sampleAccounts })
     vi.spyOn(llmGatewayApi, 'listQuotas').mockResolvedValue({ quotas: [] })
+    vi.spyOn(llmGatewayApi, 'getPoolDetail').mockResolvedValue({ pool: samplePoolDetail })
   })
 
-  it('shows shimmer skeletons while page data and pool details are loading, then renders loaded state', async () => {
+  it('shows shimmer skeletons while page data is loading, then renders Variant A Hub with clickable cards', async () => {
     let finishVendors!: (value: { vendors: GatewayVendorInfo[] }) => void
     let finishAccounts!: (value: { accounts: GatewayAccountView[] }) => void
     let finishQuotas!: (value: { quotas: never[] }) => void
-    let finishPoolDetail!: (value: { pool: GatewayPoolDetailView }) => void
 
     vi.spyOn(llmGatewayApi, 'listVendors').mockReturnValue(
       new Promise((resolve) => {
@@ -158,11 +234,6 @@ describe('LlmGatewayPage', () => {
     vi.spyOn(llmGatewayApi, 'listQuotas').mockReturnValue(
       new Promise((resolve) => {
         finishQuotas = resolve
-      }),
-    )
-    vi.spyOn(llmGatewayApi, 'getPoolDetail').mockReturnValue(
-      new Promise((resolve) => {
-        finishPoolDetail = resolve
       }),
     )
 
@@ -188,120 +259,30 @@ describe('LlmGatewayPage', () => {
       await flushPromises()
 
       expect(wrapper.find('[data-llm-gateway-skeleton]').exists()).toBe(false)
-      expect(wrapper.findAll('[data-pool-group]')).toHaveLength(2)
+      expect(wrapper.find('[data-testid="llm-gateway-hero"]').exists()).toBe(true)
+      expect(wrapper.findAll('[data-pool-group]')).toHaveLength(3)
       expect(wrapper.findAll('[data-quota-skeleton]').length).toBeGreaterThan(0)
 
       finishQuotas({ quotas: [] })
       await flushPromises()
       expect(wrapper.findAll('[data-quota-skeleton]')).toHaveLength(0)
 
-      // Open Pool Detail modal and verify modal shimmer while loading
-      await wrapper.get('[data-pool-detail="openai_codex"]').trigger('click')
+      // Clicking a Vendor Pool card navigates to Pool Detail page
+      await wrapper.get('[data-pool="openai_codex"]').trigger('click')
       await flushPromises()
-      expect(wrapper.find('[data-pool-detail-skeleton]').exists()).toBe(true)
-      expect(wrapper.get('[data-pool-detail-skeleton]').attributes('aria-busy')).toBe('true')
-      expect(wrapper.findAll('[data-pool-detail-skeleton] .card-shimmer').length).toBeGreaterThan(0)
+      expect(router.currentRoute.value.name).toBe('llm-gateway-pool')
+      expect(router.currentRoute.value.params.vendor).toBe('openai_codex')
 
-      finishPoolDetail({
-        pool: {
-          vendor: 'openai_codex',
-          display_name: 'OpenAI Codex (ChatGPT)',
-          login_mode: 'pkce',
-          default_base_url: 'https://chatgpt.com/backend-api/codex',
-          pool_binding: 'pool:openai_codex',
-          total_accounts: 1,
-          active_accounts: 1,
-          cooling_down_accounts: 0,
-          reauth_required_accounts: 0,
-          disabled_accounts: 0,
-          accounts: [sampleAccounts[0]!],
-          models: [sampleCodexModel],
-          preset_models: [],
-        },
-      })
+      // Clicking a KPI card navigates to its dedicated sub-page
+      await wrapper.get('[data-kpi-card="quotas"]').trigger('click')
       await flushPromises()
-      expect(wrapper.find('[data-pool-detail-skeleton]').exists()).toBe(false)
-      expect(wrapper.find('[data-testid="pool-detail-content"]').exists()).toBe(true)
+      expect(router.currentRoute.value.name).toBe('llm-gateway-quotas')
     } finally {
       wrapper.unmount()
     }
   })
 
-  it('groups populated pools into collapsible sections and hides top pool cards', async () => {
-    const router = makeRouter()
-    await router.push('/llm-gateway')
-    await router.isReady()
-
-    const wrapper = mount(LlmGatewayPage, {
-      global: {
-        plugins: [router],
-        stubs: { Teleport: true },
-      },
-    })
-    await flushPromises()
-
-    // Only populated vendor pools render as group sections
-    const poolGroups = wrapper.findAll('[data-pool-group]')
-    expect(poolGroups).toHaveLength(2)
-    expect(poolGroups[0]?.attributes('data-pool-group')).toBe('openai_codex')
-    expect(poolGroups[1]?.attributes('data-pool-group')).toBe('muse')
-
-    // Empty vendor pool (anthropic) is shown in the compact empty pools bar
-    expect(wrapper.text()).toContain('Pool chưa có tài khoản:')
-    expect(wrapper.text()).toContain('Anthropic Claude')
-
-    // Toggle collapse on openai_codex pool group
-    const codexToggle = wrapper.get('[data-pool-toggle="openai_codex"]')
-    expect(codexToggle.attributes('aria-expanded')).toBe('true')
-    await codexToggle.trigger('click')
-    expect(codexToggle.attributes('aria-expanded')).toBe('false')
-
-    // Toggle all pools collapse / expand
-    const toggleAllBtn = wrapper.get('[data-testid="toggle-all-pools"]')
-    await toggleAllBtn.trigger('click')
-    expect(wrapper.get('[data-pool-toggle="openai_codex"]').attributes('aria-expanded')).toBe(
-      'false',
-    )
-    expect(wrapper.get('[data-pool-toggle="muse"]').attributes('aria-expanded')).toBe('false')
-
-    await toggleAllBtn.trigger('click')
-    expect(wrapper.get('[data-pool-toggle="openai_codex"]').attributes('aria-expanded')).toBe(
-      'true',
-    )
-    expect(wrapper.get('[data-pool-toggle="muse"]').attributes('aria-expanded')).toBe('true')
-  })
-
-  it('supports viewing Pool Detail and adding, editing, and deleting models in a Pool', async () => {
-    const samplePoolDetail: GatewayPoolDetailView = {
-      vendor: 'openai_codex',
-      display_name: 'OpenAI Codex (ChatGPT)',
-      login_mode: 'pkce',
-      default_base_url: 'https://chatgpt.com/backend-api/codex',
-      pool_binding: 'pool:openai_codex',
-      total_accounts: 1,
-      active_accounts: 1,
-      cooling_down_accounts: 0,
-      reauth_required_accounts: 0,
-      disabled_accounts: 0,
-      accounts: [sampleAccounts[0]!],
-      models: [sampleCodexModel],
-      preset_models: [
-        {
-          model: 'gpt-5.6-terra',
-          display_name: 'GPT-5.6 Terra (Codex)',
-          tags: ['chat', 'reasoning', 'vision'],
-          supports_reasoning_effort: true,
-          default_max_tokens: 128000,
-          default_context_limit_tokens: 1050000,
-          default_reasoning_effort: 'high',
-          default_timeout_ms: 90000,
-        },
-      ],
-    }
-
-    const getPoolSpy = vi
-      .spyOn(llmGatewayApi, 'getPoolDetail')
-      .mockResolvedValue({ pool: samplePoolDetail })
+  it('supports Pool Detail tabs, Model Editor creation from Preset and editing, and deleting models', async () => {
     const createModelSpy = vi
       .spyOn(llmGatewayApi, 'createPoolModel')
       .mockResolvedValue({
@@ -325,10 +306,10 @@ describe('LlmGatewayPage', () => {
       .mockResolvedValue({ deleted: true })
 
     const router = makeRouter()
-    await router.push('/llm-gateway')
+    await router.push('/llm-gateway/pools/openai_codex')
     await router.isReady()
 
-    const wrapper = mount(LlmGatewayPage, {
+    const poolWrapper = mount(LlmGatewayPoolDetailPage, {
       global: {
         plugins: [router],
         stubs: { Teleport: true },
@@ -336,33 +317,60 @@ describe('LlmGatewayPage', () => {
     })
     await flushPromises()
 
-    // 1. Inline Models in Pool sub-section renders the configured model
-    expect(wrapper.get('[data-pool-model-count="openai_codex"]').text()).toContain('1 model')
-    expect(wrapper.get('[data-pool-model-row="llm_codex_pool_1"]').text()).toContain(
-      'gpt-5.3-codex',
-    )
-
-    // 2. Open Pool Detail modal
-    await wrapper.get('[data-pool-detail="openai_codex"]').trigger('click')
-    await flushPromises()
-    expect(getPoolSpy).toHaveBeenCalledWith('openai_codex')
-    expect(wrapper.get('[data-testid="pool-detail-content"]').text()).toContain(
+    expect(poolWrapper.get('[data-testid="pool-detail-content"]').text()).toContain(
       'https://chatgpt.com/backend-api/codex',
     )
-    expect(wrapper.get('[data-testid="pool-detail-accounts"]').text()).toContain(
+    expect(poolWrapper.get('[data-testid="pool-detail-accounts"]').text()).toContain(
       'lamphuchai98@gmail.com',
     )
 
-    // 3. Click a Preset Model in Pool Detail to open Add Model modal prefilled
-    await wrapper.get('[data-preset-model="gpt-5.6-terra"]').trigger('click')
+    // Switch to Pool Models tab and toggle / delete model
+    await poolWrapper.get('[data-pool-tab="models"]').trigger('click')
     await flushPromises()
-    const modelInput = wrapper.get('[data-testid="pool-model-id-input"]')
+    expect(poolWrapper.get('[data-pool-model-row="llm_codex_pool_1"]').text()).toContain(
+      'gpt-5.3-codex',
+    )
+
+    await poolWrapper.get('[data-toggle-pool-model="llm_codex_pool_1"]').trigger('click')
+    await flushPromises()
+    expect(updateModelSpy).toHaveBeenCalledWith('openai_codex', 'llm_codex_pool_1', {
+      enabled: false,
+    })
+
+    await poolWrapper.get('[data-delete-pool-model="llm_codex_pool_1"]').trigger('click')
+    await flushPromises()
+    const confirmButtons = poolWrapper
+      .findAll('button')
+      .filter((b) => b.text().includes('Xóa Model'))
+    expect(confirmButtons.length).toBeGreaterThan(0)
+    await confirmButtons[confirmButtons.length - 1]!.trigger('click')
+    await flushPromises()
+    expect(deleteModelSpy).toHaveBeenCalledWith('openai_codex', 'llm_codex_pool_1')
+
+    // Switch to Presets tab and click a preset card to navigate to Model Editor create page
+    await poolWrapper.get('[data-pool-tab="presets"]').trigger('click')
+    await flushPromises()
+    await poolWrapper.get('[data-preset-model="gpt-5.6-terra"]').trigger('click')
+    await flushPromises()
+    expect(router.currentRoute.value.name).toBe('llm-gateway-model-create')
+    expect(router.currentRoute.value.query.preset).toBe('gpt-5.6-terra')
+    poolWrapper.unmount()
+
+    // Mount Model Editor in create mode with preset query
+    const createEditorWrapper = mount(LlmGatewayModelEditorPage, {
+      global: {
+        plugins: [router],
+        stubs: { Teleport: true },
+      },
+    })
+    await flushPromises()
+
+    const modelInput = createEditorWrapper.get('[data-testid="pool-model-id-input"]')
     expect((modelInput.element as HTMLInputElement).value).toBe('gpt-5.6-terra')
-    const maxTokensInput = wrapper.get('[data-testid="pool-model-max-tokens-input"]')
-    expect(maxTokensInput.attributes('max')).toBeUndefined()
+    const maxTokensInput = createEditorWrapper.get('[data-testid="pool-model-max-tokens-input"]')
     expect((maxTokensInput.element as HTMLInputElement).value).toBe('128000')
 
-    await wrapper.get('[data-testid="pool-model-form"]').trigger('submit.prevent')
+    await createEditorWrapper.get('[data-testid="pool-model-form"]').trigger('submit.prevent')
     await flushPromises()
     expect(createModelSpy).toHaveBeenCalledWith(
       'openai_codex',
@@ -377,16 +385,27 @@ describe('LlmGatewayPage', () => {
         timeout_ms: 90000,
       }),
     )
+    createEditorWrapper.unmount()
 
-    // 4. Edit existing model in the Pool (including base_url and temperature_percent)
-    await wrapper.get('[data-edit-pool-model="llm_codex_pool_1"]').trigger('click')
+    // Mount Model Editor in edit mode for llm_codex_pool_1
+    await router.push('/llm-gateway/models/llm_codex_pool_1?vendor=openai_codex')
     await flushPromises()
-    await wrapper.get('[data-testid="pool-model-name-input"]').setValue('GPT-5.3 Codex Updated')
-    await wrapper
+    const editEditorWrapper = mount(LlmGatewayModelEditorPage, {
+      global: {
+        plugins: [router],
+        stubs: { Teleport: true },
+      },
+    })
+    await flushPromises()
+
+    await editEditorWrapper
+      .get('[data-testid="pool-model-name-input"]')
+      .setValue('GPT-5.3 Codex Updated')
+    await editEditorWrapper
       .get('[data-testid="pool-model-base-url-input"]')
       .setValue('https://proxy.example.com/v1')
-    await wrapper.get('[data-testid="pool-model-temperature-input"]').setValue('75')
-    await wrapper.get('[data-testid="pool-model-form"]').trigger('submit.prevent')
+    await editEditorWrapper.get('[data-testid="pool-model-temperature-input"]').setValue('75')
+    await editEditorWrapper.get('[data-testid="pool-model-form"]').trigger('submit.prevent')
     await flushPromises()
     expect(updateModelSpy).toHaveBeenCalledWith(
       'openai_codex',
@@ -398,23 +417,85 @@ describe('LlmGatewayPage', () => {
         temperature_percent: 75,
       }),
     )
+    editEditorWrapper.unmount()
+  })
 
-    // 4b. Toggle model enabled/disabled in the Pool
-    await wrapper.get('[data-toggle-pool-model="llm_codex_pool_1"]').trigger('click')
-    await flushPromises()
-    expect(updateModelSpy).toHaveBeenCalledWith('openai_codex', 'llm_codex_pool_1', {
-      enabled: false,
+  it('renders dedicated Vendor Pools, OAuth Accounts, Account Detail, Models, Quotas, and Connect pages', async () => {
+    vi.spyOn(llmGatewayApi, 'getAccountQuota').mockResolvedValue({
+      quota: {
+        account_key: 'gw_openai_codex_145ef96e',
+        vendor: 'openai_codex',
+        plan: 'ChatGPT Plus',
+        limit_reached: false,
+        windows: [
+          {
+            name: '5h window',
+            used: 18,
+            total: 100,
+            remaining_percentage: 82,
+            reset_at: null,
+            unlimited: false,
+          },
+        ],
+        fetched_at: 1793000000,
+      },
     })
 
-    // 5. Delete model from the Pool
-    await wrapper.get('[data-delete-pool-model="llm_codex_pool_1"]').trigger('click')
+    const router = makeRouter()
+    await router.push('/llm-gateway/pools')
+    await router.isReady()
+
+    const poolsWrapper = mount(LlmGatewayPoolsPage, { global: { plugins: [router] } })
     await flushPromises()
-    const confirmButtons = wrapper
-      .findAll('button')
-      .filter((b) => b.text().includes('Xóa Model'))
-    expect(confirmButtons.length).toBeGreaterThan(0)
-    await confirmButtons[confirmButtons.length - 1]!.trigger('click')
+    expect(poolsWrapper.find('[data-testid="llm-gateway-pools-page"]').exists()).toBe(true)
+    expect(poolsWrapper.findAll('[data-pool]')).toHaveLength(3)
+    await poolsWrapper.get('[data-filter="openai_codex"]').trigger('click')
+    expect(poolsWrapper.findAll('[data-pool]')).toHaveLength(1)
+    poolsWrapper.unmount()
+
+    await router.push('/llm-gateway/accounts')
     await flushPromises()
-    expect(deleteModelSpy).toHaveBeenCalledWith('openai_codex', 'llm_codex_pool_1')
+    const accountsWrapper = mount(LlmGatewayAccountsPage, { global: { plugins: [router] } })
+    await flushPromises()
+    expect(accountsWrapper.find('[data-testid="llm-gateway-accounts-page"]').exists()).toBe(true)
+    await accountsWrapper.get('[data-account="gw_openai_codex_145ef96e"]').trigger('click')
+    await flushPromises()
+    expect(router.currentRoute.value.name).toBe('llm-gateway-account')
+    accountsWrapper.unmount()
+
+    const accountDetailWrapper = mount(LlmGatewayAccountDetailPage, {
+      global: { plugins: [router], stubs: { Teleport: true } },
+    })
+    await flushPromises()
+    expect(accountDetailWrapper.find('[data-testid="llm-gateway-account-detail-page"]').exists()).toBe(
+      true,
+    )
+    expect(accountDetailWrapper.text()).toContain('lamphuchai98@gmail.com')
+    expect(accountDetailWrapper.text()).toContain('ChatGPT Plus')
+    accountDetailWrapper.unmount()
+
+    await router.push('/llm-gateway/models')
+    await flushPromises()
+    const modelsWrapper = mount(LlmGatewayModelsPage, { global: { plugins: [router] } })
+    await flushPromises()
+    expect(modelsWrapper.find('[data-testid="llm-gateway-models-page"]').exists()).toBe(true)
+    expect(modelsWrapper.text()).toContain('GPT-5.3 Codex')
+    modelsWrapper.unmount()
+
+    await router.push('/llm-gateway/quotas')
+    await flushPromises()
+    const quotasWrapper = mount(LlmGatewayQuotasPage, { global: { plugins: [router] } })
+    await flushPromises()
+    expect(quotasWrapper.find('[data-testid="llm-gateway-quotas-page"]').exists()).toBe(true)
+    expect(quotasWrapper.text()).toContain('Account Quota Matrix')
+    quotasWrapper.unmount()
+
+    await router.push('/llm-gateway/connect')
+    await flushPromises()
+    const connectWrapper = mount(LlmGatewayConnectPage, { global: { plugins: [router] } })
+    await flushPromises()
+    expect(connectWrapper.find('[data-testid="llm-gateway-connect-page"]').exists()).toBe(true)
+    expect(connectWrapper.text()).toContain('Connection Guide')
+    connectWrapper.unmount()
   })
 })

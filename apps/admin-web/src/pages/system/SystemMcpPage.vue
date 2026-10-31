@@ -286,7 +286,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <section class="space-y-6">
+  <section class="space-y-4">
     <PageHeader
       :eyebrow="isVi ? 'HẠ TẦNG HỆ THỐNG' : 'SYSTEM INFRASTRUCTURE'"
       :title="isVi ? 'System & Knowledge MCP Server' : 'System & Knowledge MCP Server'"

@@ -11,7 +11,7 @@ const { t } = useI18n()
 </script>
 
 <template>
-  <section class="space-y-5" data-testid="notification-settings-page">
+  <section class="space-y-4" data-testid="notification-settings-page">
     <DetailHeader
       :title="t('notifications.settings.title')"
       :back-label="t('system.title')"
