@@ -76,7 +76,10 @@ it('defaults to Knowledge and switches its single displayed tree using the sourc
     expect(wrapper.get('.a-pane-heading').text()).not.toContain('File explorer')
     const tablist = wrapper.get('.a-pane-heading [role="tablist"][aria-label="Knowledge source"]')
     const tabs = tablist.findAll('[role="tab"]')
-    expect(tabs.map(tab => tab.text())).toEqual(['Knowledge', 'File'])
+    expect(tabs.map(tab => tab.text())).toEqual(['', ''])
+    expect(tabs.map(tab => tab.attributes('aria-label'))).toEqual(['Knowledge', 'File'])
+    expect(tabs.map(tab => tab.attributes('title'))).toEqual(['Knowledge', 'File'])
+    expect(tabs.every(tab => tab.find('svg').exists())).toBe(true)
     expect(tabs[0]!.attributes('aria-selected')).toBe('true')
     expect(tabs[1]!.attributes('aria-selected')).toBe('false')
     expect(wrapper.text()).toContain('Wiki Demo')
@@ -140,7 +143,7 @@ it('hides file and folder creation actions in the Knowledge tab and shows them o
     expect(wrapper.find('button[aria-label^="Create note in"]').exists()).toBe(false)
 
     const fileTab = wrapper.findAll('[role="tablist"][aria-label="Knowledge source"] [role="tab"]')
-      .find(tab => tab.text() === 'File')!
+      .find(tab => tab.attributes('aria-label') === 'File')!
     await fileTab.trigger('click')
     await flushPromises()
     expect(wrapper.find('button[aria-label="Add folder"]').exists()).toBe(true)
@@ -165,7 +168,7 @@ it('persists the selected vault and restores it on reload', async () => {
   const first = mount(KnowledgePage)
   await flushPromises()
   const fileTab = first.findAll('[role="tablist"][aria-label="Knowledge source"] [role="tab"]')
-    .find(tab => tab.text() === 'File')!
+    .find(tab => tab.attributes('aria-label') === 'File')!
   await fileTab.trigger('click')
   await flushPromises()
   expect(window.localStorage.getItem('voice-agent-knowledge-vault-space')).toBe('raw')
@@ -175,7 +178,7 @@ it('persists the selected vault and restores it on reload', async () => {
   try {
     await flushPromises()
     const restoredFileTab = again.findAll('[role="tablist"][aria-label="Knowledge source"] [role="tab"]')
-      .find(tab => tab.text() === 'File')!
+      .find(tab => tab.attributes('aria-label') === 'File')!
     expect(restoredFileTab.attributes('aria-selected')).toBe('true')
     expect(requestJsonMock).toHaveBeenCalledWith('/api/admin/knowledge/tree?space=raw')
     expect(again.get('.tree-holder').text()).toContain('raw-file')
@@ -207,7 +210,7 @@ it('creates an empty Raw note in the selected folder and saves its content with 
   try {
     await flushPromises()
     const fileTab = wrapper.findAll('[role="tablist"][aria-label="Knowledge source"] [role="tab"]')
-      .find(tab => tab.text() === 'File')!
+      .find(tab => tab.attributes('aria-label') === 'File')!
     await fileTab.trigger('click')
     await flushPromises()
     await wrapper.get('button[aria-label="Create note in notes"]').trigger('click')
@@ -232,7 +235,7 @@ it('cancels inline note naming with Escape in the File tab', async () => {
   try {
     await flushPromises()
     const fileTab = wrapper.findAll('[role="tablist"][aria-label="Knowledge source"] [role="tab"]')
-      .find(tab => tab.text() === 'File')!
+      .find(tab => tab.attributes('aria-label') === 'File')!
     await fileTab.trigger('click')
     await flushPromises()
     await wrapper.get('button[aria-label="Add file"]').trigger('click')
@@ -258,7 +261,7 @@ it('creates nested folders through Explorer in the File tab without writing a fi
   try {
     await flushPromises()
     const fileTab = wrapper.findAll('[role="tablist"][aria-label="Knowledge source"] [role="tab"]')
-      .find(tab => tab.text() === 'File')!
+      .find(tab => tab.attributes('aria-label') === 'File')!
     await fileTab.trigger('click')
     await flushPromises()
     await wrapper.get('button[aria-label="Add folder"]').trigger('click')
@@ -378,7 +381,7 @@ it('opens a Job Wiki link even when the explorer previously selected raw space',
   const wrapper = mount(KnowledgePage)
   await flushPromises()
   const knowledgeTab = wrapper.findAll('[role="tablist"][aria-label="Knowledge source"] [role="tab"]')
-    .find(tab => tab.text() === 'Knowledge')!
+    .find(tab => tab.attributes('aria-label') === 'Knowledge')!
   expect(knowledgeTab.attributes('aria-selected')).toBe('true')
   expect(wrapper.get('.doc h1').text()).toBe('Wiki Demo')
   wrapper.unmount()
@@ -426,7 +429,7 @@ it('uploads a dropped Markdown file into the File space and displays its content
       },
     }])
     const fileTab = wrapper.findAll('[role="tablist"][aria-label="Knowledge source"] [role="tab"]')
-      .find(tab => tab.text() === 'File')!
+      .find(tab => tab.attributes('aria-label') === 'File')!
     expect(fileTab.attributes('aria-selected')).toBe('true')
     expect(wrapper.get('.doc h1').text()).toBe('Guide')
     expect(wrapper.get('.markdown-body').text()).toContain('Dragged into page.')
@@ -601,7 +604,7 @@ it('toggles Explorer search, queries Wiki and File spaces, and opens matching do
 
     // 2. Switching to File (raw) space keeps search open and automatically re-runs search in raw space
     const fileTab = wrapper.findAll('[role="tablist"][aria-label="Knowledge source"] [role="tab"]')
-      .find(tab => tab.text() === 'File')!
+      .find(tab => tab.attributes('aria-label') === 'File')!
     await fileTab.trigger('click')
     await flushPromises()
 
@@ -871,7 +874,7 @@ it('persists Recent items across reloads and switches space when clicking a Rece
     await flushPromises()
     // Initial load opened Wiki Demo in Knowledge (wiki) space
     const fileTab = first.findAll('[role="tablist"][aria-label="Knowledge source"] [role="tab"]')
-      .find(tab => tab.text() === 'File')!
+      .find(tab => tab.attributes('aria-label') === 'File')!
     await fileTab.trigger('click')
     await flushPromises()
     const rawLeaf = first.findAll('button.tree-leaf').find(btn => btn.text().includes('raw-file'))!
@@ -901,7 +904,7 @@ it('persists Recent items across reloads and switches space when clicking a Rece
     await flushPromises()
 
     const knowledgeTab = second.findAll('[role="tablist"][aria-label="Knowledge source"] [role="tab"]')
-      .find(tab => tab.text() === 'Knowledge')!
+      .find(tab => tab.attributes('aria-label') === 'Knowledge')!
     expect(knowledgeTab.attributes('aria-selected')).toBe('true')
     expect(second.get('.doc h1').text()).toBe('Wiki Demo')
     expect(second.findAll('button.a-recent-item').map(btn => btn.get('.a-recent-title').text())).toEqual([

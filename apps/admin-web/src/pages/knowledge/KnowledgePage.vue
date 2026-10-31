@@ -216,8 +216,8 @@ function toggleSearch() {
   })
 }
 const storageSpaces = [
-  { id: 'wiki', label: 'knowledgeV3.viewWiki' },
-  { id: 'raw', label: 'knowledgeV3.viewRaw' },
+  { id: 'wiki', label: 'knowledgeV3.viewWiki', icon: BookOpen },
+  { id: 'raw', label: 'knowledgeV3.viewRaw', icon: FileText },
 ] as const
 const activeSpace = ref<TreeSpace>(restoredVaultSpace())
 watch(activeSpace, space => {
@@ -1192,10 +1192,13 @@ onMounted(() => {
         <div class="a-source-tabs" role="tablist" aria-label="Knowledge source">
           <button v-for="space in storageSpaces" :key="space.id" type="button" role="tab"
             class="a-source-tab" :class="{ active: activeSpace === space.id }"
+            :aria-label="t(space.label)" :title="t(space.label)"
             :aria-selected="activeSpace === space.id" :disabled="busy"
-            @click="selectSpace(space.id)">{{ t(space.label) }}</button>
+            @click="selectSpace(space.id)">
+            <component :is="space.icon" :size="18" aria-hidden="true" />
+          </button>
         </div>
-        <div class="flex items-center gap-1">
+        <div class="flex shrink-0 items-center gap-1">
           <template v-if="activeSpace === 'raw'">
             <button type="button" class="icon-button" aria-label="Add folder" title="Add folder"
               :disabled="busy" @click="newFolder"><FolderPlus :size="17" /></button>
