@@ -1,5 +1,18 @@
 <script setup lang="ts">
-import { Activity, ArrowRight, CircleHelp, FlaskConical, Layers3, Pencil, Play, RefreshCw, RotateCcw, Settings2, Trash2 } from '@lucide/vue'
+import {
+  Activity,
+  FlaskConical,
+  Layers3,
+  LayoutGrid,
+  LayoutTemplate,
+  Link2,
+  Pencil,
+  Play,
+  RefreshCw,
+  Settings2,
+  ShieldAlert,
+  Trash2,
+} from '@lucide/vue'
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
 
@@ -14,18 +27,26 @@ import ProviderTestPanel from '@/components/providers/ProviderTestPanel.vue'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { useI18n } from '@/composables/useI18n'
-import { effectiveLlmTags, type ProviderInstance, type ProviderStatus, type ProviderType } from '@/domain/admin'
-import { providerTypeIcons } from '@/lib/providerTypeIcons'
+import {
+  effectiveLlmTags,
+  type ProviderInstance,
+  type ProviderStatus,
+  type ProviderType,
+} from '@/domain/admin'
 import { redactEndpoint } from '@/lib/providerEndpoint'
+import { providerTypeIcons } from '@/lib/providerTypeIcons'
 import { useAdminStore } from '@/stores/admin'
+
+type DetailTab = 'overview' | 'config' | 'runtime' | 'test' | 'bindings'
 
 const route = useRoute()
 const router = useRouter()
 const catalogRoute = computed(() => ({ path: '/providers', query: route.query }))
 const store = useAdminStore()
-const { t, providerTypeLabel } = useI18n()
-const key = computed(() => typeof route.params.key === 'string' ? route.params.key : '')
+const { t, providerTypeLabel, providerStatusLabel } = useI18n()
+const key = computed(() => (typeof route.params.key === 'string' ? route.params.key : ''))
 
+const activeTab = ref<DetailTab>('overview')
 const provider = ref<AdminProvider>()
 const adapterDescriptor = ref<ProviderAdapter>()
 const bindings = ref<ProviderTemplate[]>([])
@@ -42,11 +63,25 @@ const deleteOpen = ref(false)
 let loadController: AbortController | undefined
 let bindingController: AbortController | undefined
 
+const lifecycleList = [
+  { id: 'cold', label: 'Initial' },
+  { id: 'queued', label: 'Queued' },
+  { id: 'loading', label: 'Loading' },
+  { id: 'ready', label: 'Ready' },
+  { id: 'failed', label: 'Failed' },
+  { id: 'draining', label: 'Draining' },
+  { id: 'quarantined', label: 'Quarantined' },
+] as const
+
 function parseConfig(value: string): Record<string, unknown> {
   try {
     const parsed: unknown = JSON.parse(value)
-    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed as Record<string, unknown> : {}
-  } catch { return {} }
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : {}
+  } catch {
+    return {}
+  }
 }
 
 const config = computed(() => parseConfig(provider.value?.config_json ?? '{}'))
@@ -57,26 +92,68 @@ function stringConfig(field: string) {
 const model = computed(() => stringConfig('model'))
 const endpoint = computed(() => redactEndpoint(stringConfig('base_url') || stringConfig('endpoint')))
 const enabled = computed(() => provider.value?.enabled === 1)
-const runtimeState = computed(() => provider.value?.runtime?.desired_state ?? provider.value?.runtime_status ?? 'not_loaded')
+const runtimeState = computed(
+  () => provider.value?.runtime?.desired_state ?? provider.value?.runtime_status ?? 'not_loaded',
+)
 const isRuntimeReady = computed(() =>
   provider.value?.runtime
     ? provider.value.runtime.desired_state === 'ready'
     : provider.value?.runtime_status === 'loaded' && provider.value.runtime_matches_desired,
 )
 const typeIcon = computed(() => providerTypeIcons[provider.value?.type ?? 'llm'])
-const runtimeTone = computed(() => isRuntimeReady.value
-  ? 'text-success'
-  : runtimeState.value === 'failed' || runtimeState.value === 'quarantined' || runtimeState.value === 'unavailable'
-    ? 'text-danger'
-    : 'text-warning')
+const runtimeTone = computed(() =>
+  isRuntimeReady.value
+    ? 'text-success'
+    : runtimeState.value === 'failed' ||
+        runtimeState.value === 'quarantined' ||
+        runtimeState.value === 'unavailable'
+      ? 'text-danger'
+      : 'text-warning',
+)
+
+const status = computed<ProviderStatus>(() => {
+  if (!enabled.value) return 'disabled'
+  if (
+    runtimeState.value === 'failed' ||
+    runtimeState.value === 'quarantined' ||
+    runtimeState.value === 'unavailable'
+  ) {
+    return 'error'
+  }
+  return 'ready'
+})
+
+const typeIconBoxClass = computed(() => {
+  switch (provider.value?.type) {
+    case 'asr':
+      return 'border-sky-500/25 bg-sky-500/12 text-sky-400'
+    case 'tts':
+      return 'border-emerald-500/25 bg-emerald-500/12 text-emerald-400'
+    case 'vad':
+      return 'border-amber-500/25 bg-amber-500/12 text-amber-400'
+    case 'llm':
+      return 'border-violet-500/25 bg-violet-500/12 text-violet-400'
+    default:
+      return 'border-primary/25 bg-primary/12 text-primary'
+  }
+})
+
+const statusChipClass = computed(() => {
+  if (status.value === 'error') return 'border-danger/30 bg-danger/10 text-danger'
+  if (status.value === 'disabled') return 'border-border/70 bg-muted/40 text-muted-foreground'
+  return 'border-emerald-500/30 bg-emerald-500/10 text-emerald-400'
+})
+
+const statusDotClass = computed(() => {
+  if (status.value === 'error') return 'bg-danger'
+  if (status.value === 'disabled') return 'bg-muted-foreground'
+  return 'bg-emerald-400 shadow-[0_0_0_3px_rgba(16,185,129,0.14)]'
+})
 
 /** This is the current desired configuration, not an inference health check. */
 const editableProvider = computed<ProviderInstance | undefined>(() => {
   const item = provider.value
   if (!item) return undefined
-  const status: ProviderStatus = !item.enabled ? 'disabled'
-    : runtimeState.value === 'failed' || runtimeState.value === 'quarantined' || runtimeState.value === 'unavailable'
-      ? 'error' : 'ready'
   return {
     id: item.key,
     source: item.source,
@@ -87,7 +164,7 @@ const editableProvider = computed<ProviderInstance | undefined>(() => {
     model: model.value,
     description: stringConfig('description'),
     endpoint: stringConfig('base_url') || stringConfig('endpoint'),
-    status,
+    status: status.value,
     desiredRevision: item.revision,
     runtime: item.runtime,
     credential: item.credential,
@@ -95,23 +172,44 @@ const editableProvider = computed<ProviderInstance | undefined>(() => {
   }
 })
 
-const sensitiveField = (field: string) => /key|token|password|secret|credential|auth|signature/i.test(field)
-const configFields = computed(() => (adapterDescriptor.value?.config_schema?.fields ?? [])
-  .filter((field) => !sensitiveField(field.key) && field.key !== 'model' && field.key !== 'base_url' && field.key !== 'endpoint')
-  .flatMap((field) => {
-    const rawValue = config.value[field.key]
-    const value =
-      rawValue === undefined && field.key === 'tags' && provider.value?.type === 'llm'
-        ? effectiveLlmTags({ type: 'llm', configJson: config.value })
-        : rawValue
-    if (value === undefined || value === null) return []
-    if (Array.isArray(value)) {
-      const items = value.map(String).filter(Boolean)
-      return items.length ? [{ key: field.key, label: field.label || field.key, value: items.join(', ') }] : []
-    }
-    if (typeof value === 'object') return []
-    return [{ key: field.key, label: field.label || field.key, value: typeof value === 'string' && (value.startsWith('https://') || value.startsWith('http://')) ? redactEndpoint(value) : String(value) }]
-  }))
+const sensitiveField = (field: string) =>
+  /key|token|password|secret|credential|auth|signature/i.test(field)
+const configFields = computed(() =>
+  (adapterDescriptor.value?.config_schema?.fields ?? [])
+    .filter(
+      (field) =>
+        !sensitiveField(field.key) &&
+        field.key !== 'model' &&
+        field.key !== 'base_url' &&
+        field.key !== 'endpoint',
+    )
+    .flatMap((field) => {
+      const rawValue = config.value[field.key]
+      const value =
+        rawValue === undefined && field.key === 'tags' && provider.value?.type === 'llm'
+          ? effectiveLlmTags({ type: 'llm', configJson: config.value })
+          : rawValue
+      if (value === undefined || value === null) return []
+      if (Array.isArray(value)) {
+        const items = value.map(String).filter(Boolean)
+        return items.length
+          ? [{ key: field.key, label: field.label || field.key, value: items.join(', ') }]
+          : []
+      }
+      if (typeof value === 'object') return []
+      return [
+        {
+          key: field.key,
+          label: field.label || field.key,
+          value:
+            typeof value === 'string' &&
+            (value.startsWith('https://') || value.startsWith('http://'))
+              ? redactEndpoint(value)
+              : String(value),
+        },
+      ]
+    }),
+)
 
 async function load() {
   loadController?.abort()
@@ -130,9 +228,14 @@ async function load() {
     const item = await providersApi.get(key.value, pending.signal)
     if (pending.signal.aborted) return
     provider.value = item
-    const descriptor = providerAdaptersApi.get(item.adapter, pending.signal)
-      .then((result) => { if (!pending.signal.aborted) adapterDescriptor.value = result })
-      .catch(() => { /* Optional schema does not block provider management. */ })
+    const descriptor = providerAdaptersApi
+      .get(item.adapter, pending.signal)
+      .then((result) => {
+        if (!pending.signal.aborted) adapterDescriptor.value = result
+      })
+      .catch(() => {
+        /* Optional schema does not block provider management. */
+      })
     const page = await providersApi.templates(item.key, 1, 50, pending.signal)
     if (pending.signal.aborted) return
     bindings.value = page.items
@@ -147,13 +250,19 @@ async function load() {
 }
 
 async function loadMoreBindings() {
-  if (!provider.value || loadingBindings.value || bindings.value.length >= bindingTotal.value) return
+  if (!provider.value || loadingBindings.value || bindings.value.length >= bindingTotal.value)
+    return
   bindingController?.abort()
   const pending = new AbortController()
   bindingController = pending
   loadingBindings.value = true
   try {
-    const page = await providersApi.templates(provider.value.key, nextBindingPage.value, 50, pending.signal)
+    const page = await providersApi.templates(
+      provider.value.key,
+      nextBindingPage.value,
+      50,
+      pending.signal,
+    )
     if (pending.signal.aborted) return
     bindings.value = [...bindings.value, ...page.items]
     nextBindingPage.value += 1
@@ -208,20 +317,33 @@ function save(payload: {
   const hasGatewayBinding =
     payload.adapter === 'llm_gateway' ||
     (typeof nextConfig.gateway_binding === 'string' && nextConfig.gateway_binding.trim().length > 0)
-  void mutate(() => providersApi.update(current.key, {
-    name: payload.name,
-    adapter: payload.adapter,
-    config_json: nextConfig,
-    enabled: payload.status !== 'disabled',
-    ...(hasGatewayBinding || payload.apiKey === null
-      ? { api_key: null }
-      : payload.apiKey
-        ? { api_key: payload.apiKey }
-        : {}),
-  }, current.revision))
+  void mutate(() =>
+    providersApi.update(
+      current.key,
+      {
+        name: payload.name,
+        adapter: payload.adapter,
+        config_json: nextConfig,
+        enabled: payload.status !== 'disabled',
+        ...(hasGatewayBinding || payload.apiKey === null
+          ? { api_key: null }
+          : payload.apiKey
+            ? { api_key: payload.apiKey }
+            : {}),
+      },
+      current.revision,
+    ),
+  )
 }
 async function remove() {
-  if (!provider.value || isConfigProvider.value || !bindingsLoaded.value || bindingTotal.value > 0 || busy.value) return
+  if (
+    !provider.value ||
+    isConfigProvider.value ||
+    !bindingsLoaded.value ||
+    bindingTotal.value > 0 ||
+    busy.value
+  )
+    return
   const current = provider.value
   busy.value = true
   error.value = ''
@@ -237,11 +359,16 @@ async function remove() {
   }
 }
 
-watch(key, () => {
-  editOpen.value = false
-  deleteOpen.value = false
-  void load()
-}, { immediate: true })
+watch(
+  key,
+  () => {
+    activeTab.value = 'overview'
+    editOpen.value = false
+    deleteOpen.value = false
+    void load()
+  },
+  { immediate: true },
+)
 onBeforeUnmount(() => {
   loadController?.abort()
   bindingController?.abort()
@@ -249,242 +376,752 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <main class="mx-auto max-w-7xl space-y-5">
-    <DetailHeader v-if="provider" :title="provider.name" :back-label="t('providers.title')" @back="router.push(catalogRoute)">
+  <div class="space-y-4">
+    <DetailHeader
+      :title="provider?.name || key || t('providers.detailTitle')"
+      :back-label="t('providers.title')"
+      @back="router.push(catalogRoute)"
+    >
       <template #icon>
-        <span class="flex size-10 shrink-0 items-center justify-center rounded-xl border border-studio-violet/20 bg-studio-violet/10 text-studio-violet">
-          <component :is="typeIcon" class="size-5" aria-hidden="true" />
-        </span>
-      </template>
-      <template #details>
-        <div class="flex flex-wrap items-center gap-x-2 gap-y-1">
-          <span class="font-medium">{{ providerTypeLabel(provider.type) }}</span>
-          <Badge v-if="provider.source === 'config'" variant="outline">Config</Badge>
-          <span aria-hidden="true">·</span>
-          <span class="font-mono">{{ provider.adapter }}</span>
-          <span aria-hidden="true">·</span>
-          <span class="break-all font-mono">{{ provider.key }}</span>
+        <div
+          class="flex size-9 shrink-0 items-center justify-center rounded-lg border"
+          :class="typeIconBoxClass"
+        >
+          <component :is="typeIcon" class="size-4" aria-hidden="true" />
         </div>
       </template>
+
+      <template #details>
+        <div class="flex flex-wrap items-center gap-x-2 gap-y-1">
+          <span v-if="provider" class="font-medium uppercase">
+            {{ providerTypeLabel(provider.type) }}
+          </span>
+          <span v-if="provider" class="font-mono">· {{ provider.adapter }}</span>
+          <span v-if="provider" class="font-mono">· {{ provider.key }}</span>
+          <Badge v-if="isConfigProvider" variant="outline">Config</Badge>
+        </div>
+      </template>
+
       <template #actions>
-        <Button variant="outline" size="sm" :disabled="busy" @click="load">
-          <RefreshCw class="size-4" aria-hidden="true" />{{ t('common.refresh') }}
+        <span
+          v-if="provider"
+          class="inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium"
+          :class="statusChipClass"
+        >
+          <span class="size-1.5 rounded-full" :class="statusDotClass" aria-hidden="true" />
+          {{ providerStatusLabel(status) }}
+        </span>
+
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          :disabled="loading || busy"
+          @click="load"
+        >
+          <RefreshCw class="size-3.5" aria-hidden="true" />
+          {{ t('common.refresh') }}
         </Button>
-        <Button variant="outline" size="sm" :disabled="busy || isConfigProvider" :title="isConfigProvider ? 'Managed by deployment config' : undefined" @click="editOpen = true">
-          <Pencil class="size-4" aria-hidden="true" />{{ t('common.edit') }}
+
+        <Button
+          v-if="provider"
+          type="button"
+          variant="outline"
+          size="sm"
+          :disabled="busy || isConfigProvider"
+          @click="editOpen = true"
+        >
+          <Pencil class="size-3.5" aria-hidden="true" />
+          {{ t('common.edit') }}
         </Button>
-        <Button variant="outline" size="sm" :disabled="busy || isConfigProvider" @click="toggleEnabled">
+
+        <Button
+          v-if="provider"
+          type="button"
+          variant="outline"
+          size="sm"
+          :disabled="busy || isConfigProvider"
+          @click="toggleEnabled"
+        >
           {{ enabled ? t('providerDetail.disable') : t('providerDetail.enable') }}
         </Button>
-        <Button variant="ghost" size="sm" class="text-danger" :disabled="busy || isConfigProvider || !bindingsLoaded || bindingTotal > 0" @click="deleteOpen = true">
-          <Trash2 class="size-4" aria-hidden="true" />{{ t('common.delete') }}
+
+        <Button
+          v-if="provider"
+          type="button"
+          variant="outline"
+          size="sm"
+          class="text-danger"
+          :disabled="busy || isConfigProvider || !bindingsLoaded || bindingTotal > 0"
+          @click="deleteOpen = true"
+        >
+          <Trash2 class="size-3.5" aria-hidden="true" />
+          {{ t('common.delete') }}
         </Button>
       </template>
     </DetailHeader>
 
-    <p v-if="error" role="alert" class="rounded-lg border border-danger/30 bg-danger/5 px-4 py-3 text-sm text-danger">{{ error }}</p>
-    <div v-if="loading && !provider" class="studio-panel p-10 text-center text-muted-foreground" role="status">
+    <p v-if="error" role="alert" class="studio-panel p-4 text-sm text-danger">
+      {{ error }}
+    </p>
+    <p v-else-if="loading" class="studio-panel p-4 text-sm text-muted-foreground">
       {{ t('common.loading') }}
-    </div>
-    <div v-if="!loading && !provider" class="space-y-3">
-      <RouterLink :to="catalogRoute" class="text-sm text-studio-violet hover:underline">← {{ t('providers.title') }}</RouterLink>
-      <p class="text-sm text-muted-foreground">{{ t('providerDetail.unavailable') }}</p>
-      <Button variant="outline" @click="load">{{ t('common.retry') }}</Button>
-    </div>
+    </p>
 
-    <template v-if="provider">
-      <div class="grid gap-3 sm:grid-cols-2 xl:grid-cols-4" aria-label="Provider summary">
-        <section class="studio-panel px-4 py-3">
-          <p class="text-xs text-muted-foreground">{{ t('providerDetail.configurationState') }}</p>
-          <div class="mt-2 flex items-center gap-2 font-semibold">
-            <span class="size-2 rounded-full" :class="enabled ? 'bg-success' : 'bg-muted-foreground'" aria-hidden="true" />
-            {{ enabled ? t('providerDetail.enabled') : t('providerDetail.disabled') }}
+    <template v-else-if="provider">
+      <!-- Variant A Horizontal Detail Tabs -->
+      <nav
+        class="flex flex-wrap items-center gap-1 border-b border-border/70 pb-2"
+        aria-label="Provider detail sections"
+      >
+        <button
+          type="button"
+          class="inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors"
+          :class="
+            activeTab === 'overview'
+              ? 'border-primary/40 bg-primary/12 text-foreground'
+              : 'border-transparent text-muted-foreground hover:bg-muted/40 hover:text-foreground'
+          "
+          @click="activeTab = 'overview'"
+        >
+          <LayoutGrid class="size-3.5" aria-hidden="true" />
+          {{ t('providerDetail.tab.overview') }}
+        </button>
+
+        <button
+          type="button"
+          class="inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors"
+          :class="
+            activeTab === 'config'
+              ? 'border-primary/40 bg-primary/12 text-foreground'
+              : 'border-transparent text-muted-foreground hover:bg-muted/40 hover:text-foreground'
+          "
+          @click="activeTab = 'config'"
+        >
+          <Settings2 class="size-3.5" aria-hidden="true" />
+          {{ t('providerDetail.tab.config') }}
+        </button>
+
+        <button
+          type="button"
+          class="inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors"
+          :class="
+            activeTab === 'runtime'
+              ? 'border-primary/40 bg-primary/12 text-foreground'
+              : 'border-transparent text-muted-foreground hover:bg-muted/40 hover:text-foreground'
+          "
+          @click="activeTab = 'runtime'"
+        >
+          <Activity class="size-3.5" aria-hidden="true" />
+          {{ t('providerDetail.tab.runtime') }}
+        </button>
+
+        <button
+          type="button"
+          class="inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors"
+          :class="
+            activeTab === 'test'
+              ? 'border-primary/40 bg-primary/12 text-foreground'
+              : 'border-transparent text-muted-foreground hover:bg-muted/40 hover:text-foreground'
+          "
+          @click="activeTab = 'test'"
+        >
+          <FlaskConical class="size-3.5" aria-hidden="true" />
+          {{ t('providerDetail.tab.test') }}
+        </button>
+
+        <button
+          type="button"
+          class="inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors"
+          :class="
+            activeTab === 'bindings'
+              ? 'border-primary/40 bg-primary/12 text-foreground'
+              : 'border-transparent text-muted-foreground hover:bg-muted/40 hover:text-foreground'
+          "
+          @click="activeTab = 'bindings'"
+        >
+          <Link2 class="size-3.5" aria-hidden="true" />
+          {{ t('providerDetail.tab.bindings') }}
+          <span class="rounded-full bg-muted px-1.5 py-0.2 text-[10px] tabular-nums text-muted-foreground">
+            {{ bindingTotal }}
+          </span>
+        </button>
+      </nav>
+
+      <!-- TAB 1: OVERVIEW -->
+      <div v-show="activeTab === 'overview'" class="space-y-4">
+        <!-- 4 Summary KPI Cards -->
+        <section class="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          <div class="studio-panel flex items-center gap-3 p-3.5">
+            <span class="flex size-8 shrink-0 items-center justify-center rounded-lg border border-border/70 bg-muted/30 text-muted-foreground">
+              <Settings2 class="size-4" aria-hidden="true" />
+            </span>
+            <div class="min-w-0">
+              <p class="text-sm font-semibold" :class="enabled ? 'text-success' : 'text-muted-foreground'">
+                {{ enabled ? t('providerDetail.enabled') : t('providerDetail.disabled') }}
+              </p>
+              <p class="truncate text-xs text-muted-foreground">
+                {{ t('providerDetail.configurationState') }}
+              </p>
+            </div>
           </div>
-          <p class="mt-1 text-xs text-muted-foreground">{{ t('providerDetail.enabledHint') }}</p>
-        </section>
-        <section class="studio-panel px-4 py-3">
-          <p class="text-xs text-muted-foreground">{{ t('diagnostics.runtime') }}</p>
-          <div class="mt-2 flex items-center gap-2 font-semibold" :class="runtimeTone">
-            <Activity class="size-4" aria-hidden="true" />
-            <span class="capitalize">{{ runtimeState.replaceAll('_', ' ') }}</span>
+
+          <div class="studio-panel flex items-center gap-3 p-3.5">
+            <span class="flex size-8 shrink-0 items-center justify-center rounded-lg border border-border/70 bg-muted/30 text-muted-foreground">
+              <Activity class="size-4" aria-hidden="true" />
+            </span>
+            <div class="min-w-0">
+              <p class="font-mono text-sm font-semibold" :class="runtimeTone">{{ runtimeState }}</p>
+              <p class="truncate text-xs text-muted-foreground">
+                {{ t('providers.status') }}
+              </p>
+            </div>
           </div>
-          <p class="mt-1 text-xs text-muted-foreground">{{ t('providerDetail.runtimeHint') }}</p>
+
+          <div class="studio-panel flex items-center gap-3 p-3.5">
+            <span class="flex size-8 shrink-0 items-center justify-center rounded-lg border border-border/70 bg-muted/30 text-muted-foreground">
+              <Link2 class="size-4" aria-hidden="true" />
+            </span>
+            <div class="min-w-0">
+              <p class="text-sm font-semibold tabular-nums">{{ bindingTotal }}</p>
+              <p class="truncate text-xs text-muted-foreground">
+                {{ t('providers.templateUsage') }}
+              </p>
+            </div>
+          </div>
+
+          <div class="studio-panel flex items-center gap-3 p-3.5">
+            <span class="flex size-8 shrink-0 items-center justify-center rounded-lg border border-border/70 bg-muted/30 text-muted-foreground">
+              <Layers3 class="size-4" aria-hidden="true" />
+            </span>
+            <div class="min-w-0">
+              <p class="font-mono text-sm font-semibold">
+                r{{ provider.runtime?.desired_revision ?? provider.revision }}
+              </p>
+              <p class="truncate text-xs text-muted-foreground">
+                {{ t('providerDetail.desiredRevision') }}
+              </p>
+            </div>
+          </div>
         </section>
-        <section class="studio-panel px-4 py-3">
-          <p class="text-xs text-muted-foreground">{{ t('providers.templateUsage') }}</p>
-          <p class="mt-2 text-lg font-semibold tabular-nums">{{ bindingTotal }}</p>
-          <p class="mt-1 text-xs text-muted-foreground">{{ t('providerDetail.bindingsHint') }}</p>
-        </section>
-        <section class="studio-panel px-4 py-3">
-          <p class="text-xs text-muted-foreground">{{ t('providerDetail.desiredRevision') }}</p>
-          <p class="mt-2 font-mono text-lg font-semibold tabular-nums">r{{ provider.revision }}</p>
-          <p class="mt-1 text-xs text-muted-foreground">{{ t('providerDetail.revisionHint') }}</p>
-        </section>
+
+        <!-- Overview 2-Column Grid -->
+        <div class="grid gap-4 lg:grid-cols-[minmax(0,1.15fr)_minmax(0,0.85fr)]">
+          <div class="space-y-4">
+            <!-- Provider Overview Card -->
+            <section class="studio-panel space-y-3 p-4">
+              <div class="flex items-center justify-between gap-2 border-b border-border/60 pb-2.5">
+                <h2 class="text-sm font-semibold">{{ t('providerDetail.overviewCard') }}</h2>
+                <Button type="button" size="sm" variant="outline" @click="activeTab = 'config'">
+                  <Settings2 class="size-3.5" aria-hidden="true" />
+                  {{ t('providerDetail.tab.config') }}
+                </Button>
+              </div>
+
+              <p v-if="stringConfig('description')" class="text-xs leading-relaxed text-muted-foreground">
+                {{ stringConfig('description') }}
+              </p>
+
+              <dl class="divide-y divide-border/50 text-xs">
+                <div class="flex items-center justify-between gap-3 py-2">
+                  <dt class="text-muted-foreground">Key</dt>
+                  <dd class="font-mono">{{ provider.key }}</dd>
+                </div>
+                <div class="flex items-center justify-between gap-3 py-2">
+                  <dt class="text-muted-foreground">{{ t('providers.type') }}</dt>
+                  <dd>{{ providerTypeLabel(provider.type) }}</dd>
+                </div>
+                <div class="flex items-center justify-between gap-3 py-2">
+                  <dt class="text-muted-foreground">{{ t('providers.adapter') }}</dt>
+                  <dd class="font-mono">{{ provider.adapter }}</dd>
+                </div>
+                <div class="flex items-center justify-between gap-3 py-2">
+                  <dt class="text-muted-foreground">{{ t('providers.model') }}</dt>
+                  <dd class="font-mono">{{ model || t('providers.modelMissing') }}</dd>
+                </div>
+                <div class="flex items-center justify-between gap-3 py-2">
+                  <dt class="text-muted-foreground">{{ t('providers.endpoint') }}</dt>
+                  <dd class="max-w-[60%] truncate font-mono" :title="endpoint || '—'">
+                    {{ endpoint || '—' }}
+                  </dd>
+                </div>
+                <div class="flex items-center justify-between gap-3 py-2">
+                  <dt class="text-muted-foreground">Source</dt>
+                  <dd class="font-mono">{{ isConfigProvider ? 'Config (read-only)' : 'Database' }}</dd>
+                </div>
+              </dl>
+            </section>
+
+            <!-- Quick Actions Card -->
+            <section class="studio-panel space-y-2.5 p-4">
+              <h2 class="text-sm font-semibold">{{ t('providerDetail.quickActions') }}</h2>
+              <div class="flex flex-wrap items-center gap-2">
+                <Button type="button" size="sm" @click="activeTab = 'test'">
+                  <FlaskConical class="size-3.5" aria-hidden="true" />
+                  {{ t('providerDetail.tab.test') }}
+                </Button>
+                <Button type="button" size="sm" variant="outline" @click="activeTab = 'runtime'">
+                  <Activity class="size-3.5" aria-hidden="true" />
+                  {{ t('providerDetail.tab.runtime') }}
+                </Button>
+                <Button type="button" size="sm" variant="outline" @click="activeTab = 'bindings'">
+                  <Link2 class="size-3.5" aria-hidden="true" />
+                  {{ t('providerDetail.tab.bindings') }}
+                </Button>
+              </div>
+            </section>
+          </div>
+
+          <div class="space-y-4">
+            <!-- Runtime Snapshot Card -->
+            <section class="studio-panel space-y-3 p-4">
+              <div class="flex items-center justify-between gap-2 border-b border-border/60 pb-2.5">
+                <h2 class="text-sm font-semibold">{{ t('providerDetail.runtimeSnapshot') }}</h2>
+                <span
+                  class="inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-[11px] font-medium"
+                  :class="statusChipClass"
+                >
+                  <span class="size-1.5 rounded-full" :class="statusDotClass" aria-hidden="true" />
+                  {{ providerStatusLabel(status) }}
+                </span>
+              </div>
+
+              <dl class="divide-y divide-border/50 text-xs">
+                <div class="flex items-center justify-between gap-3 py-2">
+                  <dt class="text-muted-foreground">{{ t('providerDetail.desiredState') }}</dt>
+                  <dd class="font-mono font-semibold" :class="runtimeTone">{{ runtimeState }}</dd>
+                </div>
+                <div class="flex items-center justify-between gap-3 py-2">
+                  <dt class="text-muted-foreground">{{ t('providerDetail.readyRevisions') }}</dt>
+                  <dd class="font-mono">
+                    {{
+                      provider.runtime?.ready_revisions?.length
+                        ? provider.runtime.ready_revisions.map((item) => `r${item}`).join(', ')
+                        : '—'
+                    }}
+                  </dd>
+                </div>
+                <div class="flex items-center justify-between gap-3 py-2">
+                  <dt class="text-muted-foreground">{{ t('providerDetail.runtimeMatch') }}</dt>
+                  <dd>
+                    {{
+                      isRuntimeReady
+                        ? t('providerDetail.matches')
+                        : t('providerDetail.notReady')
+                    }}
+                  </dd>
+                </div>
+                <div class="flex items-center justify-between gap-3 py-2">
+                  <dt class="text-muted-foreground">{{ t('providerDetail.failureCode') }}</dt>
+                  <dd class="font-mono text-danger">
+                    {{ provider.runtime?.failure_code || '—' }}
+                  </dd>
+                </div>
+              </dl>
+
+              <p v-if="provider.requires_restart" class="text-xs text-warning">
+                {{ t('providerDetail.restartRequired') }}
+              </p>
+
+              <div class="pt-1">
+                <Button
+                  type="button"
+                  size="sm"
+                  :disabled="busy || !enabled || !provider.runtime?.can_prepare"
+                  @click="prepare"
+                >
+                  <Play class="size-3.5" aria-hidden="true" />
+                  {{ t('providerDetail.prepare') }}
+                </Button>
+              </div>
+            </section>
+
+            <!-- Bound Templates Preview Card -->
+            <section class="studio-panel space-y-3 p-4">
+              <div class="flex items-center justify-between gap-2 border-b border-border/60 pb-2.5">
+                <h2 class="text-sm font-semibold">{{ t('providers.templateUsage') }}</h2>
+                <span class="rounded-full border border-border/70 bg-muted/40 px-2 py-0.5 text-[11px] font-medium tabular-nums text-muted-foreground">
+                  {{ bindingTotal }}
+                </span>
+              </div>
+
+              <p v-if="!bindings.length" class="text-xs text-muted-foreground">
+                {{ t('providers.usageEmpty') }}
+              </p>
+
+              <ul v-else class="divide-y divide-border/50 text-xs">
+                <li v-for="item in bindings.slice(0, 4)" :key="item.key" class="py-2">
+                  <RouterLink
+                    :to="`/templates/${item.key}`"
+                    class="flex items-center justify-between gap-3 rounded transition-colors hover:text-primary"
+                  >
+                    <span class="flex min-w-0 items-center gap-2">
+                      <LayoutTemplate class="size-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
+                      <span class="truncate font-medium">{{ item.name }}</span>
+                    </span>
+                    <span class="shrink-0 font-mono text-[11px] text-muted-foreground">{{ item.key }}</span>
+                  </RouterLink>
+                </li>
+              </ul>
+            </section>
+          </div>
+        </div>
       </div>
 
-      <div class="grid items-start gap-4 lg:grid-cols-[minmax(0,1.35fr)_minmax(300px,1fr)]">
-        <div class="min-w-0 space-y-4">
-          <section class="studio-panel space-y-4 p-4 sm:p-5" aria-labelledby="provider-test-heading">
-            <div class="flex items-start gap-3">
-              <span class="flex size-9 shrink-0 items-center justify-center rounded-lg bg-studio-violet/10 text-studio-violet">
-                <FlaskConical class="size-4" aria-hidden="true" />
-              </span>
-              <div>
-                <h2 id="provider-test-heading" class="font-semibold">{{ t('providers.testTitle') }}</h2>
-                <p class="mt-1 text-xs text-muted-foreground">{{ t('providerDetail.testHint') }}</p>
-              </div>
+      <!-- TAB 2: CONFIGURATION -->
+      <div
+        v-show="activeTab === 'config'"
+        class="grid gap-4 lg:grid-cols-[minmax(0,1.2fr)_minmax(0,0.8fr)]"
+      >
+        <section class="studio-panel space-y-3 p-4">
+          <div class="flex items-start justify-between gap-3 border-b border-border/60 pb-2.5">
+            <div>
+              <h2 class="text-sm font-semibold">{{ t('providerDetail.configurationTitle') }}</h2>
+              <p class="mt-0.5 text-xs text-muted-foreground">{{ t('providerDetail.secretHint') }}</p>
             </div>
-            <ProviderTestPanel
-              :key="`${provider.key}:${provider.revision}`"
-              :type="provider.type"
-              :adapter="provider.adapter"
-              :model="model"
-              :revision="provider.revision"
-              :saved-key="provider.key"
-              :capabilities="adapterDescriptor?.capabilities"
-            />
-          </section>
-
-          <section class="studio-panel space-y-4 p-4 sm:p-5" aria-labelledby="provider-runtime-heading">
-            <div class="flex flex-wrap items-start justify-between gap-3">
-              <div class="flex items-center gap-2">
-                <Activity class="size-4 text-studio-violet" aria-hidden="true" />
-                <div>
-                  <h2 id="provider-runtime-heading" class="font-semibold">{{ t('providerDetail.runtimeLifecycle') }}</h2>
-                  <p class="mt-1 text-xs text-muted-foreground">{{ t('providerDetail.runtimeNote') }}</p>
-                </div>
-              </div>
-              <Button
-                size="sm"
-                variant="outline"
-                :disabled="busy || !enabled || !provider.runtime?.can_prepare"
-                @click="prepare"
+            <div class="flex shrink-0 items-center gap-2">
+              <span
+                class="rounded-full border px-2 py-0.5 text-[11px] font-medium"
+                :class="
+                  isConfigProvider
+                    ? 'border-border/70 bg-muted/40 text-muted-foreground'
+                    : 'border-primary/30 bg-primary/10 text-primary'
+                "
               >
-                <Play class="size-4" aria-hidden="true" />{{ t('providerDetail.prepare') }}
+                {{ isConfigProvider ? 'Read only' : 'Editable' }}
+              </span>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                :disabled="busy || isConfigProvider"
+                @click="editOpen = true"
+              >
+                <Pencil class="size-3.5" aria-hidden="true" />
+                {{ t('common.edit') }}
               </Button>
             </div>
-            <div class="grid gap-3 rounded-lg border border-border/70 bg-surface/60 p-3 text-sm sm:grid-cols-2">
-              <div>
-                <p class="text-xs text-muted-foreground">{{ t('providerDetail.desiredState') }}</p>
-                <p class="mt-1 font-mono">{{ runtimeState }}</p>
-              </div>
-              <div>
-                <p class="text-xs text-muted-foreground">{{ t('providerDetail.readyRevisions') }}</p>
-                <p class="mt-1 font-mono">{{ provider.runtime?.ready_revisions.join(', ') || '—' }}</p>
-              </div>
-              <div>
-                <p class="text-xs text-muted-foreground">{{ t('providerDetail.runtimeMatch') }}</p>
-                <p class="mt-1">{{ provider.runtime_matches_desired ? t('providerDetail.matches') : t('providerDetail.notReady') }}</p>
-              </div>
-              <div>
-                <p class="text-xs text-muted-foreground">{{ t('providerDetail.failureCode') }}</p>
-                <p class="mt-1 break-all font-mono">{{ provider.runtime?.failure_code || '—' }}</p>
-              </div>
-            </div>
-            <p v-if="provider.requires_restart" class="flex items-start gap-2 text-xs text-warning">
-              <RotateCcw class="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
-              {{ t('providerDetail.restartRequired') }}
-            </p>
-            <p v-else-if="!enabled" class="text-xs text-muted-foreground">{{ t('providerDetail.disabledPrepare') }}</p>
-            <p v-else-if="!provider.runtime?.can_prepare && !isRuntimeReady" class="text-xs text-muted-foreground">{{ t('providerDetail.prepareUnavailable') }}</p>
-          </section>
-        </div>
+          </div>
 
-        <div class="min-w-0 space-y-4">
-          <section class="studio-panel space-y-4 p-4 sm:p-5" aria-labelledby="provider-config-heading">
-            <div class="flex items-center gap-2">
-              <Settings2 class="size-4 text-studio-violet" aria-hidden="true" />
-              <h2 id="provider-config-heading" class="font-semibold">{{ t('providerDetail.configurationTitle') }}</h2>
+          <dl class="grid gap-2.5 sm:grid-cols-2 text-xs">
+            <div class="rounded-lg border border-border/60 bg-muted/20 p-2.5">
+              <dt class="text-muted-foreground">{{ t('providers.model') }}</dt>
+              <dd class="mt-1 break-all font-mono">{{ model || t('providers.modelMissing') }}</dd>
             </div>
-            <p v-if="stringConfig('description')" class="text-sm text-muted-foreground">{{ stringConfig('description') }}</p>
-            <dl class="space-y-3 text-sm">
-              <div class="grid grid-cols-[110px_minmax(0,1fr)] gap-3">
-                <dt class="text-xs text-muted-foreground">{{ t('providers.type') }}</dt>
-                <dd>{{ providerTypeLabel(provider.type) }}</dd>
+            <div class="rounded-lg border border-border/60 bg-muted/20 p-2.5">
+              <dt class="text-muted-foreground">{{ t('providers.endpoint') }}</dt>
+              <dd class="mt-1 break-all font-mono">{{ endpoint || '—' }}</dd>
+            </div>
+            <div
+              v-for="field in configFields"
+              :key="field.key"
+              class="rounded-lg border border-border/60 bg-muted/20 p-2.5"
+            >
+              <dt class="text-muted-foreground">{{ field.label }}</dt>
+              <dd class="mt-1 break-all font-mono">{{ field.value }}</dd>
+            </div>
+          </dl>
+        </section>
+
+        <div class="space-y-4">
+          <section class="studio-panel space-y-3 p-4">
+            <h2 class="text-sm font-semibold">{{ t('providerDetail.configOwnership') }}</h2>
+            <div
+              class="flex items-start gap-2 rounded-lg border p-3 text-xs"
+              :class="
+                isConfigProvider
+                  ? 'border-warning/40 bg-warning/10 text-warning'
+                  : 'border-border/70 bg-muted/30 text-muted-foreground'
+              "
+            >
+              <ShieldAlert class="mt-0.5 size-4 shrink-0" aria-hidden="true" />
+              <span>
+                {{
+                  isConfigProvider
+                    ? t('providerDetail.configOwnershipConfig')
+                    : t('providerDetail.configOwnershipDb')
+                }}
+              </span>
+            </div>
+
+            <dl class="divide-y divide-border/50 text-xs">
+              <div class="flex items-center justify-between gap-3 py-2">
+                <dt class="text-muted-foreground">{{ t('providerDetail.desiredRevision') }}</dt>
+                <dd class="font-mono">r{{ provider.runtime?.desired_revision ?? provider.revision }}</dd>
               </div>
-              <div class="grid grid-cols-[110px_minmax(0,1fr)] gap-3">
-                <dt class="text-xs text-muted-foreground">{{ t('providers.adapter') }}</dt>
-                <dd class="break-all font-mono text-xs">{{ provider.adapter }}</dd>
+              <div class="flex items-center justify-between gap-3 py-2">
+                <dt class="text-muted-foreground">Source</dt>
+                <dd class="font-mono">{{ provider.source || 'database' }}</dd>
               </div>
-              <div class="grid grid-cols-[110px_minmax(0,1fr)] gap-3">
-                <dt class="text-xs text-muted-foreground">{{ t('providers.model') }}</dt>
-                <dd class="break-all font-mono text-xs">{{ model || t('providers.modelMissing') }}</dd>
-              </div>
-              <div v-if="endpoint" class="grid grid-cols-[110px_minmax(0,1fr)] gap-3">
-                <dt class="text-xs text-muted-foreground">{{ t('providers.endpoint') }}</dt>
-                <dd class="break-all font-mono text-xs">{{ endpoint }}</dd>
-              </div>
-              <div v-if="stringConfig('gateway_binding')" class="grid grid-cols-[110px_minmax(0,1fr)] gap-3">
-                <dt class="text-xs text-muted-foreground">{{ t('llmGateway.auth.title') }}</dt>
-                <dd class="flex flex-wrap items-center gap-2 font-mono text-xs">
-                  <Badge variant="outline">{{ stringConfig('gateway_binding') }}</Badge>
-                  <RouterLink to="/llm-gateway" class="text-studio-violet hover:underline">
-                    {{ t('llmGateway.auth.managePools') }}
-                  </RouterLink>
-                </dd>
-              </div>
-              <div v-for="field in configFields" :key="field.key" class="grid grid-cols-[110px_minmax(0,1fr)] gap-3">
-                <dt class="break-words text-xs text-muted-foreground">{{ field.label }}</dt>
-                <dd class="break-all font-mono text-xs">{{ field.value }}</dd>
+              <div class="flex items-center justify-between gap-3 py-2">
+                <dt class="text-muted-foreground">Secret</dt>
+                <dd class="font-mono">write-only</dd>
               </div>
             </dl>
-            <p class="flex items-center gap-1.5 border-t pt-3 text-xs text-muted-foreground">
-              <CircleHelp class="size-3.5 shrink-0" aria-hidden="true" />
-              {{ t('providerDetail.secretHint') }}
-            </p>
-            <Button size="sm" variant="outline" :disabled="busy || isConfigProvider" :title="isConfigProvider ? 'Managed by deployment config' : undefined" @click="editOpen = true">
-              <Pencil class="size-3.5" aria-hidden="true" />{{ t('common.edit') }}
-            </Button>
           </section>
 
-          <section class="studio-panel space-y-3 p-4 sm:p-5" aria-labelledby="provider-bindings-heading">
-            <div class="flex items-center justify-between gap-2">
-              <div class="flex items-center gap-2">
-                <Layers3 class="size-4 text-studio-violet" aria-hidden="true" />
-                <h2 id="provider-bindings-heading" class="font-semibold">{{ t('providers.templateUsage') }}</h2>
-              </div>
-              <span class="text-xs tabular-nums text-muted-foreground">{{ bindingTotal }}</span>
-            </div>
-            <p class="text-xs text-muted-foreground">{{ t('providerDetail.bindingDescription') }}</p>
-            <p v-if="!bindingTotal" class="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">
-              {{ t('providers.usageEmpty') }}
+          <section class="studio-panel space-y-2 p-4">
+            <h2 class="text-sm font-semibold">{{ t('providerDetail.schemaHintTitle') }}</h2>
+            <p class="text-xs leading-relaxed text-muted-foreground">
+              {{ t('providerDetail.secretHint') }}
             </p>
-            <ul v-else class="divide-y divide-border/70 rounded-lg border border-border/70">
-              <li v-for="binding in bindings" :key="binding.key">
-                <RouterLink :to="`/templates/${encodeURIComponent(binding.key)}`" class="group flex items-center justify-between gap-2 p-3 hover:bg-accent/40">
-                  <span class="min-w-0">
-                    <span class="block truncate text-sm font-medium">{{ binding.name }}</span>
-                    <span class="mt-0.5 block truncate text-xs text-muted-foreground">{{ binding.key }}</span>
-                  </span>
-                  <ArrowRight class="size-4 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5" aria-hidden="true" />
-                </RouterLink>
-              </li>
-            </ul>
-            <Button v-if="bindings.length < bindingTotal" variant="outline" size="sm" :disabled="loadingBindings" @click="loadMoreBindings">
-              {{ t('providerDetail.loadMore') }}
-            </Button>
-            <p v-if="bindingTotal > 0" class="text-xs text-muted-foreground">{{ t('providerDetail.deleteGuard') }}</p>
           </section>
         </div>
       </div>
 
-      <ProviderFormModal
-        v-model="editOpen"
-        :provider="editableProvider"
-        :providers="store.providers"
-        :usage-count="bindingTotal"
-        @save="save"
-      />
-      <ConfirmDialog
-        v-model="deleteOpen"
-        tone="danger"
-        :title="t('providerDelete.title', { name: provider.name })"
-        :description="t('providerDelete.description')"
-        :confirm-label="t('providerDelete.submit')"
-        @confirm="remove"
+      <!-- TAB 3: RUNTIME -->
+      <div
+        v-show="activeTab === 'runtime'"
+        class="grid gap-4 lg:grid-cols-[minmax(0,1.15fr)_minmax(0,0.85fr)]"
       >
-        {{ t('providerDelete.unused') }}
-      </ConfirmDialog>
+        <section class="studio-panel space-y-3 p-4">
+          <div class="flex items-center justify-between gap-3 border-b border-border/60 pb-2.5">
+            <div>
+              <h2 class="text-sm font-semibold">{{ t('providerDetail.runtimeLifecycle') }}</h2>
+              <p class="mt-0.5 text-xs text-muted-foreground">{{ t('providerDetail.runtimeNote') }}</p>
+            </div>
+            <Button
+              type="button"
+              size="sm"
+              :disabled="busy || !enabled || !provider.runtime?.can_prepare"
+              @click="prepare"
+            >
+              <Play class="size-3.5" aria-hidden="true" />
+              {{ t('providerDetail.prepare') }}
+            </Button>
+          </div>
+
+          <dl class="grid gap-2.5 sm:grid-cols-2 text-xs">
+            <div class="rounded-lg border border-border/60 bg-muted/20 p-2.5">
+              <dt class="text-muted-foreground">{{ t('providerDetail.desiredState') }}</dt>
+              <dd class="mt-1 font-mono font-semibold">{{ runtimeState }}</dd>
+            </div>
+            <div class="rounded-lg border border-border/60 bg-muted/20 p-2.5">
+              <dt class="text-muted-foreground">{{ t('providerDetail.readyRevisions') }}</dt>
+              <dd class="mt-1 font-mono">
+                {{
+                  provider.runtime?.ready_revisions?.length
+                    ? provider.runtime.ready_revisions.map((item) => `r${item}`).join(', ')
+                    : '—'
+                }}
+              </dd>
+            </div>
+            <div class="rounded-lg border border-border/60 bg-muted/20 p-2.5">
+              <dt class="text-muted-foreground">{{ t('providerDetail.runtimeMatch') }}</dt>
+              <dd class="mt-1 font-semibold">
+                {{ isRuntimeReady ? t('providerDetail.matches') : t('providerDetail.notReady') }}
+              </dd>
+            </div>
+            <div class="rounded-lg border border-border/60 bg-muted/20 p-2.5">
+              <dt class="text-muted-foreground">{{ t('providerDetail.failureCode') }}</dt>
+              <dd class="mt-1 font-mono text-danger">
+                {{ provider.runtime?.failure_code || '—' }}
+              </dd>
+            </div>
+          </dl>
+
+          <p v-if="provider.requires_restart" class="text-xs text-warning">
+            {{ t('providerDetail.restartRequired') }}
+          </p>
+          <p v-if="!enabled" class="text-xs text-muted-foreground">
+            {{ t('providerDetail.disabledPrepare') }}
+          </p>
+          <p v-else-if="!provider.runtime?.can_prepare" class="text-xs text-muted-foreground">
+            {{ t('providerDetail.prepareUnavailable') }}
+          </p>
+        </section>
+
+        <div class="space-y-4">
+          <section class="studio-panel space-y-2.5 p-4">
+            <h2 class="text-sm font-semibold">{{ t('providerDetail.lifecycleStates') }}</h2>
+            <div class="divide-y divide-border/50 text-xs">
+              <div
+                v-for="item in lifecycleList"
+                :key="item.id"
+                class="flex items-center justify-between gap-2 py-2"
+              >
+                <span class="inline-flex items-center gap-2 font-mono">
+                  <Activity class="size-3.5 text-muted-foreground" aria-hidden="true" />
+                  {{ item.id }}
+                </span>
+                <span
+                  v-if="runtimeState === item.id"
+                  class="rounded-full border border-primary/40 bg-primary/12 px-2 py-0.5 text-[10px] font-semibold text-primary"
+                >
+                  {{ t('providerDetail.currentState') }}
+                </span>
+                <span v-else class="text-[11px] text-muted-foreground">{{ item.label }}</span>
+              </div>
+            </div>
+          </section>
+        </div>
+      </div>
+
+      <!-- TAB 4: DIAGNOSTICS / TEST -->
+      <div
+        v-show="activeTab === 'test'"
+        class="grid gap-4 lg:grid-cols-[minmax(0,1.2fr)_minmax(0,0.8fr)]"
+      >
+        <section class="studio-panel space-y-3 p-4">
+          <div class="flex items-center justify-between gap-2 border-b border-border/60 pb-2.5">
+            <div>
+              <h2 class="text-sm font-semibold">{{ t('providers.testTitle') }}</h2>
+              <p class="mt-0.5 text-xs text-muted-foreground">{{ t('providerDetail.testHint') }}</p>
+            </div>
+            <span class="rounded-full border border-primary/30 bg-primary/10 px-2.5 py-0.5 text-[11px] font-semibold text-primary">
+              {{ providerTypeLabel(provider.type) }} TEST
+            </span>
+          </div>
+
+          <ProviderTestPanel
+            :type="provider.type"
+            :saved-key="provider.key"
+            :revision="provider.revision"
+            :adapter="provider.adapter"
+            :model="model"
+            :capabilities="adapterDescriptor?.capabilities"
+          />
+        </section>
+
+        <section class="studio-panel space-y-3 p-4">
+          <h2 class="border-b border-border/60 pb-2.5 text-sm font-semibold">
+            {{ t('providerDetail.testContext') }}
+          </h2>
+          <dl class="divide-y divide-border/50 text-xs">
+            <div class="flex items-center justify-between gap-3 py-2">
+              <dt class="text-muted-foreground">{{ t('providers.name') }}</dt>
+              <dd class="font-medium">{{ provider.name }}</dd>
+            </div>
+            <div class="flex items-center justify-between gap-3 py-2">
+              <dt class="text-muted-foreground">{{ t('providers.adapter') }}</dt>
+              <dd class="font-mono">{{ provider.adapter }}</dd>
+            </div>
+            <div class="flex items-center justify-between gap-3 py-2">
+              <dt class="text-muted-foreground">{{ t('providers.model') }}</dt>
+              <dd class="font-mono">{{ model || '—' }}</dd>
+            </div>
+            <div class="flex items-center justify-between gap-3 py-2">
+              <dt class="text-muted-foreground">{{ t('providerDetail.desiredRevision') }}</dt>
+              <dd class="font-mono">r{{ provider.runtime?.desired_revision ?? provider.revision }}</dd>
+            </div>
+            <div class="flex items-center justify-between gap-3 py-2">
+              <dt class="text-muted-foreground">Input kind</dt>
+              <dd class="font-mono">
+                {{
+                  provider.type === 'asr'
+                    ? 'audio/wav'
+                    : provider.type === 'vad'
+                      ? 'PCM sample'
+                      : 'text'
+                }}
+              </dd>
+            </div>
+          </dl>
+        </section>
+      </div>
+
+      <!-- TAB 5: TEMPLATE BINDINGS -->
+      <div
+        v-show="activeTab === 'bindings'"
+        class="grid gap-4 lg:grid-cols-[minmax(0,1.2fr)_minmax(0,0.8fr)]"
+      >
+        <section class="studio-panel space-y-3 p-4">
+          <div class="flex items-start justify-between gap-3 border-b border-border/60 pb-2.5">
+            <div>
+              <h2 class="text-sm font-semibold">{{ t('providers.templateUsage') }}</h2>
+              <p class="mt-0.5 text-xs text-muted-foreground">
+                {{ t('providerDetail.bindingDescription') }}
+              </p>
+            </div>
+            <span class="rounded-full border border-border/70 bg-muted/40 px-2.5 py-0.5 text-xs font-medium tabular-nums text-muted-foreground">
+              {{ t('providers.templatesShort', { count: bindingTotal }) }}
+            </span>
+          </div>
+
+          <p v-if="!bindings.length" class="text-xs text-muted-foreground">
+            {{ t('providers.usageEmpty') }}
+          </p>
+
+          <ul v-else class="divide-y divide-border/60 text-xs">
+            <li v-for="template in bindings" :key="template.key" class="py-2.5">
+              <RouterLink
+                :to="`/templates/${template.key}`"
+                class="flex items-center justify-between gap-3 rounded-md p-1 transition-colors hover:bg-accent"
+              >
+                <span class="flex min-w-0 items-center gap-2">
+                  <LayoutTemplate class="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+                  <span class="truncate font-medium">{{ template.name }}</span>
+                </span>
+                <span class="shrink-0 font-mono text-xs text-muted-foreground">{{ template.key }}</span>
+              </RouterLink>
+            </li>
+          </ul>
+
+          <Button
+            v-if="bindings.length < bindingTotal"
+            type="button"
+            variant="outline"
+            size="sm"
+            :disabled="loadingBindings"
+            @click="loadMoreBindings"
+          >
+            {{ loadingBindings ? t('common.loading') : t('providerDetail.loadMore') }}
+          </Button>
+        </section>
+
+        <section class="studio-panel space-y-3 p-4">
+          <h2 class="border-b border-border/60 pb-2.5 text-sm font-semibold">
+            {{ t('providerDetail.dependencyGuard') }}
+          </h2>
+          <div
+            class="flex items-start gap-2 rounded-lg border p-3 text-xs"
+            :class="
+              bindingTotal > 0 || isConfigProvider
+                ? 'border-warning/40 bg-warning/10 text-warning'
+                : 'border-border/70 bg-muted/30 text-muted-foreground'
+            "
+          >
+            <ShieldAlert class="mt-0.5 size-4 shrink-0" aria-hidden="true" />
+            <span>
+              {{
+                bindingTotal > 0
+                  ? t('providerDetail.deleteGuard')
+                  : isConfigProvider
+                    ? t('providerDetail.configOwnershipConfig')
+                    : t('providerDelete.unused')
+              }}
+            </span>
+          </div>
+
+          <dl class="divide-y divide-border/50 text-xs">
+            <div class="flex items-center justify-between gap-3 py-2">
+              <dt class="text-muted-foreground">{{ t('providers.templateUsage') }}</dt>
+              <dd class="font-mono">{{ bindingTotal }}</dd>
+            </div>
+            <div class="flex items-center justify-between gap-3 py-2">
+              <dt class="text-muted-foreground">{{ t('providerDetail.deletionAllowed') }}</dt>
+              <dd class="font-mono">{{ !bindingTotal && !isConfigProvider ? 'Yes' : 'No' }}</dd>
+            </div>
+          </dl>
+        </section>
+      </div>
     </template>
-  </main>
+
+    <ProviderFormModal
+      v-if="editableProvider && !isConfigProvider"
+      v-model="editOpen"
+      :provider="editableProvider"
+      @submit="save"
+    />
+
+    <ConfirmDialog
+      v-model="deleteOpen"
+      :title="t('providerDelete.title', { name: provider?.name ?? '' })"
+      :description="t('providerDelete.description')"
+      :confirm-label="t('providerDelete.submit')"
+      @confirm="remove"
+    >
+      <p class="text-xs text-muted-foreground">{{ t('providerDelete.unused') }}</p>
+    </ConfirmDialog>
+  </div>
 </template>

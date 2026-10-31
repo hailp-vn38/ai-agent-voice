@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Plus, Search } from '@lucide/vue'
+import { Activity, Check, Layers, Link2, Plus, Search, X } from '@lucide/vue'
 import { computed, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
@@ -88,6 +88,20 @@ function usageFor(providerId: string): ProviderUsageEntry[] {
   }))
 }
 
+const totalProvidersCount = computed(() => store.providers.length)
+const readyProvidersCount = computed(
+  () => store.providers.filter((provider) => provider.status === 'ready').length,
+)
+const attentionProvidersCount = computed(
+  () => store.providers.filter((provider) => provider.status === 'error').length,
+)
+const totalBindingsCount = computed(() =>
+  store.providers.reduce(
+    (sum, provider) => sum + store.templatesUsingProvider(provider.id).length,
+    0,
+  ),
+)
+
 const editingUsageCount = computed(() =>
   editingProvider.value ? store.getProviderTemplateCount(editingProvider.value.id) : 0,
 )
@@ -127,6 +141,7 @@ const groups = computed(() =>
   providerTypes
     .map((type) => ({
       key: type as string,
+      type,
       label: providerTypeLabel(type),
       icon: providerTypeIcons[type],
       providers: visibleProviders.value.filter((provider) => provider.type === type),
@@ -135,22 +150,38 @@ const groups = computed(() =>
 )
 
 /**
- * A single type view skips the heading, since the active tab already names it.
+ * In Variant A, each non-empty type group displays its compact section header + 3-column grid.
  */
-const displayGroups = computed(() => {
-  if (activeType.value !== ALL) {
-    return visibleProviders.value.length
-      ? [{ key: activeType.value, label: '', icon: undefined, providers: visibleProviders.value }]
-      : []
-  }
-  return groups.value
-})
+const displayGroups = computed(() => groups.value)
+
+const hasFilters = computed(
+  () =>
+    activeType.value !== ALL ||
+    statusFilter.value !== ALL ||
+    tagFilter.value !== ALL ||
+    Boolean(searchQuery.value.trim()),
+)
 
 const activeTypeLabel = computed(() =>
   activeType.value === ALL ? t('common.all') : providerTypeLabel(activeType.value as ProviderType),
 )
 
 const activeProviderType = computed(() => activeType.value as ProviderType)
+
+function typeGroupBadgeClass(type: ProviderType) {
+  switch (type) {
+    case 'asr':
+      return 'border-sky-500/25 bg-sky-500/12 text-sky-400'
+    case 'tts':
+      return 'border-emerald-500/25 bg-emerald-500/12 text-emerald-400'
+    case 'vad':
+      return 'border-amber-500/25 bg-amber-500/12 text-amber-400'
+    case 'llm':
+      return 'border-violet-500/25 bg-violet-500/12 text-violet-400'
+    default:
+      return 'border-primary/25 bg-primary/12 text-primary'
+  }
+}
 
 function clearFilters() {
   searchQuery.value = ''
@@ -216,8 +247,13 @@ function providerNameById(id?: string) {
 </script>
 
 <template>
-  <section class="space-y-6">
-    <PageHeader :title="t('providers.title')" :description="t('providers.description')">
+  <section class="space-y-4">
+    <!-- Header -->
+    <PageHeader
+      :eyebrow="t('providers.eyebrow')"
+      :title="t('providers.title')"
+      :description="t('providers.description')"
+    >
       <template #actions>
         <Button :aria-label="t('providers.create')" @click="openCreate()">
           <Plus class="size-4" />
@@ -226,83 +262,162 @@ function providerNameById(id?: string) {
       </template>
     </PageHeader>
 
-    <div class="flex flex-col gap-2 sm:flex-row sm:items-center">
-      <div class="relative sm:max-w-sm sm:flex-1">
-        <Search
-          class="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground"
-          aria-hidden="true"
-        />
-        <input
-          v-model="searchQuery"
-          class="admin-input pl-9"
-          type="search"
-          :placeholder="t('providers.search')"
-          :aria-label="t('providers.searchLabel')"
-        />
+    <!-- 4 KPI Summary Cards (Variant A) -->
+    <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+      <div class="studio-panel flex items-center justify-between gap-3 p-3.5">
+        <div>
+          <p class="text-xl font-bold tracking-tight tabular-nums">{{ totalProvidersCount }}</p>
+          <p class="mt-0.5 text-xs text-muted-foreground">{{ t('providers.stat.total') }}</p>
+        </div>
+        <span class="flex size-9 shrink-0 items-center justify-center rounded-lg border border-primary/25 bg-primary/10 text-primary">
+          <Layers class="size-4" aria-hidden="true" />
+        </span>
       </div>
 
-      <select
-        v-model="statusFilter"
-        class="admin-input sm:w-44"
-        :aria-label="t('providers.statusFilter')"
-      >
-        <option v-for="option in statusOptions" :key="option.value" :value="option.value">
-          {{ t(option.label) }}
-        </option>
-      </select>
+      <div class="studio-panel flex items-center justify-between gap-3 p-3.5">
+        <div>
+          <p class="text-xl font-bold tracking-tight tabular-nums text-emerald-400">{{ readyProvidersCount }}</p>
+          <p class="mt-0.5 text-xs text-muted-foreground">{{ t('providers.stat.ready') }}</p>
+        </div>
+        <span class="flex size-9 shrink-0 items-center justify-center rounded-lg border border-emerald-500/25 bg-emerald-500/10 text-emerald-400">
+          <Check class="size-4" aria-hidden="true" />
+        </span>
+      </div>
+
+      <div class="studio-panel flex items-center justify-between gap-3 p-3.5">
+        <div>
+          <p
+            class="text-xl font-bold tracking-tight tabular-nums"
+            :class="attentionProvidersCount > 0 ? 'text-amber-400' : 'text-foreground'"
+          >
+            {{ attentionProvidersCount }}
+          </p>
+          <p class="mt-0.5 text-xs text-muted-foreground">{{ t('providers.stat.attention') }}</p>
+        </div>
+        <span class="flex size-9 shrink-0 items-center justify-center rounded-lg border border-amber-500/25 bg-amber-500/10 text-amber-400">
+          <Activity class="size-4" aria-hidden="true" />
+        </span>
+      </div>
+
+      <div class="studio-panel flex items-center justify-between gap-3 p-3.5">
+        <div>
+          <p class="text-xl font-bold tracking-tight tabular-nums">{{ totalBindingsCount }}</p>
+          <p class="mt-0.5 text-xs text-muted-foreground">{{ t('providers.stat.bindings') }}</p>
+        </div>
+        <span class="flex size-9 shrink-0 items-center justify-center rounded-lg border border-sky-500/25 bg-sky-500/10 text-sky-400">
+          <Link2 class="size-4" aria-hidden="true" />
+        </span>
+      </div>
     </div>
 
-    <ProviderTypeTabs v-model="activeType" :counts="typeCounts" />
+    <!-- Type Tabs + Capability Tags + Filter Toolbar -->
+    <div class="space-y-2.5">
+      <div class="flex flex-wrap items-center justify-between gap-2">
+        <ProviderTypeTabs v-model="activeType" :counts="typeCounts" />
 
-    <div
-      v-if="activeType === 'llm' || activeType === ALL"
-      class="flex flex-wrap items-center gap-1.5"
-      role="group"
-      aria-label="LLM capability tags"
-    >
-      <button
-        type="button"
-        data-tag-filter="all"
-        :aria-pressed="tagFilter === ALL"
-        :class="[
-          'rounded-full border px-2.5 py-1 text-xs font-medium transition-colors',
-          tagFilter === ALL
-            ? 'border-primary bg-primary text-primary-foreground'
-            : 'border-border bg-background text-muted-foreground hover:bg-accent hover:text-foreground',
-        ]"
-        @click="tagFilter = ALL"
-      >
-        {{ t('common.all') }}
-      </button>
-      <button
-        v-for="tag in llmCapabilityTags"
-        :key="tag"
-        type="button"
-        :data-tag-filter="tag"
-        :aria-pressed="tagFilter === tag"
-        :class="[
-          'rounded-full border px-2.5 py-1 font-mono text-xs transition-colors',
-          tagFilter === tag
-            ? 'border-primary bg-primary text-primary-foreground'
-            : 'border-border bg-background text-muted-foreground hover:bg-accent hover:text-foreground',
-        ]"
-        @click="tagFilter = tagFilter === tag ? ALL : tag"
-      >
-        {{ tag }}
-      </button>
+        <div
+          v-if="activeType === 'llm' || activeType === ALL"
+          class="flex flex-wrap items-center gap-1.5"
+          role="group"
+          aria-label="LLM capability tags"
+        >
+          <button
+            type="button"
+            data-tag-filter="all"
+            :aria-pressed="tagFilter === ALL"
+            :class="[
+              'rounded-full border px-2.5 py-1 text-xs font-medium transition-colors',
+              tagFilter === ALL
+                ? 'border-primary bg-primary text-primary-foreground'
+                : 'border-border bg-background text-muted-foreground hover:bg-accent hover:text-foreground',
+            ]"
+            @click="tagFilter = ALL"
+          >
+            {{ t('common.all') }}
+          </button>
+          <button
+            v-for="tag in llmCapabilityTags"
+            :key="tag"
+            type="button"
+            :data-tag-filter="tag"
+            :aria-pressed="tagFilter === tag"
+            :class="[
+              'rounded-full border px-2.5 py-1 font-mono text-xs transition-colors',
+              tagFilter === tag
+                ? 'border-primary bg-primary text-primary-foreground'
+                : 'border-border bg-background text-muted-foreground hover:bg-accent hover:text-foreground',
+            ]"
+            @click="tagFilter = tagFilter === tag ? ALL : tag"
+          >
+            {{ tag }}
+          </button>
+        </div>
+      </div>
+
+      <!-- Filter toolbar -->
+      <div class="flex flex-col gap-2 sm:flex-row sm:items-center">
+        <div class="relative sm:max-w-sm sm:flex-1">
+          <Search
+            class="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground"
+            aria-hidden="true"
+          />
+          <input
+            v-model="searchQuery"
+            class="admin-input pl-9"
+            type="search"
+            :placeholder="t('providers.search')"
+            :aria-label="t('providers.searchLabel')"
+          />
+        </div>
+
+        <select
+          v-model="statusFilter"
+          class="admin-input sm:w-44"
+          :aria-label="t('providers.statusFilter')"
+        >
+          <option v-for="option in statusOptions" :key="option.value" :value="option.value">
+            {{ t(option.label) }}
+          </option>
+        </select>
+
+        <span class="inline-flex items-center self-start rounded-full border border-border/70 bg-muted/30 px-2.5 py-1 text-xs font-medium text-muted-foreground sm:self-auto">
+          {{ t('providers.resultCount', { count: visibleProviders.length }) }}
+        </span>
+
+        <Button
+          v-if="hasFilters"
+          variant="ghost"
+          size="sm"
+          class="self-start sm:self-auto"
+          @click="clearFilters"
+        >
+          <X class="size-3.5" aria-hidden="true" />
+          {{ t('providers.clearFilters') }}
+        </Button>
+      </div>
     </div>
 
     <CardListSkeleton v-if="store.loading" class="gap-3 sm:grid-cols-2 xl:grid-cols-3" />
-    <div v-else-if="displayGroups.length" class="space-y-8">
-      <section v-for="group in displayGroups" :key="group.key" class="space-y-3">
-        <h2
-          v-if="group.label"
-          class="flex items-center gap-2 text-xs font-semibold tracking-wider text-muted-foreground uppercase"
-        >
-          <component :is="group.icon" class="size-3.5" aria-hidden="true" />
-          {{ group.label }}
-        </h2>
-        <div class="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+
+    <!-- Grouped Compact 3-Column Grid -->
+    <div v-else-if="displayGroups.length" class="space-y-4">
+      <section v-for="group in displayGroups" :key="group.key" class="space-y-2.5">
+        <div class="flex items-center justify-between gap-2">
+          <h2 class="inline-flex items-center gap-2 text-sm font-bold tracking-tight text-foreground">
+            <span
+              class="flex size-6 items-center justify-center rounded-md border"
+              :class="typeGroupBadgeClass(group.type)"
+            >
+              <component :is="group.icon" class="size-3.5" aria-hidden="true" />
+            </span>
+            <span>{{ group.label }}</span>
+            <small class="text-xs font-medium text-muted-foreground">
+              {{ t('providers.groupCount', { count: group.providers.length }) }}
+            </small>
+          </h2>
+        </div>
+
+        <div class="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
           <ProviderCatalogCard
             v-for="provider in group.providers"
             :key="provider.id"
@@ -320,7 +435,7 @@ function providerNameById(id?: string) {
 
     <div
       v-else-if="isSearching"
-      class="rounded-xl border border-dashed border-border/80 px-4 py-16 text-center"
+      class="rounded-xl border border-dashed border-border/80 px-4 py-12 text-center"
     >
       <p class="text-sm font-medium">{{ t('providers.searchEmptyTitle', { query: searchQuery.trim() }) }}</p>
       <p class="mt-1 text-sm text-muted-foreground">{{ t('providers.searchEmptyDescription') }}</p>
@@ -331,7 +446,7 @@ function providerNameById(id?: string) {
 
     <div
       v-else-if="activeType !== ALL"
-      class="rounded-xl border border-dashed border-border/80 px-4 py-16 text-center"
+      class="rounded-xl border border-dashed border-border/80 px-4 py-12 text-center"
     >
       <p class="text-sm font-medium">
         {{ t('providers.emptyTypeTitle', { type: activeTypeLabel }) }}
@@ -345,7 +460,7 @@ function providerNameById(id?: string) {
 
     <div
       v-else-if="statusFilter !== ALL"
-      class="rounded-xl border border-dashed border-border/80 px-4 py-16 text-center"
+      class="rounded-xl border border-dashed border-border/80 px-4 py-12 text-center"
     >
       <p class="text-sm font-medium">{{ t('providers.filterEmptyTitle') }}</p>
       <p class="mt-1 text-sm text-muted-foreground">{{ t('providers.filterEmptyDescription') }}</p>
@@ -354,7 +469,7 @@ function providerNameById(id?: string) {
       </Button>
     </div>
 
-    <div v-else class="rounded-xl border border-dashed border-border/80 px-4 py-16 text-center">
+    <div v-else class="rounded-xl border border-dashed border-border/80 px-4 py-12 text-center">
       <p class="text-sm font-medium">{{ t('providers.emptyTitle') }}</p>
       <p class="mt-1 text-sm text-muted-foreground">{{ t('providers.emptyDescription') }}</p>
       <Button class="mt-4" @click="openCreate()">

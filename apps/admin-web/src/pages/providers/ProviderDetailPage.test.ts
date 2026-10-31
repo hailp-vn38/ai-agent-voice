@@ -179,3 +179,17 @@ it('displays multi_select capability tags in configuration details when present'
   expect(wrapper.text()).toContain('chat, vision, image')
   wrapper.unmount()
 })
+
+it('switches between the 5 detail tabs (Overview, Configuration, Runtime, Diagnostics, Templates)', async () => {
+  const wrapper = render()
+  await flushPromises()
+  const navButtons = wrapper.findAll('nav[aria-label="Provider detail sections"] button')
+  expect(navButtons).toHaveLength(5)
+
+  for (const button of navButtons) {
+    await button.trigger('click')
+    await flushPromises()
+    expect(button.classes()).toContain('border-primary/40')
+  }
+  wrapper.unmount()
+})

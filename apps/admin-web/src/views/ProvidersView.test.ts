@@ -124,3 +124,29 @@ it('renders capability tags on LLM cards and filters LLM providers by capability
     wrapper.unmount()
   }
 })
+
+it('navigates to provider detail when clicking a compact card directly', async () => {
+  const router = createRouter({
+    history: createMemoryHistory(),
+    routes: [
+      { path: '/providers', name: 'providers', component: ProvidersView },
+      { path: '/providers/:key', name: 'provider-detail', component: ProviderDetailPage },
+    ],
+  })
+  await router.push('/providers')
+  await router.isReady()
+  const wrapper = mount(defineComponent({ components: { RouterView }, template: '<RouterView />' }), {
+    global: {
+      plugins: [router],
+      stubs: { ProviderCreateDrawer: true, ProviderFormModal: true, LinkProviderTemplateDialog: true, ConfirmDialog: true, ProviderTestPanel: true },
+    },
+  })
+  try {
+    const firstCard = wrapper.findComponent(ProviderCatalogCard)
+    await firstCard.trigger('click')
+    await flushPromises()
+    expect(router.currentRoute.value.path).toBe('/providers/llm_primary')
+  } finally {
+    wrapper.unmount()
+  }
+})
