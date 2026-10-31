@@ -80,15 +80,26 @@ pub(crate) async fn run_media_turn_once(
         lease.retain_session();
     }
 
-    let res = execute_media_turn_on_lease(
-        &mut lease,
-        batches,
-        images,
-        kind,
-        transparent_background,
-        timeout_duration,
-    )
-    .await;
+    let recovered = match &retained {
+        Some(session) if session.last_timed_out && matches!(kind, MediaKind::Video) => {
+            recover_finished_video(&mut lease, batches).await
+        }
+        _ => None,
+    };
+    let res = match recovered {
+        Some(output) => Ok(output),
+        None => {
+            execute_media_turn_on_lease(
+                &mut lease,
+                batches,
+                images,
+                kind,
+                transparent_background,
+                timeout_duration,
+            )
+            .await
+        }
+    };
 
     if let Err(WorkflowFailure::Upstream(err_kind, _)) = &res {
         lease.fail_account(*err_kind).await;
@@ -103,6 +114,7 @@ pub(crate) async fn run_media_turn_once(
             account_key.to_string(),
             lease.session_id().to_string(),
             Arc::clone(lease.client()),
+            matches!(res, Err(WorkflowFailure::Timeout(_))),
         ));
         entry.set_account_hint(Some(account_key.to_string()));
     }
@@ -560,6 +572,51 @@ async fn collect_media_turn(
         ready_candidates,
         assistant_bubbles,
     })
+}
+
+/// After a timed-out call, checks the job's chat for a video Muse finished in the meantime. Returns
+/// it only when it covers the whole requested duration, so a half-finished render is never
+/// handed over as the answer.
+async fn recover_finished_video(
+    lease: &mut VmOperationLease,
+    batches: &[MediaBatch],
+) -> Option<LlmOutput> {
+    let history_path = format!("/chat/history?session_id={}", lease.session_id());
+    let resp = lease
+        .client()
+        .send_request(
+            "GET",
+            &history_path,
+            None,
+            SERVICE_DAEMON,
+            Duration::from_secs(15),
+            false,
+        )
+        .await
+        .ok()?;
+    if resp.status != 200 {
+        return None;
+    }
+    let history_json = resp.json().ok()?;
+    let turn_events = extract_history_turn_events(&history_json);
+    if turn_events.is_empty() || has_active_tool_task(&turn_events) {
+        return None;
+    }
+    let bubbles = extract_turn_assistant_messages(&turn_events);
+    let candidates =
+        extract_candidates_from_stream_and_history(MediaKind::Video, &[], &turn_events, &bubbles);
+    let selected = select_effective_ready_attachments(&candidates);
+    if selected.is_empty() {
+        return None;
+    }
+    let parts = download_video_parts(lease, &selected).await.ok()?;
+    let wanted: u32 = batches.iter().filter_map(|b| b.target_secs).sum();
+    let total = total_duration_secs(&parts)?;
+    if wanted == 0 || video_shortfall_secs(Some(wanted), Some(total)) > 0 {
+        return None;
+    }
+    lease.finish_clean(None);
+    LlmOutput::from_media_parts(parts, format_clean_assistant_bubbles(&bubbles))
 }
 
 async fn send_media_stream_request(

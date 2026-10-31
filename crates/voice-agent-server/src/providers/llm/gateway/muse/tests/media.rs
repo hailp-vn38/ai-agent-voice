@@ -800,3 +800,39 @@ async fn video_timeout_is_reported_as_timed_out_and_keeps_the_job_session() {
         "the job session survives a timeout so the retry can continue it"
     );
 }
+
+#[tokio::test]
+async fn retry_after_timeout_recovers_a_video_that_finished_late_without_a_new_request() {
+    let stuck = FakeStreamTurn::media_reply(
+        vec![],
+        vec![vec![
+            json!({ "role": "user", "display_text": "prompt" }),
+            json!({ "role": "assistant", "status": "in_progress", "display_text": "working" }),
+        ]],
+        vec![],
+    );
+    let late = mp4_with_duration(30);
+    let acc = FakeVmAccount::new(vec![stuck]).with_file("/home/user/late.mp4", late.clone());
+    let transport = FakeMuseVmTransport::new(vec![Arc::clone(&acc)]);
+    let provider = build_gateway_muse_provider(&[SINGLE_COOKIE], transport).await;
+    tokio::time::pause();
+
+    let first = invoke_video(&provider, Some("job-late")).await;
+    assert!(matches!(first, Err(crate::providers::llm::LlmError::TimedOut)));
+
+    // Muse finishes the video after the first call gave up.
+    acc.set_history_polls(single_video_history(
+        "done [ALL_MEDIA_ATTACHED]",
+        "sandbox:///home/user/late.mp4",
+    ));
+
+    let second = invoke_video(&provider, Some("job-late")).await.expect("recovered");
+    let (parts, _) = second.into_media_parts().expect("media output");
+    assert_eq!(parts.len(), 1);
+    assert_eq!(parts[0].bytes, late, "the late video is returned as-is");
+    assert_eq!(
+        acc.stream_requests().len(),
+        1,
+        "recovery must not send another generation request"
+    );
+}

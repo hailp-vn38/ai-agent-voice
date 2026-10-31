@@ -58,6 +58,11 @@ impl FakeVmAccount {
         Arc::clone(self)
     }
 
+    /// Replaces the chat history served from now on (a video that finished after the call gave up).
+    pub fn set_history_polls(&self, polls: Vec<Vec<Value>>) {
+        *self.active_history.lock().unwrap() = VecDeque::from(polls);
+    }
+
     pub fn stream_requests(&self) -> Vec<Value> {
         self.stream_requests.lock().unwrap().clone()
     }
@@ -144,10 +149,7 @@ impl MuseVmSender for FakeVmSender {
             } else if path == "/fs/read" {
                 let body_json: Value =
                     serde_json::from_slice(&req.body).unwrap_or_else(|_| json!({}));
-                let raw_path = body_json
-                    .get("path")
-                    .and_then(Value::as_str)
-                    .unwrap_or("");
+                let raw_path = body_json.get("path").and_then(Value::as_str).unwrap_or("");
                 if raw_path.starts_with('/') {
                     send_json_response(
                         &self.tx,
@@ -164,10 +166,7 @@ impl MuseVmSender for FakeVmSender {
                     continue;
                 }
                 let file_path = raw_path.trim_start_matches("sandbox://");
-                let offset = body_json
-                    .get("offset")
-                    .and_then(Value::as_u64)
-                    .unwrap_or(0) as usize;
+                let offset = body_json.get("offset").and_then(Value::as_u64).unwrap_or(0) as usize;
                 let len = body_json
                     .get("len")
                     .and_then(Value::as_u64)

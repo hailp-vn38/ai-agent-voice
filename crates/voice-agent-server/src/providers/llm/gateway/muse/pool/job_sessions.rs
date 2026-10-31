@@ -24,14 +24,23 @@ pub(crate) struct JobSession {
     /// Gateway account that owns the VM holding the session; reuse is only valid on this account.
     pub account_key: String,
     pub session_id: String,
+    /// The previous call on this session gave up at its deadline, so Muse may still finish (or
+    /// have finished) its video; the next call should look at the chat before asking again.
+    pub last_timed_out: bool,
     client: Arc<MuseVmClient>,
 }
 
 impl JobSession {
-    pub fn new(account_key: String, session_id: String, client: Arc<MuseVmClient>) -> Self {
+    pub fn new(
+        account_key: String,
+        session_id: String,
+        client: Arc<MuseVmClient>,
+        last_timed_out: bool,
+    ) -> Self {
         Self {
             account_key,
             session_id,
+            last_timed_out,
             client,
         }
     }
