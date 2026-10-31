@@ -959,3 +959,37 @@ fn chillaudio_validate_and_synthesize_diagnostic_accept_supported_voices() {
         ("deepseek/deepseek-r1:free", None)
     );
 }
+
+#[test]
+fn normalized_wiki_host_tool_preserves_inner_tool_timeout_for_long_media_tasks() {
+    struct LongVideoTool;
+
+    #[async_trait::async_trait]
+    impl HostTool for LongVideoTool {
+        fn descriptor(&self) -> ToolDescriptor {
+            ToolDescriptor {
+                name: "video_create".to_string(),
+                description: "Create a video".to_string(),
+                input_schema: serde_json::json!({ "type": "object" }),
+                effect: orchestrator_agent_rs::ToolEffect::Mutating,
+            }
+        }
+
+        fn timeout(&self) -> Option<Duration> {
+            Some(Duration::from_secs(1800))
+        }
+
+        async fn execute(&self, _ctx: ToolContext, _args: Value) -> Result<ToolOutcome, ToolError> {
+            unreachable!()
+        }
+    }
+
+    let wrapped = NormalizedWikiHostTool {
+        inner: Arc::new(LongVideoTool),
+    };
+    assert_eq!(
+        wrapped.timeout(),
+        Some(Duration::from_secs(1800)),
+        "NormalizedWikiHostTool must forward custom HostTool::timeout() so video_create is not killed at 300s"
+    );
+}

@@ -95,6 +95,9 @@ async fn execute_media_turn_on_lease(
     let mut assistant_bubbles: Vec<String> = Vec::new();
     let mut ready_candidates: Vec<ReadyMediaCandidate> = Vec::new();
     let mut explicit_done = false;
+    let mut latest_activity_code = String::new();
+    let mut empty_completed_ticks: usize = 0;
+    let mut candidate_ready_ticks: usize = 0;
     let mut should_poll_history = false;
     let mut nudged_attach = false;
 
@@ -125,13 +128,26 @@ async fn execute_media_turn_on_lease(
                         collect_presentations_from_payload(ev.payload(), &mut stream_presentations);
                         explicit_done = true;
                         should_poll_history = true;
-                    } else if ev.agent_activity_state() == Some(true)
-                        || ev.session_update_status(lease.session_id()) == Some("running")
-                    {
+                    } else if ev_name == "agent.status" {
+                        if let Some(code) = ev.activity_code() {
+                            latest_activity_code = code.to_string();
+                        }
+                        match ev.agent_activity_state() {
+                            Some(true) => {
+                                explicit_done = false;
+                                empty_completed_ticks = 0;
+                                candidate_ready_ticks = 0;
+                            }
+                            Some(false) => {
+                                explicit_done = true;
+                                should_poll_history = true;
+                            }
+                            None => {}
+                        }
+                    } else if ev.session_update_status(lease.session_id()) == Some("running") {
                         explicit_done = false;
-                    } else if ev.agent_activity_state() == Some(false)
-                        || ev.is_session_completed_for(lease.session_id())
-                    {
+                        empty_completed_ticks = 0;
+                    } else if ev.is_session_completed_for(lease.session_id()) {
                         explicit_done = true;
                         should_poll_history = true;
                     } else if ev_name == "error" || ev_name == "chat.error" {
@@ -208,13 +224,30 @@ async fn execute_media_turn_on_lease(
                 return Err(WorkflowFailure::Upstream(err_kind, reason));
             }
 
+            let is_agent_working = active_tools
+                || matches!(
+                    latest_activity_code.as_str(),
+                    "working" | "making_something" | "responding" | "thinking" | "running"
+                );
+
+            if !active_tools && !is_agent_working && !ready_candidates.is_empty() {
+                candidate_ready_ticks += 1;
+            } else {
+                candidate_ready_ticks = 0;
+            }
+
             let has_done_marker = assistant_bubbles
                 .iter()
                 .any(|b| b.contains(MEDIA_DONE_MARKER))
                 || streamed_text.contains(MEDIA_DONE_MARKER);
             let media_turn_done = match kind {
                 MediaKind::Image => true,
-                MediaKind::Video => has_done_marker || explicit_done || is_assistant_completed,
+                MediaKind::Video => {
+                    has_done_marker
+                        || explicit_done
+                        || is_assistant_completed
+                        || (!is_agent_working && candidate_ready_ticks >= 6)
+                }
             };
 
             if !active_tools && !ready_candidates.is_empty() && media_turn_done {
@@ -222,13 +255,24 @@ async fn execute_media_turn_on_lease(
             }
 
             if !active_tools
+                && !is_agent_working
                 && ready_candidates.is_empty()
                 && (explicit_done || is_assistant_completed)
-                && !nudged_attach
                 && !joined_raw.trim().is_empty()
             {
+                empty_completed_ticks += 1;
+            } else {
+                empty_completed_ticks = 0;
+            }
+
+            // Mirror `muse-api-server-main/src/core/client.js:1448` (`requiredTicks = 12` = 4.8s):
+            // Muse records `message.assistant` (status="completed") 0.7s-1.5s before `delta.presentation`
+            // in `/chat/history`. Waiting 12 ticks before sending a follow-up nudge prevents appending a
+            // new `message.user` during that gap and losing the presentation event.
+            if empty_completed_ticks >= 12 && !nudged_attach {
                 nudged_attach = true;
                 explicit_done = false;
+                empty_completed_ticks = 0;
                 streamed_text.clear();
                 let followup = match kind {
                     MediaKind::Video => VIDEO_ATTACH_FOLLOWUP_PROMPT,

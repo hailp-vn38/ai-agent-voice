@@ -72,6 +72,10 @@ impl HostTool for NormalizedWikiHostTool {
         self.inner.descriptor()
     }
 
+    fn timeout(&self) -> Option<Duration> {
+        self.inner.timeout()
+    }
+
     async fn execute(&self, ctx: ToolContext, mut args: Value) -> Result<ToolOutcome, ToolError> {
         let name = self.inner.descriptor().name;
         normalize_wiki_tool_arguments(&name, &mut args);

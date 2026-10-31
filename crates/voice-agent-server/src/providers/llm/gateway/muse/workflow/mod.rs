@@ -201,11 +201,22 @@ pub(crate) fn extract_turn_assistant_messages(turn_events: &[Value]) -> Vec<Stri
     blocks
 }
 
+fn is_commentary_assistant_event(ev: &Value) -> bool {
+    let p = ev.get("payload").unwrap_or(ev);
+    let meta = p.get("metadata").or_else(|| ev.get("metadata"));
+    meta.and_then(|m| m.get("message_kind"))
+        .and_then(Value::as_str)
+        == Some("commentary")
+        || meta
+            .and_then(|m| m.get("recipient"))
+            .and_then(Value::as_str)
+            == Some("commentary")
+}
+
 pub(crate) fn is_last_assistant_completed(turn_events: &[Value]) -> bool {
-    turn_events
+    let assistant_events: Vec<&Value> = turn_events
         .iter()
-        .rev()
-        .find(|ev| {
+        .filter(|ev| {
             let ev_name = ev
                 .get("event_name")
                 .or_else(|| ev.get("event"))
@@ -226,11 +237,37 @@ pub(crate) fn is_last_assistant_completed(turn_events: &[Value]) -> bool {
                 || p.get("role").and_then(Value::as_str) == Some("assistant")
                 || ev_name == "message.assistant"
         })
-        .is_some_and(|ev| {
-            let p = ev.get("payload").unwrap_or(ev);
-            ev.get("status").and_then(Value::as_str) == Some("completed")
-                || p.get("status").and_then(Value::as_str) == Some("completed")
-        })
+        .collect();
+
+    if assistant_events.is_empty() {
+        return false;
+    }
+
+    let any_in_progress = assistant_events.iter().any(|ev| {
+        let p = ev.get("payload").unwrap_or(ev);
+        let status = ev
+            .get("status")
+            .or_else(|| p.get("status"))
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_ascii_lowercase();
+        matches!(
+            status.as_str(),
+            "in_progress" | "running" | "pending" | "streaming"
+        )
+    });
+    if any_in_progress {
+        return false;
+    }
+
+    assistant_events.last().is_some_and(|ev| {
+        if is_commentary_assistant_event(ev) {
+            return false;
+        }
+        let p = ev.get("payload").unwrap_or(ev);
+        ev.get("status").and_then(Value::as_str) == Some("completed")
+            || p.get("status").and_then(Value::as_str) == Some("completed")
+    })
 }
 
 pub(crate) async fn handle_approval_event<F>(

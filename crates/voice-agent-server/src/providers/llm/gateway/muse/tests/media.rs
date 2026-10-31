@@ -368,3 +368,179 @@ async fn image_generation_completes_from_history_presentation_without_done_marke
         }
     );
 }
+
+#[tokio::test]
+async fn video_generation_waits_across_commentary_and_message_to_presentation_gap_for_50s_merged_video()
+ {
+    let merged_bytes = [VALID_MP4_BYTES, &[0xCC; 16]].concat();
+    let final_rel_path = "workspace/imagine_media/chelsea-vs-mu-50s-final.mp4";
+    let final_sandbox_path = format!("sandbox://{final_rel_path}");
+
+    // Poll 1: Muse emits an initial `message.assistant` with `metadata.message_kind = "commentary"`
+    // and `status = "completed"` while generating the 5 sequential 10s clips.
+    // Workflow must NOT treat this commentary bubble as final completion or send a follow-up nudge.
+    let poll_commentary = vec![
+        json!({
+            "event_name": "message.user",
+            "payload": {
+                "role": "user",
+                "display_text": "Generate a video (aspect ratio 9:16, target total duration ~50s): Chelsea vs MU"
+            }
+        }),
+        json!({
+            "event_name": "message.assistant",
+            "status": "completed",
+            "display_text": "Generating your 50-second explainer as 5 clips (~10 seconds each), then stitching them with burned-in Vietnamese captions.",
+            "metadata": {
+                "message_kind": "commentary",
+                "recipient": "commentary"
+            },
+            "payload": {
+                "role": "assistant",
+                "status": "completed",
+                "display_text": "Generating your 50-second explainer as 5 clips (~10 seconds each), then stitching them with burned-in Vietnamese captions.",
+                "metadata": {
+                    "message_kind": "commentary",
+                    "recipient": "commentary"
+                }
+            }
+        }),
+    ];
+
+    // Poll 2: Muse records `ev[1]` (`message.assistant`, `status = "completed"`, `message_kind = "message"`)
+    // ~955ms BEFORE `ev[2]` (`delta.presentation`) appears in `/chat/history`.
+    // Workflow must wait across this ~1s gap without sending a follow-up nudge that would overwrite the turn.
+    let poll_message_before_presentation = vec![
+        json!({
+            "event_name": "message.user",
+            "payload": {
+                "role": "user",
+                "display_text": "Generate a video (aspect ratio 9:16, target total duration ~50s): Chelsea vs MU"
+            }
+        }),
+        json!({
+            "event_name": "message.assistant",
+            "status": "completed",
+            "display_text": "Đã ghép xong 5 beat thành 1 video duy nhất — đã kiểm chứng: 1080x1920 (9:16), H.264 + AAC, 50.07 giây.",
+            "metadata": {
+                "message_kind": "message",
+                "recipient": "all"
+            },
+            "payload": {
+                "role": "assistant",
+                "status": "completed",
+                "display_text": "Đã ghép xong 5 beat thành 1 video duy nhất — đã kiểm chứng: 1080x1920 (9:16), H.264 + AAC, 50.07 giây.",
+                "metadata": {
+                    "message_kind": "message",
+                    "recipient": "all"
+                }
+            }
+        }),
+    ];
+
+    // Poll 3: `delta.presentation` and final `message.assistant` with `[ALL_MEDIA_ATTACHED]` arrive.
+    let poll_completed = vec![
+        json!({
+            "event_name": "message.user",
+            "payload": {
+                "role": "user",
+                "display_text": "Generate a video (aspect ratio 9:16, target total duration ~50s): Chelsea vs MU"
+            }
+        }),
+        json!({
+            "event_name": "message.assistant",
+            "status": "completed",
+            "display_text": "Đã ghép xong 5 beat thành 1 video duy nhất — đã kiểm chứng: 1080x1920 (9:16), H.264 + AAC, 50.07 giây.",
+            "metadata": {
+                "message_kind": "message",
+                "recipient": "all"
+            },
+            "payload": {
+                "role": "assistant",
+                "status": "completed",
+                "display_text": "Đã ghép xong 5 beat thành 1 video duy nhất — đã kiểm chứng: 1080x1920 (9:16), H.264 + AAC, 50.07 giây."
+            }
+        }),
+        json!({
+            "event_name": "delta.presentation",
+            "payload": {
+                "id": "widget-da9e29b6",
+                "kind": "video",
+                "video_path": final_rel_path,
+                "fallback_text": format!("![Chelsea vs MU — 50s Preview Video (9:16)]({final_sandbox_path})"),
+                "data": {
+                    "fallback_text": format!("![Chelsea vs MU — 50s Preview Video (9:16)]({final_sandbox_path})"),
+                    "videos": [{
+                        "byte_len": merged_bytes.len(),
+                        "duration_secs": 50.066667,
+                        "width": 1080,
+                        "height": 1920,
+                        "mime": "video/mp4",
+                        "missing": false,
+                        "path": final_sandbox_path
+                    }]
+                }
+            }
+        }),
+        json!({
+            "event_name": "message.assistant",
+            "status": "completed",
+            "display_text": "Hoàn tất video Chelsea vs MU — 50 giây, dọc 9:16, phụ đề tiếng Việt đốt trực tiếp theo đúng kịch bản, không thêm dữ kiện ngoài brief. [ALL_MEDIA_ATTACHED]",
+            "metadata": {
+                "message_kind": "message",
+                "recipient": "all"
+            },
+            "payload": {
+                "role": "assistant",
+                "status": "completed",
+                "display_text": "Hoàn tất video Chelsea vs MU — 50 giây, dọc 9:16, phụ đề tiếng Việt đốt trực tiếp theo đúng kịch bản, không thêm dữ kiện ngoài brief. [ALL_MEDIA_ATTACHED]"
+            }
+        }),
+    ];
+
+    let turn = FakeStreamTurn::media_reply(
+        vec![],
+        vec![
+            poll_commentary,
+            poll_message_before_presentation,
+            poll_completed,
+        ],
+        vec![],
+    );
+
+    let acc = FakeVmAccount::new(vec![turn]).with_file(final_rel_path, merged_bytes.clone());
+    let transport = FakeMuseVmTransport::new(vec![Arc::clone(&acc)]);
+    let provider = build_gateway_muse_provider(&[SINGLE_COOKIE], transport).await;
+
+    let output = provider
+        .invoke(LlmOperation::VideoGeneration {
+            prompt: "Chelsea vs MU 50s preview".to_string(),
+            width: 1080,
+            height: 1920,
+            duration_secs: 50,
+            first_frame: None,
+        })
+        .await
+        .expect("50s merged video generation succeeds without premature nudge");
+
+    assert_eq!(
+        acc.stream_requests().len(),
+        1,
+        "must not send a premature follow-up stream request during commentary or the 1s presentation gap"
+    );
+
+    assert_eq!(
+        output,
+        LlmOutput::from_media_parts(
+            vec![MediaPart {
+                bytes: merged_bytes,
+                mime_type: "video/mp4".to_string(),
+            }],
+            Some(
+                "Đã ghép xong 5 beat thành 1 video duy nhất — đã kiểm chứng: 1080x1920 (9:16), H.264 + AAC, 50.07 giây.\n\nHoàn tất video Chelsea vs MU — 50 giây, dọc 9:16, phụ đề tiếng Việt đốt trực tiếp theo đúng kịch bản, không thêm dữ kiện ngoài brief."
+                    .to_string()
+            ),
+        )
+        .unwrap()
+    );
+}

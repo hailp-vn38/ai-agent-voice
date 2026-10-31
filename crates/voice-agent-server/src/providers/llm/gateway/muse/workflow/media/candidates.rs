@@ -109,14 +109,6 @@ pub(super) fn extract_candidates_from_stream_and_history(
     let mut candidates = Vec::new();
     let mut group_counter = 0usize;
 
-    for p in stream_presentations {
-        let before = candidates.len();
-        extract_paths_from_presentation(kind, p, group_counter, &mut candidates);
-        if candidates.len() > before {
-            group_counter += 1;
-        }
-    }
-
     for ev in turn_events {
         let p = ev.get("payload").unwrap_or(ev);
         if !is_presentation_pending(p) {
@@ -140,6 +132,14 @@ pub(super) fn extract_candidates_from_stream_and_history(
                     }
                 }
             }
+        }
+    }
+
+    for p in stream_presentations {
+        let before = candidates.len();
+        extract_paths_from_presentation(kind, p, group_counter, &mut candidates);
+        if candidates.len() > before {
+            group_counter += 1;
         }
     }
 
