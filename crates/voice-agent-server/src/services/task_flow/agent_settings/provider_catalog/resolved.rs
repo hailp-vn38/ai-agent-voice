@@ -86,9 +86,9 @@ impl ResolvedLlmProvider {
                 provider_label: label,
                 max_clip_duration_secs: 10,
                 max_clips_per_call: 6,
-                max_total_duration_secs: 60,
+                max_total_duration_secs: 120,
                 provider_guidance: "Generates MP4 video with built-in voiceover/narration audio and burned-in subtitles directly from `prompt` (do NOT call `tts_synthesize` for video requests, and do NOT split `prompt` into 10-second sub-prompts). \
-                    Pass a single unified video `prompt` and the target `duration_secs` (up to 60s). \
+                    Pass a single unified video `prompt` and the target `duration_secs` (up to 120s; longer videos are produced in sequential batches of up to 60s and merged for you). \
                     When `duration_secs` exceeds the 10-second single-clip generation limit, `video_create` automatically merges the generated segments into a single continuous primary MP4 artifact."
                     .to_owned(),
             }

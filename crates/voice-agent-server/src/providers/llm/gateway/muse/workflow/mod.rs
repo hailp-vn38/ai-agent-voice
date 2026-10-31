@@ -37,6 +37,9 @@ impl WorkflowFailure {
 pub(crate) const MEDIA_DONE_MARKER: &str = "[ALL_MEDIA_ATTACHED]";
 pub(crate) const MUSE_SINGLE_CLIP_LIMIT_SECS: u32 = 10;
 pub(crate) const MUSE_MAX_CLIPS_PER_TURN: u32 = 6;
+/// Longest video one tool call can request: two turns of six ~10s clips.
+pub(crate) const MUSE_MAX_VIDEO_SECS: u32 =
+    2 * MUSE_MAX_CLIPS_PER_TURN * MUSE_SINGLE_CLIP_LIMIT_SECS;
 pub(crate) const CUTOUT_HINT: &str = "\n\nBackground requirement: Render the subject isolated on a solid, uniform, flat pure-white (#FFFFFF) studio background with clean, crisp edges and no background shadows or gradients so it can be cleanly cut out.";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -305,6 +308,7 @@ pub(crate) async fn handle_approval_event<F>(
 }
 
 pub(crate) use self::chat::run_chat_turn_once;
+pub(crate) use self::media::MediaBatch;
 pub(crate) use self::media::run_media_turn_once;
 #[cfg(test)]
 pub(crate) use self::png::{
@@ -312,4 +316,4 @@ pub(crate) use self::png::{
 };
 #[cfg(test)]
 pub(crate) use self::prompt::flatten_messages;
-pub(crate) use self::prompt::{format_image_prompt, format_video_prompt};
+pub(crate) use self::prompt::{format_image_prompt, format_video_batches, format_video_prompt};

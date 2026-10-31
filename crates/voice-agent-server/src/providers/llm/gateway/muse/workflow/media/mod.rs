@@ -36,17 +36,25 @@ const DURATION_SHORTFALL_TOLERANCE_SECS: u32 = 5;
 const VIDEO_ATTACH_FOLLOWUP_PROMPT: &str = "You have not attached the final video file(s) to this chat thread yet. Do NOT ask any questions. Generate and attach the final MP4 video file(s) directly into this chat message now, and end your message with [ALL_MEDIA_ATTACHED] once every video is attached.";
 const IMAGE_ATTACH_FOLLOWUP_PROMPT: &str = "You have not attached the generated image to this chat thread yet. Generate and attach the image file directly into this chat message now, and end your message with [ALL_MEDIA_ATTACHED].";
 
+/// One chat turn sent to Muse. A long video is split into several batches that run back to back
+/// in the same Muse session; each batch is one merged file of at most one turn's worth of clips.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct MediaBatch {
+    pub prompt: String,
+    /// Duration this batch should deliver (videos only); drives the shortfall repair.
+    pub target_secs: Option<u32>,
+}
+
 pub(crate) async fn run_media_turn_once(
     pool: &Arc<SharedMusePool>,
     kind: MediaKind,
-    formatted_prompt: &str,
+    batches: &[MediaBatch],
     images: &[ReferenceImage],
     transparent_background: bool,
-    target_duration_secs: Option<u32>,
     job: Option<Arc<JobEntry>>,
     timeout_duration: Duration,
 ) -> Result<LlmOutput, WorkflowFailure> {
-    if formatted_prompt.trim().is_empty() {
+    if batches.is_empty() || batches.iter().any(|b| b.prompt.trim().is_empty()) {
         return Err(WorkflowFailure::Rejected("empty media prompt".to_string()));
     }
     // Calls of one job run one at a time so they never interleave inside the shared session.
@@ -74,11 +82,10 @@ pub(crate) async fn run_media_turn_once(
 
     let res = execute_media_turn_on_lease(
         &mut lease,
-        formatted_prompt,
+        batches,
         images,
         kind,
         transparent_background,
-        target_duration_secs,
         timeout_duration,
     )
     .await;
@@ -110,13 +117,52 @@ struct CollectedTurn {
 
 async fn execute_media_turn_on_lease(
     lease: &mut VmOperationLease,
-    prompt: &str,
+    batches: &[MediaBatch],
     images: &[ReferenceImage],
     kind: MediaKind,
     transparent_background: bool,
-    target_duration_secs: Option<u32>,
     timeout_duration: Duration,
 ) -> Result<LlmOutput, WorkflowFailure> {
+    let mut event_rx = lease.client().subscribe_events();
+    let deadline = Instant::now() + timeout_duration;
+
+    let mut all_parts: Vec<MediaPart> = Vec::new();
+    let mut messages: Vec<String> = Vec::new();
+    for (index, batch) in batches.iter().enumerate() {
+        let batch_images = if index == 0 { images } else { &[] };
+        send_media_stream_request(lease, build_turn_items(batch_images, &batch.prompt)).await?;
+        let outcome = run_media_batch(
+            lease,
+            &mut event_rx,
+            kind,
+            batch.target_secs,
+            transparent_background,
+            deadline,
+        )
+        .await;
+        match outcome {
+            Ok(BatchOutput::Image(output)) => return Ok(output),
+            Ok(BatchOutput::Video(best)) => {
+                all_parts.extend(best.parts);
+                messages.extend(best.assistant_message);
+            }
+            // Earlier batches already produced footage: hand it back instead of discarding it.
+            Err(WorkflowFailure::Timeout(_)) if !all_parts.is_empty() => break,
+            Err(err) => return Err(err),
+        }
+    }
+
+    lease.finish_clean(None);
+    let message = (!messages.is_empty()).then(|| messages.join("\n\n"));
+    LlmOutput::from_media_parts(all_parts, message).ok_or_else(|| {
+        WorkflowFailure::Upstream(
+            UpstreamFailureKind::Transient,
+            "no video parts downloaded".to_string(),
+        )
+    })
+}
+
+fn build_turn_items(images: &[ReferenceImage], prompt: &str) -> Vec<Value> {
     let mut items = Vec::with_capacity(images.len() + 1);
     for img in images {
         items.push(json!({
@@ -129,15 +175,28 @@ async fn execute_media_turn_on_lease(
         "type": "text",
         "text": prompt,
     }));
+    items
+}
 
-    let mut event_rx = lease.client().subscribe_events();
-    send_media_stream_request(lease, items).await?;
-    let deadline = Instant::now() + timeout_duration;
+enum BatchOutput {
+    Image(LlmOutput),
+    Video(BestVideo),
+}
 
+/// Waits for the batch just sent to settle, downloads its media and, for videos that come back
+/// shorter than the batch target, asks Muse in the same session to fill the gap.
+async fn run_media_batch(
+    lease: &mut VmOperationLease,
+    event_rx: &mut tokio::sync::broadcast::Receiver<VmStreamEvent>,
+    kind: MediaKind,
+    target_duration_secs: Option<u32>,
+    transparent_background: bool,
+    deadline: Instant,
+) -> Result<BatchOutput, WorkflowFailure> {
     let mut repairs_used = 0usize;
     let mut best: Option<BestVideo> = None;
     loop {
-        let turn = match collect_media_turn(lease, &mut event_rx, kind, deadline).await {
+        let turn = match collect_media_turn(lease, event_rx, kind, deadline).await {
             Ok(turn) => turn,
             Err(WorkflowFailure::Timeout(_)) if best.is_some() => break,
             Err(err) => return Err(err),
@@ -154,7 +213,9 @@ async fn execute_media_turn_on_lease(
         let assistant_message = format_clean_assistant_bubbles(&turn.assistant_bubbles);
 
         if matches!(kind, MediaKind::Image) {
-            return finish_image(lease, &selected, transparent_background, assistant_message).await;
+            let output =
+                finish_image(lease, &selected, transparent_background, assistant_message).await?;
+            return Ok(BatchOutput::Image(output));
         }
 
         let parts = download_video_parts(lease, &selected).await?;
@@ -184,17 +245,10 @@ async fn execute_media_turn_on_lease(
         send_media_stream_request(lease, vec![json!({ "type": "text", "text": followup })]).await?;
     }
 
-    let Some(best) = best else {
-        return Err(WorkflowFailure::Timeout(format!(
+    best.map(BatchOutput::Video).ok_or_else(|| {
+        WorkflowFailure::Timeout(format!(
             "Muse {kind:?} generation timed out without producing any downloadable file path"
-        )));
-    };
-    lease.finish_clean(None);
-    LlmOutput::from_media_parts(best.parts, best.assistant_message).ok_or_else(|| {
-        WorkflowFailure::Upstream(
-            UpstreamFailureKind::Transient,
-            "no video parts downloaded".to_string(),
-        )
+        ))
     })
 }
 

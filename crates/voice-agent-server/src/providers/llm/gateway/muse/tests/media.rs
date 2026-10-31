@@ -708,3 +708,64 @@ async fn video_call_without_continuation_key_still_deletes_its_session() {
     }
     assert_eq!(acc.deleted_sessions().len(), 1);
 }
+
+fn video_turn(text: &str, path: &str) -> FakeStreamTurn {
+    FakeStreamTurn::media_reply(vec![], single_video_history(text, path), vec![])
+}
+
+#[tokio::test]
+async fn ninety_second_video_runs_two_batches_in_one_session_and_returns_both_parts() {
+    let first = mp4_with_duration(60);
+    let second = mp4_with_duration(30);
+    let acc = FakeVmAccount::new(vec![
+        video_turn("beats 1-6 merged [ALL_MEDIA_ATTACHED]", "sandbox:///home/user/p1.mp4"),
+        video_turn("beats 7-9 merged [ALL_MEDIA_ATTACHED]", "sandbox:///home/user/p2.mp4"),
+    ])
+    .with_file("/home/user/p1.mp4", first.clone())
+    .with_file("/home/user/p2.mp4", second.clone());
+    let transport = FakeMuseVmTransport::new(vec![Arc::clone(&acc)]);
+    let provider = build_gateway_muse_provider(&[SINGLE_COOKIE], transport).await;
+
+    let output = provider
+        .invoke(LlmOperation::VideoGeneration {
+            prompt: "9 beat football recap".to_string(),
+            width: 1080,
+            height: 1920,
+            duration_secs: 90,
+            first_frame: None,
+            continuation_key: None,
+        })
+        .await
+        .expect("two-batch video succeeds");
+
+    let reqs = acc.stream_requests();
+    assert_eq!(reqs.len(), 2, "90s = one 60s batch + one 30s batch");
+    assert_eq!(reqs[0]["session_id"], reqs[1]["session_id"], "batches share one session");
+    let texts = stream_texts(&acc);
+    assert!(texts[0].contains("beats 1-6"), "first batch scope: {}", texts[0]);
+    assert!(texts[1].contains("beats 7-9"), "second batch scope: {}", texts[1]);
+    let (parts, _message) = output.into_media_parts().expect("media output");
+    let bytes: Vec<Vec<u8>> = parts.into_iter().map(|p| p.bytes).collect();
+    assert_eq!(bytes, vec![first, second], "one merged file per batch, in order");
+    tokio::task::yield_now().await;
+    assert_eq!(acc.deleted_sessions().len(), 1, "no job key: session deleted after the batches");
+}
+
+#[tokio::test]
+async fn video_longer_than_two_batches_is_rejected_without_calling_muse() {
+    let acc = FakeVmAccount::new(vec![]);
+    let transport = FakeMuseVmTransport::new(vec![Arc::clone(&acc)]);
+    let provider = build_gateway_muse_provider(&[SINGLE_COOKIE], transport).await;
+    let res = provider
+        .invoke(LlmOperation::VideoGeneration {
+            prompt: "too long".to_string(),
+            width: 1080,
+            height: 1920,
+            duration_secs: 130,
+            first_frame: None,
+            continuation_key: None,
+        })
+        .await;
+    assert!(res.is_err(), "130s exceeds the 120s Muse limit");
+    assert!(acc.stream_requests().is_empty(), "nothing is sent to Muse");
+}

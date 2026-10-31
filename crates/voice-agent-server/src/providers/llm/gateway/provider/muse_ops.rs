@@ -19,7 +19,9 @@ use super::super::{
     config::LlmGatewayConfig,
     muse::{
         pool::{SharedMusePool, UpstreamFailureKind, job_entry},
-        workflow::{MediaKind, WorkflowFailure, run_chat_turn_once, run_media_turn_once},
+        workflow::{
+            MediaBatch, MediaKind, WorkflowFailure, run_chat_turn_once, run_media_turn_once,
+        },
     },
 };
 use super::{LlmGatewayProvider, MAX_POOL_FAILOVER_ATTEMPTS, record_wire_detail};
@@ -245,10 +247,9 @@ impl LlmGatewayProvider {
     pub(super) async fn run_muse_media(
         &self,
         kind: MediaKind,
-        formatted_prompt: &str,
+        batches: &[MediaBatch],
         images: &[ReferenceImage],
         transparent_background: bool,
-        target_duration_secs: Option<u32>,
         continuation_key: Option<String>,
         required_tag: &'static str,
     ) -> Result<LlmOutput, LlmError> {
@@ -279,8 +280,10 @@ impl LlmGatewayProvider {
         } else {
             1
         };
+        // 15 minutes for the first batch plus ~13 for each further batch of a long video.
+        let extra_batches = batches.len().saturating_sub(1) as u64;
         let min_timeout_ms = match kind {
-            MediaKind::Video => 900_000,
+            MediaKind::Video => 900_000 + 800_000 * extra_batches,
             MediaKind::Image => 180_000,
         };
         let timeout = Duration::from_millis(self.config.timeout_ms.max(min_timeout_ms));
@@ -290,10 +293,9 @@ impl LlmGatewayProvider {
                 run_media_turn_once(
                     &pool,
                     kind,
-                    formatted_prompt,
+                    batches,
                     images,
                     transparent_background,
-                    target_duration_secs,
                     job,
                     timeout,
                 )

@@ -27,7 +27,7 @@ use super::{
     config::{ADAPTER_NAME, LlmGatewayConfig},
     muse::{
         client::MuseVmTransport,
-        workflow::{MediaKind, format_image_prompt, format_video_prompt},
+        workflow::{MediaBatch, MediaKind, format_image_prompt, format_video_batches},
     },
 };
 
@@ -285,12 +285,15 @@ impl LlmProvider for LlmGatewayProvider {
                     return Err(LlmError::Rejected);
                 }
                 let formatted = format_image_prompt(&prompt, width, height, transparent_background);
+                let batches = [MediaBatch {
+                    prompt: formatted,
+                    target_secs: None,
+                }];
                 self.run_muse_media(
                     MediaKind::Image,
-                    &formatted,
+                    &batches,
                     &reference_images,
                     transparent_background,
-                    None,
                     None,
                     LlmCapabilityTag::Image.as_str(),
                 )
@@ -305,14 +308,17 @@ impl LlmProvider for LlmGatewayProvider {
                 continuation_key,
             } => {
                 self.ensure_tag(LlmCapabilityTag::Video)?;
-                let formatted = format_video_prompt(&prompt, width, height, duration_secs);
+                // Longer than Muse can deliver in one call: reject instead of silently shortening.
+                let Some(batches) = format_video_batches(&prompt, width, height, duration_secs)
+                else {
+                    return Err(LlmError::Rejected);
+                };
                 let images = first_frame.into_iter().collect::<Vec<_>>();
                 self.run_muse_media(
                     MediaKind::Video,
-                    &formatted,
+                    &batches,
                     &images,
                     false,
-                    Some(duration_secs),
                     continuation_key,
                     LlmCapabilityTag::Video.as_str(),
                 )

@@ -315,9 +315,13 @@ impl orchestrator_flow_rs::VideoGeneratorBackend for CatalogMediaBackend {
         };
         let constraints = resolved.video_constraints();
         let (width, height) = req.effective_dimensions();
-        let duration_secs = req
-            .duration_secs
-            .clamp(1, constraints.max_total_duration_secs.max(1));
+        let duration_secs = req.duration_secs.max(1);
+        if duration_secs > constraints.max_total_duration_secs.max(1) {
+            return Err(format!(
+                "duration_secs={duration_secs} exceeds max_total_duration_secs={} for {}",
+                constraints.max_total_duration_secs, resolved.provider_ref
+            ));
+        }
         let provider = resolved.to_llm_provider().map_err(|e| e.to_string())?;
         let first_frame = req
             .first_frame

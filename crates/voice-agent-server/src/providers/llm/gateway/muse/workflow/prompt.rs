@@ -1,7 +1,11 @@
 use crate::providers::llm::{ChatMessage, LlmRequest};
 
 use super::super::pool::ConversationTurn;
-use super::{CUTOUT_HINT, MEDIA_DONE_MARKER, MUSE_MAX_CLIPS_PER_TURN, MUSE_SINGLE_CLIP_LIMIT_SECS};
+use super::media::MediaBatch;
+use super::{
+    CUTOUT_HINT, MEDIA_DONE_MARKER, MUSE_MAX_CLIPS_PER_TURN, MUSE_MAX_VIDEO_SECS,
+    MUSE_SINGLE_CLIP_LIMIT_SECS,
+};
 
 pub fn aspect_ratio_hint(width: u32, height: u32) -> &'static str {
     if width == 0 || height == 0 {
@@ -61,6 +65,57 @@ pub fn format_video_prompt(prompt: &str, width: u32, height: u32, duration_secs:
     }
 }
 
+/// Splits a video request into the Muse turns needed to produce it, or `None` when it is longer
+/// than Muse can deliver in one tool call. Up to one turn's worth of clips fits a single batch;
+/// longer videos continue the same chat, each batch scoped to its own beats.
+pub fn format_video_batches(
+    prompt: &str,
+    width: u32,
+    height: u32,
+    duration_secs: u32,
+) -> Option<Vec<MediaBatch>> {
+    let secs = duration_secs.max(1);
+    if secs > MUSE_MAX_VIDEO_SECS {
+        return None;
+    }
+    let turn_secs = MUSE_MAX_CLIPS_PER_TURN * MUSE_SINGLE_CLIP_LIMIT_SECS;
+    if secs <= turn_secs {
+        return Some(vec![MediaBatch {
+            prompt: format_video_prompt(prompt, width, height, secs),
+            target_secs: Some(secs),
+        }]);
+    }
+
+    let ratio = aspect_ratio_hint(width, height);
+    let total_beats = secs.div_ceil(MUSE_SINGLE_CLIP_LIMIT_SECS);
+    let batch_count = total_beats.div_ceil(MUSE_MAX_CLIPS_PER_TURN);
+    let mut batches = Vec::with_capacity(batch_count as usize);
+    for index in 0..batch_count {
+        let first_beat = index * MUSE_MAX_CLIPS_PER_TURN + 1;
+        let last_beat = ((index + 1) * MUSE_MAX_CLIPS_PER_TURN).min(total_beats);
+        let batch_secs = ((last_beat - first_beat + 1) * MUSE_SINGLE_CLIP_LIMIT_SECS)
+            .min(secs - index * turn_secs);
+        let scope = format!(
+            "THIS TURN: generate ONLY beats {first_beat}-{last_beat} (~{batch_secs} seconds), each beat a ~{MUSE_SINGLE_CLIP_LIMIT_SECS}-second clip with synchronized audio/narration and subtitles. Do not skip or drop any beat in this range.\n\nMandatory workflow:\n1. Generate the clips for beats {first_beat}-{last_beat}.\n2. Concatenate/merge them in order into ONE single continuous video.\n3. Send ONLY that merged video as the file attachment in the chat — do NOT attach the individual clip parts.\n4. Only after the merged video is attached, send a final confirmation message ending with {MEDIA_DONE_MARKER}."
+        );
+        let text = if index == 0 {
+            format!(
+                "Generate a long video (aspect ratio {ratio}, {secs} seconds in total = {total_beats} sequential ~{MUSE_SINGLE_CLIP_LIMIT_SECS}-second beats, delivered over {batch_count} turns in this chat). Full script: {}\n\n{scope}",
+                prompt.trim()
+            )
+        } else {
+            format!(
+                "Continue the SAME video in this chat — do not restart and do not repeat earlier beats. Follow the full script from the first message, keeping the same visual style, characters and voice.\n\n{scope}"
+            )
+        };
+        batches.push(MediaBatch {
+            prompt: text,
+            target_secs: Some(batch_secs),
+        });
+    }
+    Some(batches)
+}
+
 const ORCHESTRATOR_BASE_PREFIX: &str = "<!-- base-instructions-version:";
 const ORCHESTRATOR_BASE_END_MARKER: &str =
     "không chứng nhận yêu cầu nghiệp vụ đã đạt; hãy nêu rõ phần chưa làm được.";
@@ -79,11 +134,7 @@ fn remove_xml_section(input: &str, open_tag: &str, close_tag: &str) -> String {
 }
 
 pub(crate) fn strip_orchestrator_system_boilerplate(raw: &str) -> String {
-    let mut cleaned = remove_xml_section(
-        raw,
-        "<project_instructions>",
-        "</project_instructions>",
-    );
+    let mut cleaned = remove_xml_section(raw, "<project_instructions>", "</project_instructions>");
     cleaned = remove_xml_section(&cleaned, "<available_skills>", "</available_skills>");
     let trimmed = cleaned.trim();
     if trimmed.starts_with(ORCHESTRATOR_BASE_PREFIX)

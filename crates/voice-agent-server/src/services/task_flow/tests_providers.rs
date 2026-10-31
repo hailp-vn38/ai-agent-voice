@@ -421,7 +421,7 @@ fn muse_gateway_provider_in_catalog_supports_media_and_custom_executor() {
     let muse_vc = muse_prov.video_constraints();
     assert_eq!(muse_vc.max_clip_duration_secs, 10);
     assert_eq!(muse_vc.max_clips_per_call, 6);
-    assert_eq!(muse_vc.max_total_duration_secs, 60);
+    assert_eq!(muse_vc.max_total_duration_secs, 120);
     assert!(muse_vc.provider_guidance.contains("automatically merges"));
 
     let openai_vc = chat_prov.video_constraints();
@@ -473,7 +473,7 @@ fn muse_gateway_provider_in_catalog_supports_media_and_custom_executor() {
     assert!(
         media_def
             .description
-            .contains("[Active video_create provider: Muse Media (model: muse-image); max 10s/clip, up to 6 clip(s) = 60s per call; auto-merges multi-clip outputs into a single primary MP4]")
+            .contains("[Active video_create provider: Muse Media (model: muse-image); max 10s/clip, up to 6 clip(s) = 120s per call; auto-merges multi-clip outputs into a single primary MP4]")
     );
     let proc_spec = crate::services::task_flow::find_agent_spec("media_processor").unwrap();
     assert!(proc_spec.default_allowed_tools.contains(&"video_concat"));
@@ -483,7 +483,7 @@ fn muse_gateway_provider_in_catalog_supports_media_and_custom_executor() {
     let backend_vc = orchestrator_flow_rs::VideoGeneratorBackend::video_constraints(&backend);
     assert_eq!(backend_vc.max_clip_duration_secs, 10);
     assert_eq!(backend_vc.max_clips_per_call, 6);
-    assert_eq!(backend_vc.max_total_duration_secs, 60);
+    assert_eq!(backend_vc.max_total_duration_secs, 120);
 
     // 3. Verify `build_generated_video_payload` converts multi-part `LlmOutput::Media` + `assistant_message`
     // into `GeneratedVideoPayload` with accurate clip durations parsed via `inspect_mp4_duration_secs`.
