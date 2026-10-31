@@ -11,9 +11,9 @@ use std::time::Duration;
 use tokio::sync::{Mutex as AsyncMutex, broadcast, oneshot};
 
 use self::dispatch::{PendingStream, handle_decoded_frame};
-pub(crate) use self::transport::{
-    MuseVmReceiver, MuseVmSender, MuseVmTransport, WsNoiseVmTransport,
-};
+#[cfg(test)]
+pub(crate) use self::transport::MuseVmReceiver;
+pub(crate) use self::transport::{MuseVmSender, MuseVmTransport, WsNoiseVmTransport};
 pub(crate) use self::types::{RpcResponse, VmError, VmStreamEvent};
 use super::proto::{
     encode_application_request, encode_service_frame, encode_service_request,

@@ -137,14 +137,20 @@ pub(in crate::app::admin) async fn export_backup(
 
 async fn extract_import_payload(
     request: Request,
-) -> Result<(Request, String, BackupImportOptions, axum::body::Bytes), Response> {
+) -> Result<(Request, String, BackupImportOptions, axum::body::Bytes), Box<Response>> {
     let Query(query) = match Query::<ImportBackupQuery>::try_from_uri(request.uri()) {
         Ok(q) => q,
-        Err(_) => return Err(error(&request, StatusCode::BAD_REQUEST, "invalid_query")),
+        Err(_) => {
+            return Err(Box::new(error(
+                &request,
+                StatusCode::BAD_REQUEST,
+                "invalid_query",
+            )));
+        }
     };
     let options = match parse_import_options(query) {
         Ok(opts) => opts,
-        Err(code) => return Err(error(&request, StatusCode::BAD_REQUEST, code)),
+        Err(code) => return Err(Box::new(error(&request, StatusCode::BAD_REQUEST, code))),
     };
     let req_id = id(&request).to_owned();
     let (parts, body) = request.into_parts();
@@ -152,11 +158,11 @@ async fn extract_import_payload(
     let bytes = match to_bytes(body, MAX_BACKUP_BODY_BYTES).await {
         Ok(b) => b,
         Err(_) => {
-            return Err(error(
+            return Err(Box::new(error(
                 &req_head,
                 StatusCode::PAYLOAD_TOO_LARGE,
                 "backup_payload_too_large",
-            ));
+            )));
         }
     };
     Ok((req_head, req_id, options, bytes))
@@ -175,7 +181,7 @@ pub(in crate::app::admin) async fn inspect_backup(
     };
     let (req_head, _req_id, options, bytes) = match extract_import_payload(request).await {
         Ok(v) => v,
-        Err(resp) => return resp,
+        Err(resp) => return *resp,
     };
     match db
         .inspect_backup(InspectBackupRequest {
@@ -209,7 +215,7 @@ pub(in crate::app::admin) async fn import_backup(
     };
     let (req_head, req_id, options, bytes) = match extract_import_payload(request).await {
         Ok(v) => v,
-        Err(resp) => return resp,
+        Err(resp) => return *resp,
     };
     match db
         .import_backup(ImportBackupRequest {

@@ -174,16 +174,7 @@ impl TtsProvider for ConfiguredKokoroVi {
     }
 
     fn open_worker(&self) -> Result<Box<dyn TtsWorker>, TtsError> {
-        Ok(Box::new(KokoroViWorker::open(
-            &self.model,
-            &self.tokenizer,
-            self.default_voice.clone(),
-            Arc::clone(&self.voicepacks),
-            &self.g2p_executable,
-            &self.runtime_library,
-            self.num_threads,
-            self.speed,
-        )?))
+        Ok(Box::new(KokoroViWorker::open(self)?))
     }
 }
 

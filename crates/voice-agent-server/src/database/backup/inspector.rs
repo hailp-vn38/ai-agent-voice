@@ -56,26 +56,30 @@ pub(super) fn scrub_or_keep_gateway_credential(
     }
 }
 
+struct CredentialCheckItem<'a> {
+    scope: &'a str,
+    cred: &'a str,
+    resource_type: &'a str,
+    resource_key: &'a str,
+    scrub_action: &'a str,
+}
+
 fn record_credential_check(
     summary: &mut BackupCredentialSummary,
     secret_resolver: &dyn SecretResolver,
-    scope: &str,
-    cred: &str,
-    resource_type: &str,
-    resource_key: &str,
-    scrub_action: &str,
     clear_unreadable: bool,
+    item: CredentialCheckItem<'_>,
 ) {
     summary.total_encrypted += 1;
-    if can_decrypt_credential(secret_resolver, scope, cred) {
+    if can_decrypt_credential(secret_resolver, item.scope, item.cred) {
         summary.decryptable += 1;
     } else {
         summary.unreadable += 1;
         summary.unreadable_items.push(UnreadableCredentialItem {
-            resource_type: resource_type.to_owned(),
-            resource_key: resource_key.to_owned(),
+            resource_type: item.resource_type.to_owned(),
+            resource_key: item.resource_key.to_owned(),
             action: if clear_unreadable {
-                scrub_action.to_owned()
+                item.scrub_action.to_owned()
             } else {
                 "reject".to_owned()
             },
@@ -99,12 +103,14 @@ pub(super) fn verify_bundle_credentials(
             record_credential_check(
                 &mut summary,
                 secret_resolver,
-                &scope,
-                cred,
-                "provider",
-                &p.key,
-                "clear_to_null",
                 clear_unreadable,
+                CredentialCheckItem {
+                    scope: &scope,
+                    cred,
+                    resource_type: "provider",
+                    resource_key: &p.key,
+                    scrub_action: "clear_to_null",
+                },
             );
         }
     }
@@ -117,12 +123,14 @@ pub(super) fn verify_bundle_credentials(
             record_credential_check(
                 &mut summary,
                 secret_resolver,
-                &scope,
-                cred,
-                "mcp_server",
-                &s.key,
-                "clear_to_null",
                 clear_unreadable,
+                CredentialCheckItem {
+                    scope: &scope,
+                    cred,
+                    resource_type: "mcp_server",
+                    resource_key: &s.key,
+                    scrub_action: "clear_to_null",
+                },
             );
         }
     }
@@ -134,12 +142,14 @@ pub(super) fn verify_bundle_credentials(
             record_credential_check(
                 &mut summary,
                 secret_resolver,
-                &scope,
-                cred,
-                "llm_gateway_account",
-                &acc.account_key,
-                "set_reauth_required",
                 clear_unreadable,
+                CredentialCheckItem {
+                    scope: &scope,
+                    cred,
+                    resource_type: "llm_gateway_account",
+                    resource_key: &acc.account_key,
+                    scrub_action: "set_reauth_required",
+                },
             );
         }
     }
@@ -152,12 +162,14 @@ pub(super) fn verify_bundle_credentials(
             record_credential_check(
                 &mut summary,
                 secret_resolver,
-                &scope,
-                cred,
-                "notification_channel",
-                &ch.channel_kind,
-                "clear_to_null",
                 clear_unreadable,
+                CredentialCheckItem {
+                    scope: &scope,
+                    cred,
+                    resource_type: "notification_channel",
+                    resource_key: &ch.channel_kind,
+                    scrub_action: "clear_to_null",
+                },
             );
         }
     }

@@ -17,7 +17,7 @@ use crate::{
     },
 };
 
-use super::{g2p::G2pSidecar, tokenizer::Tokenizer, voicepack::Voicepack};
+use super::{ConfiguredKokoroVi, g2p::G2pSidecar, tokenizer::Tokenizer, voicepack::Voicepack};
 
 const KOKORO_SAMPLE_RATE_HZ: u32 = 24_000;
 const PCM_CHUNK_DURATION_MS: usize = 60;
@@ -33,30 +33,25 @@ pub(super) struct KokoroViWorker {
 }
 
 impl KokoroViWorker {
-    pub(super) fn open(
-        model: &Path,
-        tokenizer: &Tokenizer,
-        default_voice: String,
-        voicepacks: Arc<BTreeMap<String, Voicepack>>,
-        g2p_executable: &Path,
-        runtime_library: &Path,
-        num_threads: i32,
-        speed: f32,
-    ) -> Result<Self, TtsError> {
-        if !speed.is_finite() || speed <= 0.0 {
+    pub(super) fn open(config: &ConfiguredKokoroVi) -> Result<Self, TtsError> {
+        if !config.speed.is_finite() || config.speed <= 0.0 {
             return Err(TtsError::Failed);
         }
-        if !voicepacks.contains_key(&default_voice) {
-            return Err(TtsError::UnsupportedVoice(default_voice));
+        if !config.voicepacks.contains_key(&config.default_voice) {
+            return Err(TtsError::UnsupportedVoice(config.default_voice.clone()));
         }
-        let session = build_session(model, runtime_library, num_threads)?;
+        let session = build_session(
+            &config.model,
+            &config.runtime_library,
+            config.num_threads,
+        )?;
         Ok(Self {
             session,
-            tokenizer: tokenizer.clone(),
-            default_voice,
-            voicepacks,
-            g2p: G2pSidecar::start(g2p_executable)?,
-            speed,
+            tokenizer: config.tokenizer.clone(),
+            default_voice: config.default_voice.clone(),
+            voicepacks: Arc::clone(&config.voicepacks),
+            g2p: G2pSidecar::start(&config.g2p_executable)?,
+            speed: config.speed,
         })
     }
 }
