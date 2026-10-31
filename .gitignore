@@ -1,4 +1,5 @@
-reference/
+/reference/
+/vendor/
 /target/
 /config.toml
 /.env

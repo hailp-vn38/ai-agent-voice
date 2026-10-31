@@ -3,7 +3,10 @@
 .codex
 .aws
 .scratch
+reference
+vendor
 target
+**/target
 data
 models
 runtime
