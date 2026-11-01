@@ -48,68 +48,7 @@ web_root="$repo_root/apps/admin-web"
 default_crate="voice-agent-server"
 
 prune_stale_target_artifacts() {
-  local mode_arg="${1:-auto}"
-  python3 - "$repo_root" "$mode_arg" <<'PY' 2>/dev/null || true
-import os, re, shutil, sys
-from pathlib import Path
-
-root = Path(sys.argv[1])
-mode = sys.argv[2]
-target_dir = Path(os.environ.get("CARGO_TARGET_DIR", root / "target")) / "debug"
-if not target_dir.is_dir():
-    sys.exit(0)
-
-keep = 1 if mode == "aggressive" else 2
-inc_dir = target_dir / "incremental"
-if inc_dir.is_dir():
-    groups = {}
-    for entry in inc_dir.iterdir():
-        if entry.is_dir() and "-" in entry.name:
-            prefix = entry.name.rsplit("-", 1)[0]
-            try:
-                mtime = entry.stat().st_mtime
-            except OSError:
-                continue
-            groups.setdefault(prefix, []).append((mtime, entry))
-    for entries in groups.values():
-        entries.sort(key=lambda item: item[0], reverse=True)
-        for _, old_dir in entries[keep:]:
-            shutil.rmtree(old_dir, ignore_errors=True)
-
-deps_dir = target_dir / "deps"
-if deps_dir.is_dir():
-    test_dir = root / "crates" / "voice-agent-server" / "tests"
-    test_stems = {p.stem.replace("-", "_") for p in test_dir.glob("*.rs")} if test_dir.is_dir() else set()
-    tracked_prefixes = test_stems | {"voice_agent_server", "libvoice_agent_server", "provider_bench", "provider_bench_av", "provider_runtime_bench", "zerotts_core_check"}
-    pattern = re.compile(r"^([a-zA-Z0-9_]+)-([0-9a-f]{16})(\..+)?$")
-    groups = {}
-    for entry in deps_dir.iterdir():
-        m = pattern.match(entry.name)
-        if not m:
-            continue
-        prefix, digest, ext = m.group(1), m.group(2), m.group(3) or ""
-        if ext in (".d", ".dSYM"):
-            continue
-        if prefix not in tracked_prefixes:
-            continue
-        try:
-            mtime = entry.stat().st_mtime
-        except OSError:
-            continue
-        groups.setdefault((prefix, ext), []).append((mtime, prefix, digest, entry))
-    for (prefix, ext), entries in groups.items():
-        entries.sort(key=lambda item: item[0], reverse=True)
-        limit = 0 if (mode == "aggressive" and prefix in test_stems and ext == "") else keep
-        for _, pfx, digest, old_path in entries[limit:]:
-            for candidate in (old_path, deps_dir / f"{pfx}-{digest}.d", deps_dir / f"{pfx}-{digest}.dSYM"):
-                if candidate.is_dir():
-                    shutil.rmtree(candidate, ignore_errors=True)
-                elif candidate.exists():
-                    try:
-                        candidate.unlink()
-                    except OSError:
-                        pass
-PY
+  python3 "$script_dir/prune-target-artifacts.py" "$repo_root" "${1:-auto}"
 }
 
 build_targeted_args() {
@@ -215,8 +154,11 @@ case "$mode" in
     ;;
   prune)
     (( $# == 0 )) || fail_usage 'prune takes no arguments'
-    prune_stale_target_artifacts aggressive
-    printf 'RESULT: PASS (pruned stale target artifacts)\n'
+    if ! prune_report="$(prune_stale_target_artifacts aggressive)"; then
+      printf 'RESULT: FAIL (could not prune target artifacts)\n'
+      exit 1
+    fi
+    printf 'RESULT: PASS (%s)\n' "$prune_report"
     exit 0
     ;;
   web)
@@ -266,7 +208,7 @@ else
 fi
 elapsed="$SECONDS"
 if [[ "${command_args[0]}" == "cargo" ]]; then
-  prune_stale_target_artifacts auto
+  prune_stale_target_artifacts auto >/dev/null 2>&1 || true
 fi
 
 if (( status == 0 )); then
