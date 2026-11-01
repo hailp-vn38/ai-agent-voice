@@ -1,10 +1,5 @@
 [workspace]
 members = ["crates/voice-agent-server"]
-exclude = [
-    "vendor/llm-wiki-rs",
-    "vendor/orchestrator_agent_rs",
-    "vendor/orchestrator_task_rs",
-]
 resolver = "2"
 
 [workspace.package]
@@ -63,9 +58,4 @@ debug = "line-tables-only"
 
 [profile.dev.package."*"]
 debug = false
-
-[patch.crates-io]
-llm-wiki-rs = { path = "vendor/llm-wiki-rs" }
-orchestrator-agent = { path = "vendor/orchestrator_agent_rs" }
-orchestrator-flow = { path = "vendor/orchestrator_task_rs" }
 

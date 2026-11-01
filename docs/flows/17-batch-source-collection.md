@@ -99,7 +99,7 @@ Lấy `invocation_id` và `tool_call_id` từ step tương ứng trong chi tiế
 
 ## Test contract
 
-- `vendor/llm-wiki-rs/tests/autoflow_planning.rs`: tra nguồn theo định danh, ingest dở, chia lô, cách ly, ingest lại.
-- `vendor/orchestrator_task_rs/tests/integration/collection_batch.rs`: chống trùng, không ghi đè, sổ theo dõi qua Retry, `yt-dlp` treo, chờ thu thập, cách ly, đối soát tool.
-- `vendor/orchestrator_agent_rs/tests/m4_continuous.rs`: step cap và giới hạn retry theo tiến độ.
-- `vendor/orchestrator_agent_rs/tests/m3_parent_child.rs`: cha thấy con dừng ở step cap.
+- `llm-wiki-rs`, `tests/autoflow_planning.rs`: tra nguồn theo định danh, ingest dở, chia lô, cách ly, ingest lại.
+- `orchestrator-flow`, `tests/integration/collection_batch.rs`: chống trùng, không ghi đè, sổ theo dõi qua Retry, `yt-dlp` treo, chờ thu thập, cách ly, đối soát tool.
+- `orchestrator-agent`, `tests/m4_continuous.rs`: step cap và giới hạn retry theo tiến độ.
+- `orchestrator-agent`, `tests/m3_parent_child.rs`: cha thấy con dừng ở step cap.
