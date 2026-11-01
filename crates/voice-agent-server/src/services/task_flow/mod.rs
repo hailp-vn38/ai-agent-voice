@@ -4,6 +4,7 @@
 pub mod agent_settings;
 pub mod charts;
 mod memory_tools;
+pub(crate) mod muse_task;
 mod projections;
 pub mod skills;
 mod voice;
@@ -276,6 +277,7 @@ async fn init_orchestrator_and_task_manager(
         .start()
         .await?;
     spawn_job_session_reaper(&task_manager, &orchestrator);
+    muse_task::closer::SubagentMuseCloser::spawn(&orchestrator);
 
     Ok((orchestrator, task_manager))
 }
@@ -380,6 +382,7 @@ pub(crate) fn spawn_job_session_reaper(
                     }
                     for summary in ops {
                         if !summary.root_has_active_work
+                            && !summary.operation.continuation_key.as_deref().is_some_and(|key| key.starts_with(crate::providers::llm::MUSE_TASK_KEY_PREFIX))
                             && summary.operation.remote_deleted_at.is_none()
                             && let Some(sid) = crate::providers::llm::gateway::muse::pool::release_recorded_job_session(&summary.operation).await
                         {
