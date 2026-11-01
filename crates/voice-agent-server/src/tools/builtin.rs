@@ -1,6 +1,9 @@
 //! Typed server-side LLM tools that do not use Device MCP transport.
 
-use crate::{providers::llm::ToolDefinition, services::memory::MemoryMode};
+use crate::{
+    providers::llm::ToolDefinition,
+    services::memory::{FactKind, MemoryMode},
+};
 
 pub const EXIT_TOOL_NAME: &str = "handle_exit_intent";
 pub const MAX_GOODBYE_CHARS: usize = 240;
@@ -32,8 +35,16 @@ pub const LEGACY_REMINDER_TOOL_NAMES: &[&str] = &[
     LEGACY_DELETE_REMINDER_TOOL_NAME,
 ];
 pub const MEMORY_RECALL_TOOL_NAME: &str = "server_memory_recall";
+pub const MEMORY_REMEMBER_TOOL_NAME: &str = "server_memory_remember";
+pub const MEMORY_CORRECT_TOOL_NAME: &str = "server_memory_correct";
+pub const MEMORY_FORGET_TOOL_NAME: &str = "server_memory_forget";
 /// Every Memory builtin. The catalog, delivery and receipt rules all follow this list.
-pub const MEMORY_TOOL_NAMES: &[&str] = &[MEMORY_RECALL_TOOL_NAME];
+pub const MEMORY_TOOL_NAMES: &[&str] = &[
+    MEMORY_RECALL_TOOL_NAME,
+    MEMORY_REMEMBER_TOOL_NAME,
+    MEMORY_CORRECT_TOOL_NAME,
+    MEMORY_FORGET_TOOL_NAME,
+];
 pub const MAX_MEMORY_RECALL_LIMIT: usize = 5;
 pub use crate::services::task_flow::{TASK_SUITE_TOOL_NAMES, is_task_suite_tool_name};
 /// Matches the Resource Key bound the Admin API enforces on a stored Template key, so a
@@ -61,12 +72,23 @@ pub fn is_memory_tool_name(name: &str) -> bool {
     MEMORY_TOOL_NAMES.contains(&name)
 }
 
+/// The builtins whose success returns a Memory Receipt.
+pub fn is_memory_write_tool_name(name: &str) -> bool {
+    is_memory_tool_name(name) && name != MEMORY_RECALL_TOOL_NAME
+}
+
 /// What the model is offered for a mode, fixed at admission. No definition has a scope parameter:
 /// the vault is always the session's own.
 pub fn memory_tool_definitions(mode: MemoryMode) -> Vec<ToolDefinition> {
     match mode {
         MemoryMode::Off => Vec::new(),
-        MemoryMode::Read | MemoryMode::ReadWrite => vec![memory_recall_tool_definition()],
+        MemoryMode::Read => vec![memory_recall_tool_definition()],
+        MemoryMode::ReadWrite => vec![
+            memory_recall_tool_definition(),
+            memory_remember_tool_definition(),
+            memory_correct_tool_definition(),
+            memory_forget_tool_definition(),
+        ],
     }
 }
 
@@ -93,6 +115,90 @@ fn memory_recall_tool_definition() -> ToolDefinition {
                 }
             },
             "required": ["query"],
+            "additionalProperties": false
+        }),
+    }
+}
+
+fn memory_remember_tool_definition() -> ToolDefinition {
+    ToolDefinition {
+        name: MEMORY_REMEMBER_TOOL_NAME.into(),
+        description: concat!(
+            "Save a fact to Memory for this device. Call only when the user explicitly asks to ",
+            "remember something in this turn, and save only what they asked. Confirm to the user ",
+            "only after this tool returns success."
+        )
+        .into(),
+        parameters: serde_json::json!({
+            "type": "object",
+            "properties": {
+                "title": {"type": "string", "description": "A short name for the fact."},
+                "hook": {
+                    "type": "string",
+                    "description": "One line saying when this fact is useful."
+                },
+                "body": {"type": "string", "description": "The fact itself."},
+                "kind": {
+                    "type": "string",
+                    "enum": ["user", "preference", "business", "decision", "reference"],
+                    "description": "What sort of fact this is."
+                }
+            },
+            "required": ["title", "hook", "body", "kind"],
+            "additionalProperties": false
+        }),
+    }
+}
+
+fn memory_correct_tool_definition() -> ToolDefinition {
+    ToolDefinition {
+        name: MEMORY_CORRECT_TOOL_NAME.into(),
+        description: concat!(
+            "Correct a saved fact. Call only when the user explicitly asks to correct it in this ",
+            "turn. Call server_memory_recall first to get its id and revision. Confirm to the ",
+            "user only after this tool returns success."
+        )
+        .into(),
+        parameters: serde_json::json!({
+            "type": "object",
+            "properties": {
+                "id": {"type": "string", "description": "The fact id from server_memory_recall."},
+                "revision": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "description": "The fact revision from server_memory_recall."
+                },
+                "body": {"type": "string", "description": "The corrected fact."},
+                "title": {"type": "string", "description": "A new title, if it should change."},
+                "hook": {"type": "string", "description": "A new hook, if it should change."}
+            },
+            "required": ["id", "revision", "body"],
+            "additionalProperties": false
+        }),
+    }
+}
+
+fn memory_forget_tool_definition() -> ToolDefinition {
+    ToolDefinition {
+        name: MEMORY_FORGET_TOOL_NAME.into(),
+        description: concat!(
+            "Forget a saved fact. Call only when the user explicitly asks to forget it in this ",
+            "turn. Call server_memory_recall first to get its id and revision. On success, tell ",
+            "the user the limits in the result: the fact is still in this turn, in this ",
+            "session's history, and in any copies outside Memory."
+        )
+        .into(),
+        parameters: serde_json::json!({
+            "type": "object",
+            "properties": {
+                "id": {"type": "string", "description": "The fact id from server_memory_recall."},
+                "revision": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "description": "The fact revision from server_memory_recall."
+                }
+            },
+            "required": ["id", "revision"],
             "additionalProperties": false
         }),
     }
@@ -311,6 +417,73 @@ pub fn parse_memory_recall_args(
         return Err(BuiltinToolError::InvalidArguments);
     }
     Ok(args)
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct RawMemoryRememberArgs {
+    title: String,
+    hook: String,
+    body: String,
+    kind: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MemoryRememberArgs {
+    pub title: String,
+    pub hook: String,
+    pub body: String,
+    pub kind: FactKind,
+}
+
+/// Size limits and secret checks belong to `MemoryCore`, which applies them on every path.
+pub fn parse_memory_remember_args(
+    arguments: &serde_json::Value,
+) -> Result<MemoryRememberArgs, BuiltinToolError> {
+    let args: RawMemoryRememberArgs = serde_json::from_value(arguments.clone())
+        .map_err(|_| BuiltinToolError::InvalidArguments)?;
+    let kind = FactKind::parse(&args.kind).ok_or(BuiltinToolError::InvalidArguments)?;
+    if args.title.trim().is_empty() || args.body.trim().is_empty() {
+        return Err(BuiltinToolError::InvalidArguments);
+    }
+    Ok(MemoryRememberArgs {
+        title: args.title,
+        hook: args.hook,
+        body: args.body,
+        kind,
+    })
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, serde::Deserialize)]
+pub struct MemoryCorrectArgs {
+    pub id: String,
+    pub revision: u64,
+    pub body: String,
+    pub title: Option<String>,
+    pub hook: Option<String>,
+}
+
+pub fn parse_memory_correct_args(
+    arguments: &serde_json::Value,
+) -> Result<MemoryCorrectArgs, BuiltinToolError> {
+    let args: MemoryCorrectArgs = serde_json::from_value(arguments.clone())
+        .map_err(|_| BuiltinToolError::InvalidArguments)?;
+    let blank_title = args.title.as_deref().is_some_and(|t| t.trim().is_empty());
+    if args.body.trim().is_empty() || blank_title {
+        return Err(BuiltinToolError::InvalidArguments);
+    }
+    Ok(args)
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, serde::Deserialize)]
+pub struct MemoryForgetArgs {
+    pub id: String,
+    pub revision: u64,
+}
+
+pub fn parse_memory_forget_args(
+    arguments: &serde_json::Value,
+) -> Result<MemoryForgetArgs, BuiltinToolError> {
+    serde_json::from_value(arguments.clone()).map_err(|_| BuiltinToolError::InvalidArguments)
 }
 
 /// Validates shape and bound only.  Whether the key names a candidate this session admitted is a

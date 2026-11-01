@@ -644,7 +644,7 @@ fn a_session_without_a_catalog_is_never_offered_the_switch_tool() {
 ///
 /// A gate rather than a sleep is what makes the window below reachable on purpose: the test
 /// chooses the instant the response becomes available, instead of hoping a timer lines up.
-struct GatedServer {
+pub(super) struct GatedServer {
     url: String,
     held: Arc<tokio::sync::Notify>,
     opener: watch::Sender<bool>,
@@ -654,6 +654,11 @@ struct GatedServer {
 
 impl GatedServer {
     async fn start() -> Self {
+        Self::answering("late").await
+    }
+
+    /// `answer` is the text of the tool result, once the test opens the gate.
+    pub(super) async fn answering(answer: &'static str) -> Self {
         let held = Arc::new(tokio::sync::Notify::new());
         let (opener, open) = watch::channel(false);
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
@@ -697,7 +702,7 @@ impl GatedServer {
                                 open.changed().await.ok();
                             }
                             serde_json::json!({
-                                "content": [{"type": "text", "text": "late"}],
+                                "content": [{"type": "text", "text": answer}],
                                 "isError": false
                             })
                         }
@@ -736,13 +741,13 @@ impl GatedServer {
             .expect("the fixture receives the in-flight tools/call within its bound");
     }
 
-    fn release(&self) {
+    pub(super) fn release(&self) {
         let _ = self.opener.send(true);
     }
 }
 
 /// A snapshot whose calls report into a sink the test can read.
-async fn gated_snapshot(
+pub(super) async fn gated_snapshot(
     server: &GatedServer,
     telemetry: Arc<crate::telemetry::RecordingTelemetry>,
 ) -> SessionExternalMcp {

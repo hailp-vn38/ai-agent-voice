@@ -356,6 +356,7 @@ impl SessionActor {
                     response_chars = self.generated_response.chars().count(),
                     "LLM operation finished"
                 );
+                self.observe_memory_claim();
                 self.llm_finish_pending = true;
                 self.flush_pending_llm_text();
             }

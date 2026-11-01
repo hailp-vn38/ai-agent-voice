@@ -265,6 +265,7 @@ impl SessionActor {
             system_mcp: None,
             reminder_tools: None,
             session_memory: None,
+            memory_receipt_turn: None,
             speech_output_config: crate::config::SpeechOutputConfig::default(),
             // Capture is opt-in, so an actor that is never bound archives nothing.
             transcript: None,

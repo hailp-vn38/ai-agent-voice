@@ -159,6 +159,8 @@ pub struct SessionActor {
     system_mcp: Option<crate::tools::system_mcp::SessionSystemMcp>,
     reminder_tools: Option<crate::services::notifications::SessionReminderTools>,
     session_memory: Option<crate::session::SessionMemory>,
+    /// The latest turn a Memory write returned a receipt in. Comparing turns needs no reset.
+    memory_receipt_turn: Option<TurnId>,
     /// The Device tool review this Voice Session was admitted under, if any.  A session admitted
     /// without one keeps the legacy Device allowlist behavior; one admitted with a participating
     /// Agent only calls what that Agent approved for this Device incarnation.

@@ -4,12 +4,27 @@
 use super::*;
 
 use crate::{
-    services::memory::RecallQuery,
+    services::memory::{
+        ExplicitIntent, FactId, MemoryActor, MemoryChange, RecallQuery, classify_intent,
+    },
     session::SessionMemory,
-    tools::builtin::{MAX_MEMORY_RECALL_LIMIT, MEMORY_RECALL_TOOL_NAME, parse_memory_recall_args},
+    tools::builtin::{
+        BuiltinToolError, MAX_MEMORY_RECALL_LIMIT, MEMORY_CORRECT_TOOL_NAME,
+        MEMORY_FORGET_TOOL_NAME, MEMORY_RECALL_TOOL_NAME, MEMORY_REMEMBER_TOOL_NAME,
+        is_memory_write_tool_name, parse_memory_correct_args, parse_memory_forget_args,
+        parse_memory_recall_args, parse_memory_remember_args,
+    },
 };
+use unicode_normalization::UnicodeNormalization;
 
 const RECALL_BODY_MAX_CHARS: usize = 500;
+/// What a successful Forget cannot have done, for the model to say out loud.
+const FORGET_LIMITS: [&str; 3] = [
+    "still_in_this_turn",
+    "still_in_session_history",
+    "copies_outside_memory_not_deleted",
+];
+const CLAIM_PHRASES: [&str; 3] = ["đã nhớ", "đã quên", "đã lưu"];
 
 impl SessionActor {
     pub(in super::super) fn execute_memory_tool(&mut self, call: ToolCall) {
@@ -34,14 +49,16 @@ impl SessionActor {
             tool = %call.name,
             call_id = %call.id,
         );
+        let intent = self.turn_intent();
         let completions = self.async_calls_tx.clone();
         let session_id = self.session_id.clone();
         let dispatched = call.clone();
         runtime.spawn(async move {
+            // A barge-in drops this future, not the write: `apply` runs in a task of its own.
             let outcome = tokio::select! {
                 biased;
                 () = cancellation.cancelled() => return,
-                outcome = run_memory_tool(&memory, &dispatched) => outcome,
+                outcome = run_memory_tool(&memory, intent, &dispatched) => outcome,
             };
             tracing::info!(
                 event = "voice_memory_tool_completed",
@@ -77,17 +94,138 @@ impl SessionActor {
         );
         self.complete_tool_call(call, Err(code));
     }
+
+    /// Read from the last `ChatMessage::User`, the text the server committed for this turn. Tool
+    /// results have their own variant, so nothing a tool returns can open the gate.
+    fn turn_intent(&self) -> ExplicitIntent {
+        self.llm_messages
+            .iter()
+            .rev()
+            .find_map(|message| match message {
+                ChatMessage::User { content } => Some(classify_intent(content)),
+                _ => None,
+            })
+            .unwrap_or_default()
+    }
+
+    /// Only a write's success is a Memory Receipt; a recall proves nothing was saved.
+    pub(in super::super) fn note_memory_receipt(&mut self, tool: &str, turn_id: TurnId) {
+        if is_memory_write_tool_name(tool) {
+            self.memory_receipt_turn = Some(turn_id);
+        }
+    }
+
+    /// Measures promises the model did not keep. It adds nothing to what the user hears.
+    pub(in super::super) fn observe_memory_claim(&self) {
+        let Some(turn_id) = self.current_turn_id() else {
+            return;
+        };
+        if self.session_memory.is_some()
+            && self.memory_receipt_turn != Some(turn_id)
+            && claims_a_memory_write(&self.generated_response)
+        {
+            tracing::warn!(
+                event = "memory_claim_without_receipt",
+                session_id = %self.session_id,
+                turn_id = turn_id.get(),
+            );
+        }
+    }
+}
+
+fn claims_a_memory_write(answer: &str) -> bool {
+    let answer: String = answer.nfc().flat_map(char::to_lowercase).collect();
+    CLAIM_PHRASES.iter().any(|phrase| answer.contains(phrase))
 }
 
 /// One arm per Memory builtin. The error is the tool result's code.
 async fn run_memory_tool(
     memory: &SessionMemory,
+    intent: ExplicitIntent,
     call: &ToolCall,
 ) -> Result<serde_json::Value, &'static str> {
+    let actor = MemoryActor::VoiceUser {
+        device_db_id: memory.device_db_id,
+        mode: memory.mode,
+        intent,
+    };
     match call.name.as_str() {
         MEMORY_RECALL_TOOL_NAME => recall(memory, &call.arguments).await,
+        MEMORY_REMEMBER_TOOL_NAME => remember(memory, actor, &call.arguments).await,
+        MEMORY_CORRECT_TOOL_NAME => correct(memory, actor, &call.arguments).await,
+        MEMORY_FORGET_TOOL_NAME => forget(memory, actor, &call.arguments).await,
         _ => Err("memory_tool_unknown"),
     }
+}
+
+fn invalid_arguments(_: BuiltinToolError) -> &'static str {
+    "invalid_arguments"
+}
+
+/// An id that is not a fact id, such as a Wiki Page's, names no fact.
+fn fact_id(id: &str) -> Result<FactId, &'static str> {
+    FactId::parse(id).ok_or("memory_not_found")
+}
+
+/// Permissions, the intent gate and every limit are `apply`'s to enforce.
+async fn write(
+    memory: &SessionMemory,
+    actor: MemoryActor,
+    change: MemoryChange,
+) -> Result<serde_json::Value, &'static str> {
+    let receipt = memory
+        .core
+        .apply(&memory.scope, actor, change)
+        .await
+        .map_err(|error| error.code())?;
+    Ok(serde_json::json!({"ok": true, "receipt": receipt}))
+}
+
+async fn remember(
+    memory: &SessionMemory,
+    actor: MemoryActor,
+    arguments: &serde_json::Value,
+) -> Result<serde_json::Value, &'static str> {
+    let args = parse_memory_remember_args(arguments).map_err(invalid_arguments)?;
+    let change = MemoryChange::Remember {
+        title: args.title,
+        hook: args.hook,
+        body: args.body,
+        kind: args.kind,
+        source_ref: None,
+    };
+    write(memory, actor, change).await
+}
+
+async fn correct(
+    memory: &SessionMemory,
+    actor: MemoryActor,
+    arguments: &serde_json::Value,
+) -> Result<serde_json::Value, &'static str> {
+    let args = parse_memory_correct_args(arguments).map_err(invalid_arguments)?;
+    let change = MemoryChange::Correct {
+        id: fact_id(&args.id)?,
+        expected_revision: args.revision,
+        title: args.title,
+        hook: args.hook,
+        body: args.body,
+    };
+    write(memory, actor, change).await
+}
+
+async fn forget(
+    memory: &SessionMemory,
+    actor: MemoryActor,
+    arguments: &serde_json::Value,
+) -> Result<serde_json::Value, &'static str> {
+    let args = parse_memory_forget_args(arguments).map_err(invalid_arguments)?;
+    let change = MemoryChange::Forget {
+        id: fact_id(&args.id)?,
+        expected_revision: args.revision,
+    };
+    let mut result = write(memory, actor, change).await?;
+    result["limits"] = serde_json::json!(FORGET_LIMITS);
+    Ok(result)
 }
 
 async fn recall(

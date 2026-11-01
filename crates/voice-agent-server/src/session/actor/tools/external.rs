@@ -146,6 +146,9 @@ impl SessionActor {
                     if let Some(batch) = self.tool_batch.as_mut() {
                         batch.in_flight = None;
                     }
+                    if outcome.is_ok() {
+                        self.note_memory_receipt(&in_flight.name, completion.turn_id);
+                    }
                     match outcome {
                         Ok(value) => self.complete_tool_call(
                             in_flight,
