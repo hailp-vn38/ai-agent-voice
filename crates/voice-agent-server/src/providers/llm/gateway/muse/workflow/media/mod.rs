@@ -1,5 +1,7 @@
 mod candidates;
 mod journal;
+#[cfg(test)]
+pub(crate) mod live_spike;
 use journal::TurnJournal;
 
 use std::sync::Arc;

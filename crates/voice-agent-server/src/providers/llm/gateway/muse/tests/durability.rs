@@ -384,6 +384,231 @@ async fn cleanup_deletes_all_remote_sessions_of_one_job() {
     );
 }
 
+/// Lớp đo của spike thật: đọc được history và file bằng kết nối mới, không cần stream cũ.
+#[tokio::test]
+async fn spike_probe_reads_history_and_file_without_the_original_stream() {
+    use super::super::pool::SharedMusePool;
+    use super::super::workflow::live_spike::probe_session;
+
+    let acc = FakeVmAccount::new(vec![]).with_file("/tmp/spike.mp4", mp4_with_duration(8));
+    acc.set_history_polls(single_video_history("done", "/tmp/spike.mp4"));
+    let transport = FakeMuseVmTransport::new(vec![acc.clone()]);
+    let provider = build_gateway_muse_provider(&[SINGLE_COOKIE], transport.clone()).await;
+    let lease = provider
+        .hub
+        .acquire_lease(&GatewayBinding::Pool(GatewayVendor::Muse))
+        .unwrap();
+    let pool = SharedMusePool::for_gateway_lease(
+        &reqwest::Client::new(),
+        &lease.account_key,
+        lease.access_token.expose(),
+        Some(transport),
+    );
+
+    let probe = probe_session(&pool, "spike-session", None).await;
+    assert_eq!(probe.acquire_error, None);
+    assert_eq!(probe.history_status, Some(200));
+    assert_eq!(probe.ready_paths, ["/tmp/spike.mp4"]);
+    assert_eq!(probe.read_path.as_deref(), Some("/tmp/spike.mp4"));
+    assert!(probe.read_bytes.is_some_and(|bytes| bytes > 0));
+    assert_eq!(probe.read_error, None);
+    assert!(
+        acc.deleted_sessions().is_empty(),
+        "probing must never delete the session being measured"
+    );
+}
+
+/// Gọi `render` ở lượt đầu, rồi kết thúc bằng text.
+#[derive(Debug)]
+struct RenderThenFinish(std::sync::atomic::AtomicUsize);
+
+#[async_trait::async_trait]
+impl orchestrator_agent_rs::CustomModelExecutor for RenderThenFinish {
+    fn routing_fingerprint(&self) -> String {
+        "test-render-then-finish".into()
+    }
+
+    async fn complete(
+        &self,
+        _request: &orchestrator_agent_rs::ModelRequest,
+        _cancel: &tokio_util::sync::CancellationToken,
+        _sink: orchestrator_agent_rs::StreamSink<'_>,
+    ) -> Result<orchestrator_agent_rs::ModelResponse, orchestrator_agent_rs::GatewayError> {
+        let first = self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 0;
+        Ok(orchestrator_agent_rs::ModelResponse {
+            text: if first { String::new() } else { "done".into() },
+            finish_reason: if first { "tool_calls" } else { "stop" }.into(),
+            tool_calls: if first {
+                vec![orchestrator_agent_rs::ModelToolCall {
+                    id: "render-1".into(),
+                    name: "render".into(),
+                    arguments: serde_json::json!({}),
+                }]
+            } else {
+                Vec::new()
+            },
+            usage: None,
+        })
+    }
+}
+
+/// Ghi operation của Job Session như `video_create`, rồi giữ run sống tới khi test cho phép.
+struct RenderGate {
+    account_key: String,
+    recorded: tokio::sync::Notify,
+    finish: tokio::sync::Notify,
+}
+
+struct RenderTool(std::sync::Arc<RenderGate>);
+
+#[async_trait::async_trait]
+impl orchestrator_agent_rs::HostTool for RenderTool {
+    fn descriptor(&self) -> orchestrator_agent_rs::ToolDescriptor {
+        orchestrator_agent_rs::ToolDescriptor {
+            name: "render".into(),
+            description: "holds the run open while a job session exists".into(),
+            input_schema: serde_json::json!({ "type": "object", "properties": {} }),
+            effect: orchestrator_agent_rs::ToolEffect::Resumable,
+        }
+    }
+
+    async fn execute(
+        &self,
+        context: orchestrator_agent_rs::ToolContext,
+        _args: serde_json::Value,
+    ) -> Result<orchestrator_agent_rs::ToolOutcome, orchestrator_agent_rs::ToolError> {
+        let operation = context.operation();
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64;
+        operation.begin(now + 600, "muse").await?;
+        operation
+            .advance(OperationUpdate {
+                status: Some(ToolOperationStatus::Running),
+                account_key: Some(self.0.account_key.clone()),
+                remote_session_id: Some("terminal-release-session".into()),
+                continuation_key: Some(context.scope().root_session_id.clone()),
+                ..Default::default()
+            })
+            .await?;
+        self.0.recorded.notify_one();
+        self.0.finish.notified().await;
+        operation
+            .advance(OperationUpdate {
+                status: Some(ToolOperationStatus::Committed),
+                result_json: Some("{}".into()),
+                ..Default::default()
+            })
+            .await?;
+        Ok(orchestrator_agent_rs::ToolOutcome {
+            call_id: context.scope().tool_call_id.clone(),
+            content: "rendered".into(),
+            metadata: serde_json::json!({}),
+        })
+    }
+}
+
+/// `TaskTerminal` của hủy đến khi run còn chạy: lúc đó xóa session sẽ làm hỏng lượt đang render.
+#[tokio::test]
+async fn terminal_release_waits_for_the_active_run_then_deletes_the_session_once() {
+    use super::super::pool::{SharedMusePool, restore_job_sessions_from_operations};
+    use crate::services::task_flow::release_terminal_job_sessions;
+    use orchestrator_agent_rs::{
+        AgentDefinition, AgentMode, CallerContext, LlmBackend, LlmConfig, LlmProviderConfig,
+        Orchestrator, OrchestratorConfig, ProviderAuth, RequestLimits, RunStatus,
+    };
+
+    let acc = FakeVmAccount::new(vec![]);
+    let transport = FakeMuseVmTransport::new(vec![acc.clone()]);
+    let provider = build_gateway_muse_provider(&[SINGLE_COOKIE], transport.clone()).await;
+    let lease = provider
+        .hub
+        .acquire_lease(&GatewayBinding::Pool(GatewayVendor::Muse))
+        .unwrap();
+    let _pool = SharedMusePool::for_gateway_lease(
+        &reqwest::Client::new(),
+        &lease.account_key,
+        lease.access_token.expose(),
+        Some(transport),
+    );
+
+    let dir = std::env::temp_dir().join(format!("terminal-release-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let prompt = dir.join("root.md");
+    std::fs::write(&prompt, "test root").unwrap();
+    let gate = std::sync::Arc::new(RenderGate {
+        account_key: lease.account_key.clone(),
+        recorded: tokio::sync::Notify::new(),
+        finish: tokio::sync::Notify::new(),
+    });
+    let orchestrator = Orchestrator::builder(OrchestratorConfig::new(
+        LlmConfig {
+            providers: vec![LlmProviderConfig {
+                id: "test".into(),
+                backend: LlmBackend::OpenAi,
+                endpoint: None,
+                auth: ProviderAuth::CustomExecutor(std::sync::Arc::new(RenderThenFinish(
+                    Default::default(),
+                ))),
+                limits: RequestLimits::uniform(Duration::from_secs(10)),
+            }],
+        },
+        vec![
+            AgentDefinition::new("root", "test", "model")
+                .with_mode(AgentMode::Primary)
+                .with_prompt_path(&prompt)
+                .with_allowed_tools(["render"]),
+        ],
+        dir.join("store"),
+    ))
+    .register_tool(std::sync::Arc::new(RenderTool(gate.clone())))
+    .build()
+    .await
+    .unwrap();
+
+    let caller = CallerContext::new("alice", "ws1");
+    let session_id = orchestrator.create_session(&caller, "root").await.unwrap();
+    let turn = orchestrator
+        .submit(&caller, &session_id, "render it".into())
+        .await
+        .unwrap();
+    tokio::time::timeout(Duration::from_secs(20), gate.recorded.notified())
+        .await
+        .expect("tool must record its operation");
+
+    assert!(
+        !release_terminal_job_sessions(&orchestrator, &session_id).await,
+        "an active run must ask the caller to retry"
+    );
+    assert!(acc.deleted_sessions().is_empty());
+
+    gate.finish.notify_one();
+    tokio::time::timeout(Duration::from_secs(20), async {
+        while orchestrator
+            .result(&caller, &session_id, &turn.turn_id)
+            .await
+            .unwrap()
+            .status
+            == RunStatus::Running
+        {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("run must finish");
+
+    let ops = orchestrator.list_tool_operations().await.unwrap();
+    restore_job_sessions_from_operations(&ops).await;
+    assert!(release_terminal_job_sessions(&orchestrator, &session_id).await);
+    assert_eq!(acc.deleted_sessions(), ["terminal-release-session"]);
+    let ops = orchestrator.list_tool_operations().await.unwrap();
+    assert!(ops[0].operation.remote_deleted_at.is_some());
+
+    orchestrator.shutdown().await.unwrap();
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 #[tokio::test]
 async fn lost_submission_ack_keeps_session_for_reconciliation_without_failover() {
     use super::harness::SECOND_COOKIE;

@@ -276,7 +276,10 @@ const TERMINAL_RELEASE_ATTEMPTS: u32 = 20;
 
 /// Xóa Job Session của một Background Task đã kết thúc. Trả `false` khi còn run đang hoạt động
 /// hoặc chưa đọc được operation, để bên gọi thử lại.
-async fn release_terminal_job_sessions(orchestrator: &Orchestrator, session_id: &str) -> bool {
+pub(crate) async fn release_terminal_job_sessions(
+    orchestrator: &Orchestrator,
+    session_id: &str,
+) -> bool {
     let Ok(ops) = orchestrator.list_tool_operations().await else {
         return false;
     };

@@ -104,3 +104,37 @@ Các gate kiểm chứng code nêu trên đã đạt; các gate Muse thật vẫ
 - Task vendor: `533be88` — enforce turn budgets and preserve resumable video work.
 
 Repo chính lưu guide, thiết kế và biên bản; thư mục vendor vốn được `.gitignore` và có Git repository riêng. Commit trên các nhánh hiện tại, không merge `main` hoặc push.
+
+## Đợt bổ sung ngày 2026-11-01
+
+Phạm vi: các sửa review ghi trong [guide](../agent-job-durability-implementation-guide.md#sửa-sau-code-review-ngày-2026-11-01) và phần còn thiếu sau đó. Trên vendor agent, đợt này nằm ở [patch](patches/orchestrator_agent_rs-durability-remaining.patch), áp lên working tree đang chứa các sửa review (nền `a88bbd1`).
+
+### Nguyên nhân và cách sửa ba lỗi kiểm thử
+
+| Test | Nguyên nhân gốc | Sửa | Trước | Sau |
+| --- | --- | --- | --- | --- |
+| `shutdown_waits_for_cooperative_tool_and_commits_its_result` | Lỗi code: `shutdown_grace` 5s làm ân hạn tool về 0, tool hợp tác bị drop, sau restart bị gọi lại và treo. Cấu hình mặc định 30s không bị. Biên bản trước ghi suite này pass, nên lỗi không ổn định theo lần chạy | `shutdown_cancel_grace` giữ tối thiểu một nửa `shutdown_grace` | 13/15 fail trên bản gốc | 0/60 |
+| `at29_st04_child_events_reach_the_family_before_the_parent_tool_completes` | Lỗi code: run con commit trạng thái kết thúc trước khi phát event, nên cha đọc store rồi phát `tool.completed` trước `run.completed` của con | `await_child` chờ tối đa 500ms cho event kết thúc của con, chỉ khi đã thấy con đang chạy và chưa nhận event | 2/60 fail, CPU tải cao | 0/150, cùng tải |
+| `budget_capped_text_only` | Lỗi test: `now_secs` trộn đồng hồ thật và đồng hồ tokio đã pause, có thể lệch 1s; tool ngủ đúng bằng hạn mức 100s nên `active_secs` có thể là 99 | Tool ngủ 102s. Sai số 1s không đáng kể với ngân sách thật tính bằng giờ | 2/200 fail | 0/300 |
+
+### Kết quả
+
+| Kiểm tra | Kết quả |
+| --- | --- |
+| Full suite vendor agent, `--no-fail-fast` | PASS, trước lần `rustfmt` cuối của patch |
+| Full suite vendor task, trên agent đã áp patch | PASS |
+| Toàn workspace, `--no-fail-fast`, có `config.toml` local | PASS |
+| `cargo clippy -D warnings`: workspace | PASS |
+| `cargo clippy -D warnings`: vendor agent | PASS, trước lần `rustfmt` cuối của patch |
+| `cargo fmt --all --check` | Sạch |
+| `terminal_release_waits_for_the_active_run_then_deletes_the_session_once` | PASS |
+| `spike_probe_reads_history_and_file_without_the_original_stream` | PASS |
+| `scripts/sync-media-creator-prompt.py` trên bản sao `agent_settings.json` | Thay đúng mục video, giữ các mục khác; chạy lại không đổi. Chưa áp vào dữ liệu thật |
+
+`vieneu` đọc `config.toml` ở gốc repo, nên `full` fail trong worktree mới không có file này. Đó là phụ thuộc môi trường có sẵn, đợt này không đổi.
+
+Vendor task không có thay đổi trong đợt này. Không chạy lại test web vì không sửa web.
+
+### Chưa chạy
+
+Chín phép đo Muse thật ([runbook](muse-durability-spike.md)), kill thật và xác nhận số session Muse thật còn lại bằng 0 vẫn **NOT_RUN**. Giai đoạn 4 chưa đủ điều kiện phát hành.

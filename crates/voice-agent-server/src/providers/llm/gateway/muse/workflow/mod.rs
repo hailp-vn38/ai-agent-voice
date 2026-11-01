@@ -324,6 +324,8 @@ pub(crate) async fn handle_approval_event<F>(
 
 pub(crate) use self::chat::{ChatSignal, run_chat_turn_once};
 pub(crate) use self::media::MediaBatch;
+#[cfg(test)]
+pub(crate) use self::media::live_spike;
 pub(crate) use self::media::{
     count_remote_user_turns, resume_media_turn_once, run_media_turn_once,
 };

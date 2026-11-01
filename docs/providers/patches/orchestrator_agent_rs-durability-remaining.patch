@@ -1,0 +1,135 @@
+--- a/src/executor/dispatch.rs
++++ b/src/executor/dispatch.rs
+@@ -20,6 +20,15 @@
+ const USER_CANCEL_GRACE: Duration = Duration::from_secs(30);
+ const SHUTDOWN_CANCEL_GRACE_MAX: Duration = Duration::from_secs(20);
+ 
++/// Ân hạn cho tool khi shutdown: chừa 5s cho phần còn lại của shutdown. `shutdown_grace` ngắn thì
++/// chừa một nửa thay vì về 0, để tool hợp tác vẫn kịp trả kết quả mà không vượt tổng ân hạn.
++fn shutdown_cancel_grace(shutdown_grace: Duration) -> Duration {
++    shutdown_grace
++        .saturating_sub(Duration::from_secs(5))
++        .max(shutdown_grace / 2)
++        .min(SHUTDOWN_CANCEL_GRACE_MAX)
++}
++
+ impl ToolExecutor {
+     /// Chạy một invocation đã `prepare`. Cancel là hợp tác: tool nhận cờ `is_cancelled` và tự
+     /// dừng; executor không bỏ tool đang chạy (shutdown chờ trong grace). Timeout là per-op.
+@@ -157,9 +166,7 @@
+             cancel.cancelled().await;
+             cancelled.store(true, Ordering::Release);
+             let grace = if shutdown_token.is_cancelled() {
+-                shutdown_grace
+-                    .saturating_sub(Duration::from_secs(5))
+-                    .min(SHUTDOWN_CANCEL_GRACE_MAX)
++                shutdown_cancel_grace(shutdown_grace)
+             } else {
+                 USER_CANCEL_GRACE
+             };
+--- a/src/feed/event.rs
++++ b/src/feed/event.rs
+@@ -30,6 +30,13 @@
+     TOOL_INTERRUPTED,
+ ];
+ 
++pub(crate) fn is_run_terminal(event_type: &str) -> bool {
++    matches!(
++        event_type,
++        RUN_COMPLETED | RUN_FAILED | RUN_CANCELLED | RUN_INTERRUPTED
++    )
++}
++
+ /// Event terminal của run theo trạng thái (timed_out gộp vào failed).
+ pub(crate) fn run_terminal(status: crate::types::RunStatus) -> &'static str {
+     use crate::types::RunStatus;
+--- a/src/subagent/manager.rs
++++ b/src/subagent/manager.rs
+@@ -18,6 +18,10 @@
+ const FALLBACK_POLL: Duration = Duration::from_secs(2);
+ /// Số lần đọc store lỗi liên tiếp trước khi bỏ cuộc đợi (child vẫn chạy và vẫn đọc được sau).
+ const MAX_POLL_ERRORS: u32 = 5;
++/// Child commit trạng thái terminal rồi mới phát event, nên parent đọc store có thể thấy kết quả
++/// trước khi event lên feed. Chờ có giới hạn để `tool.completed` của parent không vượt event của
++/// child; publication bị mất chỉ làm chậm parent đúng mức này.
++const TERMINAL_EVENT_GRACE: Duration = Duration::from_millis(500);
+ 
+ struct TaskCatalog {
+     /// Chỉ agent có thể làm child (mode `Subagent|All`), theo id.
+@@ -212,6 +216,9 @@
+         let mut rx = self.emitter.feed().subscribe_raw();
+         let mut rx_open = true;
+         let mut errors = 0;
++        // Child đã terminal ngay lần đọc đầu (resume) thì event đã phát từ trước: không chờ.
++        let mut seen_live = false;
++        let mut terminal_event_seen = false;
+         let result = loop {
+             if cancel.is_cancelled() {
+                 return Delegation::Cancelled;
+@@ -222,8 +229,16 @@
+             )
+             .await
+             {
+-                Ok(r) if r.status.is_terminal() => break r,
+-                Ok(_) => errors = 0,
++                Ok(r) if r.status.is_terminal() => {
++                    if seen_live && !terminal_event_seen && rx_open {
++                        await_terminal_event(&mut rx, &admission.session_id, cancel).await;
++                    }
++                    break r;
++                }
++                Ok(_) => {
++                    errors = 0;
++                    seen_live = true;
++                }
+                 Err(_) => {
+                     errors += 1;
+                     if errors >= MAX_POLL_ERRORS {
+@@ -254,6 +269,7 @@
+                             if ev.session_id == admission.session_id
+                                 && ev.state_revision.is_some() =>
+                         {
++                            terminal_event_seen = event::is_run_terminal(&ev.event_type);
+                             break;
+                         }
+                         Ok(_) => continue,
+@@ -273,4 +289,26 @@
+         }
+         outcome_of(scope, result)
+     }
++}
++
++async fn await_terminal_event(
++    rx: &mut tokio::sync::broadcast::Receiver<crate::feed::ExecutionEvent>,
++    session_id: &str,
++    cancel: &CancellationToken,
++) {
++    use tokio::sync::broadcast::error::RecvError;
++    let wait = async {
++        loop {
++            tokio::select! {
++                biased;
++                () = cancel.cancelled() => return,
++                item = rx.recv() => match item {
++                    Ok(ev) if ev.session_id == session_id && event::is_run_terminal(&ev.event_type) => return,
++                    Ok(_) | Err(RecvError::Lagged(_)) => {}
++                    Err(RecvError::Closed) => return,
++                },
++            }
++        }
++    };
++    let _ = tokio::time::timeout(TERMINAL_EVENT_GRACE, wait).await;
+ }
+--- a/tests/m4_continuous.rs
++++ b/tests/m4_continuous.rs
+@@ -1088,7 +1088,9 @@
+ async fn budget_capped_text_only() {
+     let env = Env::new();
+     let gw = ScriptedGateway::new();
+-    let (slow, _, _) = Probe::new("slow", Behavior::Sleep(Duration::from_secs(100)));
++    // `now_secs` trộn đồng hồ thật và đồng hồ tokio đã pause, nên có thể lệch 1s: ngủ vượt hạn
++    // mức 100s để không phụ thuộc vào việc giây thật có nhảy trước khi run bắt đầu hay không.
++    let (slow, _, _) = Probe::new("slow", Behavior::Sleep(Duration::from_secs(102)));
+     push_call(&gw, "c1", "slow", "work");
+     gw.push_text("partial summary before budget stop");
+ 

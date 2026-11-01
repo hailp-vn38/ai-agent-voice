@@ -45,7 +45,7 @@ Bộ đếm retry dùng giới hạn thực tế: `max_resume_attempts=9` tươn
 
 ### Sửa sau code review ngày 2026-11-01
 
-Review hai trục (chuẩn của repo và guide này) trên repo chính `6c7ad3e5...9d200b28`, agent `62ff25f...a88bbd1`, task `9560fa0...533be88`. **Các sửa dưới đây chưa commit:** chúng nằm trong working tree của cả ba repo, trên nền repo chính `9d200b28`, agent `a88bbd1`, task `533be88`.
+Review hai trục (chuẩn của repo và guide này) trên repo chính `6c7ad3e5...9d200b28`, agent `62ff25f...a88bbd1`, task `9560fa0...533be88`. Ở repo chính, các sửa dưới đây đã commit trên nhánh `worktree-durability-remaining`. **Ở hai vendor, chúng chưa commit:** vẫn nằm trong working tree, trên nền agent `a88bbd1`, task `533be88`.
 
 | Phát hiện | Cách sửa | Vị trí |
 | --- | --- | --- |
@@ -76,13 +76,13 @@ Chi tiết lệnh, kết quả và các ranh giới chưa chạy: [biên bản k
 
 - Migration trên bản sao nhất quán của ba `orchestrator.db` và `tasks.db` thật: đã pass; `foreign_key_check` rỗng và `integrity_check=ok`. Không migrate DB gốc.
 - Test targeted cho watchdog, shutdown/restart, video journal, deadline, cleanup, budget và UI: đã pass. Full workspace và full suite của hai vendor đã pass; web được kiểm chứng riêng theo biên bản.
-- Sau các sửa ngày 2026-11-01: full suite của hai vendor pass; `scripts/agent-test.sh full` pass trước các chỉnh format và test vendor cuối, sau đó `cargo check` toàn workspace vẫn pass. Clippy `-D warnings` pass ở cả ba repo trước lần format cuối. Không chạy lại test web vì không sửa web. Biên bản kiểm chứng chưa ghi đợt này.
-- Chưa có test cho phần thử lại xóa session khi hủy (`release_terminal_job_sessions`), vì cần dựng Orchestrator có run đang chạy cùng session Muse.
-- Hai test chập chờn, chưa rõ nguyên nhân gốc: `at29_st04_child_events_reach_the_family_before_the_parent_tool_completes` (file `m6_observation` fail 0/30 lần với bản sửa, 1/30 trên bản gốc) và `budget_capped_text_only` (file `m4_continuous` fail 1/12 với bản sửa, 0/12 trên bản gốc). Lỗi `m4` chưa tái hiện được trên bản gốc nên chưa loại trừ được liên quan tới đợt sửa.
-- `cargo fmt --check` ở repo chính còn 75 diff, nên bước fmt của CI có thể fail. Các file sửa đợt này đã được format.
-- Chưa chạy chín phép đo của [Spike bắt buộc](#spike-bắt-buộc), kill thật, hoặc xác nhận số session Muse thật còn lại bằng 0. Chỉ dùng fallback `VIDEO_SESSION_LOST` nếu phép đo chứng minh không thể resume; hiện chưa có bằng chứng để chọn fallback đó.
-- Chưa merge hai nhánh vendor vào `main`, chưa push và chưa triển khai server.
-- File runtime `data/orchestrator-prompts/media_creator.md` có hướng dẫn chia theo giới hạn và `video_concat`, nhưng chưa trùng seed mới và thiếu hướng dẫn `same job`. Phải đồng bộ có giữ tùy chỉnh và reload/xác nhận prompt trước phát hành.
+- Sau các sửa ngày 2026-11-01: full suite của hai vendor, toàn workspace và clippy `-D warnings` pass trên bản đã áp patch (xem biên bản). Không chạy lại test web vì không sửa web.
+- Phần thử lại xóa session khi hủy (`release_terminal_job_sessions`) đã có test `terminal_release_waits_for_the_active_run_then_deletes_the_session_once`, dựng Orchestrator thật và VM giả.
+- Ba lỗi kiểm thử đã tìm ra nguyên nhân gốc và sửa, chi tiết ở [biên bản](providers/agent-job-durability-validation-2026-10-31.md#đợt-bổ-sung-ngày-2026-11-01). Thay đổi vendor nằm ở [patch](providers/patches/orchestrator_agent_rs-durability-remaining.patch), **chưa áp vào repo agent**.
+- `cargo fmt --check` ở repo chính đã sạch.
+- Công cụ và runbook cho chín phép đo đã có ở [spike độ bền session Muse](providers/muse-durability-spike.md), nhưng **chưa chạy với tài khoản thật**. Kill thật và xác nhận số session Muse thật còn lại bằng 0 cũng chưa chạy. Chỉ dùng fallback `VIDEO_SESSION_LOST` nếu phép đo chứng minh không thể resume; hiện chưa có bằng chứng để chọn fallback đó.
+- Chưa merge hai nhánh vendor vào `main` và chưa triển khai server.
+- `data/orchestrator-prompts/media_creator.md` được ghi đè từ `agent_settings.json` mỗi lần boot, nên sửa file `.md` không có tác dụng. Dữ liệu đang chạy còn override cũ, thiếu hướng dẫn `same job`. Trước phát hành, dừng server và chạy `scripts/sync-media-creator-prompt.py <agent_settings.json> vendor/orchestrator_task_rs/src/prompts.rs --apply` trên từng môi trường: script chỉ thay mục video, giữ các mục khác, có backup. Override còn nhắc `tts_synthesize` và `artifact_create` dù `allowed_tools` không có; giữ nguyên vì chưa xác định được đó là tùy chỉnh hay bản seed cũ.
 - Giai đoạn 0 là cấu hình runtime, chưa xác nhận trên Admin/log. Timeout profile mới và deadline Muse chat đã loại bỏ nhánh cắt sớm do config cũ trong code.
 
 Không gọi giai đoạn 4 là hoàn tất trước khi các gate Muse thật đạt. Các sửa độ bền trong nhánh này có thể commit độc lập với việc xác nhận phát hành.
@@ -724,7 +724,7 @@ Cách làm:
 - Xác nhận shutdown không phát `TaskTerminal`. Nếu có phát, bỏ qua khi `CancelReason::Shutdown`.
 - Ghi session vào slot trước khi gọi `execute_media_turn_on_lease`, không đợi lượt xong. `session_id` do client tạo nên đã biết từ đầu; nhờ vậy lần gọi đầu bị hủy vẫn được dọn.
 
-`shutdown_grace` mặc định 30s, bằng thời gian ân hạn của tool, nên shutdown có thể thất bại vì đua nhau. Đặt `CANCEL_GRACE = 30s` khi người dùng hủy, `min(20s, shutdown_grace - 5s)` khi shutdown.
+`shutdown_grace` mặc định 30s, bằng thời gian ân hạn của tool, nên shutdown có thể thất bại vì đua nhau. Đặt `CANCEL_GRACE = 30s` khi người dùng hủy, `min(20s, max(shutdown_grace - 5s, shutdown_grace / 2))` khi shutdown. Vế `shutdown_grace / 2` để `shutdown_grace` từ 5s trở xuống không làm ân hạn về 0, vốn khiến tool hợp tác bị drop trước khi kịp trả kết quả.
 
 Đợt này shutdown giữ session trên Muse, nhưng registry nằm trong RAM nên sau restart không nối lại được và session đó không ai dọn. Giai đoạn 4 mới giải quyết.
 
