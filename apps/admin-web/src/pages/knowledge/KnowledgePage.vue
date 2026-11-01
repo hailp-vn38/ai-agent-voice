@@ -190,7 +190,7 @@ function restoredVaultSpace(): TreeSpace {
 
 const q = ref('')
 const searchOpen = ref(false)
-const searchMode = ref<SearchMode>('hybrid')
+const searchMode = ref<SearchMode>('lex')
 const searchHits = ref<Hit[]>([])
 const searchExecuted = ref(false)
 watch(q, () => {
@@ -199,7 +199,7 @@ watch(q, () => {
 })
 function closeSearch() {
   searchOpen.value = false
-  searchMode.value = 'hybrid'
+  searchMode.value = 'lex'
   q.value = ''
   searchHits.value = []
   searchExecuted.value = false
@@ -1222,8 +1222,8 @@ onMounted(() => {
           <select v-model="searchMode" class="a-search-mode"
             :aria-label="t('knowledgeV3.searchMode')"
             @change="q.trim() && void search()">
-            <option value="hybrid">{{ t('knowledgeV3.searchModeHybrid') }}</option>
             <option value="lex">{{ t('knowledgeV3.searchModeLex') }}</option>
+            <option value="hybrid">{{ t('knowledgeV3.searchModeHybrid') }}</option>
             <option value="vec">{{ t('knowledgeV3.searchModeVec') }}</option>
           </select>
         </div>
