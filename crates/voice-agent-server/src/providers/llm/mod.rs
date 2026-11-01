@@ -580,8 +580,92 @@ pub trait DurableMediaProvider: Send + Sync {
     ) -> Result<LlmOutput, LlmError>;
 }
 
+pub const MUSE_TASK_KEY_PREFIX: &str = "muse_task:";
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentOutputKind {
+    #[default]
+    Message,
+    Markdown,
+    Files,
+}
+
+#[derive(Clone, Debug)]
+pub enum AgentTurnAction {
+    Send {
+        prompt: String,
+        output: AgentOutputKind,
+        filename: Option<String>,
+    },
+    Collect {
+        output: AgentOutputKind,
+        filename: Option<String>,
+    },
+}
+
+#[derive(Clone, Debug)]
+pub struct AgentTurnRequest {
+    pub session_key: String,
+    pub action: AgentTurnAction,
+    pub operation: orchestrator_agent_rs::ToolOperation,
+    pub wait_slice: std::time::Duration,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AgentTurnOutput {
+    pub turn: u32,
+    pub message: String,
+    pub files: Vec<AgentFile>,
+    pub files_missing: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AgentFile {
+    pub filename: String,
+    pub mime_type: String,
+    pub bytes: Vec<u8>,
+    pub source_path: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
+pub enum AgentTaskError {
+    #[error("{0}")]
+    RetryLater(String),
+    #[error("remote outcome unknown")]
+    OutcomeUnknown,
+    #[error("previous turn is still running")]
+    Busy,
+    #[error("no Muse session")]
+    NoSession,
+    #[error("Muse session lost")]
+    SessionLost,
+    #[error("Muse task stalled")]
+    Stalled { partial: Option<String> },
+    #[error("Muse task timed out")]
+    Timeout { partial: Option<String> },
+    #[error("provider requires reauthentication")]
+    NeedsReauth,
+    #[error("{0}")]
+    Rejected(String),
+}
+
+#[async_trait::async_trait]
+pub trait AgentTaskProvider: Send + Sync {
+    async fn run_turn(
+        &self,
+        request: &AgentTurnRequest,
+        journal: &dyn OperationJournal,
+        progress: &(dyn Fn(&str) + Send + Sync),
+    ) -> Result<AgentTurnOutput, AgentTaskError>;
+}
+
 #[async_trait::async_trait]
 pub trait LlmProvider: Send + Sync {
+    fn agent_task(&self) -> Option<&dyn AgentTaskProvider> {
+        None
+    }
+
     fn durable_media(&self) -> Option<&dyn DurableMediaProvider> {
         None
     }

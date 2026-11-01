@@ -1,6 +1,6 @@
 # 01: Port AgentTaskProvider và workflow Muse
 
-Status: ready-for-agent
+Status: claimed
 Type: task
 Blocked by: none
 
