@@ -2,7 +2,7 @@
 
 Status: ready-for-agent
 Type: task
-Blocked by: 01, 02, 03
+Blocked by: none
 
 Spec: [muse-task-tool](../spec.md)
 
@@ -11,3 +11,5 @@ SubagentMuseCloser theo đầy đủ bảng vòng đời, cleanup ACK/race/pagin
 ## Comments
 
 - 2026-11-01: Phân rã từ spec theo yêu cầu implement-spec.
+
+- 2026-11-01: Frontier cập nhật: port đã chốt ở 373e5e99, journal scope đã thống nhất; closer có thể triển khai độc lập theo contract này. Runtime wiring và nghiệm thu tích hợp chỉ hoàn tất sau merge 01/02; không resolve sớm.
