@@ -1,7 +1,7 @@
 # Khởi tạo, Admin HTTP, UI và xóa Device
 
 Type: task
-Status: ready-for-agent
+Status: resolved
 Blocked by: 02, 03
 
 ## Scope
@@ -21,3 +21,7 @@ User stories: 1 đến 8, 14 đến 22, 26 đến 29, 33, 68, 78.
 
 - Mọi dòng mốc 4 trong ma trận test của spec đều có test qua, gồm phần "Device đổi Agent vẫn giữ fact" của dòng Cách ly.
 - `scripts/agent-test.sh targeted memory voice-agent-server`, `web test`, `web typecheck` xanh.
+
+## Answer
+
+Đã triển khai tại `f619d856`: `AppState.memory_core`, route `/memory/*`, purge vault sau khi xóa Device, trang Memory, form Device và chuỗi `memoryV3.*`. Các lỗi code review được sửa tại `15556c6a`; lỗi 503 có từ trước của `admin_api` được sửa tại `7c808c32`.

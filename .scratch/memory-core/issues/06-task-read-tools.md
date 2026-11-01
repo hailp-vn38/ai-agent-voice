@@ -1,7 +1,7 @@
 # Task đọc: `memory_recall` và `memory_summary`
 
 Type: task
-Status: ready-for-agent
+Status: resolved
 Blocked by: 04
 
 ## Scope
@@ -19,3 +19,7 @@ User stories: 70 đến 74.
 - **Test đầu tiên:** Task tạo qua `VoiceTaskSubmit` với `device:<id>` thì tool của `daily_root` thấy đúng `owner_id`. Nếu sai, dừng và báo lại trước khi làm tiếp.
 - Mọi dòng mốc 6 trong ma trận test của spec đều có test qua.
 - `scripts/agent-test.sh targeted task_flow voice-agent-server` xanh.
+
+## Answer
+
+Đã triển khai tại `3acef048`: `memory_recall`, `memory_summary` và nhánh `Primary` của allowlist. Test tiền đề qua: Task của Device 42 thấy `owner_id = device:42`. `DAILY_ROOT_PROMPT` nằm trong vendor nên không đổi; mô tả tool tự đủ. Các lỗi code review được sửa tại `15556c6a`; lỗi 503 có từ trước của `admin_api` được sửa tại `7c808c32`.

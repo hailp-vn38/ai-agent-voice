@@ -1,7 +1,7 @@
 # ADR 0135, glossary và sửa tài liệu
 
 Type: task
-Status: ready-for-agent
+Status: resolved
 Blocked by:
 
 ## Scope
@@ -20,3 +20,7 @@ User story: 82.
 - ADR 0135 tồn tại, trạng thái được chấp nhận, nêu đủ các điểm trên.
 - Không tài liệu nào trong phạm vi trên còn mô tả Memory Fact nằm ở `wiki/entities/`, hay Memory Summary lấy từ `INDEX.md`, như hiện trạng.
 - Thiết kế không còn mâu thuẫn với D1 đến D11.
+
+## Answer
+
+Đã triển khai tại `05dbb1a9`: ADR 0135, `GLOSSARY.md`, `CONTEXT.md`, đánh dấu lỗi thời hai tài liệu Knowledge và sửa thiết kế theo D1 đến D11. Các lỗi code review được sửa tại `15556c6a`; lỗi 503 có từ trước của `admin_api` được sửa tại `7c808c32`.
