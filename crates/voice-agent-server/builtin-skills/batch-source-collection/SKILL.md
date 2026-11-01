@@ -48,7 +48,7 @@ End with one line per count and the ledger totals from a final `collection_statu
 
 ```text
 saved=8 already_present=3 duplicate=0 no_transcript=1 failed=0
-TOTAL: 100 | IN_SOURCES: 52 | REMAINING: 47 | NO_TRANSCRIPT: 1 | GAVE_UP: 0
+TOTAL: 100 | IN_SOURCES: 52 | DUPLICATE: 0 | REMAINING: 47 | NO_TRANSCRIPT: 1 | GAVE_UP: 0
 topic_folder=<domain>/<topic>
 ```
 

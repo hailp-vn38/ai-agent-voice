@@ -29,3 +29,4 @@ Một job nhiều video hoặc tài liệu không còn dựa vào context của 
 - Một nguồn không có tiến độ có thể tốn tối đa 3 chặng LLM trước khi bị cách ly, thay vì kẹt im lặng.
 - Source cũ không có `content_sha256` chỉ được nhận ra theo `video_id`.
 - Chưa có slot riêng cho Task Voice; một job dài vẫn có thể làm Task Voice phải xếp hàng.
+- Mọi Task không phải Voice đang chạy đều làm Auto-Flow chờ, kể cả Task không thu thập gì. Hệ thống không biết trước Task nào sẽ ghi `sources/`, nên chấp nhận độ trễ này. Thời gian chờ tính theo từng chu kỳ trong bộ nhớ và đếm lại sau restart.

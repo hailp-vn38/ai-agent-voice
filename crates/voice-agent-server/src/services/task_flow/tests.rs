@@ -513,6 +513,11 @@ fn project_task_to_admin_job_and_events_include_agent_messages_for_tool_calls() 
 
     let step = &projected["steps"][0];
     assert_eq!(
+        step["tool_call_id"], "call-wiki-1",
+        "an operator resolving a stuck tool reads its identifiers from the job step"
+    );
+    assert!(step["invocation_id"].is_string());
+    assert_eq!(
         step["assistant_message"],
         "Tôi sẽ tra cứu Wiki về Rust trước."
     );

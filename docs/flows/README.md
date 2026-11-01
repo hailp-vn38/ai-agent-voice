@@ -20,3 +20,4 @@ Mỗi flow mô tả boundary, sequence, invariants và test contract. Khi hành 
 15. [Core ASR — Job-owned WAV to final text V3](15-core-asr-v3.md)
 17. [Thu thập nhiều nguồn và nạp vào Wiki](17-batch-source-collection.md)
 16. [Unified Task Flow (`orchestrator_flow_rs`) & Multi-Kind Task Artifacts](16-task-flow-multi-kind-artifacts.md)
+17. [Thu thập nhiều nguồn và nạp vào Wiki](17-batch-source-collection.md)

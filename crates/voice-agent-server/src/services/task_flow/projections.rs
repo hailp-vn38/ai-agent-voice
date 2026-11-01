@@ -169,6 +169,8 @@ pub fn project_task_to_admin_job(task: &TaskView, detail: Option<&TaskDetailView
                     "status": map_step_status(&inv.status),
                     "error_code": inv.error_code,
                     "attempt_state": inv.status,
+                    "invocation_id": inv.invocation_id,
+                    "tool_call_id": inv.tool_call_id,
                     "instruction": format!("{} -> {}", session.agent_id, inv.tool_name),
                     "assistant_message": assistant_message,
                     "required": true,
