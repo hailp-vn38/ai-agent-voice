@@ -4970,3 +4970,96 @@ async fn agent_reminders_join_current_assignment_and_scope_mutations() {
     );
     task.abort();
 }
+
+/// Sends one write while a second connection holds SQLite's write lock, and frees the lock only
+/// after the handler has had time to reach its first write. A transaction that reads before it
+/// writes cannot wait for that lock: SQLite refuses its upgrade at once, whatever `busy_timeout`
+/// says. The request therefore has to end in `expected`, never in a 503.
+async fn assert_waits_for_writer(
+    database_uri: &str,
+    request: reqwest::RequestBuilder,
+    expected: StatusCode,
+) {
+    let writer = sqlx::SqlitePool::connect(database_uri).await.unwrap();
+    let lock = writer.begin_with("BEGIN IMMEDIATE").await.unwrap();
+    let response = tokio::spawn(request.send());
+    tokio::time::sleep(Duration::from_millis(150)).await;
+    lock.rollback().await.unwrap();
+    let response = response.await.unwrap().unwrap();
+    let status = response.status();
+    let body = response.text().await.unwrap();
+    assert_eq!(status, expected, "{body}");
+    writer.close().await;
+}
+
+/// Background workers write to this database at any moment, starting with a purge at startup, so
+/// Admin mutations must queue behind them rather than surface a transient `database_busy`.
+#[tokio::test]
+async fn admin_mutations_wait_for_a_concurrent_writer() {
+    let database_uri = database_url();
+    let (base, task) = server_with_database(true, &database_uri).await;
+    let client = Client::new();
+    let admin = format!("{base}/api/admin");
+    let llm = create_provider(
+        &client,
+        &format!("{admin}/providers"),
+        serde_json::json!({
+            "name":"Main LLM","type":"llm","adapter":"openai",
+            "config_json":{"base_url":"https://example.test/v1","model":"test","max_tokens":8}
+        }),
+    )
+    .await;
+    for (path, payload) in [
+        (
+            "agents",
+            serde_json::json!({"key":"kitchen","name":"Kitchen"}),
+        ),
+        (
+            "templates",
+            serde_json::json!({"key":"quiet","name":"Quiet","language":"vi-VN","prompt":"Short"}),
+        ),
+    ] {
+        client
+            .post(format!("{admin}/{path}"))
+            .bearer_auth("admin-test-token")
+            .json(&payload)
+            .send()
+            .await
+            .unwrap()
+            .error_for_status()
+            .unwrap();
+    }
+
+    let create_device = client
+        .post(format!("{admin}/devices"))
+        .bearer_auth("admin-test-token")
+        .json(&serde_json::json!({"device_id":"device-1","agent_key":"kitchen"}));
+    assert_waits_for_writer(&database_uri, create_device, StatusCode::CREATED).await;
+
+    let update_device = client
+        .patch(format!("{admin}/devices/device-1"))
+        .bearer_auth("admin-test-token")
+        .header("if-match", "\"1\"")
+        .json(&serde_json::json!({"name":"Kitchen speaker"}));
+    assert_waits_for_writer(&database_uri, update_device, StatusCode::OK).await;
+
+    let bind_provider = client
+        .put(format!("{admin}/templates/quiet/providers/llm"))
+        .bearer_auth("admin-test-token")
+        .header("if-match", "\"1\"")
+        .json(&serde_json::json!({"provider_key":llm}));
+    assert_waits_for_writer(&database_uri, bind_provider, StatusCode::OK).await;
+
+    let assign_template = client
+        .put(format!("{admin}/agents/kitchen/templates/quiet"))
+        .bearer_auth("admin-test-token")
+        .header("if-match", "\"1\"");
+    assert_waits_for_writer(&database_uri, assign_template, StatusCode::OK).await;
+
+    let delete_device = client
+        .delete(format!("{admin}/devices/device-1"))
+        .bearer_auth("admin-test-token")
+        .header("if-match", "\"2\"");
+    assert_waits_for_writer(&database_uri, delete_device, StatusCode::NO_CONTENT).await;
+    task.abort();
+}

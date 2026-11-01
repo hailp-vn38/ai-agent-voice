@@ -1118,7 +1118,7 @@ impl LlmGatewayHub {
         self.ensure_config_belongs_to_vendor(&config_val, vendor)?;
 
         let mut tx = pool
-            .begin()
+            .begin_with("BEGIN IMMEDIATE")
             .await
             .map_err(|_| GatewayError::DatabaseUnavailable)?;
         let bound_templates: Vec<String> = sqlx::query_scalar(

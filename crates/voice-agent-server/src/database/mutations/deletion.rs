@@ -141,7 +141,7 @@ impl Database {
         }
         let security = &self.tool_security;
         let _publication = security.publication.write().await;
-        let mut tx = match pool.begin().await {
+        let mut tx = match pool.begin_with("BEGIN IMMEDIATE").await {
             Ok(value) => value,
             Err(_) => {
                 return Err(WriteError::Unavailable);

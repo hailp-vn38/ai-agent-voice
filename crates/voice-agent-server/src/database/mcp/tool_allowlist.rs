@@ -55,7 +55,7 @@ impl Database {
         sqlx::Error,
     > {
         let mut contracts = HashMap::new();
-        let mut tx = self.pool().begin().await?;
+        let mut tx = self.pool().begin_with("BEGIN IMMEDIATE").await?;
         // Configuration revision is checked in the observation transaction: discovery may
         // finish after a config mutation; that old result must never become reviewable.
         let current = sqlx::query_scalar::<_, i64>("SELECT revision FROM mcp_servers WHERE id=?")
@@ -186,7 +186,7 @@ impl Database {
             Ok(v) => v,
             Err(e) => return Err(WriteError::Sql(e)),
         };
-        let mut tx = match pool.begin().await {
+        let mut tx = match pool.begin_with("BEGIN IMMEDIATE").await {
             Ok(v) => v,
             Err(e) => return Err(WriteError::Sql(e)),
         };

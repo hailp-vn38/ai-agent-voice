@@ -110,7 +110,7 @@ impl Database {
         request_id: &str,
     ) -> Result<(), WriteError> {
         let pool = &self.pool;
-        let mut tx = match pool.begin().await {
+        let mut tx = match pool.begin_with("BEGIN IMMEDIATE").await {
             Ok(v) => v,
             Err(_) => {
                 return Err(WriteError::Unavailable);
@@ -173,7 +173,7 @@ impl Database {
     ) -> Result<(), WriteError> {
         let _publication = self.tool_security.publication.write().await;
         let pool = &self.pool;
-        let mut tx = match pool.begin().await {
+        let mut tx = match pool.begin_with("BEGIN IMMEDIATE").await {
             Ok(v) => v,
             Err(_) => {
                 return Err(WriteError::Unavailable);

@@ -196,7 +196,10 @@ impl Database {
         if template.revision != expected {
             return Err(WriteError::Conflict("revision_conflict"));
         };
-        let mut tx = pool.begin().await.map_err(|_| WriteError::Unavailable)?;
+        let mut tx = pool
+            .begin_with("BEGIN IMMEDIATE")
+            .await
+            .map_err(|_| WriteError::Unavailable)?;
         let (provider_source, provider_id, config_key) = match reference.origin {
             crate::providers::config_catalog::ProviderOrigin::Database => {
                 let (id, kind, enabled, config_json): (i64, String, i64, String) =
@@ -307,7 +310,7 @@ impl Database {
             Ok(v) if v.enabled == 1 => v,
             _ => return Err(WriteError::Invalid("invalid_template")),
         };
-        let mut tx = match pool.begin().await {
+        let mut tx = match pool.begin_with("BEGIN IMMEDIATE").await {
             Ok(v) => v,
             Err(_) => {
                 return Err(WriteError::Unavailable);

@@ -207,7 +207,7 @@ impl Database {
         request_id: &str,
     ) -> Result<(), WriteError> {
         let pool = &self.pool;
-        let mut tx = match pool.begin().await {
+        let mut tx = match pool.begin_with("BEGIN IMMEDIATE").await {
             Ok(tx) => tx,
             Err(cause) => return Err(WriteError::Sql(cause)),
         };

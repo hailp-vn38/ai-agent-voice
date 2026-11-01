@@ -125,6 +125,9 @@ impl Database {
         })
     }
 
+    /// A transaction that reads before it writes must start with `BEGIN IMMEDIATE`. SQLite never
+    /// applies `busy_timeout` to the upgrade from a read lock, so a deferred one fails with
+    /// `SQLITE_BUSY` at once if any other writer, such as a background worker, holds the lock.
     pub fn pool(&self) -> &SqlitePool {
         &self.pool
     }

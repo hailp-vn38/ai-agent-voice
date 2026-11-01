@@ -47,7 +47,7 @@ impl Database {
         input: NewCapture<'_>,
     ) -> Result<(), WriteError> {
         let pool = &self.pool;
-        let mut tx = match pool.begin().await {
+        let mut tx = match pool.begin_with("BEGIN IMMEDIATE").await {
             Ok(tx) => tx,
             Err(cause) => return Err(WriteError::Sql(cause)),
         };
@@ -86,7 +86,7 @@ impl Database {
         request_id: &str,
     ) -> Result<CaptureCommit, WriteError> {
         let pool = &self.pool;
-        let mut tx = match pool.begin().await {
+        let mut tx = match pool.begin_with("BEGIN IMMEDIATE").await {
             Ok(tx) => tx,
             Err(cause) => return Err(WriteError::Sql(cause)),
         };
@@ -208,7 +208,7 @@ impl Database {
     ) -> Result<(), WriteError> {
         let (runtime_id, embedding_space, dimension) = runtime;
         let pool = &self.pool;
-        let mut tx = match pool.begin().await {
+        let mut tx = match pool.begin_with("BEGIN IMMEDIATE").await {
             Ok(value) => value,
             Err(cause) => return Err(WriteError::Sql(cause)),
         };
