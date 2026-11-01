@@ -147,7 +147,7 @@ fn resolve_effective_agents(
                 .map(|t| (*t).to_owned())
                 .collect();
             let allowed_tools: Vec<String> = if spec.mode == AgentMode::Primary {
-                vec!["subagent".to_owned()]
+                default_allowed_tools.clone()
             } else {
                 let mut tools: Vec<String> = match ovr.and_then(|o| o.allowed_tools.as_ref()) {
                     Some(list) => list

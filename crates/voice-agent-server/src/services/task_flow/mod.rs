@@ -3,6 +3,7 @@
 
 pub mod agent_settings;
 pub mod charts;
+mod memory_tools;
 mod projections;
 pub mod skills;
 mod voice;
@@ -12,6 +13,8 @@ mod workspace_seed;
 mod tests;
 #[cfg(test)]
 mod tests_media;
+#[cfg(test)]
+mod tests_memory;
 #[cfg(test)]
 mod tests_providers;
 
@@ -30,6 +33,7 @@ pub use agent_settings::{
     validate_agent_overrides, validate_agent_overrides_with_skills, write_agent_prompts,
 };
 pub use charts::{ChartDocument, ChartError, chart_host_tools, read_chart_json_for_admin};
+pub use memory_tools::TaskMemoryAccess;
 pub use projections::{
     project_artifact_catalog_page, project_task_events, project_task_to_admin_job,
 };
@@ -47,8 +51,8 @@ use std::time::Duration;
 
 use llm_wiki::{AdaptiveReadBudget, WikiEngine, WikiError};
 use orchestrator_agent_rs::{
-    HostTool, LlmConfig, Orchestrator, OrchestratorConfig, OrchestratorError, ToolContext,
-    ToolDescriptor, ToolError, ToolOutcome,
+    HostTool, LlmConfig, LlmProviderConfig, Orchestrator, OrchestratorConfig, OrchestratorError,
+    ToolContext, ToolDescriptor, ToolError, ToolOutcome,
 };
 use orchestrator_flow_rs::{
     CreateTaskRequest, TaskConfig, TaskError, TaskManager, TaskRuntimeConfig, TaskSource, TaskView,
@@ -134,7 +138,7 @@ pub(crate) fn open_wiki_engine(cfg: &WikiSectionConfig) -> Result<Arc<WikiEngine
 /// from [`AppConfig`].
 pub async fn init_from_app_config(config: &AppConfig) -> Result<TaskFlowRuntime, TaskFlowError> {
     let initial_catalog = vec![default_orchestrator_provider(&config.orchestrator)];
-    init_from_app_config_with_catalog(config, &initial_catalog).await
+    init_from_app_config_with_catalog(config, &initial_catalog, TaskMemoryAccess::default()).await
 }
 
 /// Initializes `WikiEngine`, `Orchestrator`, and `TaskManager` with an already-resolved
@@ -142,6 +146,7 @@ pub async fn init_from_app_config(config: &AppConfig) -> Result<TaskFlowRuntime,
 pub async fn init_from_app_config_with_catalog(
     config: &AppConfig,
     catalog: &[ResolvedLlmProvider],
+    memory: TaskMemoryAccess,
 ) -> Result<TaskFlowRuntime, TaskFlowError> {
     let autoflow_notify = Arc::new(Notify::new());
     let mut wiki_engine = init_wiki_engine(&config.wiki)?;
@@ -170,6 +175,7 @@ pub async fn init_from_app_config_with_catalog(
         engine,
         autoflow_notify.clone(),
         catalog,
+        memory,
     )
     .await?;
 
@@ -187,6 +193,29 @@ async fn init_orchestrator_and_task_manager(
     engine: Arc<WikiEngine>,
     autoflow_notify: Arc<Notify>,
     catalog: &[ResolvedLlmProvider],
+    memory: TaskMemoryAccess,
+) -> Result<(Arc<Orchestrator>, Arc<TaskManager>), TaskFlowError> {
+    start_task_flow(
+        cfg,
+        wiki_cfg,
+        engine,
+        autoflow_notify,
+        catalog,
+        memory,
+        |providers| providers,
+    )
+    .await
+}
+
+/// `route_llm` lets a test run the real assembly against a scripted model.
+async fn start_task_flow(
+    cfg: &OrchestratorSectionConfig,
+    wiki_cfg: &WikiSectionConfig,
+    engine: Arc<WikiEngine>,
+    autoflow_notify: Arc<Notify>,
+    catalog: &[ResolvedLlmProvider],
+    memory: TaskMemoryAccess,
+    route_llm: impl FnOnce(Vec<LlmProviderConfig>) -> Vec<LlmProviderConfig>,
 ) -> Result<(Arc<Orchestrator>, Arc<TaskManager>), TaskFlowError> {
     std::fs::create_dir_all(&cfg.store_dir)?;
     std::fs::create_dir_all(&cfg.tasks_store_dir)?;
@@ -228,7 +257,9 @@ async fn init_orchestrator_and_task_manager(
     let persisted = load_persisted_settings(&cfg.store_dir).unwrap_or_default();
     let _ = write_agent_prompts(&cfg.prompts_dir, &persisted);
     let (providers, agents) = build_agent_definitions(cfg, &persisted, catalog);
-    let llm_cfg = LlmConfig { providers };
+    let llm_cfg = LlmConfig {
+        providers: route_llm(providers),
+    };
     let ctx_limit = cfg.context_limit_tokens;
 
     let mut orch_cfg = OrchestratorConfig::new(llm_cfg, agents, &cfg.store_dir);
@@ -247,6 +278,9 @@ async fn init_orchestrator_and_task_manager(
         builder = builder.register_tool(Arc::new(NormalizedWikiHostTool { inner: tool }));
     }
     for tool in chart_host_tools(&wiki_cfg.vault_dir) {
+        builder = builder.register_tool(tool);
+    }
+    for tool in memory.host_tools() {
         builder = builder.register_tool(tool);
     }
     let orchestrator = Arc::new(builder.build().await?);

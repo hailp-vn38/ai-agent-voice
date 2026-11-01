@@ -154,8 +154,8 @@ pub const AGENT_SPECS: &[AgentSpec] = &[
         default_description: "Interactive & background multi-functional assistant: inspects and summarizes external sources (YouTube videos/playlists, PDFs, Web pages), researches the Wiki/Web, creates reports, generates images/diagrams/videos via media_creator, processes ASR/TTS/video concatenation via media_processor, manages reminders, and ONLY saves files into sources/ when explicitly requested by the user.",
         default_prompt: DAILY_ROOT_PROMPT,
         default_steps: 20,
-        default_allowed_tools: &["subagent"],
-        available_tools: &["subagent"],
+        default_allowed_tools: &["subagent", "memory_recall", "memory_summary"],
+        available_tools: &["subagent", "memory_recall", "memory_summary"],
         default_allowed_skills: &[],
         suggested_skills: &[],
         default_subagents: &[
