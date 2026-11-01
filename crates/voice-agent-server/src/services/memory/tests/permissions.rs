@@ -239,6 +239,19 @@ async fn a_device_scope_refuses_set_profile() {
 }
 
 #[test]
+fn stored_device_values_map_onto_the_interface_types() {
+    use crate::database::devices::MemoryMode as Stored;
+    assert_eq!(MemoryMode::from(Stored::Off), MemoryMode::Off);
+    assert_eq!(MemoryMode::from(Stored::Read), MemoryMode::Read);
+    assert_eq!(MemoryMode::from(Stored::ReadWrite), MemoryMode::ReadWrite);
+    assert_eq!(
+        DeviceKind::from_stored("web_assistant"),
+        DeviceKind::Virtual
+    );
+    assert_eq!(DeviceKind::from_stored("physical"), DeviceKind::Physical);
+}
+
+#[test]
 fn opening_with_memory_disabled_is_refused_and_touches_no_disk() {
     let root = std::env::temp_dir().join(format!("memory-core-{}", uuid::Uuid::new_v4()));
     let cfg = MemorySectionConfig {

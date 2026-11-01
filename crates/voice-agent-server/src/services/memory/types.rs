@@ -24,6 +24,28 @@ pub enum DeviceKind {
     Virtual,
 }
 
+impl DeviceKind {
+    /// Maps `devices.kind`, which `memory_binding` returns as stored.
+    pub fn from_stored(kind: &str) -> Self {
+        if kind == "web_assistant" {
+            Self::Virtual
+        } else {
+            Self::Physical
+        }
+    }
+}
+
+impl From<crate::database::devices::MemoryMode> for MemoryMode {
+    fn from(mode: crate::database::devices::MemoryMode) -> Self {
+        use crate::database::devices::MemoryMode as Stored;
+        match mode {
+            Stored::Off => Self::Off,
+            Stored::Read => Self::Read,
+            Stored::ReadWrite => Self::ReadWrite,
+        }
+    }
+}
+
 impl MemoryScope {
     /// The raw `device_id` is client-supplied, so it never reaches a path or this value (ADR 0024).
     pub fn for_device(device_id: &str, kind: DeviceKind) -> Self {
