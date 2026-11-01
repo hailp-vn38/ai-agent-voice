@@ -2186,6 +2186,8 @@ dependencies = [
 [[package]]
 name = "llm-wiki-rs"
 version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "76666096a4cf0869abe9fc85324c4d091b1e282bd4f56fc5aaa219e8553ec272"
 dependencies = [
  "blake3",
  "chrono",
@@ -2680,6 +2682,8 @@ dependencies = [
 [[package]]
 name = "orchestrator-agent"
 version = "0.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fe56962f0ead954cf8c66c6a460d2446b8af9efe96e26e4b05449dd023bf067a"
 dependencies = [
  "async-trait",
  "futures",
@@ -2696,6 +2700,8 @@ dependencies = [
 [[package]]
 name = "orchestrator-flow"
 version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4b19d8ee9ff7d1c4509468d281f21bf47fe2b3063d3ac9e835fd6664ecf1b827"
 dependencies = [
  "anydoc",
  "async-trait",
