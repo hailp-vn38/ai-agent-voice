@@ -158,6 +158,7 @@ pub struct SessionActor {
     external_mcp: SessionExternalMcp,
     system_mcp: Option<crate::tools::system_mcp::SessionSystemMcp>,
     reminder_tools: Option<crate::services::notifications::SessionReminderTools>,
+    session_memory: Option<crate::session::SessionMemory>,
     /// The Device tool review this Voice Session was admitted under, if any.  A session admitted
     /// without one keeps the legacy Device allowlist behavior; one admitted with a participating
     /// Agent only calls what that Agent approved for this Device incarnation.
@@ -437,7 +438,8 @@ struct AsyncCallCompletion {
 enum AsyncToolOutcome {
     External(Result<ExternalToolOutcome, ExternalMcpError>),
     System(Result<serde_json::Value, crate::tools::system_mcp::SystemToolError>),
-    Reminder(Result<serde_json::Value, &'static str>),
+    /// A server-side builtin: Reminder or Memory. The error is the tool result's code.
+    Server(Result<serde_json::Value, &'static str>),
 }
 
 #[derive(Default)]

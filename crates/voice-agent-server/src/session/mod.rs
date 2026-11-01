@@ -1,6 +1,7 @@
 mod actor;
 mod admission;
 pub(crate) mod interaction;
+mod memory;
 pub(crate) mod speaker;
 mod speech_output;
 
@@ -20,6 +21,7 @@ pub use interaction::{
     DirectSpeechError, DirectSpeechRequest, SpeechOrigin, validate_direct_speech,
 };
 pub use interaction::{GenerationGate, SessionEvent, SessionPhase, TurnId};
+pub use memory::SessionMemory;
 pub use speaker::{
     OBSERVE_VERIFY_THRESHOLD, ObserveCandidate, ObserveDiagnostic, ObserveIdentity, ObservePlan,
     ObserveResolution, ObserveScore, SpeakerContext, SpeakerObserve, SpeakerPolicyMode,

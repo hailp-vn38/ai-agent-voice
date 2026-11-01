@@ -309,7 +309,7 @@ pub(super) async fn admit(
     let transcript = state.transcript_capture(&session_id, &profile);
     // The optional per-session capabilities are independent snapshots: resolve them together so
     // connect latency pays for the slowest, not the sum. None of them can refuse the session.
-    let (system_mcp, reminder_tools, speaker_observe) = tokio::join!(
+    let (system_mcp, reminder_tools, session_memory, speaker_observe) = tokio::join!(
         async {
             match &assistant_connection {
                 Some(_) => resolve_system_mcp(state, &assistant_auth, &profile).await,
@@ -317,6 +317,11 @@ pub(super) async fn admit(
             }
         },
         resolve_reminder_tools(state, &profile, device_id, assistant_connection.as_ref()),
+        crate::session::SessionMemory::admit(
+            state.memory_core.as_ref(),
+            state.database.as_deref(),
+            profile.device_db_id,
+        ),
         // The immutable, Agent-scoped candidate snapshot, resolved before the upgrade closure
         // owns state.
         async {
@@ -354,6 +359,7 @@ pub(super) async fn admit(
         assistant_connection,
         system_mcp,
         reminder_tools,
+        session_memory,
         active_device_sessions: state.active_device_sessions.clone(),
         database: state.database.clone(),
     })))

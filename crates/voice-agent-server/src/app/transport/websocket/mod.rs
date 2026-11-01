@@ -160,6 +160,7 @@ struct SocketRuntimes {
     database: Option<Arc<crate::database::Database>>,
     system_mcp: Option<crate::tools::system_mcp::SessionSystemMcp>,
     reminder_tools: Option<crate::services::notifications::SessionReminderTools>,
+    session_memory: Option<crate::session::SessionMemory>,
     assistant_connection: Option<super::super::assistant::Connection>,
     connect_started: Instant,
     metrics: Option<Arc<RuntimeMetrics>>,

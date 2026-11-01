@@ -2,6 +2,7 @@ mod builtin_actions;
 mod catalog;
 mod external;
 pub(super) mod job;
+mod memory;
 mod round;
 
 use super::*;
@@ -25,5 +26,8 @@ mod system;
 
 #[cfg(test)]
 mod job_tests;
+#[cfg(test)]
+#[path = "memory_tests.rs"]
+mod memory_tests;
 #[cfg(test)]
 mod system_tests;

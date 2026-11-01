@@ -8,8 +8,9 @@ use crate::{
     tools::{
         builtin::{
             BuiltinTool, EXIT_TOOL_NAME, SWITCH_TEMPLATE_TOOL_NAME, exit_tool_definition,
-            is_legacy_reminder_tool_name, is_reminder_tool_name, is_task_suite_tool_name,
-            reminder_tool_definitions, switch_template_tool_definition,
+            is_legacy_reminder_tool_name, is_memory_tool_name, is_reminder_tool_name,
+            is_task_suite_tool_name, memory_tool_definitions, reminder_tool_definitions,
+            switch_template_tool_definition,
         },
         device_mcp::LlmVisibleTool,
         external_mcp::{ResolvedExternalMcp, ResolvedExternalTool},
@@ -23,6 +24,7 @@ pub(super) fn is_builtin_tool_name(name: &str) -> bool {
         || name == SWITCH_TEMPLATE_TOOL_NAME
         || is_task_suite_tool_name(name)
         || is_reminder_tool_name(name)
+        || is_memory_tool_name(name)
 }
 
 /// Where one ToolCall goes, decided from the name the model used and nothing else.
@@ -53,6 +55,9 @@ impl SessionActor {
         }
         if self.reminder_tools.is_some() {
             tools.extend(reminder_tool_definitions());
+        }
+        if let Some(memory) = &self.session_memory {
+            tools.extend(memory_tool_definitions(memory.mode));
         }
         if !self.switch_catalog.is_empty() {
             tools.push(switch_template_tool_definition(
@@ -97,6 +102,7 @@ impl SessionActor {
     pub(in super::super) fn offers_answer_changing_tools(&self) -> bool {
         (self.job_submit.is_some() && self.llm_runtime.supports_tools())
             || self.reminder_tools.is_some()
+            || self.session_memory.is_some()
             || !self.mcp.visible.is_empty()
             || !self.external_mcp.is_empty()
             || self
@@ -108,6 +114,11 @@ impl SessionActor {
     pub(in super::super) fn resolve_tool(&self, name: &str) -> Option<ToolTarget> {
         if is_reminder_tool_name(name) || is_legacy_reminder_tool_name(name) {
             return Some(ToolTarget::Builtin(BuiltinTool::Reminder));
+        }
+        // Resolved even without Memory, so a Device on `off` gets `memory_disabled`, never an MCP
+        // tool that happens to share the name.
+        if is_memory_tool_name(name) {
+            return Some(ToolTarget::Builtin(BuiltinTool::Memory));
         }
         if is_task_suite_tool_name(name) {
             return self
@@ -145,7 +156,10 @@ impl SessionActor {
         calls
             .iter()
             .fold(McpResultDelivery::Silent, |selected, call| {
-                if is_task_suite_tool_name(&call.name) || is_reminder_tool_name(&call.name) {
+                if is_task_suite_tool_name(&call.name)
+                    || is_reminder_tool_name(&call.name)
+                    || is_memory_tool_name(&call.name)
+                {
                     return McpResultDelivery::LlmThenTts;
                 }
                 let delivery = self

@@ -40,10 +40,17 @@ impl SessionActor {
         // Never mutate the immutable admission profile or persist speaker metadata in history.
         let speaker = self.speaker_context_for_turn.take();
         let reminder_ctx = self.reminder_tools.as_ref().map(|rt| rt.turn_context());
-        let system = match crate::session::prompt::compose_turn_system_with_reminders(
+        let memory_ctx = self
+            .session_memory
+            .as_ref()
+            .map(|memory| memory.handle.current());
+        let system = match crate::session::prompt::compose_turn_system(
             &self.profile.system_prompt,
-            speaker.as_ref(),
-            reminder_ctx.as_ref(),
+            &crate::session::prompt::TurnPromptInputs {
+                speaker: speaker.as_ref(),
+                memory: memory_ctx.as_deref(),
+                reminders: reminder_ctx.as_ref(),
+            },
         ) {
             Ok(system) => system,
             Err(_) => {

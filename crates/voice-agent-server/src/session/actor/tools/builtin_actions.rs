@@ -46,6 +46,7 @@ impl SessionActor {
             BuiltinTool::SwitchTemplate => self.execute_template_switch(call),
             BuiltinTool::TaskSuite => self.execute_task_suite(call),
             BuiltinTool::Reminder => self.execute_reminder_tool(call),
+            BuiltinTool::Memory => self.execute_memory_tool(call),
         }
     }
 
@@ -111,7 +112,7 @@ impl SessionActor {
                 generation,
                 call_id: dispatched.id,
                 server_key: String::new(),
-                outcome: AsyncToolOutcome::Reminder(outcome),
+                outcome: AsyncToolOutcome::Server(outcome),
             });
         });
         if let Some(batch) = self.tool_batch.as_mut() {

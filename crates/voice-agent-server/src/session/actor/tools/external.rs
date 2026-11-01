@@ -142,7 +142,7 @@ impl SessionActor {
                         Err(error) => self.complete_tool_call(in_flight, Err(&error.to_string())),
                     }
                 }
-                AsyncToolOutcome::Reminder(outcome) => {
+                AsyncToolOutcome::Server(outcome) => {
                     if let Some(batch) = self.tool_batch.as_mut() {
                         batch.in_flight = None;
                     }
