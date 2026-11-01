@@ -83,8 +83,8 @@ enum SearchModeParam {
 impl SearchModeParam {
     fn parse(raw: Option<&str>) -> Option<Self> {
         match raw.map(str::trim).filter(|s| !s.is_empty()) {
-            None | Some("hybrid") => Some(Self::Hybrid),
-            Some("lex") => Some(Self::Lex),
+            Some("hybrid") => Some(Self::Hybrid),
+            None | Some("lex") => Some(Self::Lex),
             Some("vec") => Some(Self::Vec),
             Some(_) => None,
         }

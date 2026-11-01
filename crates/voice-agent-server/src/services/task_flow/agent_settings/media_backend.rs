@@ -223,13 +223,15 @@ pub(crate) fn resolve_media_tool_provider(
         {
             return Some(found.clone());
         }
-        if matches!(required_tag, "image" | "video" | "tts" | "asr" | "audio" | "agent_task")
-            && let Some(explicit_ref) = settings
-                .agents
-                .get(owner_id)
-                .and_then(|o| o.provider_ref.as_deref())
-                .map(str::trim)
-                .filter(|s| !s.is_empty())
+        if matches!(
+            required_tag,
+            "image" | "video" | "tts" | "asr" | "audio" | "agent_task"
+        ) && let Some(explicit_ref) = settings
+            .agents
+            .get(owner_id)
+            .and_then(|o| o.provider_ref.as_deref())
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
             && let Some(found) = catalog.iter().find(|p| matches_prov(p, explicit_ref))
         {
             return Some(found.clone());

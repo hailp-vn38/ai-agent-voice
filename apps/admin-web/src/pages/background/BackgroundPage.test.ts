@@ -1,3 +1,4 @@
+import type { BackgroundSettings } from '@/api/types/agent-jobs'
 import { flushPromises, mount } from '@vue/test-utils'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { ref } from 'vue'
@@ -41,7 +42,9 @@ vi.mock('@/api/client', async importOriginal => ({
   requestJson: requestMock,
 }))
 
-const fixtureSettings = () => ({
+type SettingsFixture = BackgroundSettings & Required<Pick<BackgroundSettings, 'agents' | 'llm_providers' | 'skills'>>
+
+const fixtureSettings = (): SettingsFixture => ({
   runtime_ready: true,
   enabled: true,
   orchestrator_llm_provider: 'orchestrator:default',
@@ -343,6 +346,41 @@ describe('Jobs Settings Hub (Variant A) & Sub-pages', () => {
       name: 'jobs-settings-agent',
       params: { agentId: 'wiki_researcher' },
     })
+  })
+
+  it('configures Muse Task through the provider catalog and resets cloud worker to disabled', async () => {
+    const settings = fixtureSettings()
+    const template = settings.agents.find(a => a.id === 'wiki_researcher')!
+    settings.agents.push({
+      ...template, id: 'cloud_worker', enabled: true, default_enabled: false,
+      allowed_tools: ['muse_task'], available_tools: ['muse_task'],
+      default_allowed_tools: ['muse_task'], allowed_skills: [], default_allowed_skills: [],
+      tool_capability_tags: { muse_task: 'agent_task' }, tool_providers: {},
+    })
+    settings.llm_providers.push({
+      ref: 'muse_cloud', name: 'Muse Cloud', source: 'database', model: 'muse',
+      tags: ['agent_task'],
+    })
+    reactiveAgentId.value = 'cloud_worker'
+    requestMock.mockImplementation((path: string) => Promise.resolve(
+      path === '/api/admin/background/settings' ? settings : [],
+    ))
+    const wrapper = mount(BackgroundAgentDetailPage)
+    await flushPromises()
+    const selector = wrapper.get('select[data-tool-provider="muse_task"]')
+    expect(selector.text()).toContain('Muse Cloud')
+    expect(selector.text()).not.toContain('Flux Image Gen')
+    await selector.setValue('muse_cloud')
+    await wrapper.get('[data-save-agent-config]').trigger('click')
+    await flushPromises()
+    let calls = requestMock.mock.calls.filter(c => c[1]?.method === 'PUT')
+    expect(JSON.parse(String(calls.at(-1)![1].body)).agents.cloud_worker.tool_providers)
+      .toEqual({ muse_task: 'muse_cloud' })
+    await wrapper.get('[data-reset-agent-default]').trigger('click')
+    await wrapper.get('[data-save-agent-config]').trigger('click')
+    await flushPromises()
+    calls = requestMock.mock.calls.filter(c => c[1]?.method === 'PUT')
+    expect(JSON.parse(String(calls.at(-1)![1].body)).agents.cloud_worker.enabled).toBe(false)
   })
 
   it('renders dedicated BackgroundAgentDetailPage for wiki_researcher, media_creator, and media_processor and saves overrides', async () => {

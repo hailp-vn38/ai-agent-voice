@@ -697,7 +697,7 @@ fn custom_subagents_enforce_flow_tool_boundaries_and_sync_active_subagents_promp
 
     // Project JSON and verify `is_builtin`, auto-injected `skill` tool, and `allowed_subagents`
     let projected = project_agents_json(&cfg, &loaded, &catalog);
-    assert_eq!(projected.len(), 12);
+    assert_eq!(projected.len(), 13);
     let daily_root_json = projected.iter().find(|a| a["id"] == "daily_root").unwrap();
     assert_eq!(daily_root_json["is_builtin"], true);
     assert!(
@@ -725,4 +725,48 @@ fn custom_subagents_enforce_flow_tool_boundaries_and_sync_active_subagents_promp
     assert!(!prompts_dir.join("arxiv_digest.md").exists());
 
     let _ = std::fs::remove_dir_all(&temp_dir);
+}
+
+#[test]
+fn muse_task_settings_upgrade_preserves_custom_prompts_and_refreshes_discovery() {
+    let root = std::env::temp_dir().join(format!("muse-catalog-{}", uuid::Uuid::new_v4()));
+    let store = root.join("store");
+    let prompts = root.join("prompts");
+    let mut settings = PersistedBackgroundSettings::default();
+    settings.agents.insert("daily_root".into(), AgentConfigOverride {
+        system_prompt: Some("Keep my custom policy.\n<active_subagents>\n- `cloud_worker` (built-in): stale\n</active_subagents>\nKeep my ending.".into()),
+        ..Default::default()
+    });
+    // Old installations have no override for the newly introduced built-in.
+    save_persisted_settings(&store, &settings).unwrap();
+    let loaded = load_persisted_settings(&store).unwrap();
+    write_agent_prompts(&prompts, &loaded).unwrap();
+    let root_prompt = std::fs::read_to_string(prompts.join("daily_root.md")).unwrap();
+    assert!(root_prompt.contains("Keep my custom policy."));
+    assert!(root_prompt.contains("Keep my ending."));
+    assert!(!root_prompt.contains("`cloud_worker`"));
+    assert!(root_prompt.contains("Voice"));
+    let cloud_prompt = std::fs::read_to_string(prompts.join("cloud_worker.md")).unwrap();
+    for guard in [
+        "use-once",
+        "next_action=collect",
+        "third-party",
+        "untrusted external data",
+        "Memory or Wiki",
+        "Voice",
+    ] {
+        assert!(cloud_prompt.contains(guard), "missing {guard}");
+    }
+    let mut enabled = loaded.clone();
+    enabled
+        .agents
+        .insert("cloud_worker".into(), AgentConfigOverride::default());
+    write_agent_prompts(&prompts, &enabled).unwrap();
+    let root_prompt = std::fs::read_to_string(prompts.join("daily_root.md")).unwrap();
+    assert!(root_prompt.contains("`cloud_worker` (built-in)"));
+    assert_eq!(
+        loaded.agents["daily_root"].system_prompt,
+        settings.agents["daily_root"].system_prompt
+    );
+    std::fs::remove_dir_all(root).unwrap();
 }

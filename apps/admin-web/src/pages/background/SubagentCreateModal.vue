@@ -71,6 +71,7 @@ const RESERVED_IDS = new Set([
   'report_stager',
   'media_creator',
   'media_processor',
+  'cloud_worker',
   'reminder_planner',
   'wiki_root',
   'wiki_ingestor',
