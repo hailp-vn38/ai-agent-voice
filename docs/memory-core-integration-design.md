@@ -1,6 +1,6 @@
 # Thiết kế tích hợp Memory Core vào `voice-agent-server`
 
-Trạng thái: đề xuất, chưa triển khai. Ngày 2026-10-31.
+Trạng thái: đã chốt bằng [ADR 0135](adr/0135-memory-core-runtime.md), code đến theo từng mốc của [spec](../.scratch/memory-core/spec.md). Viết ngày 2026-10-31, sửa ngày 2026-11-01 theo mục D1 đến D11 của [hướng dẫn triển khai](memory-core-implementation-guide.md). Nếu khác nhau, spec và D1 đến D11 thắng tài liệu này.
 Đầu vào: [javis-memory-system-implementation-guide.md](javis-memory-system-implementation-guide.md) (gọi tắt là **Blueprint**).
 Thuật ngữ thiết kế (module, interface, seam, adapter, depth) theo nghĩa của skill `codebase-design`. Thuật ngữ miền theo `CONTEXT.md` và `GLOSSARY.md`.
 
@@ -8,8 +8,8 @@ Thuật ngữ thiết kế (module, interface, seam, adapter, depth) theo nghĩa
 
 - **Không port Blueprint nguyên trạng.** Blueprint giả định một máy, một chủ, engine là CLI có quyền ghi file. Server này có Voice Session giới hạn độ trễ, Dialogue History chỉ ở RAM (ADR 0024) và Agent chạy qua `orchestrator-flow` (ADR 0127).
 - **Giữ 6 ý tưởng:** Markdown là chuẩn, index dựng lại được, model chỉ đề xuất, biên nhận trung thực, chống học lại, ép chỉ mục theo bậc.
-- **Dựng một module sâu `services::memory::MemoryCore`** với 5 method, kho riêng cho từng Device tại `data/memory-vault/devices/<device_dir>/`. Mọi đường ghi (Admin, Voice, Learner) đều đi qua một `apply()`.
-- **Sửa hiện trạng trước khi thêm tính năng.** "Memory" hiện chỉ là tên khác của Wiki, và điều này vi phạm ADR 0119 (mục 3).
+- **Dựng một module sâu `services::memory::MemoryCore`** với 6 method, kho riêng cho từng Device tại `data/memory-vault/devices/<device_dir>/`. Mọi đường ghi (Admin, Voice, và Learner từ GĐ 4) đều đi qua một `apply()`.
+- **Sửa hiện trạng trước khi thêm tính năng.** Tại commit `44351461`, "Memory" chỉ là tên khác của Wiki, và điều này vi phạm ADR 0119 (mục 3).
 - **Tự học chỉ tạo đề xuất chờ duyệt, không tự ghi.** Chế độ `auto` của Blueprint mâu thuẫn trực tiếp với ADR 0119.
 
 **Memory phân biệt theo Device** (đã chốt, xem mục 4.1).
@@ -45,13 +45,13 @@ Thuật ngữ thiết kế (module, interface, seam, adapter, depth) theo nghĩa
 - **Các ngưỡng không có dữ liệu chứng minh:** 0,38, 0,55, 0,65, các hệ số điểm. Không nên sao chép như hằng số đã kiểm chứng.
 - **Mã `C<index>` không ổn định:** xóa một dòng làm đổi mã các dòng sau.
 
-## 3. Hiện trạng server
+## 3. Hiện trạng server trước Memory Core
 
-Đã đọc code. Có Admin route và trang `MemoryPage.vue`, nhưng chưa có Memory Core:
+Ảnh chụp code tại commit `44351461`, giữ lại làm lý do của thiết kế. Đây không phải mô tả runtime đích: mục 4 và ADR 0135 mới là chuẩn, và mốc 4 của spec xóa các lỗi Admin dưới đây. Lúc đó có Admin route và trang `MemoryPage.vue`, nhưng chưa có Memory Core:
 
 | Phát hiện | Bằng chứng | Hệ quả |
 |---|---|---|
-| Fact nằm chung Wiki, trong `wiki/entities/` | `app/admin/knowledge/memory.rs:110`, `GLOSSARY.md:204` | Vi phạm ADR 0119 |
+| Fact nằm chung Wiki, trong `wiki/entities/` | `app/admin/knowledge/memory.rs:110` | Vi phạm ADR 0119 |
 | `wiki_ingestor` cũng ghi vào `entities/` | `vendor/llm-wiki-rs/src/prompts/subagents.rs:106` | Agent nền có thể ghi đè fact cá nhân, và không phân biệt được hai loại trang |
 | "Recall" trả về mọi Wiki Page | `memory.rs:35` gọi `knowledge_search` | Không có khái niệm Memory riêng |
 | Fact đọc được qua `wiki_query`, `wiki_get` và Knowledge MCP | `tools/knowledge_mcp/`, `agent_settings/specs.rs` | Dữ liệu cá nhân có thể lộ ra token MCP ngoài |
@@ -62,18 +62,18 @@ Thuật ngữ thiết kế (module, interface, seam, adapter, depth) theo nghĩa
 | `memory_forget` nhận id của Wiki Page bất kỳ | `memory.rs:173` | Thao tác ở màn Memory có thể xóa tri thức Wiki |
 | Voice và Task không dùng Memory | `delivery.rs:43`, `task_flow/mod.rs:246`; `core.memory` không còn trong `src/` | Agent không có bộ nhớ dài hạn |
 | Không có test cho Memory | `knowledge/tests.rs` không có ca nào | Không có lưới an toàn khi đổi |
-| Tài liệu đã lỗi thời | `docs/knowledge/README.md:31`, `docs/flows/13-knowledge-v3.md` mô tả `MemoryCore`, `memory_index.db`, `core.memory` nhưng không có trong `src/` | Dễ hiểu nhầm là đã có |
+| Tài liệu đã lỗi thời | `docs/knowledge/README.md:31`, `docs/flows/13-knowledge-v3.md` mô tả `MemoryCore`, `memory_index.db`, `core.memory` nhưng không có trong `src/` | Dễ hiểu nhầm là đã có. Đã đánh dấu lỗi thời ở GĐ 0 |
 
 **Seam có sẵn, không cần dựng mới:**
 
 - `compose_turn_system_with_reminders` (`session/interaction/prompt.rs:112`): ghép System message một lần mỗi lượt, đã có mẫu khối dữ liệu được escape.
 - `ToolTarget::Builtin` (`session/actor/tools/catalog.rs`, `builtin_actions.rs:47`): đường đi của tool nội bộ.
-- `Orchestrator::builder().register_tool` (`task_flow/mod.rs:246`) và allowlist theo Agent (`agent_settings/specs.rs`).
+- `Orchestrator::builder().register_tool` (`task_flow/mod.rs:246`) và allowlist theo Agent (`agent_settings/specs.rs`). Nhánh `Primary` ở `resolution.rs:149-150` đang ép chỉ có `subagent`, nên phải sửa cùng (mục 4.4).
 - `ToolScope.owner_id` và Job Requester Scope (`device:<device_db_id>`, `task_flow/voice.rs:47`).
 - `devices.device_id` là khóa nghiệp vụ duy nhất, không phụ thuộc id dòng. Virtual Device là bản ghi duy nhất có `kind` riêng (migration 0102).
 - `agents.reminders_enabled` (migration 0104) là mẫu cho cờ bật tính năng, và `devices.template_id` (migration 0004) là tiền lệ cho cấu hình theo Device.
 - `history_messages` (Persistent Transcript, mặc định tắt) là nguồn duy nhất cho hội thoại cũ.
-- Tokenizer `unicode61 remove_diacritics 2` của `WikiEngine` (`db/schema.rs:64`) và `open_with_config` cho phép mở vault thứ hai.
+- Các helper `llm_wiki::fold_vietnamese`, `slugify`, `parse_frontmatter`, và lựa chọn tokenizer `unicode61 remove_diacritics 2` của `WikiEngine` (`db/schema.rs:64`). Bản thân `WikiEngine` không dùng được cho Memory (mục 4.2).
 
 ## 4. Thiết kế
 
@@ -116,21 +116,23 @@ Chọn A vì khớp ADR 0119 và triết lý của Blueprint. Cái giá là ph�
 
 ```text
 data/memory-vault/
-├── _deployment/profile.md
+├── _deployment/
+│   ├── profile.md
+│   └── tombstone.key        # Khóa HMAC 32 byte, quyền 0600, tạo lúc open
 └── devices/<device_dir>/
     ├── MEMORY.md            # Sinh lại, không bao giờ sửa tay, không phải nguồn chuẩn
     ├── facts/<slug>.md      # Nguồn chuẩn: fact confirmed
-    ├── proposals/<id>.md    # Đề xuất chờ duyệt, không vào index, không vào prompt
+    ├── proposals/<id>.md    # Chỉ có từ GĐ 4. Đề xuất chờ duyệt, không vào index, không vào prompt
     ├── tombstones.json      # {fp, at}, không có title
-    ├── settings.json        # {learning_enabled}
-    └── .wiki/index.sqlite   # Search Projection, xóa được
+    ├── settings.json        # Chỉ có từ GĐ 4. {learning_enabled}
+    └── .index.sqlite        # Search Projection, xóa được
 ```
 
 `<device_dir>` là `sha256(device_id)` lấy 16 ký tự hex đầu, riêng Virtual Device dùng tên cố định `web-assistant`. Không dùng `device_id` thô vì đó là chuỗi do client gửi, không an toàn làm đường dẫn, và ADR 0024 không cho lộ ID nguyên bản. Không dùng `devices.id` vì import theo ADR 0131 có thể đánh lại id dòng. Ánh xạ này nằm trong một hàm của `MemoryScope`.
 
 ```markdown
 ---
-id: fact_01JC...           # Định danh ổn định, slug đổi được
+id: fact_<uuid v4 simple>  # Định danh ổn định, đổi title không đổi slug
 title: Shop nghỉ Chủ Nhật
 hook: Không nhận đơn giao ngay vào Chủ Nhật
 kind: user | preference | business | decision | reference
@@ -143,11 +145,14 @@ pinned: false
 source_ref: "device:12 turn:48"
 created_at: 2026-10-31T09:00:00Z
 updated_at: 2026-10-31T09:00:00Z
+content_hash: <sha256>     # Của title, hook, kind, body đã chuẩn hóa xuống dòng
 ---
 Nội dung.
 ```
 
-Mỗi Device một `WikiEngine` riêng, mở lười qua `open_with_config`, chỉ giữ tối đa 8 engine theo LRU. Cách ly scope nhờ vậy là vật lý: không có truy vấn nào cần lọc sau, nên không có lỗi quên lọc. `WikiEngine` là chi tiết bên trong, không lộ ra interface.
+Trường frontmatter lạ, ví dụ do Obsidian thêm, được giữ nguyên khi ghi lại. Trùng slug thì thêm hậu tố từ id, không ghi đè.
+
+Mỗi Device một file index riêng: một bảng FTS5 qua `sqlx`, tokenizer `unicode61 remove_diacritics 2`, mở kết nối theo từng lời gọi. Cách ly scope nhờ vậy là vật lý: không có truy vấn nào cần lọc sau, nên không có lỗi quên lọc. **Không dùng `WikiEngine`:** `open_with_config` luôn dựng cấu trúc thư mục Wiki, và FTS của nó lưu body thô nên không gấp được `đ` lúc index (B3). Index là seam nội bộ, không lộ ra interface, nên đổi lại về sau chỉ đụng một thành phần.
 
 ### 4.3. Interface của module
 
@@ -173,24 +178,36 @@ impl MemoryCore {
 
     /// Chạy lúc khởi động, sau khi phát hiện sửa ngoài luồng, và khi Admin yêu cầu rebuild.
     pub async fn reconcile(&self, scope: &MemoryScope) -> Result<ReconcileReport, MemoryError>;
+
+    /// Chạy nền lúc khởi động. Thư mục không thuộc `known` chỉ được báo cáo, không bị xóa.
+    pub async fn reconcile_all(&self, known: &[MemoryScope]) -> ReconcileAllReport;
+}
+
+/// Chỉ server dựng được. Scope deployment chỉ nhận `SetProfile` và `inspect`.
+impl MemoryScope {
+    pub fn for_device(device_id: &str, kind: DeviceKind) -> Self;
+    pub fn deployment() -> Self;
 }
 
 pub enum MemoryChange {
     Remember { title: String, hook: String, body: String, kind: FactKind, source_ref: Option<String> },
-    Propose  { /* như Remember + provenance, supersedes */ },
-    Confirm  { proposal_id: ProposalId },
-    Correct  { id: FactId, expected_revision: u64, body: String },
+    Correct  { id: FactId, expected_revision: u64, title: Option<String>, hook: Option<String>, body: String },
     Discard  { id: FactId, expected_revision: u64 }, // Hoàn tác: xóa, KHÔNG tombstone
     Forget   { id: FactId, expected_revision: u64 }, // Quên: xóa, CÓ tombstone
-    SetPinned { id: FactId, pinned: bool },
-    SetLearning { enabled: bool },
+    SetPinned { id: FactId, pinned: bool },              // không tăng revision
+    SetProfile { body: String, expected_revision: u64 }, // chỉ Admin + scope deployment
+    PurgeScope,                                          // chỉ Admin
+    // Thêm ở GĐ 4, không viết trước: Propose, Confirm, Reject, SetLearning
 }
 
 pub enum MemoryActor {
     Admin,
-    VoiceUser { device_db_id: i64, explicit_intent: bool },
-    Learner { task_id: String },
+    VoiceUser { device_db_id: i64, intent: ExplicitIntent },
+    // Thêm ở GĐ 4: Learner { task_id: String },
 }
+
+/// Mỗi hành động một cờ: lượt "nhớ giúp X" không mở quyền quên hay sửa.
+pub struct ExplicitIntent { pub remember: bool, pub correct: bool, pub forget: bool }
 ```
 
 **Interface không có `write_file`, `sync_index`, `regenerate_summary`, `add_tombstone`.** Các bước đó bắt buộc đi cùng nhau và có thứ tự, nên để lộ ra sẽ đẩy việc đúng thứ tự sang từng caller. Không có Task Agent trong `MemoryActor`: Task chỉ đọc, sai lệch này bị chặn ngay ở kiểu dữ liệu.
@@ -200,11 +217,11 @@ pub enum MemoryActor {
 **Bất biến thuộc interface:**
 
 1. `apply` trả thành công thì thay đổi đã có hiệu lực với mọi `context()` và `recall()`.
-2. `recall` không bao giờ trả fact chưa `confirmed`, đã thay thế, hoặc khớp tombstone.
-3. `context()` không làm hỏng admission, `handle.current()` không bao giờ chặn lượt thoại. Nếu suy giảm, chúng trả về rỗng và tăng metric.
+2. `recall` không bao giờ trả fact chưa `confirmed`, đã thay thế, bị cách ly hoặc khớp tombstone.
+3. `context()` không làm hỏng admission, `handle.current()` không bao giờ chặn lượt thoại. Nếu suy giảm, chúng trả về rỗng và phát sự kiện `tracing` chỉ có metadata.
 4. Dữ liệu trả về là dữ liệu không tin cậy. Caller phải đặt trong khối dữ liệu, không phải chỉ dẫn.
 
-**Seam nội bộ, không lộ ra:** `fit_summary` và `normalize` (hàm thuần), `guard` (secret, giới hạn kích thước), `FactFile` (parse), `index` (adapter của `WikiEngine`). Filesystem và SQLite thay được bằng tempdir trong test, nên **không tạo port** cho `MemoryStore`: chỉ có một adapter thật thì seam chỉ là giả định. Port duy nhất có hai adapter thật là LLM của Learner.
+**Seam nội bộ, không lộ ra:** `fit_summary` và `normalize` (hàm thuần), `guard` (secret, giới hạn kích thước), `FactFile` (parse), `index` (bảng FTS5 riêng). Filesystem và SQLite thay được bằng tempdir trong test, nên **không tạo port** cho `MemoryStore`: chỉ có một adapter thật thì seam chỉ là giả định. Port duy nhất có hai adapter thật là LLM của Learner.
 
 ### 4.4. Các đường tích hợp
 
@@ -214,7 +231,7 @@ flowchart LR
     A[Admin HTTP /api/admin/memory/*]
     V[SessionActor: builtin tools]
     T[daily_root: HostTool chỉ đọc]
-    L[Learner: Background Task không tool]
+    L[Learner, từ GĐ 4: Background Task không tool]
   end
   A -->|apply, inspect, reconcile| M[MemoryCore]
   V -->|apply, recall| M
@@ -255,13 +272,13 @@ Khối dữ liệu dùng lại cách escape của `speaker_data`, kèm `<memory_
 | `server_memory_correct` | Sửa fact, cần `id`, `revision` từ recall | `read_write` + cổng ý định |
 | `server_memory_forget` | Quên fact, cần `id`, `revision` từ recall | `read_write` + cổng ý định |
 
-**Cổng ý định** là chốt chặn chính cho đường Voice: server kiểm tra **User đã commit của chính lượt này** có cụm ghi nhớ hoặc quên rõ ràng (`nhớ giúp`, `ghi nhớ`, `lưu lại`, `quên`, `xóa ký ức`, `remember`, `forget`...). Không có thì trả `memory_requires_explicit_request`. Vì văn bản này do server giữ, nội dung độc từ tool result của External MCP không thể khiến model tự ghi. Đây cũng là cách thực thi "Inference không được âm thầm thành Memory" của ADR 0119. Đánh đổi là bỏ sót khi người dùng diễn đạt lạ, khi đó model nhắc họ nói rõ hơn. Chấp nhận được vì sai theo hướng không ghi.
+**Cổng ý định** là chốt chặn chính cho đường Voice: server kiểm tra **User đã commit của chính lượt này** có cụm rõ ràng cho **đúng hành động đó** (`nhớ giúp`, `ghi nhớ`, `đừng quên`, `don't forget` cho `remember`; `sửa lại`, `nhớ nhầm` cho `correct`; `quên`, `xóa ký ức`, `forget` cho `forget`). `đừng quên` và `don't forget` bị loại khỏi nhóm `forget` trước khi khớp. Cụm có dấu được khớp giữ dấu, để `tôi quen anh ấy` không mở quyền Quên. Không có cờ tương ứng thì trả `memory_requires_explicit_request`, nên lượt "nhớ giúp X" không gọi được Quên. Vì văn bản này do server giữ, nội dung độc từ tool result của External MCP không thể khiến model tự ghi. Đây cũng là cách thực thi "Inference không được âm thầm thành Memory" của ADR 0119. Đánh đổi là bỏ sót khi người dùng diễn đạt lạ, khi đó model nhắc họ nói rõ hơn. Chấp nhận được vì sai theo hướng không ghi.
 
-**Bỏ cảnh báo hứa suông bằng regex trên Voice.** Câu trả lời đã phát qua TTS thì không thể chèn dòng cảnh báo bên dưới, và nói thêm một câu sau đó là trải nghiệm tệ. Thay bằng `<memory_policy>` cộng metric metadata `memory_claim_without_receipt`, không log nội dung (ADR 0024). Web Chat có thể hiển thị biên nhận từ `MemoryReceipt`, đây là việc của UI sau này.
+**Bỏ cảnh báo hứa suông bằng regex trên Voice.** Câu trả lời đã phát qua TTS thì không thể chèn dòng cảnh báo bên dưới, và nói thêm một câu sau đó là trải nghiệm tệ. Thay bằng `<memory_policy>` cộng sự kiện `tracing` `memory_claim_without_receipt`, chỉ gồm `session_id` và `turn_id`, không log nội dung (ADR 0024). Web Chat có thể hiển thị biên nhận từ `MemoryReceipt`, đây là việc của UI sau này.
 
-**Task.** Đăng ký `memory_recall` và `memory_summary` là `HostTool` tại `task_flow/mod.rs:246`, **không** bọc `NormalizedWikiHostTool`. Chỉ thêm vào allowlist của `daily_root` trong `specs.rs`. Scope lấy từ `ToolContext.scope.owner_id` (`device:<device_db_id>`), tra ra `device_id` trong DB, không lấy từ tham số do model truyền. Task chỉ đọc được bộ nhớ của Device đã tạo ra nó. Scope khác dạng này, kể cả `personal` mặc định của task do Admin tạo, thì **từ chối**. Không cấp cho `wiki_root` và các Sub-Agent Wiki để tri thức cá nhân không rò vào Wiki Page công khai. Không có Knowledge MCP token nào đọc được Memory.
+**Task.** Đăng ký `memory_recall` và `memory_summary` là `HostTool` tại `task_flow/mod.rs:246`, **không** bọc `NormalizedWikiHostTool`, và **luôn đăng ký** kể cả khi Memory tắt, khi đó tool trả `memory_disabled`, vì allowlist có tool chưa đăng ký sẽ làm hỏng `build()`. Thêm vào allowlist của `daily_root` trong `specs.rs`, và đổi nhánh `Primary` ở `resolution.rs` sang dùng `default_allowed_tools`, nếu không thì sửa `specs.rs` không có tác dụng. Scope lấy từ `ToolContext.scope.owner_id` (`device:<device_db_id>`), tra ra `device_id` trong DB, không lấy từ tham số do model truyền. Task chỉ đọc được bộ nhớ của Device đã tạo ra nó. Scope khác dạng này, kể cả `personal` mặc định của task do Admin tạo, thì **từ chối**. Không cấp cho `wiki_root` và các Sub-Agent Wiki để tri thức cá nhân không rò vào Wiki Page công khai. Không có Knowledge MCP token nào đọc được Memory.
 
-**Admin HTTP.** Giữ `/api/admin/memory/*` để `MemoryPage.vue` ít thay đổi, thêm tham số `device` bắt buộc cùng bộ chọn Device trên UI, `expected_revision`, và trả trạng thái thật. Handler chỉ còn parse, gọi `MemoryCore`, map lỗi. Xóa các lời gọi chuyển tiếp sang `knowledge_*`. Thêm `POST /memory/facts/{id}/discard`, `GET/POST /memory/profile`, `GET/POST /memory/settings`, và ở Giai đoạn 4 `GET /memory/proposals`, `POST /memory/proposals/{id}/confirm`, `.../reject`.
+**Admin HTTP.** Giữ `/api/admin/memory/*` để `MemoryPage.vue` ít thay đổi, thêm tham số `device` bắt buộc cùng bộ chọn Device trên UI, `expected_revision`, và trả trạng thái thật. Handler chỉ còn parse, gọi `MemoryCore`, map lỗi. Xóa các lời gọi chuyển tiếp sang `knowledge_*`. Thêm `POST /memory/facts/{id}/discard`, `POST /memory/facts/{id}/pin`, `GET/POST /memory/profile`, và ở Giai đoạn 4 `GET/POST /memory/settings`, `GET /memory/proposals`, `POST /memory/proposals/{id}/confirm`, `.../reject`.
 
 ### 4.5. Luồng `apply(Forget)` và giới hạn của Quên
 
@@ -270,11 +287,16 @@ Thứ tự này cho phép crash ở bất kỳ bước nào mà fact không quay
 1. Giữ writer của scope, kiểm tra `expected_revision`.
 2. Ghi `tombstones.json` bằng tmp + fsync + rename. **Đây là điểm commit.**
 3. Xóa khỏi index.
-4. Sinh lại `MEMORY.md` và publish `MemoryContext` mới.
-5. Xóa `facts/<slug>.md`.
-6. Trả `MemoryReceipt`.
+4. Publish `MemoryContext` mới.
+5. Sinh lại `MEMORY.md`.
+6. Xóa `facts/<slug>.md`.
+7. Trả `MemoryReceipt`.
 
-`reconcile` khi khởi động sẽ áp tombstone lên fact còn sót, nên crash giữa chừng vẫn hội tụ. Bước 3 hoặc 4 lỗi thì trả lỗi, nhưng tombstone vẫn có hiệu lực, vì `recall` luôn lọc theo tombstone.
+`reconcile` khi khởi động sẽ áp tombstone lên fact còn sót, nên crash giữa chừng vẫn hội tụ. **Qua điểm commit thì luôn trả `Ok`:** các bước 3 đến 6 lỗi thì đặt `cleanup_pending: true` trong biên nhận, vì fact đã bị quên thật và `recall` luôn lọc theo tombstone. Báo lỗi lúc này sẽ khiến model nói sai, và người dùng nói lại rồi gặp `memory_not_found`.
+
+**Khóa tombstone** nằm ở `_deployment/tombstone.key`. Mất khóa thì tombstone cũ hết tác dụng, nên backup thủ công phải gồm cả file này.
+
+**Gỡ tombstone.** `Remember` khớp tombstone thì gỡ, và `Correct` có body mới khớp tombstone cũng gỡ, vì người dùng đã nói rõ. Nếu `Correct` không gỡ thì nó trả thành công nhưng `recall` lại lọc mất fact, và `reconcile` lần sau sẽ xóa fact.
 
 Quên có giới hạn, và tool result phải nói thật:
 
@@ -285,9 +307,9 @@ Quên có giới hạn, và tool result phải nói thật:
 
 ### 4.6. Xử lý sửa ngoài luồng
 
-Sửa file trực tiếp bằng Obsidian được phép. `reconcile` phát hiện hash khác thì tăng `revision`, đặt `origin: owner-edited`. Frontmatter hỏng thì cách ly: không đưa vào prompt và recall, báo trong `inspect`. **Không dùng file watcher** ở V1: chạy `reconcile` khi khởi động và khi Admin bấm rebuild là đủ.
+Sửa file trực tiếp bằng Obsidian được phép. `reconcile` so nội dung với `content_hash` trong frontmatter, vì index xóa được nên không giữ mốc này được. Hash khác thì tăng `revision`, đặt `origin: owner-edited`. File sửa ngoài luồng mà khớp tombstone thì bị xóa, vì sửa tay không phải ý định rõ ràng qua hệ thống. Frontmatter hỏng thì cách ly: không đưa vào prompt và recall, báo trong `inspect`. **Không dùng file watcher** ở V1: chạy `reconcile` khi khởi động và khi Admin bấm rebuild là đủ.
 
-### 4.7. Cross-Session Recall
+### 4.7. Cross-Session Recall (GĐ 4)
 
 Phải chọn bật riêng, mặc định tắt, vì khác bản chất với lưu transcript:
 
@@ -297,7 +319,7 @@ Phải chọn bật riêng, mặc định tắt, vì khác bản chất với l�
 - Chỉ trả hội thoại của cùng Device, đúng theo Memory Scope. Hội thoại cũ của Device vẫn tìm được sau khi Device đổi Agent.
 - Lọc đoạn trích theo tombstone, đây là best effort.
 
-### 4.8. Learner (tự học)
+### 4.8. Learner, tự học (GĐ 4)
 
 Mặc định `off`. Các chế độ: `off | suggest`. **Không có `auto`.** Bật tự động ghi fact là _contradicts ADR 0119_ ("Inference... must not silently become personal Memory") và cần một ADR mới nếu muốn mở lại.
 
@@ -317,13 +339,11 @@ vault_dir = "data/memory-vault"
 voice_summary_max_bytes = 4000
 max_facts_per_scope = 500
 max_fact_body_chars = 2000
-cross_session_recall = false
-
-[memory.learning]
-mode = "off"   # off | suggest
 ```
 
-Migration `0141_device_memory_mode.sql`: `devices.memory_mode TEXT NOT NULL DEFAULT 'off' CHECK (memory_mode IN ('off','read','read_write'))`. Cờ đặt trên Device vì dữ liệu thuộc Device, và để bật từng thiết bị được. Default-deny, Device hiện có không đổi hành vi. Phải thêm cột vào `database/backup/bundle.rs`, `codec/queries_core.rs`, `importer/upsert_core.rs` và test backup.
+Chỉ thêm ở GĐ 4: `cross_session_recall = false` và `[memory.learning] mode = "off"`.
+
+Migration `0141_device_memory_mode.sql`: `devices.memory_mode TEXT NOT NULL DEFAULT 'off' CHECK (memory_mode IN ('off','read','read_write'))`. Cờ đặt trên Device vì dữ liệu thuộc Device, và để bật từng thiết bị được. Default-deny, Device hiện có không đổi hành vi. Phải thêm cột vào `database/backup/bundle.rs`, `codec/queries_core.rs`, `importer/upsert_core.rs`, `inspector.rs` và test backup, giữ nguyên `BUNDLE_SCHEMA_VERSION = 1`.
 
 ## 6. Lộ trình
 
@@ -331,9 +351,9 @@ Mỗi giai đoạn merge độc lập được.
 
 | GĐ | Nội dung | Điều kiện xong |
 |---|---|---|
-| **0. Quyết định** | ADR 0135 cho runtime Memory sau ADR 0127. Cập nhật `GLOSSARY.md` (Memory Fact không còn ở `wiki/entities/`; thêm Memory Scope, Memory Proposal, Memory Receipt, Forget Tombstone) qua `/domain-modeling`. Đánh dấu lỗi thời `docs/knowledge/*` và `docs/flows/13-knowledge-v3.md`. | ADR được chấp nhận |
-| **1. Lõi và Admin** | `services::memory`, `apply`, `recall`, `inspect`, `reconcile`. Viết lại `knowledge/memory.rs`, chuyển UI. | Hết các lỗi ở mục 3 trừ Voice và Task |
-| **2. Voice đọc** | `MemoryContext`, `fit_summary`, `TurnPromptInputs`, `server_memory_recall`, `memory_mode`. | Benchmark: không tăng độ trễ actor đo được ở lượt không gọi tool |
+| **0. Quyết định** | ADR 0135 cho runtime Memory sau ADR 0127. Cập nhật `GLOSSARY.md` (Memory Fact không còn ở `wiki/entities/`; thêm Memory Scope, Memory Proposal, Memory Receipt, Forget Tombstone) qua `/domain-modeling`. Đánh dấu lỗi thời `docs/knowledge/README.md` và `docs/flows/13-knowledge-v3.md`. | ADR được chấp nhận |
+| **1. Lõi và Admin** | `services::memory`, `apply`, `recall`, `inspect`, `reconcile`, `reconcile_all`. Migration `memory_mode` và backup. Viết lại `knowledge/memory.rs`, chuyển UI. | Hết các lỗi ở mục 3 trừ Voice và Task |
+| **2. Voice đọc** | `TurnPromptInputs`, đường vào `SessionActor`, `server_memory_recall`. | Benchmark: không tăng độ trễ actor đo được ở lượt không gọi tool |
 | **3. Voice ghi, Task đọc** | Ba builtin ghi với cổng ý định. `HostTool` đọc cho `daily_root`. | Test chống injection qua tool result |
 | **4. Mở rộng tùy chọn** | Cross-Session Recall, Learner `suggest`, trang duyệt đề xuất. | Chỉ bắt đầu khi đã dùng 1 đến 3 thực tế |
 
@@ -343,16 +363,16 @@ Chỉ thêm "Turn Recall" (tự truy xuất mỗi lượt, join kiểu Speaker v
 
 ## 7. Kiểm thử
 
-Theo AGENTS.md, chạy qua `scripts/agent-test.sh`, targeted trước, workspace sau. Test qua interface của `MemoryCore` với tempdir, không test xuyên vào module con.
+Theo AGENTS.md, chạy qua `scripts/agent-test.sh`, targeted trước, workspace sau. Test qua interface của `MemoryCore` với thư mục tạm (`std::env::temp_dir()` cộng uuid), không test xuyên vào module con.
 
-- **Quên:** sau `Forget`, `recall`, `context` và `MEMORY.md` đều không còn fact. Inject lỗi ở từng bước rồi `reconcile`: fact không quay lại.
-- **Hoàn tác và Quên:** sau `Discard`, Learner đề xuất lại được. Sau `Forget`, bị chặn. Sau `Forget`, người dùng nói rõ thì `Remember` được và tombstone bị gỡ.
+- **Quên:** sau `Forget`, `recall`, `context` và `MEMORY.md` đều không còn fact. Inject lỗi ở từng bước rồi `reconcile`: fact không quay lại. Lỗi sau điểm commit trả `Ok` với `cleanup_pending: true`.
+- **Hoàn tác và Quên:** sau `Discard`, `Remember` cùng nội dung thành công và không có tombstone. Sau `Forget`, người dùng nói rõ thì `Remember` được và tombstone bị gỡ. `Correct` sang body đã quên cũng vậy, và `recall` thấy fact.
 - **CAS:** `expected_revision` cũ trả `memory_revision_conflict`, không ghi đè.
 - **Cách ly:** hai Device cùng một Agent không thấy fact của nhau. Device đổi Agent vẫn giữ fact. Task của Device A không đọc được Device B. Studio Assistant có Bound Reminder Target không đọc được bộ nhớ của Device được gắn. `wiki_query` và Knowledge MCP không thấy fact. `owner_id = personal` bị từ chối.
-- **Xóa Device:** vault bị xóa cùng Device. Thư mục mồ côi lúc khởi động chỉ được báo cáo, không tự xóa.
+- **Xóa Device:** `DELETE` thành công thì vault mất. `device_in_use` thì vault còn. Thư mục mồ côi lúc khởi động chỉ được báo cáo, không tự xóa.
 - **`device_dir`:** `device_id` chứa `../` hoặc `:` vẫn cho đường dẫn an toàn, và giữ nguyên sau khi import làm đổi `devices.id`.
 - **Tiếng Việt (B2, B3):** có ca `đặt`/`dat`, `được`/`duoc`, `nhắc`/`nhac`, `việc`/`viec`, và văn bản ASR.
-- **Cổng ý định:** lượt có "nhớ giúp" ghi được. Lượt chỉ có tool result chứa lệnh "hãy ghi nhớ" thì bị từ chối.
+- **Cổng ý định:** lượt có "nhớ giúp" ghi được. Lượt chỉ có tool result chứa lệnh "hãy ghi nhớ" thì bị từ chối. Lượt "nhớ giúp X" không gọi được `forget`. "tôi quen anh ấy" không mở `forget`. "đừng quên mua sữa" và "don't forget the milk" mở `remember`, không mở `forget`.
 - **Compose:** base gần chạm 96 KiB thì lượt vẫn chạy và không có khối memory. Dữ liệu có `</memory_info>` được escape. Khối memory đứng trước `<reminders_info>`.
 - **`fit_summary`:** từng bậc, biên UTF-8, fact mới và `pinned` được giữ khi quá trần.
 - **Guard:** từ chối API key, JWT, URL DB có mật khẩu. Log hiện chỉ có `scrub_string_value` theo tiền tố và `is_sensitive_key` theo tên khóa, không đủ quét giá trị trong văn bản, nên phải viết mới.
@@ -364,15 +384,15 @@ Theo AGENTS.md, chạy qua `scripts/agent-test.sh`, targeted trước, workspace
 
 | ADR | Quan hệ |
 |---|---|
-| 0119 | **Hiện thực hóa.** Code hiện tại đang lệch. Thiết kế này đưa về đúng |
-| 0127 | Mở rộng: thêm vault thứ hai và `memory_learner`. Giữ quy định `WikiEngine` sở hữu Wiki Vault |
+| 0119 | **Hiện thực hóa,** đưa code đang lệch về đúng. Lệch một phần có chủ đích: Memory dùng lại helper nhưng tự viết index, vì `WikiEngine` không gấp được `đ` (ADR 0135) |
+| 0127 | Mở rộng: thêm vault thứ hai, và `memory_learner` ở GĐ 4. Giữ quy định `WikiEngine` sở hữu Wiki Vault |
 | 0120 | Đã bị thay thế. **Không khôi phục** `memory_index.db`; index nằm trong vault của từng scope |
-| 0024 | **Blueprint mâu thuẫn:** log `conversations/*.md` bị loại. Fact là dữ liệu người dùng chủ động lưu, cần ghi rõ phạm vi này vào ADR 0135 |
+| 0024 | **Blueprint mâu thuẫn:** log `conversations/*.md` bị loại. Fact là dữ liệu người dùng chủ động lưu, phạm vi này đã ghi vào ADR 0135 |
 | 0084 | Mở rộng compose seam theo cách của reminders. Ghi chú "Reminder context (proposed)" trong ADR đã lỗi thời vì code đã có |
 | 0002, 0005 | Tuân thủ: actor chỉ đọc snapshot, ghi chạy ngoài actor và trả về qua đường tool sẵn có |
 | 0078 | `memory_mode` là cổng riêng cho builtin, tương tự `reminders_enabled` nhưng đặt trên Device |
-| 0008 | **Cần ghi nhận trong ADR 0135:** ADR này coi Device ID chỉ là metadata và không có credential theo thiết bị, còn Memory dùng nó làm khóa phân vùng dữ liệu. Xem mục 9 |
-| 0131 | **Khoảng trống:** backup không gồm Memory Vault, xem mục 9 |
+| 0008 | **Đã ghi nhận trong ADR 0135:** ADR này coi Device ID chỉ là metadata và không có credential theo thiết bị, còn Memory dùng nó làm khóa phân vùng dữ liệu. Xem mục 9 |
+| 0131 | **Khoảng trống,** đã ghi nhận trong ADR 0135: backup không gồm Memory Vault, xem mục 9 |
 
 ## 9. Quyết định và rủi ro
 
@@ -384,8 +404,8 @@ Theo AGENTS.md, chạy qua `scripts/agent-test.sh`, targeted trước, workspace
 
 Các rủi ro khác:
 
-- **Backup.** Memory Vault nằm ngoài ADR 0131. Trước GĐ 4 cần hoặc mở rộng backup, hoặc ghi rõ trong tài liệu vận hành. Thư mục đặt theo hash của `device_id`, nên khôi phục file không phụ thuộc id dòng.
-- **Xóa Device.** Xóa Device sẽ xóa luôn vault của nó, nhất quán với `history_messages` đang `ON DELETE CASCADE`, và UI phải cảnh báo trước. Thư mục mồ côi tìm thấy lúc khởi động chỉ được báo cáo cho Admin, không tự xóa, vì việc xóa tự động sau một lần import sai là không khôi phục được.
-- **Chi phí `WikiEngine` theo Device.** Số Device có thể lớn hơn số Agent nhiều. Mỗi engine giữ một kết nối SQLite sau `Mutex` đồng bộ, nên mọi lời gọi phải qua `spawn_blocking`, và engine nhàn rỗi bị đóng theo LRU. `handle.current()` đọc từ snapshot nên không cần engine. Device tắt Memory không mở gì cả.
-- **Chưa kiểm chứng bằng test:** `owner_id` của `TaskScope` có đi đúng vào `ToolScope` khi Sub-Agent gọi tool hay không. `scope.rs` có import cả hai kiểu nhưng tôi chưa lần theo đường đi đầy đủ. Cần viết test này đầu GĐ 3 vì cách ly của Task phụ thuộc vào nó.
+- **Backup.** Memory Vault nằm ngoài ADR 0131. Trước GĐ 4 cần hoặc mở rộng backup, hoặc ghi rõ trong tài liệu vận hành. Bản sao thủ công phải gồm cả `_deployment/tombstone.key`. Thư mục đặt theo hash của `device_id`, nên khôi phục file không phụ thuộc id dòng.
+- **Xóa Device.** Vault chỉ bị xóa sau khi `DELETE` thành công, và UI phải cảnh báo trước. Quy tắc `device_in_use` giữ nguyên: `DeleteSpec::DEVICE` từ chối xóa khi còn lịch sử, dù cột `history_messages` có CASCADE, và khi đó vault còn nguyên. Purge lỗi thì log, `reconcile_all` sau đó báo là thư mục mồ côi. Thư mục mồ côi tìm thấy lúc khởi động chỉ được báo cáo cho Admin, không tự xóa, vì việc xóa tự động sau một lần import sai là không khôi phục được.
+- **`sqlx` với FTS5 chưa được chạy thử** trong crate này. Nếu không tạo được bảng, phương án dự phòng là thêm `rusqlite` trực tiếp, chỉ đổi index. Đây là một trong hai test viết đầu tiên.
+- **Chưa kiểm chứng bằng test:** `ToolScope.owner_id` lấy từ `run.owner_id`, và Sub-Agent kế thừa owner của session cha, nhưng đoạn từ `task.owner_id` đến `run.owner_id` mới chỉ đọc lướt. Cần viết test này đầu GĐ 3 vì cách ly của Task phụ thuộc vào nó.
 - **Dữ liệu ra ngoài.** Fact đi vào prompt của LLM provider đang dùng, có thể là dịch vụ từ xa. `memory_mode` mặc định `off` là đồng ý tường minh theo từng Device, nhưng UI nên nói rõ điều này.

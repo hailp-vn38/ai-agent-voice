@@ -747,7 +747,7 @@ _Avoid_: synchronous HTTP ingest, unverified direct Wiki write
 
 ### Knowledge and Wiki language
 
-For Wiki Page, Source, Knowledge Revision, Memory Fact, Memory Summary, Search Projection, Physical Knowledge Folder, Raw Working Note, Wiki Link, Backlink, and Graph Projection, use the definitions in [GLOSSARY.md](GLOSSARY.md#knowledge-and-memory-v3).
+For Wiki Page, Source, Knowledge Revision, Memory Fact, Memory Summary, Memory Vault, Memory Scope, Memory Proposal, Memory Receipt, Forget Tombstone, Search Projection, Physical Knowledge Folder, Raw Working Note, Wiki Link, Backlink, and Graph Projection, use the definitions in [GLOSSARY.md](GLOSSARY.md#knowledge-and-memory-v3). Memory runtime decisions are in [ADR 0135](docs/adr/0135-memory-core-runtime.md).
 
 ## Multi-Channel Notifications
 

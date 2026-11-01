@@ -1,5 +1,7 @@
 # Knowledge + Memory V3 — data flows
 
+> **Lỗi thời (đánh dấu 2026-11-01).** Các luồng dưới đây mô tả nhánh Knowledge + Memory V3 cũ, không phải runtime hiện tại. Sơ đồ Memory, `MemoryCore`, `memory_index.db`, `memory.recall` và Job Core Plugin không có trong code runtime. Task và Wiki chạy theo [ADR 0127](../adr/0127-orchestrator-flow-task-and-wiki-runtime.md); Memory theo [ADR 0135](../adr/0135-memory-core-runtime.md).
+
 Normative DB and recovery contract: [database-layout-v3.md](../knowledge/database-layout-v3.md). Domain interfaces: [implementation-v3.md](../knowledge/implementation-v3.md).
 
 ```mermaid

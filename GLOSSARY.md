@@ -201,15 +201,35 @@ Quan hệ truy nguyên giữa nội dung của một Wiki Page và các Source l
 _Avoid_: Wiki Link, Backlink, truth guarantee
 
 **Memory Fact**:
-Khẳng định tri thức bền vững về một thực thể hoặc sự kiện được lưu trữ dưới dạng trang thực thể (`wiki/entities/`), có thể được tạo mới, cập nhật hoặc xóa bỏ (`forget`).
-_Avoid_: inference, Memory Summary, temporary session note
+Khẳng định bền vững được người dùng hoặc Admin chủ động lưu, thuộc về đúng một Device và nằm trong Memory Vault; có thể được sửa, hoàn tác hoặc quên.
+_Avoid_: inference, Memory Summary, Wiki Page, temporary session note
 
 **Memory Summary**:
-Bản tóm tắt có giới hạn kích thước được trích xuất từ chỉ mục tổng hợp (`INDEX.md`) của kho tri thức, không thay thế cho từng Memory Fact hay Wiki Page gốc.
+Mục lục có giới hạn kích thước mà model nhận mỗi lượt, sinh lại từ các Memory Fact đang hiệu lực của một Memory Scope; không thay thế cho Memory Fact gốc.
 _Avoid_: canonical memory page, index row
 
+**Memory Vault**:
+Kho Markdown riêng của Memory, tách khỏi kho tri thức Wiki, gồm một phần cho từng Device và một phần dùng chung của deployment.
+_Avoid_: Wiki Vault, knowledge store
+
+**Memory Scope**:
+Phần của Memory Vault mà một thao tác được phép chạm tới, là một Device hoặc deployment; chỉ server xác định, Agent và Speaker không tham gia, và đây không phải ranh giới bảo mật.
+_Avoid_: Agent memory, Speaker memory, model-selected scope
+
+**Memory Proposal**:
+Đề xuất do tự học tạo, chờ Admin xác nhận trước khi thành Memory Fact; thuộc giai đoạn sau, chưa có trong runtime.
+_Avoid_: unconfirmed Memory Fact, auto-learned fact
+
+**Memory Receipt**:
+Bằng chứng một thay đổi Memory đã có hiệu lực, do chính thao tác ghi trả về; là căn cứ để Agent nói đã nhớ hoặc đã quên.
+_Avoid_: Tool Execution Status, disk scan result
+
+**Forget Tombstone**:
+Dấu vết không đọc ngược được của nội dung đã quên, giữ cho nội dung đó không quay lại qua các đường đọc của Memory; Hoàn tác không tạo dấu vết này.
+_Avoid_: soft delete, audit record
+
 **Search Projection**:
-Chỉ mục tìm kiếm lai (BM25 kết hợp vector ngữ nghĩa) được suy dẫn từ các tệp Markdown chuẩn trong kho tri thức; việc mất hoặc tạo lại chỉ mục không làm mất tài liệu gốc.
+Chỉ mục tìm kiếm được suy dẫn từ các tệp Markdown chuẩn, là BM25 kết hợp vector ngữ nghĩa với kho tri thức và BM25 với Memory Vault; việc mất hoặc tạo lại chỉ mục không làm mất tài liệu gốc.
 _Avoid_: authoritative database, document source of truth
 
 ## Knowledge Physical Folder Tree

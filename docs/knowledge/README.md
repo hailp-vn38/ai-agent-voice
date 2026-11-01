@@ -1,5 +1,7 @@
 # Knowledge + Memory V3
 
+> **Lỗi thời (đánh dấu 2026-11-01).** Tài liệu này mô tả nhánh Knowledge + Memory V3 cũ, không phải runtime hiện tại. `MemoryCore`, `memory_index.db`, `core.memory`, `memory.recall` và `memory.summary` được mô tả dưới đây không có trong code runtime. Task và Wiki chạy theo [ADR 0127](../adr/0127-orchestrator-flow-task-and-wiki-runtime.md); Memory theo [ADR 0135](../adr/0135-memory-core-runtime.md). Các đoạn về Memory trong những tài liệu khác của thư mục này (`implementation-v3.md`, `database-layout-v3.md`, `verification-v3.md`, `glossary-additions.md`, `ai-ingest-auto-publish-implementation-v3.md`) cũng lỗi thời theo. Thuật ngữ dùng [GLOSSARY.md](../../GLOSSARY.md#knowledge-and-memory-v3).
+
 Status: implementation branch. Base: `feat/agent-job-v3-opencode-session-runtime`.
 
 Architecture is **file-first hybrid**. Knowledge and Memory are separate domain modules with one internal Markdown/indexing implementation. The existing application SQLite DB remains authoritative for Agent Jobs, Providers, Plugins, and all execution history; `knowledge_index.db` and `memory_index.db` are independently rebuildable read projections.
