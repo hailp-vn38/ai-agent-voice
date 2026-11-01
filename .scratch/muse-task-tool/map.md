@@ -8,6 +8,8 @@ Spec: [spec.md](spec.md). Base: 4315248cdb6019085bb02f509afa61e83d1efab9. Integr
 
 ## Decisions-so-far
 
+- [02 Host tool](issues/02-host-tool.md) resolved; câu trả lời và triển khai tại `fcbe18fc`: durable scoped tool, journal recovery và artifact publication; targeted tests 15 PASS, cargo check PASS.
+
 - [03 catalog](issues/03-catalog.md) resolved; tích hợp ở 5d194db5. Mặc định OFF, tag Muse-only, bảo toàn prompt tùy chỉnh; HTTP/settings/Web/typecheck PASS.
 
 - Không sửa thư viện/schema; dùng seam đã được xác nhận trong spec.
