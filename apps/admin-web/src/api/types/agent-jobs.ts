@@ -21,6 +21,7 @@ export interface BackgroundAgentConfig {
   mode: 'primary' | 'subagent' | 'all'
   is_builtin?: boolean
   enabled: boolean
+  default_enabled?: boolean
   provider_ref: string | null
   effective_provider_ref: string
   effective_model: string

@@ -253,7 +253,10 @@ fn format_active_subagents_block(
     let mut lines = Vec::new();
     for &sub_id in default_subagents {
         let ovr = settings.agents.get(sub_id);
-        if !ovr.is_none_or(|o| o.enabled) {
+        if !ovr.map_or_else(
+            || find_agent_spec(sub_id).is_some_and(|s| s.default_enabled),
+            |o| o.enabled,
+        ) {
             continue;
         }
         let desc = ovr
@@ -280,8 +283,13 @@ fn format_active_subagents_block(
     } else {
         lines.join("\n")
     };
+    let cloud_guard = if flow_id == "daily" {
+        "\nLong-running cloud research is only for Chat/API tasks. Never delegate it for Task source Voice, whose Job Budget is five minutes. Follow-up after a use-once cloud Sub-Agent ends requires a new Sub-Agent with explicit context.\n"
+    } else {
+        ""
+    };
     format!(
-        "\n\n<active_subagents>\nCurrently enabled subagents you may delegate to via the `subagent` tool (`agent` parameter):\n{body}\nDo NOT delegate to any subagent not listed in <active_subagents>.\n</active_subagents>\n"
+        "\n\n<active_subagents>\nCurrently enabled subagents you may delegate to via the `subagent` tool (`agent` parameter):\n{body}\nDo NOT delegate to any subagent not listed in <active_subagents>.\n{cloud_guard}</active_subagents>\n"
     )
 }
 
@@ -302,10 +310,20 @@ pub fn write_agent_prompts(
             .unwrap_or(spec.default_prompt);
         let filename = format!("{}.md", spec.id);
         expected_files.insert(filename.clone());
-        if spec.mode == AgentMode::Primary && !base_prompt.contains("<active_subagents>") {
+        if spec.mode == AgentMode::Primary {
+            // The discovery block is server-owned. Old saved prompts may contain a snapshot;
+            // replace that block while preserving the Admin's surrounding custom instructions.
+            let mut prompt = base_prompt.to_owned();
+            while let Some(start) = prompt.find("<active_subagents>") {
+                let Some(relative_end) = prompt[start..].find("</active_subagents>") else {
+                    break;
+                };
+                let end = start + relative_end + "</active_subagents>".len();
+                prompt.replace_range(start..end, "");
+            }
             let block =
                 format_active_subagents_block(spec.flow_id, spec.default_subagents, settings);
-            std::fs::write(prompts_dir.join(&filename), format!("{base_prompt}{block}"))?;
+            std::fs::write(prompts_dir.join(&filename), format!("{prompt}{block}"))?;
         } else {
             std::fs::write(prompts_dir.join(&filename), base_prompt)?;
         }

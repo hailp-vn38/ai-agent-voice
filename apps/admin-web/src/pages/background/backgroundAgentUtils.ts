@@ -241,7 +241,7 @@ export function isAgentCustomizedFromDefault(
   const systemPrompt = (current?.system_prompt ?? agent.system_prompt).trim()
 
   return (
-    !enabled ||
+    enabled !== (agent.default_enabled ?? true) ||
     Boolean(providerRef) ||
     Object.keys(toolProviders).length > 0 ||
     steps !== agent.default_steps ||
