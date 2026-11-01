@@ -7,7 +7,8 @@ use super::{
 };
 use crate::services::task_flow::{project_task_events, project_task_to_admin_job};
 use orchestrator_flow_rs::{
-    CreateTaskRequest, TaskEvent, TaskFeedItem, TaskFilter, TaskManager, TaskSource, TaskStatus,
+    CreateTaskRequest, ResolveStuckTool, StuckToolDecision, TaskEvent, TaskFeedItem, TaskFilter,
+    TaskManager, TaskSource, TaskStatus,
 };
 use serde::Deserialize;
 
@@ -382,6 +383,74 @@ pub(in crate::app::admin) async fn resume(
         Err(resp) => return resp,
     };
     match tm.resume_waiting_task_any_scope(&id).await {
+        Ok(task) => {
+            let detail = tm.get_task_detail_any_scope(&task.id).await.ok();
+            Json(project_task_to_admin_job(&task, detail.as_ref())).into_response()
+        }
+        Err(e) => task_failure(&request, e),
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(tag = "decision", rename_all = "snake_case")]
+enum ResolveInvocationDecision {
+    NoEffect {
+        evidence: String,
+    },
+    Completed {
+        tool_call_id: String,
+        result_text: String,
+        evidence: String,
+    },
+}
+
+#[derive(Deserialize)]
+struct ResolveInvocationInput {
+    /// Session của subagent khi tool bị kẹt thuộc agent con; bỏ trống là session gốc của Job.
+    #[serde(default)]
+    session_id: Option<String>,
+    #[serde(flatten)]
+    decision: ResolveInvocationDecision,
+}
+
+/// Đối soát một tool `Mutating` không rõ kết quả rồi cho Job chạy tiếp. Tool không được chạy lại.
+pub(in crate::app::admin) async fn resolve_invocation(
+    State(state): State<AppState>,
+    Path((id, invocation_id)): Path<(String, String)>,
+    request: Request,
+) -> Response {
+    let (request, input): (_, ResolveInvocationInput) = match json(request).await {
+        Ok(value) => value,
+        Err(error) => return error,
+    };
+    let tm = match task_manager(&state, &request) {
+        Ok(tm) => tm,
+        Err(resp) => return resp,
+    };
+    let decision = match input.decision {
+        ResolveInvocationDecision::NoEffect { evidence } => {
+            StuckToolDecision::NoEffect { evidence }
+        }
+        ResolveInvocationDecision::Completed {
+            tool_call_id,
+            result_text,
+            evidence,
+        } => StuckToolDecision::Completed {
+            tool_call_id,
+            result_text,
+            evidence,
+        },
+    };
+    let resolved = tm
+        .resolve_stuck_tool(ResolveStuckTool {
+            task_id: id,
+            session_id: input.session_id,
+            invocation_id,
+            operator_id: "admin".to_string(),
+            decision,
+        })
+        .await;
+    match resolved {
         Ok(task) => {
             let detail = tm.get_task_detail_any_scope(&task.id).await.ok();
             Json(project_task_to_admin_job(&task, detail.as_ref())).into_response()

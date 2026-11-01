@@ -66,6 +66,44 @@ pub(in crate::app::admin) async fn analyze(
     }
 }
 
+/// Nguồn Auto-Flow đã bỏ qua sau nhiều chặng thất bại.
+pub(in crate::app::admin) async fn quarantined_sources(
+    State(state): State<AppState>,
+    req: Request,
+) -> Response {
+    let Some(ref tm) = state.task_manager else {
+        return error(&req, StatusCode::SERVICE_UNAVAILABLE, "runtime_unavailable");
+    };
+    match tm.quarantined_sources().await {
+        Ok(sources) => Json(serde_json::json!({ "sources": sources })).into_response(),
+        Err(_) => error(&req, StatusCode::SERVICE_UNAVAILABLE, "runtime_unavailable"),
+    }
+}
+
+#[derive(Deserialize)]
+struct ReleaseQuarantinedSource {
+    source_rel_path: String,
+}
+
+/// Đưa một nguồn bị cách ly trở lại hàng đợi Auto-Flow.
+pub(in crate::app::admin) async fn release_quarantined_source(
+    State(state): State<AppState>,
+    req: Request,
+) -> Response {
+    let (req, input): (_, ReleaseQuarantinedSource) = match json(req).await {
+        Ok(value) => value,
+        Err(error) => return error,
+    };
+    let Some(ref tm) = state.task_manager else {
+        return error(&req, StatusCode::SERVICE_UNAVAILABLE, "runtime_unavailable");
+    };
+    match tm.release_quarantined_source(&input.source_rel_path).await {
+        Ok(true) => StatusCode::NO_CONTENT.into_response(),
+        Ok(false) => error(&req, StatusCode::NOT_FOUND, "not_found"),
+        Err(_) => error(&req, StatusCode::SERVICE_UNAVAILABLE, "runtime_unavailable"),
+    }
+}
+
 #[derive(Deserialize)]
 pub(in crate::app::admin) struct ReviewsQuery {
     #[serde(default)]

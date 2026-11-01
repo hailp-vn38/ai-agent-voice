@@ -26,7 +26,11 @@ pub const TRADING_CHART_SKILL: &str =
 pub const WEB_FETCH_POLICY_SKILL: &str =
     include_str!("../../../builtin-skills/web-fetch-policy/SKILL.md");
 
+pub const BATCH_SOURCE_COLLECTION_SKILL: &str =
+    include_str!("../../../builtin-skills/batch-source-collection/SKILL.md");
+
 pub const BUILTIN_SKILLS: &[(&str, &str)] = &[
+    ("batch-source-collection", BATCH_SOURCE_COLLECTION_SKILL),
     ("wiki-taxonomy", WIKI_TAXONOMY_SKILL),
     ("wiki-ingest", WIKI_INGEST_SKILL),
     ("wiki-query", WIKI_QUERY_SKILL),

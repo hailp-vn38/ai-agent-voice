@@ -696,7 +696,7 @@ skills_dir = "{}"
     let skills = initial["skills"]
         .as_array()
         .expect("skills array in settings");
-    assert_eq!(skills.len(), 8);
+    assert_eq!(skills.len(), 9);
     for expected_id in [
         "daily-synthesis-staging",
         "daily-task-reminder",
@@ -724,7 +724,7 @@ skills_dir = "{}"
         .find(|a| a["id"] == "wiki_researcher")
         .unwrap();
     let researcher_avail = researcher["available_skills"].as_array().unwrap();
-    assert_eq!(researcher_avail.len(), 8);
+    assert_eq!(researcher_avail.len(), 9);
     assert_eq!(researcher_avail[0], "wiki-query");
     assert_eq!(researcher_avail[1], "web-fetch-policy");
     assert_eq!(researcher_avail[2], "wiki-taxonomy");
@@ -1591,6 +1591,111 @@ vault_dir = "{}"
     let list_body: Value = list_resp.json().await.unwrap();
     assert_eq!(list_body["total"], 1);
     assert_eq!(list_body["items"][0]["id"], created_ids[2]);
+
+    server.abort();
+}
+
+#[tokio::test]
+async fn batch_durability_routes_are_authenticated_and_fail_closed_without_a_task_manager() {
+    let temp_root = std::env::temp_dir().join(format!("background-http-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&temp_root).unwrap();
+    let config: AppConfig = toml::from_str(&format!(
+        r#"
+[server]
+bind = "127.0.0.1:0"
+public_ws_url = "ws://127.0.0.1:0/voice/v1/"
+[provider_defaults]
+vad = "test"
+asr = "test"
+llm = "test"
+tts = "test"
+[database]
+url = "sqlite://{}"
+[api]
+enabled = true
+admin_token = "background-test-token"
+[orchestrator]
+store_dir = "{}"
+prompts_dir = "{}"
+"#,
+        temp_root.join("voice-agent.db").display(),
+        temp_root.join("orch-store").display(),
+        temp_root.join("prompts").display(),
+    ))
+    .unwrap();
+    let router = bootstrap_with_providers(config, Arc::new(ProviderSet::unavailable()))
+        .await
+        .unwrap();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base = format!("http://{}/api/admin", listener.local_addr().unwrap());
+    let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    let client = Client::new();
+
+    let quarantine = format!("{base}/knowledge/quarantined-sources");
+    let release = format!("{quarantine}/release");
+    let resolve = format!("{base}/jobs/job-1/invocations/inv-1/resolve");
+    let verdict = json!({ "decision": "no_effect", "evidence": "checked" });
+
+    assert_eq!(
+        client.get(&quarantine).send().await.unwrap().status(),
+        StatusCode::UNAUTHORIZED
+    );
+    assert_eq!(
+        client
+            .post(&resolve)
+            .json(&verdict)
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::UNAUTHORIZED
+    );
+
+    let token = "background-test-token";
+    assert_eq!(
+        client
+            .get(&quarantine)
+            .bearer_auth(token)
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::SERVICE_UNAVAILABLE
+    );
+    assert_eq!(
+        client
+            .post(&release)
+            .bearer_auth(token)
+            .json(&json!({ "source_rel_path": "sources/a.md" }))
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::SERVICE_UNAVAILABLE
+    );
+    assert_eq!(
+        client
+            .post(&resolve)
+            .bearer_auth(token)
+            .json(&verdict)
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::SERVICE_UNAVAILABLE
+    );
+    assert_eq!(
+        client
+            .post(&resolve)
+            .bearer_auth(token)
+            .json(&json!({ "decision": "guess" }))
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::BAD_REQUEST,
+        "an unknown verdict is rejected before anything else"
+    );
 
     server.abort();
 }
