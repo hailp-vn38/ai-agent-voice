@@ -270,6 +270,43 @@ async fn init_orchestrator_and_task_manager(
     Ok((orchestrator, task_manager))
 }
 
+const TERMINAL_RELEASE_INTERVAL: Duration = Duration::from_secs(2);
+/// 40s: dài hơn ân hạn hủy 30s của tool. Quá mức này thì giao lại cho sweep 5 phút.
+const TERMINAL_RELEASE_ATTEMPTS: u32 = 20;
+
+/// Xóa Job Session của một Background Task đã kết thúc. Trả `false` khi còn run đang hoạt động
+/// hoặc chưa đọc được operation, để bên gọi thử lại.
+async fn release_terminal_job_sessions(orchestrator: &Orchestrator, session_id: &str) -> bool {
+    let Ok(ops) = orchestrator.list_tool_operations().await else {
+        return false;
+    };
+    let of_job = |summary: &&orchestrator_agent_rs::ToolOperationSummary| {
+        summary.operation.continuation_key.as_deref() == Some(session_id)
+    };
+    if ops
+        .iter()
+        .filter(of_job)
+        .any(|summary| summary.root_has_active_work)
+    {
+        return false;
+    }
+    for summary in ops.iter().filter(of_job) {
+        if let Some(sid) = crate::providers::llm::gateway::muse::pool::release_recorded_job_session(
+            &summary.operation,
+        )
+        .await
+        {
+            let _ = orchestrator.mark_remote_session_deleted(&sid).await;
+        }
+    }
+    if let Some(sid) =
+        crate::providers::llm::gateway::muse::pool::release_job_session(session_id).await
+    {
+        let _ = orchestrator.mark_remote_session_deleted(&sid).await;
+    }
+    true
+}
+
 pub(crate) fn spawn_job_session_reaper(
     task_manager: &TaskManager,
     orchestrator: &Arc<Orchestrator>,
@@ -287,19 +324,23 @@ pub(crate) fn spawn_job_session_reaper(
                 {
                     let is_shutdown = task.status == orchestrator_flow_rs::TaskStatus::Interrupted
                         && task.error_code.as_deref() == Some("SHUTTING_DOWN");
-                    let Ok(ops) = orch_events.list_tool_operations().await else { continue; };
-                    let protected = ops.iter().any(|summary| summary.root_has_active_work
-                        && summary.operation.continuation_key.as_deref() == Some(task.session_id.as_str()));
-                    if !is_shutdown && !protected {
-                        for summary in ops.iter().filter(|summary| summary.operation.continuation_key.as_deref() == Some(task.session_id.as_str())) {
-                            if let Some(sid) = crate::providers::llm::gateway::muse::pool::release_operation_session(&summary.operation).await {
-                                let _ = orch_events.mark_remote_session_deleted(&sid).await;
+                    if is_shutdown
+                        || release_terminal_job_sessions(&orch_events, &task.session_id).await
+                    {
+                        continue;
+                    }
+                    // `TaskTerminal` của hủy phát trước khi run dừng hẳn và không có sự kiện thứ
+                    // hai, nên phải thử lại tới hết ân hạn thay vì đợi sweep 5 phút.
+                    let orch_retry = Arc::clone(&orch_events);
+                    let session_id = task.session_id.clone();
+                    tokio::spawn(async move {
+                        for _ in 0..TERMINAL_RELEASE_ATTEMPTS {
+                            tokio::time::sleep(TERMINAL_RELEASE_INTERVAL).await;
+                            if release_terminal_job_sessions(&orch_retry, &session_id).await {
+                                return;
                             }
                         }
-                        if let Some(sid) = crate::providers::llm::gateway::muse::pool::release_job_session(&task.session_id).await {
-                            let _ = orch_events.mark_remote_session_deleted(&sid).await;
-                        }
-                    }
+                    });
                 }
             }
         });
@@ -327,10 +368,9 @@ pub(crate) fn spawn_job_session_reaper(
                     for summary in ops {
                         if !summary.root_has_active_work
                             && summary.operation.remote_deleted_at.is_none()
+                            && let Some(sid) = crate::providers::llm::gateway::muse::pool::release_recorded_job_session(&summary.operation).await
                         {
-                            if let Some(sid) = crate::providers::llm::gateway::muse::pool::release_operation_session(&summary.operation).await {
-                                let _ = orch_sweep.mark_remote_session_deleted(&sid).await;
-                            }
+                            let _ = orch_sweep.mark_remote_session_deleted(&sid).await;
                         }
                     }
                 }

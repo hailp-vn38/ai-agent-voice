@@ -10,3 +10,7 @@ Các công cụ sinh dữ liệu kéo dài (như `video_create`) sử dụng `To
 Trước mọi lượt gửi từ xa, kể cả sửa thời lượng và nhắc đính kèm, journal lưu trạng thái `submitting`, baseline `user_turns_before`, lô hiện tại, số lần sửa của lô và nội dung chính xác của lượt đang chờ trong `request_json.pending_turn`. Cờ `attachment_followup_sent` giới hạn lượt nhắc đính kèm xuyên restart. Sau ACK, journal ghi `running` và ID session thực tế. Lỗi ghi journal hoặc mất ACK không chứng minh upstream đã từ chối: trả `TOOL_OUTCOME_UNKNOWN`, giữ invocation/session để đối soát và không failover tạo video mới.
 
 Timeout/panic của tool `Resumable` khi còn operation mở cũng trả outcome unknown; chỉ tool không có operation mở mới có thể settle thành lỗi kỹ thuật thường. Deadline tuyệt đối của operation được giữ qua mọi attempt và kiểm tra trước mỗi lần gửi. Dọn session phải nhận ACK xóa trước khi ghi `remote_deleted_at`, kể cả session khôi phục không có client hoặc nhiều session cùng Continuation Key.
+
+## Lỗi tạm thời khi operation còn mở — 2026-11-01
+
+Khi operation còn việc trên remote (`running`, `downloading`, hoặc `submitting` đã có `user_turns_before`) mà backend báo lỗi tạm thời, tool trả mã `TOOL_RETRY_LATER`. Runtime không settle invocation và đưa run sang `waiting_retry`; attempt sau gọi lại tool với cùng `invocation_id`. Operation không bị ghi `failed`, nên model không có lý do tạo video thứ hai. `submitting` chưa có baseline nghĩa là chưa gửi gì, nên vẫn báo lỗi thường.

@@ -345,7 +345,7 @@ async fn attachment_followup_is_journaled_before_sending() {
 #[tokio::test]
 async fn cleanup_deletes_all_remote_sessions_of_one_job() {
     use super::super::pool::{
-        SharedMusePool, release_operation_session, restore_job_sessions_from_operations,
+        SharedMusePool, release_recorded_job_session, restore_job_sessions_from_operations,
     };
     let acc = FakeVmAccount::new(vec![]);
     let transport = FakeMuseVmTransport::new(vec![acc.clone()]);
@@ -373,7 +373,7 @@ async fn cleanup_deletes_all_remote_sessions_of_one_job() {
     });
     restore_job_sessions_from_operations(&summaries).await;
     for summary in &summaries {
-        let _ = release_operation_session(&summary.operation).await;
+        let _ = release_recorded_job_session(&summary.operation).await;
     }
     let mut deleted = acc.deleted_sessions();
     deleted.sort();

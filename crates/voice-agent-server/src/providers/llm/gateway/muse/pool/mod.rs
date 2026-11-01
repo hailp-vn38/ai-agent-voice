@@ -15,7 +15,7 @@ use uuid::Uuid;
 use self::account::{AccountStatus, MuseAccountState};
 pub(crate) use self::job_sessions::{
     JobEntry, JobSession, VideoRequestSignature, job_entry, release_job_session,
-    release_operation_session, restore_job_sessions_from_operations, sweep_idle_job_sessions,
+    release_recorded_job_session, restore_job_sessions_from_operations, sweep_idle_job_sessions,
 };
 pub(crate) use self::lease::VmOperationLease;
 pub(crate) use self::types::{ConversationTurn, HotConversation, UpstreamFailureKind};

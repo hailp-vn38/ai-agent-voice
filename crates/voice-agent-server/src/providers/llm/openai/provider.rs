@@ -4,6 +4,7 @@ use url::Url;
 
 #[cfg(test)]
 use crate::config::SecretString;
+use crate::providers::llm::gateway::{CustomLimits, resolve, valid_timeout_bounds};
 use crate::providers::llm::{
     LlmCapabilityTag, LlmError, LlmEventStream, LlmOperation, LlmOutput, LlmProvider, LlmRequest,
     effective_capability_tags, openai::config::OpenAiConfig, valid_generation_bounds,
@@ -15,7 +16,9 @@ pub(crate) struct ConfiguredOpenAiLlm {
     base_url: Url,
     pub(super) base_url_str: String,
     pub(super) model: String,
+    /// Lưới an toàn cho `llm` crate và deadline poll: `max_total + 30s` (ADR 0132).
     pub(super) timeout_seconds: u64,
+    max_total: Duration,
     pub(super) max_tokens: Option<u32>,
     reasoning_effort: Option<String>,
     temperature_percent: Option<u16>,
@@ -25,8 +28,14 @@ pub(crate) struct ConfiguredOpenAiLlm {
 
 impl ConfiguredOpenAiLlm {
     pub(crate) fn from_config(config: &OpenAiConfig) -> Result<Self, LlmError> {
+        let custom = CustomLimits {
+            first_byte_ms: config.first_byte_ms,
+            idle_ms: config.idle_ms,
+            max_total_ms: config.max_total_ms,
+        };
         if config.model.trim().is_empty()
             || config.timeout_ms == 0
+            || !valid_timeout_bounds(config.timeout_profile, custom, config.timeout_ms)
             || !valid_generation_bounds(
                 config.max_tokens,
                 config.context_limit_tokens,
@@ -41,9 +50,11 @@ impl ConfiguredOpenAiLlm {
         if !base_url.path().ends_with('/') {
             base_url.set_path(&format!("{}/", base_url.path()));
         }
-        let timeout_seconds = config.timeout_ms.div_ceil(1_000).max(1);
+        let limits = resolve(config.timeout_profile, custom, config.timeout_ms);
+        let timeout_seconds = limits.max_total.as_secs().max(1).saturating_add(30);
         let client = reqwest::Client::builder()
-            .timeout(Duration::from_millis(config.timeout_ms))
+            .connect_timeout(Duration::from_secs(15))
+            .read_timeout(limits.first_byte.max(limits.idle) + Duration::from_secs(30))
             .build()
             .map_err(|_| LlmError::Failed)?;
         Ok(Self {
@@ -52,6 +63,7 @@ impl ConfiguredOpenAiLlm {
             base_url,
             model: config.model.clone(),
             timeout_seconds,
+            max_total: limits.max_total,
             max_tokens: config.max_tokens,
             reasoning_effort: config.reasoning_effort.clone(),
             temperature_percent: config.temperature_percent,
@@ -148,6 +160,15 @@ impl LlmProvider for ConfiguredOpenAiLlm {
     }
 
     async fn execute_operation(&self, op: LlmOperation) -> Result<LlmOutput, LlmError> {
+        // HTTP chỉ còn connect/read timeout, nên deadline tổng của một operation nằm ở đây.
+        tokio::time::timeout(self.max_total, self.run_operation(op))
+            .await
+            .map_err(|_| LlmError::Timeout)?
+    }
+}
+
+impl ConfiguredOpenAiLlm {
+    async fn run_operation(&self, op: LlmOperation) -> Result<LlmOutput, LlmError> {
         match op {
             LlmOperation::Chat { request, reasoning } => {
                 self.complete_chat(request, reasoning).await

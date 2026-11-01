@@ -1,6 +1,6 @@
 # Triển khai độ bền Job và Agent
 
-Cập nhật: 2026-10-31
+Cập nhật: 2026-11-01
 
 Thiết kế gốc: [agent-job-durability-redesign.md](agent-job-durability-redesign.md). Tài liệu đó trả lời "làm gì và vì sao"; tài liệu này trả lời "sửa ở đâu, theo thứ tự nào, kiểm tra ra sao".
 
@@ -43,12 +43,43 @@ Cập nhật bổ sung ngày 2026-11-01, tiếp nối snapshot review ở repo c
 
 Bộ đếm retry dùng giới hạn thực tế: `max_resume_attempts=9` tương ứng 10 attempt kể cả lần đầu; cấu hình mặc định 10 lần phục hồi tương ứng 11 attempt. Không ghi cứng “/10” trên UI.
 
+### Sửa sau code review ngày 2026-11-01
+
+Review hai trục (chuẩn của repo và guide này) trên repo chính `6c7ad3e5...9d200b28`, agent `62ff25f...a88bbd1`, task `9560fa0...533be88`. **Các sửa dưới đây chưa commit:** chúng nằm trong working tree của cả ba repo, trên nền repo chính `9d200b28`, agent `a88bbd1`, task `533be88`.
+
+| Phát hiện | Cách sửa | Vị trí |
+| --- | --- | --- |
+| Timeout tổng của crate `llm` đua với watchdog | `timeout_seconds` đặt bằng `max_total + 30s`, vì crate không có `read_timeout`. Bổ sung vào ADR 0132 | `agent/gateway/client.rs` |
+| Adapter OpenAI còn dùng `.timeout(timeout_ms)` | Dùng chung timeout profile; client chỉ giữ `connect_timeout` và `read_timeout`; deadline tổng nằm ở `execute_operation` | `server/providers/llm/openai/provider.rs` |
+| Lỗi đọc/ghi journal bị nuốt hoặc trả sai mã | Trả `TOOL_OUTCOME_UNKNOWN`. Khi người dùng hủy thì vẫn trả `CANCELLED` và ghi log cảnh báo | `task/tools/media_video.rs` |
+| Tên hàm gần thuật ngữ cần tránh | Đổi `release_operation_session` thành `release_recorded_job_session` | `gw/muse/pool/job_sessions.rs` |
+| Lỗi tạm thời khi nối lại làm operation `failed` | Thêm mã `TOOL_RETRY_LATER`: giữ invocation, run sang `waiting_retry`, attempt sau gọi lại cùng `invocation_id`. Bổ sung vào ADR 0134 | `task/tools/media_video.rs`, `agent/executor/dispatch.rs`, `agent/runtime/settle.rs` |
+| Task mất lý do và lịch chờ khi con đang chờ | Thêm `Orchestrator::waiting_descendant`; `resume_waiting` đánh thức cả con cháu nhiều tầng | `agent/store/recovery.rs`, `task/runtime/dispatch_core.rs` |
+| Event đến muộn đưa Task đã hủy về `running` | `clear_task_waiting` và `mark_task_waiting` chặn theo status; watcher bỏ qua Task đã kết thúc | `task/store/task_ops.rs`, `task/runtime/watcher.rs` |
+| `TaskTerminal` của hủy phát khi run còn chạy, session sống tới sweep | Thử xóa lại mỗi 2s, tối đa 40s, rồi giao cho sweep 5 phút | `server/services/task_flow/mod.rs` |
+| `CONTEXT_LIMIT` của con báo `retryable="true"`; `partial_result` không bị cắt | Thêm vào danh sách không retry; cắt theo `tool_output_cap_bytes` và giữ thẻ đóng `</subagent>` | `agent/subagent/outcome.rs`, `agent/executor/dispatch.rs` |
+| `resume_waiting` báo thành công khi run bị chặn hoặc hết lượt | Trả lỗi `InvalidInput`. Trạng thái `interrupted`/`failed` vẫn được ghi | `agent/store/recovery.rs`, `agent/orchestrator/session.rs` |
+
+Hai thay đổi hành vi cần biết khi phát hành:
+
+- `resume_waiting` giờ trả lỗi khi đổi routing rồi bấm "Chạy tiếp", thay vì OK.
+- Adapter OpenAI với `timeout_ms: 60000` cũ giờ có `max_total` là 10 phút, theo quy tắc của ADR 0132, nên provider treo mất lâu hơn mới bị cắt.
+
+Không sửa:
+
+- `wait_reason` và `retry_reason`: giữ nguyên vì guide quy định cả hai tên, và đổi `wait_reason` cần migration.
+- Các smell chỉ là judgement call: không refactor, trừ chuỗi "Waiting…" bị lặp đã gộp thành `project_task_waiting`.
+
 ### Kiểm chứng và việc còn lại
 
 Chi tiết lệnh, kết quả và các ranh giới chưa chạy: [biên bản kiểm chứng](providers/agent-job-durability-validation-2026-10-31.md).
 
 - Migration trên bản sao nhất quán của ba `orchestrator.db` và `tasks.db` thật: đã pass; `foreign_key_check` rỗng và `integrity_check=ok`. Không migrate DB gốc.
 - Test targeted cho watchdog, shutdown/restart, video journal, deadline, cleanup, budget và UI: đã pass. Full workspace và full suite của hai vendor đã pass; web được kiểm chứng riêng theo biên bản.
+- Sau các sửa ngày 2026-11-01: full suite của hai vendor pass; `scripts/agent-test.sh full` pass trước các chỉnh format và test vendor cuối, sau đó `cargo check` toàn workspace vẫn pass. Clippy `-D warnings` pass ở cả ba repo trước lần format cuối. Không chạy lại test web vì không sửa web. Biên bản kiểm chứng chưa ghi đợt này.
+- Chưa có test cho phần thử lại xóa session khi hủy (`release_terminal_job_sessions`), vì cần dựng Orchestrator có run đang chạy cùng session Muse.
+- Hai test chập chờn, chưa rõ nguyên nhân gốc: `at29_st04_child_events_reach_the_family_before_the_parent_tool_completes` (file `m6_observation` fail 0/30 lần với bản sửa, 1/30 trên bản gốc) và `budget_capped_text_only` (file `m4_continuous` fail 1/12 với bản sửa, 0/12 trên bản gốc). Lỗi `m4` chưa tái hiện được trên bản gốc nên chưa loại trừ được liên quan tới đợt sửa.
+- `cargo fmt --check` ở repo chính còn 75 diff, nên bước fmt của CI có thể fail. Các file sửa đợt này đã được format.
 - Chưa chạy chín phép đo của [Spike bắt buộc](#spike-bắt-buộc), kill thật, hoặc xác nhận số session Muse thật còn lại bằng 0. Chỉ dùng fallback `VIDEO_SESSION_LOST` nếu phép đo chứng minh không thể resume; hiện chưa có bằng chứng để chọn fallback đó.
 - Chưa merge hai nhánh vendor vào `main`, chưa push và chưa triển khai server.
 - File runtime `data/orchestrator-prompts/media_creator.md` có hướng dẫn chia theo giới hạn và `video_concat`, nhưng chưa trùng seed mới và thiếu hướng dẫn `same job`. Phải đồng bộ có giữ tùy chỉnh và reload/xác nhận prompt trước phát hành.
@@ -200,7 +231,7 @@ Mục tiêu là stream còn dữ liệu thì không bị cắt, stream treo thì
 | `agent/gateway/types.rs:199` | Thêm `StreamEvent::Activity` |
 | `agent/gateway/error.rs:5` | Thêm `Stalled`, `RequestLimitExceeded` |
 | `agent/gateway/client.rs:296` | Thay `tokio::time::timeout` bằng watchdog |
-| `agent/gateway/client.rs:127,150` | So sánh `limits`; `timeout_seconds` dùng `max_total` |
+| `agent/gateway/client.rs:127,150` | So sánh `limits`; `timeout_seconds` dùng `max_total + 30s` để watchdog luôn báo trước (ADR 0132) |
 | `agent/gateway/collect.rs:208,216` | Phát `Activity` cho mọi chunk |
 | `agent/runtime/terminal.rs:43` | `Stalled`, `RequestLimitExceeded` cũng thành `TimedOut` (tạm thời) |
 | `agent/runtime/model.rs:105` | Đo tín hiệu và ghi `llm_attempts` |

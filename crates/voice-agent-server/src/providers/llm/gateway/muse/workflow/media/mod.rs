@@ -59,6 +59,7 @@ pub(crate) struct MediaBatch {
     pub target_secs: Option<u32>,
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn run_media_turn_once(
     pool: &Arc<SharedMusePool>,
     kind: MediaKind,
@@ -256,13 +257,12 @@ pub(crate) async fn resume_media_turn_once(
         let mut all_parts =
             within_deadline(deadline, download_video_paths(&mut lease, &completed_paths)).await?;
         let mut message = None;
-        if all_parts.is_empty() {
-            if let Some((parts, msg)) =
+        if all_parts.is_empty()
+            && let Some((parts, msg)) =
                 within_deadline(deadline, inspect_and_download_latest_turn(&mut lease)).await?
-            {
-                all_parts = parts;
-                message = msg;
-            }
+        {
+            all_parts = parts;
+            message = msg;
         }
         lease.finish_clean(None);
         return LlmOutput::from_media_parts(all_parts, message).ok_or_else(|| {
@@ -379,6 +379,7 @@ struct CollectedTurn {
     assistant_bubbles: Vec<String>,
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn execute_media_turn_on_lease(
     lease: &mut VmOperationLease,
     batches: &[MediaBatch],
@@ -471,6 +472,7 @@ enum BatchOutput {
 
 /// Waits for the batch just sent to settle, downloads its media and, for videos that come back
 /// shorter than the batch target, asks Muse in the same session to fill the gap.
+#[allow(clippy::too_many_arguments)]
 async fn run_media_batch(
     lease: &mut VmOperationLease,
     event_rx: &mut tokio::sync::broadcast::Receiver<VmStreamEvent>,

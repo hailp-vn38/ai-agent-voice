@@ -8,3 +8,7 @@ Lượt gọi mô hình ngôn ngữ trong `orchestrator-agent` bỏ deadline c�
 ## Adapter coverage — 2026-10-31
 
 Timeout profile được dùng chung cho gateway, các adapter OpenAI trực tiếp và cấu hình speech catalog để tránh mỗi adapter diễn giải `timeout_ms` khác nhau. Voice Session vẫn giữ deadline phản hồi của tầng worker. Deadline nội bộ Muse chat luôn bằng `max_total + 30s`, kể cả cấu hình cũ có `timeout_ms < 60000`, để watchdog của orchestrator báo lỗi trước lưới an toàn của adapter.
+
+## Giới hạn của crate `llm` — 2026-11-01
+
+Crate `llm` 1.3.8 chỉ cho đặt `.timeout()` tổng của reqwest, không có `read_timeout`. Với các đường đi qua crate này, timeout HTTP đặt bằng `max_total + 30s`. Nó chỉ là lưới an toàn mạng, không cắt stream trước watchdog. Adapter OpenAI trực tiếp dùng `connect_timeout` và `read_timeout` cho client riêng, và đặt deadline tổng của một operation bằng `max_total`.

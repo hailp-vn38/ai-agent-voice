@@ -399,3 +399,23 @@ async fn video_generation_polls_async_job_status_until_completed_and_fetches_con
         LlmOutput::single_media(b"ASYNC_SORA_MP4_BYTES".to_vec(), "video/mp4")
     );
 }
+
+#[test]
+fn timeout_profile_replaces_the_legacy_total_timeout() {
+    let provider = ConfiguredOpenAiLlm::from_config(&OpenAiConfig {
+        timeout_ms: 60_000,
+        ..OpenAiConfig::default()
+    })
+    .unwrap();
+    assert_eq!(
+        provider.timeout_seconds, 630,
+        "a legacy 60s timeout must resolve to the standard 10-minute total plus the safety net"
+    );
+
+    let invalid = ConfiguredOpenAiLlm::from_config(&OpenAiConfig {
+        idle_ms: Some(120_000),
+        max_total_ms: Some(60_000),
+        ..OpenAiConfig::default()
+    });
+    assert!(invalid.is_err(), "idle must not exceed max_total");
+}
