@@ -22,3 +22,6 @@ models/
 
 # Python bytecode cache.
 __pycache__/
+
+# Claude Code worktrees.
+/.claude/worktrees/
