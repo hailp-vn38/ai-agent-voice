@@ -74,6 +74,14 @@ _Avoid_: generated assistant response, Reminder (khi nói về khả năng phát
 Đơn vị công việc chạy nền bền vững độc lập với Voice Session hoặc yêu cầu Admin đã khởi tạo nó, được chiếu sang giao diện Job để quan sát và quản trị.
 _Avoid_: Conversational Turn, Plugin Operation Job
 
+**Collection Ledger**:
+Sổ theo dõi bền trong `tasks.db` ghi trạng thái từng video của một playlist, để session mới hoặc lần chạy lại biết còn việc nào mà không dựa vào context của LLM.
+_Avoid_: danh sách video trong context, tiến độ trong transcript
+
+**Quarantined Source**:
+Nguồn trong `sources/` mà Wiki Auto-Flow đã thử ingest đủ số lần cho phép nhưng chưa xong, được loại khỏi hàng đợi để không chặn các nguồn khác cho tới khi người vận hành giải phóng hoặc nguồn đã đủ trang.
+_Avoid_: poison file, nguồn hỏng
+
 **Task Follow-up**:
 Chỉ dẫn bổ sung gửi tiếp vào một Background Task hiện có, được xếp hàng nếu lượt hiện tại đang chạy hoặc đánh thức lại Agent Session khi đã hoàn tất.
 _Avoid_: Replan, Step retry

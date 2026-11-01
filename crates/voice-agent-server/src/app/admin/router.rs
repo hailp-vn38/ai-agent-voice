@@ -43,6 +43,14 @@ fn knowledge_routes() -> Router<AppState> {
         )
         .route("/knowledge/reviews", get(knowledge::processing::reviews))
         .route(
+            "/knowledge/quarantined-sources",
+            get(knowledge::processing::quarantined_sources),
+        )
+        .route(
+            "/knowledge/quarantined-sources/release",
+            axum::routing::post(knowledge::processing::release_quarantined_source),
+        )
+        .route(
             "/knowledge/reviews/{id}",
             get(knowledge::processing::review),
         )
@@ -182,6 +190,10 @@ fn background_routes() -> Router<AppState> {
         )
         .route("/jobs/{id}/cancel", axum::routing::post(background::cancel))
         .route("/jobs/{id}/resume", axum::routing::post(background::resume))
+        .route(
+            "/jobs/{id}/invocations/{invocation_id}/resolve",
+            axum::routing::post(background::resolve_invocation),
+        )
         .route("/jobs/{id}/retry", axum::routing::post(background::retry))
 }
 

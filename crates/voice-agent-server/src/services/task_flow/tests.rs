@@ -181,6 +181,27 @@ fn dual_flow_agent_specs_assign_collectors_to_daily_flow_and_keep_wiki_flow_pure
         );
     }
     assert!(collector.default_allowed_tools.contains(&"add_to_sources"));
+    for tool in ["collection_status", "wiki_query", "wiki_get"] {
+        assert!(
+            collector.default_allowed_tools.contains(&tool),
+            "source_collector needs {tool} to see what is already in sources/"
+        );
+    }
+    assert!(
+        collector
+            .default_allowed_skills
+            .contains(&"batch-source-collection")
+    );
+    assert!(
+        BUILTIN_SKILLS
+            .iter()
+            .any(|(id, body)| *id == "batch-source-collection"
+                && body.contains("name: batch-source-collection"))
+    );
+    assert!(
+        DAILY_ROOT_PROMPT.contains("batch-source-collection"),
+        "daily_root has no skill tool, so the batching rule must live in its prompt"
+    );
     assert!(
         collector
             .default_allowed_skills
@@ -491,6 +512,11 @@ fn project_task_to_admin_job_and_events_include_agent_messages_for_tool_calls() 
     assert_eq!(msgs[1]["tool_call_ids"], serde_json::json!(["call-wiki-1"]));
 
     let step = &projected["steps"][0];
+    assert_eq!(
+        step["tool_call_id"], "call-wiki-1",
+        "an operator resolving a stuck tool reads its identifiers from the job step"
+    );
+    assert!(step["invocation_id"].is_string());
     assert_eq!(
         step["assistant_message"],
         "Tôi sẽ tra cứu Wiki về Rust trước."
