@@ -11,6 +11,7 @@ pub mod backup;
 pub mod history;
 mod identity;
 mod mcp;
+pub(crate) mod memory_index;
 mod mutations;
 pub mod notifications;
 pub(crate) mod providers;

@@ -4,35 +4,18 @@
 //! Errors stay as `sqlx::Error`; callers respond by discarding or rebuilding this file.
 
 use super::{normalize::normalize, types::MemoryFact, vault};
-use sqlx::{
-    ConnectOptions, Connection, Row, SqliteConnection,
-    sqlite::{SqliteConnectOptions, SqliteJournalMode},
-};
+use crate::database::memory_index::{self, IndexRow};
 use std::{fs, io, path::Path};
 
 const MAX_QUERY_TOKENS: usize = 16;
 
-async fn connect(path: &Path, create: bool) -> Result<SqliteConnection, sqlx::Error> {
-    SqliteConnectOptions::new()
-        .filename(path)
-        .create_if_missing(create)
-        .journal_mode(SqliteJournalMode::Delete)
-        // Forgotten text must not linger in free pages.
-        .pragma("secure_delete", "ON")
-        .disable_statement_logging()
-        .connect()
-        .await
-}
-
-async fn insert(conn: &mut SqliteConnection, fact: &MemoryFact) -> Result<(), sqlx::Error> {
-    sqlx::query("INSERT INTO facts_fts(fact_id,title,hook,body) VALUES (?,?,?,?)")
-        .bind(fact.id.as_str())
-        .bind(normalize(&fact.title))
-        .bind(normalize(&fact.hook))
-        .bind(normalize(&fact.body))
-        .execute(conn)
-        .await?;
-    Ok(())
+fn row_of(fact: &MemoryFact) -> IndexRow<'_> {
+    IndexRow {
+        fact_id: fact.id.as_str(),
+        title: normalize(&fact.title),
+        hook: normalize(&fact.hook),
+        body: normalize(&fact.body),
+    }
 }
 
 /// A missing index stays missing: creating it here would hold one fact and hide the rest from the
@@ -41,31 +24,14 @@ pub(super) async fn upsert(path: &Path, fact: &MemoryFact) -> Result<(), sqlx::E
     if !path.exists() {
         return Ok(());
     }
-    let mut conn = connect(path, false).await?;
-    let mut tx = conn.begin().await?;
-    sqlx::query("DELETE FROM facts_fts WHERE fact_id=?")
-        .bind(fact.id.as_str())
-        .execute(&mut *tx)
-        .await?;
-    insert(&mut tx, fact).await?;
-    tx.commit().await?;
-    conn.close().await
+    memory_index::replace_row(path, &row_of(fact)).await
 }
 
 pub(super) async fn remove(path: &Path, id: &str) -> Result<(), sqlx::Error> {
     if !path.exists() {
         return Ok(());
     }
-    let mut conn = connect(path, false).await?;
-    sqlx::query("DELETE FROM facts_fts WHERE fact_id=?")
-        .bind(id)
-        .execute(&mut conn)
-        .await?;
-    // FTS5 only marks deleted terms until segments merge; merge now so the terms really leave.
-    sqlx::query("INSERT INTO facts_fts(facts_fts) VALUES ('optimize')")
-        .execute(&mut conn)
-        .await?;
-    conn.close().await
+    memory_index::remove_row(path, id).await
 }
 
 /// The FTS5 query for `text`, or `None` when it has no searchable token. Tokens are alphanumeric
@@ -90,33 +56,7 @@ pub(super) async fn search(
     let Some(expression) = match_expression(text) else {
         return Ok(Vec::new());
     };
-    let mut conn = connect(path, false).await?;
-    let rows = sqlx::query(
-        "SELECT fact_id FROM facts_fts WHERE facts_fts MATCH ? ORDER BY bm25(facts_fts) LIMIT ?",
-    )
-    .bind(expression)
-    .bind(i64::try_from(limit).unwrap_or(i64::MAX))
-    .fetch_all(&mut conn)
-    .await?;
-    conn.close().await?;
-    rows.iter().map(|row| row.try_get(0)).collect()
-}
-
-async fn build(path: &Path, facts: &[&MemoryFact]) -> Result<(), sqlx::Error> {
-    let mut conn = connect(path, true).await?;
-    let mut tx = conn.begin().await?;
-    sqlx::query(
-        "CREATE VIRTUAL TABLE facts_fts USING fts5(\
-            fact_id UNINDEXED, title, hook, body, \
-            tokenize = 'unicode61 remove_diacritics 2')",
-    )
-    .execute(&mut *tx)
-    .await?;
-    for fact in facts {
-        insert(&mut tx, fact).await?;
-    }
-    tx.commit().await?;
-    conn.close().await
+    memory_index::search(path, &expression, limit).await
 }
 
 /// Builds beside the live file and renames, so a reader sees the old index or the whole new one.
@@ -124,7 +64,8 @@ pub(super) async fn rebuild(path: &Path, facts: &[&MemoryFact]) -> Result<(), sq
     let parent = path.parent().ok_or(sqlx::Error::RowNotFound)?;
     vault::ensure_dir(parent)?;
     let temp = vault::temp_path(path)?;
-    let built = build(&temp, facts).await;
+    let rows: Vec<IndexRow<'_>> = facts.iter().map(|fact| row_of(fact)).collect();
+    let built = memory_index::create(&temp, &rows).await;
     let moved = match built {
         Ok(()) => {
             remove_journal(path)?;
