@@ -563,10 +563,17 @@ async fn prepare_background(state: &mut AppState) -> Result<(), BootstrapError> 
     }
     crate::services::task_flow::install_server_media_runtime(state);
     let catalog = crate::services::task_flow::resolve_llm_provider_catalog(state).await;
-    let runtime =
-        crate::services::task_flow::init_from_app_config_with_catalog(&state.config, &catalog)
-            .await
-            .map_err(BootstrapError::TaskFlow)?;
+    let memory = crate::services::task_flow::TaskMemoryAccess {
+        core: state.memory_core.clone(),
+        database: state.database.clone(),
+    };
+    let runtime = crate::services::task_flow::init_from_app_config_with_catalog(
+        &state.config,
+        &catalog,
+        memory,
+    )
+    .await
+    .map_err(BootstrapError::TaskFlow)?;
     if let (Some(task_mgr), Some(orch)) =
         (runtime.task_manager.clone(), runtime.orchestrator.clone())
     {
