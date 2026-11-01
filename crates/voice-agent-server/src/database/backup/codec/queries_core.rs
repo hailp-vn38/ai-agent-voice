@@ -232,17 +232,29 @@ pub(super) async fn fetch_agent_tool_allowlist(
 }
 
 pub(super) async fn fetch_devices(pool: &SqlitePool) -> Result<Vec<BackupDeviceRow>, BackupError> {
-    let rows = sqlx::query(
+    // This also reads uploaded snapshots: older ones lack the column, and crafted ones may hold
+    // NULL or a non-text value. Both must reach the inspector rather than fail decoding `String`.
+    let has_memory_mode: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM pragma_table_info('devices') WHERE name = 'memory_mode')",
+    )
+    .fetch_one(pool)
+    .await?;
+    let memory_mode = if has_memory_mode {
+        "COALESCE(CAST(d.memory_mode AS TEXT), '')"
+    } else {
+        "'off'"
+    };
+    let sql = format!(
         "SELECT d.device_id, d.kind, a.key AS agent_key, t.key AS template_key,
-                d.name, d.description, d.enabled, d.metadata_json, d.last_seen_at,
+                d.name, d.description, d.enabled, d.metadata_json,
+                {memory_mode} AS memory_mode, d.last_seen_at,
                 d.created_at, d.updated_at
          FROM devices d
          JOIN agents a ON a.id = d.agent_id
          LEFT JOIN agent_templates t ON t.id = d.template_id
-         ORDER BY d.kind ASC, d.device_id ASC",
-    )
-    .fetch_all(pool)
-    .await?;
+         ORDER BY d.kind ASC, d.device_id ASC"
+    );
+    let rows = sqlx::query(&sql).fetch_all(pool).await?;
     Ok(rows
         .into_iter()
         .map(|r| BackupDeviceRow {
@@ -254,6 +266,7 @@ pub(super) async fn fetch_devices(pool: &SqlitePool) -> Result<Vec<BackupDeviceR
             description: r.get("description"),
             enabled: r.get("enabled"),
             metadata_json: r.get("metadata_json"),
+            memory_mode: r.get("memory_mode"),
             last_seen_at: r.get("last_seen_at"),
             created_at: r.get("created_at"),
             updated_at: r.get("updated_at"),

@@ -2,7 +2,7 @@
 use crate::database::{
     Database,
     audit::{AuditOutcome, audit, audit_conflict},
-    devices::{Device, get_device_by, template_override_id},
+    devices::{Device, MemoryMode, get_device_by, template_override_id},
     writes::WriteError,
 };
 
@@ -23,6 +23,7 @@ impl Database {
         agent: &str,
         template: Option<&str>,
         enabled: bool,
+        memory_mode: Option<MemoryMode>,
         expected: Option<i64>,
         request_id: &str,
     ) -> Result<Device, WriteError> {
@@ -76,11 +77,11 @@ impl Database {
         };
         let now = crate::database::unix_seconds().unwrap_or_default();
         let (id, identity, revision) = if let Some((id, identity, revision)) = old {
-            sqlx::query("UPDATE devices SET agent_id=?,template_id=?,enabled=?,revision=revision+1,updated_at=? WHERE id=? AND revision=?").bind(agent_id).bind(template_id).bind(enabled).bind(now).bind(id).bind(revision).execute(&mut *tx).await.map_err(WriteError::Sql)?;
+            sqlx::query("UPDATE devices SET agent_id=?,template_id=?,enabled=?,memory_mode=COALESCE(?,memory_mode),revision=revision+1,updated_at=? WHERE id=? AND revision=?").bind(agent_id).bind(template_id).bind(enabled).bind(memory_mode).bind(now).bind(id).bind(revision).execute(&mut *tx).await.map_err(WriteError::Sql)?;
             (id, identity, revision + 1)
         } else {
             let identity = format!("web_assistant_{}", uuid::Uuid::new_v4().simple());
-            let result = sqlx::query("INSERT INTO devices(device_id,agent_id,template_id,name,enabled,kind,created_at,updated_at) VALUES (?,?,?,'Studio Assistant',?,'web_assistant',?,?)").bind(&identity).bind(agent_id).bind(template_id).bind(enabled).bind(now).bind(now).execute(&mut *tx).await.map_err(WriteError::Mutation)?;
+            let result = sqlx::query("INSERT INTO devices(device_id,agent_id,template_id,name,enabled,memory_mode,kind,created_at,updated_at) VALUES (?,?,?,'Studio Assistant',?,?,'web_assistant',?,?)").bind(&identity).bind(agent_id).bind(template_id).bind(enabled).bind(memory_mode.unwrap_or_default()).bind(now).bind(now).execute(&mut *tx).await.map_err(WriteError::Mutation)?;
             (result.last_insert_rowid(), identity, 1)
         };
         audit(

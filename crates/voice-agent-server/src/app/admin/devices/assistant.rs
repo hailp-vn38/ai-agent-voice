@@ -1,11 +1,11 @@
 use super::super::*;
 use crate::app::assistant::trusted_origin;
-use crate::database::devices::Device;
+use crate::database::devices::{Device, MemoryMode};
 
 fn settings(device: Option<Device>, active: usize) -> Value {
     match device {
         Some(d) => {
-            serde_json::json!({"configured":true,"enabled":d.enabled==1,"device_id":d.device_id,"kind":d.kind,"agent_key":d.agent_key,"template_key":d.template_key,"revision":d.revision,"active_connections":active})
+            serde_json::json!({"configured":true,"enabled":d.enabled==1,"device_id":d.device_id,"kind":d.kind,"agent_key":d.agent_key,"template_key":d.template_key,"memory_mode":d.memory_mode,"revision":d.revision,"active_connections":active})
         }
         None => {
             serde_json::json!({"configured":false,"enabled":false,"device_id":null,"agent_key":null,"template_key":null,"revision":null,"active_connections":active})
@@ -40,6 +40,9 @@ struct Input {
     agent_key: String,
     #[serde(default)]
     template_key: Option<String>,
+    /// Omitted keeps the saved value, so existing clients cannot reset it.
+    #[serde(default)]
+    memory_mode: Option<String>,
 }
 
 pub(in crate::app::admin) async fn put(
@@ -49,6 +52,11 @@ pub(in crate::app::admin) async fn put(
     let (request, input): (_, Input) = match json(request).await {
         Ok(v) => v,
         Err(e) => return e,
+    };
+    let memory_mode = match input.memory_mode.as_deref().map(MemoryMode::parse) {
+        None => None,
+        Some(Some(value)) => Some(value),
+        Some(None) => return error(&request, StatusCode::BAD_REQUEST, "validation_failed"),
     };
     let expected = if request.headers().contains_key(header::IF_MATCH) {
         match expected(request.headers()) {
@@ -74,6 +82,7 @@ pub(in crate::app::admin) async fn put(
             &input.agent_key,
             input.template_key.as_deref(),
             input.enabled,
+            memory_mode,
             expected,
             id(&request),
         )

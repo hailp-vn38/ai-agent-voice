@@ -177,9 +177,24 @@ pub(crate) struct BackupDeviceRow {
     pub description: Option<String>,
     pub enabled: i64,
     pub metadata_json: Option<String>,
+    /// `off` is not serialized: the JSON checksum re-serializes the decoded bundle, so writing
+    /// the default would invalidate the checksum of every bundle from before this field.
+    #[serde(
+        default = "default_memory_mode",
+        skip_serializing_if = "is_default_memory_mode"
+    )]
+    pub memory_mode: String,
     pub last_seen_at: Option<i64>,
     pub created_at: i64,
     pub updated_at: i64,
+}
+
+fn default_memory_mode() -> String {
+    "off".to_owned()
+}
+
+fn is_default_memory_mode(mode: &str) -> bool {
+    mode == "off"
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

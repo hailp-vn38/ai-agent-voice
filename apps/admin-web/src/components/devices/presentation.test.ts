@@ -11,6 +11,7 @@ const input: AdminDevice = {
   template_key: null,
   enabled: 1,
   metadata_json: null,
+  memory_mode: 'off',
   revision: 3,
   created_at: 1_760_000_000,
   updated_at: 1_760_000_100,

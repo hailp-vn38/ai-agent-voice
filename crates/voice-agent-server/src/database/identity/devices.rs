@@ -4,8 +4,53 @@ use crate::database::{
     audit::{AuditOutcome, audit, audit_conflict},
     writes::WriteError,
 };
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use sqlx::{FromRow, Sqlite};
+
+/// Admin-granted level of Memory access for one Device; `off` is the default.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, sqlx::Type)]
+#[serde(rename_all = "snake_case")]
+#[sqlx(rename_all = "snake_case")]
+pub(crate) enum MemoryMode {
+    #[default]
+    Off,
+    Read,
+    ReadWrite,
+}
+
+impl MemoryMode {
+    pub(crate) fn parse(value: &str) -> Option<Self> {
+        match value {
+            "off" => Some(Self::Off),
+            "read" => Some(Self::Read),
+            "read_write" => Some(Self::ReadWrite),
+            _ => None,
+        }
+    }
+}
+
+/// What admission and Task tools need to build a Memory scope for a Device row.
+#[allow(dead_code)] // Connected to MemoryCore by the admission and Task tickets.
+#[derive(Clone, Debug, PartialEq, Eq, FromRow)]
+pub(crate) struct MemoryBinding {
+    pub(crate) device_id: String,
+    pub(crate) kind: String,
+    #[sqlx(rename = "memory_mode")]
+    pub(crate) mode: MemoryMode,
+}
+
+/// `None` when no Device has this row id.
+#[allow(dead_code)] // Connected to MemoryCore by the admission and Task tickets.
+pub(crate) async fn memory_binding(
+    database: &Database,
+    device_db_id: i64,
+) -> Result<Option<MemoryBinding>, sqlx::Error> {
+    sqlx::query_as("SELECT device_id,kind,memory_mode FROM devices WHERE id=?")
+        .bind(device_db_id)
+        .fetch_optional(&database.pool)
+        .await
+}
+
 #[derive(Serialize, FromRow)]
 pub(crate) struct Device {
     pub(crate) id: i64,
@@ -17,6 +62,7 @@ pub(crate) struct Device {
     pub(crate) description: Option<String>,
     pub(crate) enabled: i64,
     pub(crate) metadata_json: Option<String>,
+    pub(crate) memory_mode: MemoryMode,
     pub(crate) revision: i64,
     pub(crate) created_at: i64,
     pub(crate) updated_at: i64,
@@ -25,7 +71,7 @@ pub(crate) async fn get_device_by(
     database: &Database,
     device_id: &str,
 ) -> Result<Device, sqlx::Error> {
-    sqlx::query_as("SELECT d.id,d.device_id,d.kind,a.key AS agent_key,t.key AS template_key,d.name,d.description,d.enabled,d.metadata_json,d.revision,d.created_at,d.updated_at FROM devices d JOIN agents a ON a.id=d.agent_id LEFT JOIN agent_templates t ON t.id=d.template_id WHERE d.device_id=?").bind(device_id).fetch_one(&database.pool).await
+    sqlx::query_as("SELECT d.id,d.device_id,d.kind,a.key AS agent_key,t.key AS template_key,d.name,d.description,d.enabled,d.metadata_json,d.memory_mode,d.revision,d.created_at,d.updated_at FROM devices d JOIN agents a ON a.id=d.agent_id LEFT JOIN agent_templates t ON t.id=d.template_id WHERE d.device_id=?").bind(device_id).fetch_one(&database.pool).await
 }
 /// Returns the selected Template only when it is enabled and has an enabled assignment to the
 /// resulting Device Agent.  This is duplicated at admission as a fail-closed integrity check.
@@ -48,6 +94,7 @@ pub(crate) struct DeviceInput<'a> {
     pub name: Option<&'a str>,
     pub description: Option<&'a str>,
     pub metadata: Option<&'a str>,
+    pub memory_mode: MemoryMode,
 }
 pub(crate) struct DeviceChanges<'a> {
     pub agent_key: &'a str,
@@ -56,6 +103,7 @@ pub(crate) struct DeviceChanges<'a> {
     pub description: Option<&'a str>,
     pub metadata: Option<&'a str>,
     pub enabled: i64,
+    pub memory_mode: MemoryMode,
 }
 impl Database {
     pub(crate) async fn create_device(
@@ -87,7 +135,7 @@ impl Database {
             Err(error_value) => return Err(WriteError::Sql(error_value)),
         };
         let time = crate::database::unix_seconds().unwrap_or_default();
-        let result=sqlx::query("INSERT INTO devices (device_id,agent_id,template_id,name,description,metadata_json,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?)").bind(input.device_id).bind(agent_id).bind(template_id).bind(input.name).bind(input.description).bind(input.metadata).bind(time).bind(time).execute(&mut *tx).await;
+        let result=sqlx::query("INSERT INTO devices (device_id,agent_id,template_id,name,description,metadata_json,memory_mode,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?)").bind(input.device_id).bind(agent_id).bind(template_id).bind(input.name).bind(input.description).bind(input.metadata).bind(input.memory_mode).bind(time).bind(time).execute(&mut *tx).await;
         let device_id = match result {
             Ok(v) => v.last_insert_rowid(),
             Err(error_value) => return Err(WriteError::Mutation(error_value)),
@@ -157,7 +205,7 @@ impl Database {
             }
             Err(error_value) => return Err(WriteError::Sql(error_value)),
         };
-        let update = sqlx::query("UPDATE devices SET agent_id=?,template_id=?,name=?,description=?,metadata_json=?,enabled=?,revision=revision+1,updated_at=? WHERE id=? AND revision=?").bind(agent_id).bind(template_id).bind(input.name).bind(input.description).bind(input.metadata).bind(input.enabled).bind(crate::database::unix_seconds().unwrap_or_default()).bind(resource_id).bind(expected).execute(&mut *tx).await;
+        let update = sqlx::query("UPDATE devices SET agent_id=?,template_id=?,name=?,description=?,metadata_json=?,enabled=?,memory_mode=?,revision=revision+1,updated_at=? WHERE id=? AND revision=?").bind(agent_id).bind(template_id).bind(input.name).bind(input.description).bind(input.metadata).bind(input.enabled).bind(input.memory_mode).bind(crate::database::unix_seconds().unwrap_or_default()).bind(resource_id).bind(expected).execute(&mut *tx).await;
         let update = match update {
             Ok(result) if result.rows_affected() == 1 => Ok(()),
             Ok(_) => Err(()),
@@ -202,7 +250,7 @@ impl Database {
             _ => "d.device_id ASC",
         };
         let sql = format!(
-            "SELECT d.id,d.device_id,d.kind,a.key AS agent_key,t.key AS template_key,d.name,d.description,d.enabled,d.metadata_json,d.revision,d.created_at,d.updated_at FROM devices d JOIN agents a ON a.id=d.agent_id LEFT JOIN agent_templates t ON t.id=d.template_id WHERE (? IS NULL OR d.enabled=?) ORDER BY {order} LIMIT ? OFFSET ?"
+            "SELECT d.id,d.device_id,d.kind,a.key AS agent_key,t.key AS template_key,d.name,d.description,d.enabled,d.metadata_json,d.memory_mode,d.revision,d.created_at,d.updated_at FROM devices d JOIN agents a ON a.id=d.agent_id LEFT JOIN agent_templates t ON t.id=d.template_id WHERE (? IS NULL OR d.enabled=?) ORDER BY {order} LIMIT ? OFFSET ?"
         );
         sqlx::query_as::<_, Device>(&sql)
             .bind(enabled)
@@ -226,3 +274,7 @@ impl Database {
             .await
     }
 }
+
+#[cfg(test)]
+#[path = "devices_memory_mode_tests.rs"]
+mod memory_mode_tests;

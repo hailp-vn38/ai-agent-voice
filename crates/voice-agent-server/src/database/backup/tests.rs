@@ -3,6 +3,7 @@ use crate::{
     config::DatabaseConfig,
     database::{
         credentials::CredentialCipher,
+        devices::MemoryMode,
         secrets::{SecretResolver, SecretValue},
         tool_security::SpeakerDeps,
     },
@@ -30,6 +31,273 @@ fn cleanup_db_file(path: &std::path::Path) {
     let _ = std::fs::remove_file(path);
     let _ = std::fs::remove_file(path.with_extension("db-wal"));
     let _ = std::fs::remove_file(path.with_extension("db-shm"));
+}
+
+const MEMORY_MODE_SEED: &str = "INSERT INTO agents (key, name, enabled, created_at, updated_at)
+     VALUES ('home', 'Home', 1, 100, 100);
+     INSERT INTO devices (device_id, kind, agent_id, enabled, memory_mode, created_at, updated_at)
+     SELECT 'device-off', 'physical', id, 1, 'off', 100, 100 FROM agents WHERE key = 'home';
+     INSERT INTO devices (device_id, kind, agent_id, enabled, memory_mode, created_at, updated_at)
+     SELECT 'device-read', 'physical', id, 1, 'read', 100, 100 FROM agents WHERE key = 'home';
+     INSERT INTO devices (device_id, kind, agent_id, enabled, memory_mode, created_at, updated_at)
+     SELECT 'device-rw', 'physical', id, 1, 'read_write', 100, 100 FROM agents WHERE key = 'home';
+     INSERT INTO devices (device_id, kind, agent_id, enabled, memory_mode, created_at, updated_at)
+     SELECT 'assistant-src', 'web_assistant', id, 1, 'read', 100, 100 FROM agents WHERE key = 'home';";
+
+async fn seed_memory_modes(db: &Database) {
+    sqlx::raw_sql(MEMORY_MODE_SEED)
+        .execute(db.pool())
+        .await
+        .expect("seed devices");
+}
+
+async fn export_full(db: &Database, format: BackupFormat) -> Vec<u8> {
+    db.export_backup(ExportBackupRequest {
+        format,
+        scope: BackupScope::Full,
+        companion_settings: BackupCompanionSettings::default(),
+    })
+    .await
+    .expect("export")
+    .bytes
+}
+
+fn memory_mode_cipher() -> CredentialCipher {
+    CredentialCipher::new(1, &[0x11; 32]).expect("cipher")
+}
+
+async fn import_merge(db: &Database, payload: &[u8]) -> Result<BackupImportOutcome, BackupError> {
+    let cipher = memory_mode_cipher();
+    db.import_backup(ImportBackupRequest {
+        request_id: "req-memory-mode",
+        payload,
+        options: BackupImportOptions {
+            mode: ImportMode::Merge,
+            scope: BackupScope::Full,
+            clear_unreadable_credentials: true,
+        },
+        secret_resolver: &cipher,
+    })
+    .await
+}
+
+async fn inspect_merge(
+    db: &Database,
+    payload: &[u8],
+) -> Result<BackupInspectionReport, BackupError> {
+    let cipher = memory_mode_cipher();
+    db.inspect_backup(InspectBackupRequest {
+        payload,
+        options: BackupImportOptions {
+            mode: ImportMode::Merge,
+            scope: BackupScope::Full,
+            clear_unreadable_credentials: true,
+        },
+        secret_resolver: &cipher,
+    })
+    .await
+}
+
+async fn device_mode(db: &Database, device_id: &str) -> MemoryMode {
+    crate::database::devices::get_device_by(db, device_id)
+        .await
+        .expect("device exists")
+        .memory_mode
+}
+
+async fn assert_seeded_modes_arrived(dst: &Database) {
+    assert_eq!(device_mode(dst, "device-off").await, MemoryMode::Off);
+    assert_eq!(device_mode(dst, "device-read").await, MemoryMode::Read);
+    assert_eq!(device_mode(dst, "device-rw").await, MemoryMode::ReadWrite);
+    let assistant = dst.assistant_device().await.unwrap().expect("assistant");
+    assert_eq!(assistant.memory_mode, MemoryMode::Read);
+}
+
+#[tokio::test]
+async fn memory_mode_survives_json_and_sqlite_roundtrip() {
+    let (src, src_path) = open_temp_db("mm-src").await;
+    seed_memory_modes(&src).await;
+
+    for format in [BackupFormat::Json, BackupFormat::Sqlite] {
+        let (dst, dst_path) = open_temp_db("mm-dst").await;
+        import_merge(&dst, &export_full(&src, format).await)
+            .await
+            .expect("import");
+        assert_seeded_modes_arrived(&dst).await;
+        cleanup_db_file(&dst_path);
+    }
+
+    cleanup_db_file(&src_path);
+}
+
+#[tokio::test]
+async fn memory_mode_import_overwrites_an_existing_device() {
+    let (src, src_path) = open_temp_db("mm-src").await;
+    let (dst, dst_path) = open_temp_db("mm-dst").await;
+    seed_memory_modes(&src).await;
+    sqlx::raw_sql(
+        "INSERT INTO agents (key, name, enabled, created_at, updated_at)
+         VALUES ('home', 'Home', 1, 50, 50);
+         INSERT INTO devices (device_id, kind, agent_id, enabled, memory_mode, created_at, updated_at)
+         SELECT 'device-read', 'physical', id, 1, 'off', 50, 50 FROM agents WHERE key = 'home';
+         INSERT INTO devices (device_id, kind, agent_id, enabled, memory_mode, created_at, updated_at)
+         SELECT 'device-off', 'physical', id, 1, 'read_write', 50, 50 FROM agents WHERE key = 'home';
+         INSERT INTO devices (device_id, kind, agent_id, enabled, memory_mode, created_at, updated_at)
+         SELECT 'assistant-dst', 'web_assistant', id, 1, 'off', 50, 50 FROM agents WHERE key = 'home';",
+    )
+    .execute(dst.pool())
+    .await
+    .unwrap();
+
+    import_merge(&dst, &export_full(&src, BackupFormat::Json).await)
+        .await
+        .expect("import");
+
+    assert_seeded_modes_arrived(&dst).await;
+
+    cleanup_db_file(&src_path);
+    cleanup_db_file(&dst_path);
+}
+
+/// Rewrites a current export into what the exporter wrote before `memory_mode` existed: the
+/// field is absent and the checksum covers the bytes without it.
+fn legacy_json_without_memory_mode(payload: &[u8]) -> Vec<u8> {
+    use sha2::{Digest, Sha256};
+
+    let mut bundle: bundle::DatabaseBackupBundle = serde_json::from_slice(payload).unwrap();
+    bundle.checksum_sha256 = None;
+    let mut canonical = serde_json::to_string(&bundle).unwrap();
+    for mode in ["off", "read", "read_write"] {
+        canonical = canonical.replace(&format!("\"memory_mode\":\"{mode}\","), "");
+    }
+    assert!(!canonical.contains("memory_mode"));
+    let checksum: String = Sha256::digest(canonical.as_bytes())
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect();
+    canonical
+        .replacen(
+            "\"scope\":\"full\",",
+            &format!("\"scope\":\"full\",\"checksum_sha256\":\"{checksum}\","),
+            1,
+        )
+        .into_bytes()
+}
+
+#[tokio::test]
+async fn memory_mode_legacy_json_bundle_with_checksum_imports_as_off() {
+    let (src, src_path) = open_temp_db("mm-src").await;
+    let (dst, dst_path) = open_temp_db("mm-dst").await;
+    seed_memory_modes(&src).await;
+    let legacy = legacy_json_without_memory_mode(&export_full(&src, BackupFormat::Json).await);
+
+    inspect_merge(&dst, &legacy).await.expect("inspect legacy");
+    import_merge(&dst, &legacy).await.expect("import legacy");
+
+    assert_eq!(device_mode(&dst, "device-read").await, MemoryMode::Off);
+    assert_eq!(device_mode(&dst, "device-rw").await, MemoryMode::Off);
+
+    cleanup_db_file(&src_path);
+    cleanup_db_file(&dst_path);
+}
+
+#[tokio::test]
+async fn memory_mode_legacy_sqlite_snapshot_imports_as_off() {
+    let (src, src_path) = open_temp_db("mm-src").await;
+    let (dst, dst_path) = open_temp_db("mm-dst").await;
+    seed_memory_modes(&src).await;
+    sqlx::query("ALTER TABLE devices DROP COLUMN memory_mode")
+        .execute(src.pool())
+        .await
+        .unwrap();
+    let legacy = export_full(&src, BackupFormat::Sqlite).await;
+
+    inspect_merge(&dst, &legacy).await.expect("inspect legacy");
+    import_merge(&dst, &legacy).await.expect("import legacy");
+
+    assert_eq!(device_mode(&dst, "device-read").await, MemoryMode::Off);
+
+    cleanup_db_file(&src_path);
+    cleanup_db_file(&dst_path);
+}
+
+#[tokio::test]
+async fn memory_mode_unknown_value_in_json_bundle_is_rejected_and_writes_nothing() {
+    let (src, src_path) = open_temp_db("mm-src").await;
+    let (dst, dst_path) = open_temp_db("mm-dst").await;
+    seed_memory_modes(&src).await;
+    let mut bundle: bundle::DatabaseBackupBundle =
+        serde_json::from_slice(&export_full(&src, BackupFormat::Json).await).unwrap();
+    bundle.checksum_sha256 = None;
+    bundle.devices[0].memory_mode = "admin".to_owned();
+    let tampered = serde_json::to_vec(&bundle).unwrap();
+
+    assert!(matches!(
+        inspect_merge(&dst, &tampered).await,
+        Err(BackupError::InvalidFormat)
+    ));
+    assert!(matches!(
+        import_merge(&dst, &tampered).await,
+        Err(BackupError::InvalidFormat)
+    ));
+    let devices: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM devices")
+        .fetch_one(dst.pool())
+        .await
+        .unwrap();
+    assert_eq!(devices, 0);
+
+    cleanup_db_file(&src_path);
+    cleanup_db_file(&dst_path);
+}
+
+#[tokio::test]
+async fn memory_mode_unknown_value_in_sqlite_snapshot_is_rejected() {
+    for bad_column in [
+        "ADD COLUMN memory_mode TEXT DEFAULT 'admin'",
+        "ADD COLUMN memory_mode TEXT",
+        "ADD COLUMN memory_mode INTEGER DEFAULT 7",
+    ] {
+        let (src, src_path) = open_temp_db("mm-src").await;
+        let (dst, dst_path) = open_temp_db("mm-dst").await;
+        seed_memory_modes(&src).await;
+        // One batch on one connection: a pooled peer would parse the ADD with a stale schema.
+        sqlx::raw_sql(&format!(
+            "ALTER TABLE devices DROP COLUMN memory_mode; ALTER TABLE devices {bad_column};"
+        ))
+        .execute(src.pool())
+        .await
+        .unwrap();
+        let crafted = export_full(&src, BackupFormat::Sqlite).await;
+
+        assert!(
+            matches!(
+                import_merge(&dst, &crafted).await,
+                Err(BackupError::InvalidFormat)
+            ),
+            "{bad_column}"
+        );
+
+        cleanup_db_file(&src_path);
+        cleanup_db_file(&dst_path);
+    }
+}
+
+#[tokio::test]
+async fn memory_mode_keeps_bundle_schema_version_one() {
+    let (src, src_path) = open_temp_db("mm-src").await;
+    seed_memory_modes(&src).await;
+    let value: serde_json::Value =
+        serde_json::from_slice(&export_full(&src, BackupFormat::Json).await).unwrap();
+
+    assert_eq!(value["schema_version"], 1);
+    let devices = value["devices"].as_array().unwrap();
+    let read = devices
+        .iter()
+        .find(|d| d["device_id"] == "device-read")
+        .unwrap();
+    assert_eq!(read["memory_mode"], "read");
+
+    cleanup_db_file(&src_path);
 }
 
 #[tokio::test]

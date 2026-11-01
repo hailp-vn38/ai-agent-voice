@@ -4,7 +4,7 @@ pub(super) mod assistant;
 pub(super) mod enrollments;
 
 use super::*;
-use crate::database::devices::{DeviceChanges, DeviceInput, get_device_by};
+use crate::database::devices::{DeviceChanges, DeviceInput, MemoryMode, get_device_by};
 
 #[derive(Deserialize)]
 struct CreateDevice {
@@ -20,6 +20,8 @@ struct CreateDevice {
     metadata_json: Option<Value>,
     #[serde(default)]
     template_key: Option<String>,
+    #[serde(default)]
+    memory_mode: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -40,6 +42,8 @@ struct PatchDevice {
     enabled: Patch<bool>,
     #[serde(default)]
     template_key: Patch<String>,
+    #[serde(default)]
+    memory_mode: Patch<String>,
 }
 
 pub(super) async fn create_device(State(state): State<AppState>, request: Request) -> Response {
@@ -66,6 +70,11 @@ pub(super) async fn create_device(State(state): State<AppState>, request: Reques
     {
         return error(&request, StatusCode::BAD_REQUEST, "validation_failed");
     };
+    let memory_mode = match body.memory_mode.as_deref().map(MemoryMode::parse) {
+        None => MemoryMode::default(),
+        Some(Some(value)) => value,
+        Some(None) => return error(&request, StatusCode::BAD_REQUEST, "validation_failed"),
+    };
     let database = match database(&state) {
         Ok(v) => v,
         Err(_) => {
@@ -86,6 +95,7 @@ pub(super) async fn create_device(State(state): State<AppState>, request: Reques
                 name: body.name.as_deref(),
                 description: body.description.as_deref(),
                 metadata: metadata.as_deref(),
+                memory_mode,
             },
             id(&request),
         )
@@ -257,6 +267,13 @@ pub(super) async fn patch_device(
         Some(Some(value)) => i64::from(value),
         Some(None) => return error(&request, StatusCode::BAD_REQUEST, "validation_failed"),
     };
+    let memory_mode = match body.memory_mode.value() {
+        None => old.memory_mode,
+        Some(value) => match value.as_deref().and_then(MemoryMode::parse) {
+            Some(value) => value,
+            None => return error(&request, StatusCode::BAD_REQUEST, "validation_failed"),
+        },
+    };
     if let Err(cause) = database
         .update_device(
             old.id,
@@ -268,6 +285,7 @@ pub(super) async fn patch_device(
                 description: description.as_deref(),
                 metadata: metadata.as_deref(),
                 enabled,
+                memory_mode,
             },
             id(&request),
         )

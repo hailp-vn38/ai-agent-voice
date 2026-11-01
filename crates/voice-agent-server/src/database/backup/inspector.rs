@@ -1,6 +1,7 @@
 use super::*;
 use crate::database::{
     credentials,
+    devices::MemoryMode,
     secrets::{SecretRef, SecretResolver},
 };
 use sqlx::{Row, SqlitePool};
@@ -227,6 +228,14 @@ pub(super) async fn inspect_bundle(
     options: BackupImportOptions,
     secret_resolver: &dyn SecretResolver,
 ) -> Result<BackupInspectionReport, BackupError> {
+    // Bundles are untrusted: reject here so a bad value never reaches the column CHECK.
+    if bundle
+        .devices
+        .iter()
+        .any(|d| MemoryMode::parse(&d.memory_mode).is_none())
+    {
+        return Err(BackupError::InvalidFormat);
+    }
     let effective_scope = options.scope.resolve_effective(bundle.scope);
     let (credentials, mut warnings) = verify_bundle_credentials(
         bundle,
