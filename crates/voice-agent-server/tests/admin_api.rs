@@ -4117,6 +4117,166 @@ async fn reminder_server_clock_validation_quota_and_agent_permission() {
 }
 
 #[tokio::test]
+async fn admin_device_memory_mode_is_set_validated_and_returned() {
+    let (base, task) = server(true).await;
+    let client = Client::new();
+    let token = "admin-test-token";
+    let devices = format!("{base}/api/admin/devices");
+    client
+        .post(format!("{base}/api/admin/agents"))
+        .bearer_auth(token)
+        .json(&serde_json::json!({"key":"home","name":"Home"}))
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap();
+
+    let default_off: serde_json::Value = client
+        .post(&devices)
+        .bearer_auth(token)
+        .json(&serde_json::json!({"device_id":"plain","agent_key":"home"}))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(default_off["memory_mode"], "off");
+
+    let created: serde_json::Value = client
+        .post(&devices)
+        .bearer_auth(token)
+        .json(&serde_json::json!({"device_id":"reader","agent_key":"home","memory_mode":"read"}))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(created["memory_mode"], "read");
+
+    let rejected = client
+        .post(&devices)
+        .bearer_auth(token)
+        .json(&serde_json::json!({"device_id":"bad","agent_key":"home","memory_mode":"admin"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(rejected.status(), StatusCode::BAD_REQUEST);
+
+    let reader = format!("{devices}/reader");
+    for bad in [serde_json::json!("admin"), serde_json::Value::Null] {
+        let rejected = client
+            .patch(&reader)
+            .bearer_auth(token)
+            .header("if-match", "\"1\"")
+            .json(&serde_json::json!({ "memory_mode": bad }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(rejected.status(), StatusCode::BAD_REQUEST);
+    }
+
+    let unrelated_patch: serde_json::Value = client
+        .patch(&reader)
+        .bearer_auth(token)
+        .header("if-match", "\"1\"")
+        .json(&serde_json::json!({"description":"kept"}))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(unrelated_patch["memory_mode"], "read");
+
+    let patched: serde_json::Value = client
+        .patch(&reader)
+        .bearer_auth(token)
+        .header("if-match", "\"2\"")
+        .json(&serde_json::json!({"memory_mode":"read_write"}))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(patched["memory_mode"], "read_write");
+    assert_eq!(patched["revision"], 3);
+
+    let stale = client
+        .patch(&reader)
+        .bearer_auth(token)
+        .header("if-match", "\"2\"")
+        .json(&serde_json::json!({"memory_mode":"off"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(stale.status(), StatusCode::CONFLICT);
+
+    let fetched: serde_json::Value = client
+        .get(&reader)
+        .bearer_auth(token)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(fetched["memory_mode"], "read_write");
+
+    let listed: serde_json::Value = client
+        .get(&devices)
+        .bearer_auth(token)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(listed["items"][0]["device_id"], "plain");
+    assert_eq!(listed["items"][0]["memory_mode"], "off");
+    assert_eq!(listed["items"][1]["memory_mode"], "read_write");
+
+    let assistant = format!("{base}/api/admin/system/assistant-device");
+    let saved: serde_json::Value = client
+        .put(&assistant)
+        .bearer_auth(token)
+        .json(&serde_json::json!({"agent_key":"home","enabled":true,"memory_mode":"read"}))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(saved["memory_mode"], "read");
+    let kept: serde_json::Value = client
+        .put(&assistant)
+        .bearer_auth(token)
+        .header("if-match", "\"1\"")
+        .json(&serde_json::json!({"agent_key":"home","enabled":false}))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(kept["memory_mode"], "read");
+    let rejected = client
+        .put(&assistant)
+        .bearer_auth(token)
+        .header("if-match", "\"2\"")
+        .json(&serde_json::json!({"agent_key":"home","enabled":true,"memory_mode":"admin"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(rejected.status(), StatusCode::BAD_REQUEST);
+
+    task.abort();
+}
+
+#[tokio::test]
 async fn reminder_concurrent_retry_and_reassignment_preserve_device_ownership() {
     let (base, task) = server(true).await;
     let client = Client::new();

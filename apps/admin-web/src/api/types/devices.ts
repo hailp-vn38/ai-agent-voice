@@ -1,5 +1,7 @@
 import type { Page, PageQuery } from './common'
 
+export type MemoryMode = 'off' | 'read' | 'read_write'
+
 export interface AdminDevice {
   id: number
   device_id: string
@@ -9,6 +11,7 @@ export interface AdminDevice {
   name: string | null
   description: string | null
   metadata_json: string | null
+  memory_mode: MemoryMode
   ws_online?: boolean
   direct_tts_supported?: boolean
   enabled: number
@@ -30,6 +33,8 @@ export interface CreateDeviceInput {
   name: string
   description?: string
   metadata_json?: Record<string, unknown>
+  /** Omit to start at `off`. */
+  memory_mode?: MemoryMode
 }
 
 /** One-time Admin claim of an OTA activation code. `code` is a string so leading zeroes survive. */
@@ -49,6 +54,7 @@ export interface UpdateDeviceInput {
   description?: string | null
   metadata_json?: Record<string, unknown>
   enabled?: boolean
+  memory_mode?: MemoryMode
 }
 
 export type DevicePage = Page<AdminDevice>

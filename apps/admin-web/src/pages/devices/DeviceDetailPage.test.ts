@@ -32,7 +32,7 @@ vi.mock('@/api/devices', () => ({
 function sample(id: string): AdminDevice {
   return {
     id: 1, device_id: id, agent_key: 'home', template_key: null,
-    name: id, description: null, enabled: 1, revision: 5, metadata_json: null,
+    name: id, description: null, enabled: 1, revision: 5, metadata_json: null, memory_mode: 'off',
     created_at: 1_760_000_000, updated_at: 1_760_000_100,
   }
 }

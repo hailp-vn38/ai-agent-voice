@@ -42,7 +42,7 @@ tts="test"
         .await
         .unwrap();
     let device = database
-        .save_assistant_device("studio", None, true, None, "test")
+        .save_assistant_device("studio", None, true, None, None, "test")
         .await
         .unwrap();
     let agent_id = get_agent_by(&database, "studio").await.unwrap().id;

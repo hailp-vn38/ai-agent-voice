@@ -12,6 +12,7 @@ fn fixture_device() -> Device {
         description: None,
         enabled: 1,
         metadata_json: None,
+        memory_mode: Default::default(),
         revision: 1,
         created_at: 1,
         updated_at: 1,

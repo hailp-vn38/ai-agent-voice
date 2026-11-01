@@ -509,7 +509,7 @@ async fn upsert_device_row(
         sqlx::query(
             "UPDATE devices
              SET kind = ?, agent_id = ?, template_id = ?, name = ?, description = ?,
-                 enabled = ?, metadata_json = ?, revision = ?, updated_at = ?
+                 enabled = ?, metadata_json = ?, memory_mode = ?, revision = ?, updated_at = ?
              WHERE id = ?",
         )
         .bind(target_kind)
@@ -519,6 +519,7 @@ async fn upsert_device_row(
         .bind(&d.description)
         .bind(d.enabled)
         .bind(&d.metadata_json)
+        .bind(&d.memory_mode)
         .bind(rev + 1)
         .bind(now)
         .bind(id)
@@ -527,8 +528,8 @@ async fn upsert_device_row(
     } else {
         sqlx::query(
             "INSERT INTO devices
-             (device_id, kind, agent_id, template_id, name, description, enabled, metadata_json, revision, last_seen_at, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)",
+             (device_id, kind, agent_id, template_id, name, description, enabled, metadata_json, memory_mode, revision, last_seen_at, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)",
         )
         .bind(&d.device_id)
         .bind(target_kind)
@@ -538,6 +539,7 @@ async fn upsert_device_row(
         .bind(&d.description)
         .bind(d.enabled)
         .bind(&d.metadata_json)
+        .bind(&d.memory_mode)
         .bind(d.last_seen_at)
         .bind(d.created_at.max(1))
         .bind(now)

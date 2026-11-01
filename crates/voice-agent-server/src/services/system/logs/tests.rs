@@ -303,7 +303,7 @@ admin_token="admin-secret-token"
         .await
         .expect("create agent");
     let device = database
-        .save_assistant_device("studio", None, true, None, "req-audit-02")
+        .save_assistant_device("studio", None, true, None, None, "req-audit-02")
         .await
         .expect("save assistant device");
     let agent_id = crate::database::agents::get_agent_by(&database, "studio")
