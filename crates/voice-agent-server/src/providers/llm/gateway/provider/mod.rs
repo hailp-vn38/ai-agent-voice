@@ -1,5 +1,6 @@
 mod chat;
 mod muse_ops;
+mod muse_task;
 mod vision;
 mod wire;
 
@@ -229,6 +230,21 @@ impl LlmGatewayProvider {
 
 #[async_trait::async_trait]
 impl LlmProvider for LlmGatewayProvider {
+    fn agent_task(&self) -> Option<&dyn crate::providers::llm::AgentTaskProvider> {
+        let muse = matches!(
+            &self.config.gateway_binding,
+            GatewayBinding::Pool(GatewayVendor::Muse)
+        ) || self.config.model.trim().starts_with("muse-")
+            || match &self.config.gateway_binding {
+                GatewayBinding::Account(key) => self
+                    .hub
+                    .acquire_account_for_polling(key)
+                    .is_ok_and(|lease| lease.vendor == GatewayVendor::Muse),
+                _ => false,
+            };
+        muse.then_some(self as &dyn crate::providers::llm::AgentTaskProvider)
+    }
+
     fn durable_media(&self) -> Option<&dyn DurableMediaProvider> {
         let is_muse = matches!(
             &self.config.gateway_binding,

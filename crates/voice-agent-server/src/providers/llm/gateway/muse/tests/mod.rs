@@ -1,7 +1,9 @@
+mod agent_task;
 mod chat;
 mod durability;
 mod fixtures;
 mod harness;
+mod live_task;
 mod media;
 mod unit;
 
