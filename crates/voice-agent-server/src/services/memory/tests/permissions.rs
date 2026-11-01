@@ -239,11 +239,7 @@ async fn a_device_scope_refuses_set_profile() {
 }
 
 #[test]
-fn stored_device_values_map_onto_the_interface_types() {
-    use crate::database::devices::MemoryMode as Stored;
-    assert_eq!(MemoryMode::from(Stored::Off), MemoryMode::Off);
-    assert_eq!(MemoryMode::from(Stored::Read), MemoryMode::Read);
-    assert_eq!(MemoryMode::from(Stored::ReadWrite), MemoryMode::ReadWrite);
+fn stored_device_kinds_map_onto_the_interface_type() {
     assert_eq!(
         DeviceKind::from_stored("web_assistant"),
         DeviceKind::Virtual

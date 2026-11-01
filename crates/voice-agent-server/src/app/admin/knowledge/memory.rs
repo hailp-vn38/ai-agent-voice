@@ -13,8 +13,8 @@ use crate::{
         devices::{MemoryBinding, memory_binding},
     },
     services::memory::{
-        DeviceKind, FactId, FactKind, InspectFilter, MemoryActor, MemoryChange, MemoryCore,
-        MemoryError, MemoryReceipt, MemoryScope, RecallQuery,
+        FactId, FactKind, InspectFilter, MemoryActor, MemoryChange, MemoryCore, MemoryError,
+        MemoryReceipt, MemoryScope, RecallQuery,
     },
 };
 use serde::Deserialize;
@@ -54,7 +54,7 @@ async fn binding_of(
 }
 
 fn scope_of(binding: &MemoryBinding) -> MemoryScope {
-    MemoryScope::for_device(&binding.device_id, DeviceKind::from_stored(&binding.kind))
+    MemoryScope::for_stored_device(&binding.device_id, &binding.kind)
 }
 
 #[derive(Deserialize)]

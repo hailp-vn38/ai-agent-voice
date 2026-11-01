@@ -2,7 +2,7 @@
 
 use crate::{
     database::{Database, devices::memory_binding},
-    services::memory::{DeviceKind, MemoryContextHandle, MemoryCore, MemoryMode, MemoryScope},
+    services::memory::{MemoryContextHandle, MemoryCore, MemoryMode, MemoryScope},
 };
 use std::sync::Arc;
 
@@ -39,12 +39,11 @@ impl SessionMemory {
                 return None;
             }
         };
-        let mode = MemoryMode::from(binding.mode);
+        let mode = binding.mode;
         if mode == MemoryMode::Off {
             return None;
         }
-        let scope =
-            MemoryScope::for_device(&binding.device_id, DeviceKind::from_stored(&binding.kind));
+        let scope = MemoryScope::for_stored_device(&binding.device_id, &binding.kind);
         let handle = core.context(&scope).await;
         Some(Self {
             core: Arc::clone(core),

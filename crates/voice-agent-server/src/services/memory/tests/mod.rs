@@ -210,6 +210,23 @@ fn frontmatter(path: &Path) -> serde_yaml::Mapping {
     serde_yaml::from_str(yaml).unwrap()
 }
 
+/// A directory without read permission cannot be opened for its `fsync`, yet files can still be
+/// created, renamed and removed in it: a real failure of the last step of a durable write.
+struct DirSyncDenied(PathBuf);
+
+impl Drop for DirSyncDenied {
+    fn drop(&mut self) {
+        fs::set_permissions(&self.0, fs::Permissions::from_mode(0o755)).unwrap();
+    }
+}
+
+/// `None` when permissions do not bind, as under root, where the failure cannot be produced.
+fn deny_dir_sync(dir: &Path) -> Option<DirSyncDenied> {
+    fs::set_permissions(dir, fs::Permissions::from_mode(0o300)).unwrap();
+    let denied = DirSyncDenied(dir.to_path_buf());
+    fs::File::open(dir).is_err().then_some(denied)
+}
+
 fn mode_bits(path: &Path) -> u32 {
     fs::metadata(path).unwrap().permissions().mode() & 0o777
 }

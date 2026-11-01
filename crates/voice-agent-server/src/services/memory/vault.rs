@@ -102,12 +102,44 @@ pub(super) fn temp_path(path: &Path) -> io::Result<PathBuf> {
     )))
 }
 
-/// Temp file in the same directory, `fsync`, `rename`, `fsync` of the directory.
+/// A change that has already happened. A failed directory `fsync` cannot undo it, so this is not an
+/// error: the change is visible, a power loss could still lose it, and `reconcile` syncs again.
+#[must_use]
+pub(super) struct Committed {
+    pub(super) dir_synced: bool,
+}
+
+impl Committed {
+    fn after_sync_of(dir: &Path) -> Self {
+        let synced = sync_dir(dir);
+        if let Err(error) = &synced {
+            tracing::warn!(event = "memory_dir_sync_failed", kind = ?error.kind());
+        }
+        Self {
+            dir_synced: synced.is_ok(),
+        }
+    }
+}
+
+/// Temp file in the same directory, `fsync`, `rename`, `fsync` of the directory. For a write whose
+/// failure at any step may be reported as an error. A commit point uses [`commit_atomic`].
 pub(super) fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
     write_atomic_with_mode(path, bytes, 0o644)
 }
 
 pub(super) fn write_atomic_with_mode(path: &Path, bytes: &[u8], mode: u32) -> io::Result<()> {
+    let parent = replace_file(path, bytes, mode)?;
+    sync_dir(&parent)
+}
+
+/// [`write_atomic`] for a commit point: only a failure before the `rename` is an error.
+pub(super) fn commit_atomic(path: &Path, bytes: &[u8]) -> io::Result<Committed> {
+    let parent = replace_file(path, bytes, 0o644)?;
+    Ok(Committed::after_sync_of(&parent))
+}
+
+/// Everything up to and including the `rename`. Returns the directory that still needs its `fsync`.
+fn replace_file(path: &Path, bytes: &[u8], mode: u32) -> io::Result<PathBuf> {
     let parent = path
         .parent()
         .ok_or_else(|| io::Error::from(io::ErrorKind::InvalidInput))?;
@@ -127,7 +159,7 @@ pub(super) fn write_atomic_with_mode(path: &Path, bytes: &[u8], mode: u32) -> io
         let _ = fs::remove_file(&temp);
     }
     written?;
-    sync_dir(parent)
+    Ok(parent.to_path_buf())
 }
 
 /// Deleting something already gone is success, so cleanup can be retried.
@@ -140,6 +172,29 @@ pub(super) fn remove_durable(path: &Path) -> io::Result<()> {
     match path.parent() {
         Some(parent) => sync_dir(parent),
         None => Ok(()),
+    }
+}
+
+/// [`remove_durable`] for a commit point: only a failure of the removal itself is an error.
+pub(super) fn commit_remove(path: &Path) -> io::Result<Committed> {
+    match fs::remove_file(path) {
+        Ok(()) => {}
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            return Ok(Committed { dir_synced: true });
+        }
+        Err(error) => return Err(error),
+    }
+    Ok(match path.parent() {
+        Some(parent) => Committed::after_sync_of(parent),
+        None => Committed { dir_synced: true },
+    })
+}
+
+/// Finishes what a failed sync left open. A directory that does not exist has nothing to finish.
+pub(super) fn sync_if_present(dir: &Path) -> io::Result<()> {
+    match sync_dir(dir) {
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+        synced => synced,
     }
 }
 

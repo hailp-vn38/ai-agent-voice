@@ -93,7 +93,7 @@ impl MemoryCore {
             if entry.loaded.load(Ordering::Acquire) {
                 return;
             }
-            // Both publish an empty context on failure, and `loaded` stays false so a later call retries.
+            // Both publish an empty context on failure, with `loaded` false so a later call retries.
             if is_deployment {
                 let _ = read::publish_deployment(&inner, &entry).await;
             } else {

@@ -8,7 +8,7 @@ use super::{
     index,
     read::{
         Derived, VaultState, blocking, publish, publish_deployment, publish_from_disk, read_state,
-        same_body, write_summary_file,
+        same_body, visible_facts, write_summary_file,
     },
     scopes::ScopeEntry,
     tombstone::fingerprint,
@@ -174,8 +174,8 @@ fn find_live(state: VaultState, id: &FactId) -> Result<(FactFile, VaultState), M
     Ok((file, state))
 }
 
-fn write_fact(file: &FactFile) -> io::Result<()> {
-    vault::write_atomic(&file.path, render(file)?.as_bytes())
+fn write_fact(file: &FactFile) -> io::Result<vault::Committed> {
+    vault::commit_atomic(&file.path, render(file)?.as_bytes())
 }
 
 /// Never overwrites: a taken slug gets a suffix from the id.
@@ -295,12 +295,12 @@ impl DeviceWriter<'_> {
             guard("", source_ref, "", self.inner.max_fact_body_chars)?;
         }
         let state = self.state().await?;
-        if let Some(existing) = state
-            .live
-            .iter()
-            .find(|file| same_body(&file.fact.body, &body))
+        // Only what `recall` can return: a receipt for an invisible fact would break invariant 1.
+        if let Some(existing) = visible_facts(&state)
+            .into_iter()
+            .find(|fact| same_body(&fact.body, &body))
         {
-            return Ok(receipt(ReceiptAction::Remember, &existing.fact, false));
+            return Ok(receipt(ReceiptAction::Remember, existing, false));
         }
         if state.live.len() + state.quarantined.len() >= self.inner.max_facts_per_scope {
             return Err(MemoryError::LimitReached);
@@ -388,13 +388,13 @@ impl DeviceWriter<'_> {
             return Err(MemoryError::Unavailable);
         }
         let to_write = file.clone();
-        blocking(move || write_fact(&to_write)).await?;
+        let committed = blocking(move || write_fact(&to_write)).await?;
         let index_change = if reindex {
             IndexChange::Upsert(file.fact.clone())
         } else {
             IndexChange::Keep
         };
-        let cleanup_pending = self.converge(index_change).await?;
+        let cleanup_pending = self.converge(index_change).await? | !committed.dir_synced;
         Ok(receipt(action, &file.fact, cleanup_pending))
     }
 
@@ -406,8 +406,8 @@ impl DeviceWriter<'_> {
             return Err(MemoryError::Unavailable);
         }
         let path = file.path.clone();
-        blocking(move || vault::remove_durable(&path)).await?;
-        let cleanup_pending = self.converge(IndexChange::Remove(id)).await?;
+        let committed = blocking(move || vault::commit_remove(&path)).await?;
+        let cleanup_pending = self.converge(IndexChange::Remove(id)).await? | !committed.dir_synced;
         Ok(receipt(ReceiptAction::Discard, &file.fact, cleanup_pending))
     }
 
@@ -422,9 +422,10 @@ impl DeviceWriter<'_> {
         let mut tombstones = state.tombstones;
         tombstones.add(self.fingerprint(&file.fact.body), &Utc::now());
         let path = self.paths.tombstones.clone();
-        blocking(move || tombstones.write(&path)).await?;
+        let committed = blocking(move || tombstones.commit(&path)).await?;
 
-        let mut cleanup_pending = self.converge(IndexChange::Remove(id)).await?;
+        let mut cleanup_pending =
+            self.converge(IndexChange::Remove(id)).await? | !committed.dir_synced;
         let removed = if step!(self.inner, Cleanup) {
             let path = file.path.clone();
             blocking(move || vault::remove_durable(&path)).await.is_ok()
@@ -570,9 +571,10 @@ async fn set_profile(
     file.profile.body = body;
     file.profile.revision = revision;
     file.profile.updated_at = Some(now);
-    blocking(move || vault::write_atomic(&path, render_profile(&file)?.as_bytes())).await?;
+    let committed =
+        blocking(move || vault::commit_atomic(&path, render_profile(&file)?.as_bytes())).await?;
 
-    let mut cleanup_pending = false;
+    let mut cleanup_pending = !committed.dir_synced;
     for (key, entry) in inner.registry.all() {
         let published = if key == deployment_key {
             publish_deployment(inner, &entry).await.is_ok()

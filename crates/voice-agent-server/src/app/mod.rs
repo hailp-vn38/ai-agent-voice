@@ -526,7 +526,7 @@ async fn reconcile_memory_at_startup(
     core: Arc<crate::services::memory::MemoryCore>,
     database: Arc<Database>,
 ) {
-    use crate::services::memory::{DeviceKind, MemoryScope};
+    use crate::services::memory::MemoryScope;
     // Without the whole Device list every vault would look like an orphan.
     let Ok(devices) = database.memory_device_identities().await else {
         tracing::warn!(
@@ -537,7 +537,7 @@ async fn reconcile_memory_at_startup(
     };
     let mut known: Vec<MemoryScope> = devices
         .iter()
-        .map(|(device_id, kind)| MemoryScope::for_device(device_id, DeviceKind::from_stored(kind)))
+        .map(|(device_id, kind)| MemoryScope::for_stored_device(device_id, kind))
         .collect();
     known.push(MemoryScope::deployment());
     let report = core.reconcile_all(&known).await;

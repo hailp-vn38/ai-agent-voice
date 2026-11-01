@@ -43,6 +43,8 @@ pub(super) async fn reconcile(
                 + vault::remove_temp_files(&paths.facts)?,
             ..ReconcileReport::default()
         };
+        // A commit may have reported a failed sync. `MEMORY.md` below covers the Device directory.
+        vault::sync_if_present(&paths.facts)?;
         let state = read_state(&paths, &task_inner.key, &task_dir)?;
         report.quarantined = state.quarantined.len();
         report.facts = state.live.len();
@@ -126,6 +128,16 @@ pub(super) async fn reconcile_all(inner: &Arc<Inner>, known: &[MemoryScope]) -> 
                 let key = Vault::scope_key(scope);
                 let entry = inner.registry.entry(&key);
                 let _writer = entry.writer.lock().await;
+                let dir = inner.vault.deployment_dir();
+                let cleaned = blocking(move || {
+                    vault::remove_temp_files(&dir)?;
+                    vault::sync_if_present(&dir)
+                })
+                .await;
+                if let Err(error) = cleaned {
+                    report.failed += 1;
+                    tracing::warn!(event = "memory_reconcile_failed", code = error.code());
+                }
                 let _ = publish_deployment(inner, &entry).await;
             }
         }

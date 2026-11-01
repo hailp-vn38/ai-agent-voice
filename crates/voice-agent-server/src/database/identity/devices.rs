@@ -11,7 +11,7 @@ use sqlx::{FromRow, Sqlite};
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, sqlx::Type)]
 #[serde(rename_all = "snake_case")]
 #[sqlx(rename_all = "snake_case")]
-pub(crate) enum MemoryMode {
+pub enum MemoryMode {
     #[default]
     Off,
     Read,

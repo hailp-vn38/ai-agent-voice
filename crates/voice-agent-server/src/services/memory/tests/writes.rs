@@ -239,11 +239,61 @@ async fn two_titles_with_one_slug_make_two_files() {
 async fn remembering_the_same_body_returns_the_existing_fact() {
     let f = fixture();
     let first = f.remember("Giờ mở cửa", "Mở cửa lúc tám giờ").await;
-    let resent = f.remember("Tiêu đề khác", "  mo cua luc TAM gio\r\n").await;
+    let resent = f.remember("Tiêu đề khác", "  MỞ CỬA lúc tám giờ\r\n").await;
     assert_eq!(resent.fact_id, first.fact_id);
     assert_eq!(resent.revision, Some(1));
     assert_eq!(resent.title.as_deref(), Some("Giờ mở cửa"));
     assert_eq!(f.fact_paths().len(), 1);
+}
+
+#[tokio::test]
+async fn remembering_the_same_text_in_another_unicode_form_or_line_ending_returns_the_existing_fact()
+ {
+    let f = fixture();
+    let first = f.remember("Việc", "Đặt lịch\nGọi lại").await;
+    // "đặt lịch" with every mark as a separate combining code point.
+    let nfd = f
+        .remember("Khác", "đa\u{0323}\u{0306}t li\u{0323}ch\r\nGỌI LẠI")
+        .await;
+    assert_eq!(nfd.fact_id, first.fact_id);
+    assert_eq!(f.fact_paths().len(), 1);
+}
+
+#[tokio::test]
+async fn bodies_that_differ_only_in_diacritics_are_different_facts() {
+    let f = fixture();
+    let table = f.remember("Bàn nhà", "bàn nhà").await;
+    let sale = f.remember("Bán nhà", "bán nhà").await;
+    let plain = f.remember("Ban nha", "ban nha").await;
+
+    assert_ne!(sale.fact_id, table.fact_id, "the new fact must not be lost");
+    assert_ne!(plain.fact_id, table.fact_id);
+    assert_eq!(f.fact_paths().len(), 3);
+    let found = f.recall("nhà").await;
+    assert!(found.iter().any(|fact| fact.body == "bán nhà"), "{found:?}");
+}
+
+#[tokio::test]
+async fn remembering_a_body_only_an_invisible_fact_holds_saves_a_visible_one() {
+    for (from, to) in [
+        ("status: confirmed", "status: superseded"),
+        ("superseded_by: null", "superseded_by: fact_x"),
+    ] {
+        let f = fixture();
+        let hidden = f.remember("Mã cổng", "Mã cổng bảy bảy").await;
+        let path = f.the_fact_path();
+        let text = fs::read_to_string(&path).unwrap();
+        assert_ne!(text.replace(from, to), text);
+        fs::write(&path, text.replace(from, to)).unwrap();
+        assert!(f.recall("cổng").await.is_empty(), "{to}");
+
+        let saved = f.remember("Mã cổng", "Mã cổng bảy bảy").await;
+
+        assert_ne!(saved.fact_id, hidden.fact_id, "{to}");
+        let found = f.recall("cổng").await;
+        assert_eq!(found.len(), 1, "{to}");
+        assert_eq!(Some(found[0].id.clone()), saved.fact_id, "{to}");
+    }
 }
 
 #[tokio::test]

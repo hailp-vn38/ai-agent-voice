@@ -439,6 +439,54 @@ async fn reconcile_removes_interrupted_temp_files_but_nothing_else() {
 }
 
 #[tokio::test]
+async fn reconcile_all_removes_interrupted_temp_files_from_the_deployment_directory() {
+    let f = fixture();
+    let deployment = f.root.join("_deployment");
+    let key = fs::read(deployment.join("tombstone.key")).unwrap();
+    let profile = deployment.join(".profile.md.abc.tmp");
+    let half_key = deployment.join(".tombstone.key.abc.tmp");
+    fs::write(&profile, "half a profile").unwrap();
+    fs::write(&half_key, "half a key").unwrap();
+    fs::write(deployment.join("notes.txt"), "the owner's").unwrap();
+
+    let report = f.core.reconcile_all(&[MemoryScope::deployment()]).await;
+
+    assert_eq!(report.failed, 0);
+    assert!(!profile.exists());
+    assert!(!half_key.exists());
+    assert!(deployment.join("notes.txt").exists());
+    assert_eq!(fs::read(deployment.join("tombstone.key")).unwrap(), key);
+}
+
+#[tokio::test]
+async fn hand_edited_origins_and_provenances_it_does_not_know_are_quarantined() {
+    for (known, unknown) in [
+        ("origin: admin", "origin: learned"),
+        ("origin: admin", "origin: something-new"),
+        ("provenance: user", "provenance: assistant"),
+        ("provenance: user", "provenance: source"),
+    ] {
+        let f = fixture();
+        f.remember("Lành", "Thân lành").await;
+        f.remember("Sửa tay", "Thân sửa tay").await;
+        let path = f.device_dir().join("facts/sua-tay.md");
+        let text = fs::read_to_string(&path).unwrap();
+        assert_ne!(text.replace(known, unknown), text);
+        fs::write(&path, text.replace(known, unknown)).unwrap();
+
+        let overview = f
+            .core
+            .inspect(&f.scope, InspectFilter::default())
+            .await
+            .unwrap();
+        assert_eq!(overview.quarantined, 1, "{unknown}");
+        assert_eq!(overview.facts.len(), 1, "{unknown}");
+        assert_eq!(overview.facts[0].title, "Lành", "{unknown}");
+        assert!(f.recall("sửa").await.is_empty(), "{unknown}");
+    }
+}
+
+#[tokio::test]
 async fn reconcile_regenerates_a_deleted_summary_file() {
     let f = fixture();
     f.remember("Một", "Thân một").await;

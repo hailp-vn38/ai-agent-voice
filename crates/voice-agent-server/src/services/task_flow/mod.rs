@@ -51,8 +51,8 @@ use std::time::Duration;
 
 use llm_wiki::{AdaptiveReadBudget, WikiEngine, WikiError};
 use orchestrator_agent_rs::{
-    HostTool, LlmConfig, LlmProviderConfig, Orchestrator, OrchestratorConfig, OrchestratorError,
-    ToolContext, ToolDescriptor, ToolError, ToolOutcome,
+    HostTool, LlmConfig, Orchestrator, OrchestratorConfig, OrchestratorError, ToolContext,
+    ToolDescriptor, ToolError, ToolOutcome,
 };
 use orchestrator_flow_rs::{
     CreateTaskRequest, TaskConfig, TaskError, TaskManager, TaskRuntimeConfig, TaskSource, TaskView,
@@ -195,28 +195,6 @@ async fn init_orchestrator_and_task_manager(
     catalog: &[ResolvedLlmProvider],
     memory: TaskMemoryAccess,
 ) -> Result<(Arc<Orchestrator>, Arc<TaskManager>), TaskFlowError> {
-    start_task_flow(
-        cfg,
-        wiki_cfg,
-        engine,
-        autoflow_notify,
-        catalog,
-        memory,
-        |providers| providers,
-    )
-    .await
-}
-
-/// `route_llm` lets a test run the real assembly against a scripted model.
-async fn start_task_flow(
-    cfg: &OrchestratorSectionConfig,
-    wiki_cfg: &WikiSectionConfig,
-    engine: Arc<WikiEngine>,
-    autoflow_notify: Arc<Notify>,
-    catalog: &[ResolvedLlmProvider],
-    memory: TaskMemoryAccess,
-    route_llm: impl FnOnce(Vec<LlmProviderConfig>) -> Vec<LlmProviderConfig>,
-) -> Result<(Arc<Orchestrator>, Arc<TaskManager>), TaskFlowError> {
     std::fs::create_dir_all(&cfg.store_dir)?;
     std::fs::create_dir_all(&cfg.tasks_store_dir)?;
     std::fs::create_dir_all(&cfg.reports_dir)?;
@@ -257,9 +235,7 @@ async fn start_task_flow(
     let persisted = load_persisted_settings(&cfg.store_dir).unwrap_or_default();
     let _ = write_agent_prompts(&cfg.prompts_dir, &persisted);
     let (providers, agents) = build_agent_definitions(cfg, &persisted, catalog);
-    let llm_cfg = LlmConfig {
-        providers: route_llm(providers),
-    };
+    let llm_cfg = LlmConfig { providers };
     let ctx_limit = cfg.context_limit_tokens;
 
     let mut orch_cfg = OrchestratorConfig::new(llm_cfg, agents, &cfg.store_dir);

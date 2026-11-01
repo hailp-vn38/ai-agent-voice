@@ -10,7 +10,7 @@ use tokio::sync::watch;
 pub(super) struct ScopeEntry {
     pub(super) writer: tokio::sync::Mutex<()>,
     pub(super) context: watch::Sender<Arc<MemoryContext>>,
-    /// Set once a snapshot from disk was published, so later `context` calls do no I/O.
+    /// Whether the last published snapshot came from disk, so `context` calls can skip the I/O.
     pub(super) loaded: AtomicBool,
 }
 

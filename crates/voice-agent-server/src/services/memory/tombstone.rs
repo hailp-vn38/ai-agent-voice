@@ -27,9 +27,18 @@ impl Tombstones {
         }
     }
 
+    /// Lifting a tombstone comes before the commit point of the change that asked for it.
     pub(super) fn write(&self, path: &Path) -> io::Result<()> {
-        let bytes = serde_json::to_vec(&self.0).map_err(|_| io::ErrorKind::InvalidData)?;
-        vault::write_atomic(path, &bytes)
+        vault::write_atomic(path, &self.to_bytes()?)
+    }
+
+    /// Adding a tombstone is the commit point of `Forget`.
+    pub(super) fn commit(&self, path: &Path) -> io::Result<vault::Committed> {
+        vault::commit_atomic(path, &self.to_bytes()?)
+    }
+
+    fn to_bytes(&self) -> io::Result<Vec<u8>> {
+        serde_json::to_vec(&self.0).map_err(|_| io::ErrorKind::InvalidData.into())
     }
 
     pub(super) fn contains(&self, fingerprint: &str) -> bool {

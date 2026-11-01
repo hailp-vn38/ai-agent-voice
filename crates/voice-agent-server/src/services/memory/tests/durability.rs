@@ -176,6 +176,180 @@ async fn failure_before_the_commit_point_is_unavailable_and_changes_nothing() {
 }
 
 #[tokio::test]
+async fn forget_stays_committed_when_the_directory_sync_fails_after_the_rename() {
+    let f = fixture();
+    let gone = f.remember("Mã cổng", "Mã cổng là bảy bảy").await;
+    let Some(denied) = deny_dir_sync(&f.device_dir()) else {
+        return;
+    };
+
+    let result = f.forget(&gone).await;
+    drop(denied);
+
+    let receipt = result.expect("the tombstone is already in place");
+    assert!(receipt.cleanup_pending);
+    assert!(f.recall("cổng").await.is_empty());
+    assert_ne!(f.tombstones_file(), "");
+}
+
+/// Waits inside the commit step, past the state read that needs to list `facts/`, to deny the sync.
+async fn apply_while_the_facts_directory_cannot_sync(
+    f: &Fixture,
+    change: MemoryChange,
+) -> Option<Result<MemoryReceipt, MemoryError>> {
+    f.arm(
+        FailPoint::Commit,
+        FailAction::Stall(std::time::Duration::from_millis(500)),
+    );
+    let (core, scope) = (f.core.clone(), f.scope.clone());
+    let task = tokio::spawn(async move { core.apply(&scope, MemoryActor::Admin, change).await });
+    eventually("the commit step", async || {
+        f.core.inner.fail_point.lock().unwrap().is_none()
+    })
+    .await;
+    let denied = deny_dir_sync(&f.device_dir().join("facts"));
+    let result = task.await.unwrap();
+    denied.map(|_| result)
+}
+
+#[tokio::test]
+async fn fact_writes_stay_committed_when_the_directory_sync_fails_after_the_rename() {
+    let f = fixture();
+    let first = f.remember("Giờ mở cửa", "Mở cửa lúc tám giờ").await;
+
+    let Some(result) = apply_while_the_facts_directory_cannot_sync(
+        &f,
+        remember_change("Giờ đóng cửa", "Đóng cửa lúc năm giờ"),
+    )
+    .await
+    else {
+        return;
+    };
+    assert!(result.expect("the fact is in place").cleanup_pending);
+    assert_eq!(f.recall("đóng").await.len(), 1);
+
+    let result = apply_while_the_facts_directory_cannot_sync(
+        &f,
+        correct_change(&first, "Mở cửa lúc chín giờ"),
+    )
+    .await
+    .unwrap();
+    let corrected = result.expect("the fact is in place");
+    assert!(corrected.cleanup_pending);
+    assert_eq!(corrected.revision, Some(2));
+    assert_eq!(f.recall("chín").await.len(), 1);
+
+    let result = apply_while_the_facts_directory_cannot_sync(
+        &f,
+        MemoryChange::SetPinned {
+            id: corrected.fact_id.clone().unwrap(),
+            pinned: true,
+        },
+    )
+    .await
+    .unwrap();
+    assert!(result.expect("the fact is in place").cleanup_pending);
+
+    let result = apply_while_the_facts_directory_cannot_sync(
+        &f,
+        MemoryChange::Discard {
+            id: corrected.fact_id.clone().unwrap(),
+            expected_revision: 2,
+        },
+    )
+    .await
+    .unwrap();
+    assert!(result.expect("the file is gone").cleanup_pending);
+    assert!(f.recall("chín").await.is_empty());
+}
+
+#[tokio::test]
+async fn set_profile_stays_committed_when_the_directory_sync_fails_after_the_rename() {
+    let f = fixture();
+    let deployment = MemoryScope::deployment();
+    let Some(denied) = deny_dir_sync(&f.root.join("_deployment")) else {
+        return;
+    };
+
+    let result = f
+        .core
+        .apply(
+            &deployment,
+            MemoryActor::Admin,
+            MemoryChange::SetProfile {
+                body: "Hồ sơ mới".to_string(),
+                expected_revision: 0,
+            },
+        )
+        .await;
+    drop(denied);
+
+    assert!(result.expect("the profile is in place").cleanup_pending);
+    let overview = f
+        .core
+        .inspect(&deployment, InspectFilter::default())
+        .await
+        .unwrap();
+    assert_eq!(overview.profile.unwrap().revision, 1);
+}
+
+#[tokio::test]
+async fn a_write_that_fails_before_the_rename_is_still_an_error() {
+    let f = fixture();
+    let fact = f.remember("Giờ mở cửa", "Mở cửa lúc tám giờ").await;
+    let facts = f.device_dir().join("facts");
+    let before = fs::read(f.the_fact_path()).unwrap();
+    let read_only = fs::Permissions::from_mode(0o500);
+    let writable = fs::Permissions::from_mode(0o755);
+
+    fs::set_permissions(&facts, read_only.clone()).unwrap();
+    if fs::File::create(facts.join(".probe")).is_ok() {
+        // Permissions do not bind, as under root, so the failure cannot be produced.
+        fs::remove_file(facts.join(".probe")).unwrap();
+        fs::set_permissions(&facts, writable).unwrap();
+        return;
+    }
+    let remember = f
+        .core
+        .apply(
+            &f.scope,
+            MemoryActor::Admin,
+            remember_change("Khác", "Nội dung khác"),
+        )
+        .await;
+    fs::set_permissions(&facts, writable.clone()).unwrap();
+    assert_eq!(remember.unwrap_err().code(), "memory_unavailable");
+
+    fs::set_permissions(f.device_dir(), read_only).unwrap();
+    let forget = f.forget(&fact).await;
+    fs::set_permissions(f.device_dir(), writable).unwrap();
+    assert_eq!(forget.unwrap_err().code(), "memory_unavailable");
+
+    assert_eq!(fs::read(f.the_fact_path()).unwrap(), before);
+    assert_eq!(f.tombstones_file(), "");
+    assert_eq!(f.recall("tám").await.len(), 1);
+}
+
+#[tokio::test]
+async fn context_retries_after_a_transient_read_failure_published_an_empty_snapshot() {
+    let f = fixture();
+    f.remember("Một", "Thân một").await;
+    let open = f.core.context(&f.scope).await;
+    assert!(open.current().rows.join("\n").contains("Một"));
+
+    f.arm(FailPoint::Publish, FailAction::Error);
+    f.remember("Hai", "Thân hai").await;
+    assert!(open.current().rows.is_empty(), "fails closed");
+
+    let retried = f.core.context(&f.scope).await.current().rows.join("\n");
+    assert!(
+        retried.contains("Một") && retried.contains("Hai"),
+        "{retried}"
+    );
+    assert!(open.current().rows.join("\n").contains("Hai"));
+}
+
+#[tokio::test]
 async fn crash_after_writing_a_fact_converges_on_reconcile() {
     for point in [FailPoint::Index, FailPoint::Publish, FailPoint::Summary] {
         let f = fixture();

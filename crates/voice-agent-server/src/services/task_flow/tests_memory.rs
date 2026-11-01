@@ -10,26 +10,24 @@ use std::{
 
 use async_trait::async_trait;
 use orchestrator_agent_rs::{
-    AgentDefinition, AgentMode, CustomModelExecutor, GatewayError, HostTool, LlmBackend, LlmConfig,
-    LlmProviderConfig, ModelRequest, ModelResponse, ModelRole, ModelToolCall, Orchestrator,
-    OrchestratorConfig, ProviderAuth, RequestLimits, StreamSink, ToolContext, ToolDescriptor,
-    ToolEffect, ToolError, ToolOutcome,
+    AgentDefinition, AgentMode, HostTool, LlmBackend, LlmConfig, LlmProviderConfig, Orchestrator,
+    OrchestratorConfig, ProviderAuth, RequestLimits, ToolContext, ToolDescriptor, ToolEffect,
+    ToolError, ToolOutcome,
 };
 use orchestrator_flow_rs::{CreateTaskRequest, TaskConfig, TaskManager};
 use serde_json::{Value, json};
 use tokio::sync::Notify;
-use tokio_util::sync::CancellationToken;
 
 use super::{
     AgentConfigOverride, CUSTOM_DAILY_SUBAGENT_TOOLS, CUSTOM_WIKI_SUBAGENT_TOOLS,
     PersistedBackgroundSettings, TaskMemoryAccess, VoiceTaskSubmit, default_orchestrator_provider,
-    open_wiki_engine, project_agents_json, start_task_flow,
+    init_orchestrator_and_task_manager, open_wiki_engine, project_agents_json,
 };
 use crate::{
     config::{DatabaseConfig, MemorySectionConfig, OrchestratorSectionConfig, WikiSectionConfig},
     database::{
         Database,
-        devices::{DeviceInput, MemoryMode as StoredMode, get_device_by},
+        devices::{DeviceInput, MemoryMode, get_device_by},
     },
     services::memory::{DeviceKind, FactKind, MemoryActor, MemoryChange, MemoryCore, MemoryScope},
 };
@@ -40,88 +38,115 @@ fn temp_root(label: &str) -> PathBuf {
     root
 }
 
-/// Calls the queued tools one per Task, then ends the turn once the tool result is back.
+/// The OpenAI client refuses to start without a key; the scripted server ignores it.
+const SCRIPTED_API_KEY: &str = "scripted";
+
+/// An OpenAI server on loopback. Calls the queued tools one per Task, then ends the turn
+/// once the tool result is back. Everything past the HTTP request is the real thing.
 #[derive(Debug, Default)]
 struct ScriptedModel {
-    calls: Mutex<VecDeque<ModelToolCall>>,
-    requests: Mutex<Vec<ModelRequest>>,
+    base_url: String,
+    calls: Mutex<VecDeque<(String, String, Value)>>,
+    requests: Mutex<Vec<Value>>,
 }
 
 impl ScriptedModel {
+    async fn serve() -> Arc<Self> {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let model = Arc::new(Self {
+            base_url: format!("http://{}/v1", listener.local_addr().unwrap()),
+            ..Self::default()
+        });
+        let app = axum::Router::new()
+            .fallback(respond)
+            .with_state(model.clone());
+        tokio::spawn(async move { axum::serve(listener, app).await });
+        model
+    }
+
     fn queue(&self, name: &str, arguments: Value) -> String {
         let id = format!("call_{}", uuid::Uuid::new_v4().simple());
-        self.calls.lock().unwrap().push_back(ModelToolCall {
-            id: id.clone(),
-            name: name.to_owned(),
-            arguments,
-        });
+        self.calls
+            .lock()
+            .unwrap()
+            .push_back((id.clone(), name.to_owned(), arguments));
         id
     }
 
     fn tool_result(&self, call_id: &str) -> Option<String> {
         self.requests.lock().unwrap().iter().find_map(|request| {
-            request
-                .messages
+            request["input"]
+                .as_array()?
                 .iter()
-                .find(|message| message.tool_call_id.as_deref() == Some(call_id))
-                .map(|message| message.text.clone())
+                .find(|item| item["type"] == "function_call_output" && item["call_id"] == call_id)
+                .and_then(|item| item["output"].as_str())
+                .map(str::to_owned)
         })
     }
 
     fn offered_tools(&self) -> Vec<String> {
-        self.requests
-            .lock()
-            .unwrap()
+        let requests = self.requests.lock().unwrap();
+        let Some(tools) = requests
             .last()
-            .map(|request| request.tools.iter().map(|tool| tool.name.clone()).collect())
-            .unwrap_or_default()
-    }
-}
-
-#[async_trait]
-impl CustomModelExecutor for ScriptedModel {
-    fn routing_fingerprint(&self) -> String {
-        "test-scripted-model".to_owned()
-    }
-
-    async fn complete(
-        &self,
-        request: &ModelRequest,
-        _cancel: &CancellationToken,
-        _sink: StreamSink<'_>,
-    ) -> Result<ModelResponse, GatewayError> {
-        self.requests.lock().unwrap().push(request.clone());
-        let tool_result_is_back = request
-            .messages
-            .last()
-            .is_some_and(|message| message.role == ModelRole::Tool);
-        let tool_calls: Vec<ModelToolCall> = if tool_result_is_back {
-            Vec::new()
-        } else {
-            self.calls.lock().unwrap().pop_front().into_iter().collect()
+            .and_then(|request| request["tools"].as_array())
+        else {
+            return Vec::new();
         };
-        Ok(ModelResponse {
-            text: if tool_calls.is_empty() { "done" } else { "" }.to_owned(),
-            finish_reason: if tool_calls.is_empty() {
-                "stop"
-            } else {
-                "tool_calls"
-            }
-            .to_owned(),
-            tool_calls,
-            usage: None,
-        })
+        tools
+            .iter()
+            .filter_map(|tool| tool["name"].as_str().map(str::to_owned))
+            .collect()
     }
 }
 
-fn scripted_provider(id: &str, model: Arc<ScriptedModel>) -> LlmProviderConfig {
+/// The Responses API stream, which is what the OpenAI backend speaks.
+async fn respond(
+    axum::extract::State(model): axum::extract::State<Arc<ScriptedModel>>,
+    axum::Json(request): axum::Json<Value>,
+) -> impl axum::response::IntoResponse {
+    let tool_result_is_back = request["input"]
+        .as_array()
+        .and_then(|input| input.last())
+        .is_some_and(|item| item["type"] == "function_call_output");
+    model.requests.lock().unwrap().push(request);
+    let call = if tool_result_is_back {
+        None
+    } else {
+        model.calls.lock().unwrap().pop_front()
+    };
+    let events = match call {
+        Some((call_id, name, arguments)) => {
+            let item =
+                json!({ "id": "fc_1", "type": "function_call", "call_id": call_id, "name": name });
+            vec![
+                json!({ "type": "response.output_item.added", "output_index": 0, "item": item }),
+                json!({
+                    "type": "response.function_call_arguments.done",
+                    "item_id": "fc_1",
+                    "output_index": 0,
+                    "arguments": arguments.to_string(),
+                }),
+                json!({ "type": "response.output_item.done", "output_index": 0, "item": item }),
+            ]
+        }
+        None => vec![json!({ "type": "response.output_text.delta", "delta": "done" })],
+    };
+    let stream: String = events
+        .iter()
+        .chain([&json!({ "type": "response.completed", "response": {} })])
+        .map(|event| format!("data: {event}\n\n"))
+        .collect();
+    ([(http::header::CONTENT_TYPE, "text/event-stream")], stream)
+}
+
+fn scripted_provider(id: &str, model: &ScriptedModel) -> LlmProviderConfig {
     let mut limits = RequestLimits::uniform(Duration::from_secs(10));
     limits.fast_retries = 0;
     LlmProviderConfig {
         id: id.to_owned(),
-        backend: LlmBackend::OpenAi,
-        endpoint: None,
-        auth: ProviderAuth::CustomExecutor(model),
+        backend: LlmBackend::OpenAiCompatible,
+        endpoint: Some(model.base_url.clone()),
+        auth: ProviderAuth::ApiKey(orchestrator_agent_rs::SecretString::new(SCRIPTED_API_KEY)),
         limits,
     }
 }
@@ -171,7 +196,7 @@ fn write_prompt(root: &Path) -> PathBuf {
 #[tokio::test]
 async fn task_flow_voice_task_owner_reaches_daily_root_tool_scope() {
     let root = temp_root("premise");
-    let model = Arc::new(ScriptedModel::default());
+    let model = ScriptedModel::serve().await;
     let seen = Arc::new(Mutex::new(Vec::new()));
     let agent = AgentDefinition::new("daily_root", "test", "test-model")
         .with_mode(AgentMode::Primary)
@@ -179,7 +204,7 @@ async fn task_flow_voice_task_owner_reaches_daily_root_tool_scope() {
         .with_prompt_path(write_prompt(&root))
         .with_allowed_tools(["owner_probe"]);
     let llm = LlmConfig {
-        providers: vec![scripted_provider("test", model.clone())],
+        providers: vec![scripted_provider("test", &model)],
     };
     let orchestrator = Arc::new(
         Orchestrator::builder(OrchestratorConfig::new(llm, vec![agent], root.join("orch")))
@@ -215,7 +240,7 @@ async fn task_flow_voice_task_owner_reaches_daily_root_tool_scope() {
     let _ = std::fs::remove_dir_all(&root);
 }
 
-/// The real task flow assembly, with only the model replaced.
+/// The real task flow assembly, with its configured endpoint pointing at the scripted model.
 struct TaskFlow {
     root: PathBuf,
     model: Arc<ScriptedModel>,
@@ -257,9 +282,11 @@ impl TaskFlow {
             )
         });
 
+        let model = ScriptedModel::serve().await;
         let mut orchestrator = OrchestratorSectionConfig {
             enabled: true,
-            endpoint: "http://127.0.0.1:9".to_owned(),
+            endpoint: model.base_url.clone(),
+            api_key: SCRIPTED_API_KEY.to_owned(),
             model: "test-model".to_owned(),
             store_dir: root.join("orch"),
             tasks_store_dir: root.join("tasks"),
@@ -275,9 +302,7 @@ impl TaskFlow {
         };
         let engine = open_wiki_engine(&wiki).unwrap();
 
-        let model = Arc::new(ScriptedModel::default());
-        let scripted = model.clone();
-        let (_, manager) = start_task_flow(
+        let (_, manager) = init_orchestrator_and_task_manager(
             &orchestrator,
             &wiki,
             engine,
@@ -286,12 +311,6 @@ impl TaskFlow {
             TaskMemoryAccess {
                 core: core.clone(),
                 database: Some(database.clone()),
-            },
-            move |providers| {
-                providers
-                    .iter()
-                    .map(|provider| scripted_provider(&provider.id, scripted.clone()))
-                    .collect()
             },
         )
         .await
@@ -305,7 +324,7 @@ impl TaskFlow {
         }
     }
 
-    async fn device(&self, device_id: &str, mode: StoredMode) -> i64 {
+    async fn device(&self, device_id: &str, mode: MemoryMode) -> i64 {
         self.database
             .create_device(
                 DeviceInput {
@@ -381,8 +400,8 @@ impl TaskFlow {
 #[tokio::test]
 async fn task_flow_task_reads_memory_of_the_device_that_created_it() {
     let flow = TaskFlow::boot(true).await;
-    let device_a = flow.device("device-a", StoredMode::Read).await;
-    let device_b = flow.device("device-b", StoredMode::ReadWrite).await;
+    let device_a = flow.device("device-a", MemoryMode::Read).await;
+    let device_b = flow.device("device-b", MemoryMode::ReadWrite).await;
     flow.remember("device-a", "Cà phê của A", "A thích cà phê đen đá")
         .await;
     flow.remember("device-b", "Cà phê của B", "B thích cà phê sữa nóng")
@@ -416,7 +435,7 @@ async fn task_flow_task_reads_memory_of_the_device_that_created_it() {
 #[tokio::test]
 async fn task_flow_task_without_a_live_device_owner_is_denied() {
     let flow = TaskFlow::boot(true).await;
-    flow.device("device-a", StoredMode::ReadWrite).await;
+    flow.device("device-a", MemoryMode::ReadWrite).await;
     flow.remember("device-a", "Cà phê của A", "A thích cà phê đen đá")
         .await;
 
@@ -432,7 +451,7 @@ async fn task_flow_task_without_a_live_device_owner_is_denied() {
     assert!(personal.contains("memory_scope_denied"), "{personal}");
     assert!(!personal.contains("đen đá"), "{personal}");
 
-    let device_b = flow.device("device-b", StoredMode::ReadWrite).await;
+    let device_b = flow.device("device-b", MemoryMode::ReadWrite).await;
     sqlx::query("DELETE FROM devices WHERE id = ?")
         .bind(device_b)
         .execute(flow.database.pool())
@@ -449,7 +468,7 @@ async fn task_flow_task_without_a_live_device_owner_is_denied() {
 #[tokio::test]
 async fn task_flow_device_with_memory_off_gets_memory_disabled() {
     let flow = TaskFlow::boot(true).await;
-    let device = flow.device("device-off", StoredMode::Off).await;
+    let device = flow.device("device-off", MemoryMode::Off).await;
     flow.remember("device-off", "Cà phê", "thích cà phê đen đá")
         .await;
 
@@ -465,7 +484,7 @@ async fn task_flow_device_with_memory_off_gets_memory_disabled() {
 #[tokio::test]
 async fn task_flow_builds_with_memory_disabled_and_tools_report_it() {
     let flow = TaskFlow::boot(false).await;
-    let device = flow.device("device-a", StoredMode::ReadWrite).await;
+    let device = flow.device("device-a", MemoryMode::ReadWrite).await;
 
     let recall = flow
         .voice_task_calls(device, "memory_recall", json!({ "query": "ca phe" }))

@@ -5,7 +5,7 @@ use super::{
     fact_file::{self, FactFile, read_profile},
     fit_summary::{SummaryRow, fit_summary, joined_len, render_line, sort_rows},
     index,
-    normalize::normalize,
+    normalize::compare_key,
     scopes::ScopeEntry,
     tombstone::{Tombstones, fingerprint},
     types::{
@@ -170,12 +170,14 @@ pub(super) fn publish(entry: &ScopeEntry, context: MemoryContext) {
     entry.loaded.store(true, Ordering::Release);
 }
 
-/// Fail closed: an unreadable vault must not leave a forgotten fact in the last snapshot.
+/// Fail closed: an unreadable vault must not leave a forgotten fact in the last snapshot. This
+/// snapshot did not come from disk, so the next `context` call reads again.
 pub(super) fn publish_degraded(entry: &ScopeEntry) {
     tracing::warn!(event = "memory_context_degraded");
     entry
         .context
         .send_replace(Arc::new(MemoryContext::default()));
+    entry.loaded.store(false, Ordering::Release);
 }
 
 /// Reads the scope from disk and publishes it. The caller holds the writer.
@@ -350,7 +352,7 @@ pub(super) async fn inspect(
 }
 
 pub(super) fn same_body(left: &str, right: &str) -> bool {
-    normalize(&fact_file::canonical_text(left)) == normalize(&fact_file::canonical_text(right))
+    compare_key(&fact_file::canonical_text(left)) == compare_key(&fact_file::canonical_text(right))
 }
 
 pub(super) fn write_summary_file(paths: &DevicePaths, content: &str) -> io::Result<()> {

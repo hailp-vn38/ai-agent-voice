@@ -1,5 +1,6 @@
 //! Public data types of the `MemoryCore` interface.
 
+pub use crate::database::devices::MemoryMode;
 use chrono::{DateTime, Utc};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
@@ -35,17 +36,6 @@ impl DeviceKind {
     }
 }
 
-impl From<crate::database::devices::MemoryMode> for MemoryMode {
-    fn from(mode: crate::database::devices::MemoryMode) -> Self {
-        use crate::database::devices::MemoryMode as Stored;
-        match mode {
-            Stored::Off => Self::Off,
-            Stored::Read => Self::Read,
-            Stored::ReadWrite => Self::ReadWrite,
-        }
-    }
-}
-
 impl MemoryScope {
     /// The raw `device_id` is client-supplied, so it never reaches a path or this value (ADR 0024).
     pub fn for_device(device_id: &str, kind: DeviceKind) -> Self {
@@ -57,6 +47,11 @@ impl MemoryScope {
             }
         };
         Self(ScopeTarget::Device { dir })
+    }
+
+    /// The scope of a Device row, from its `device_id` and `kind` columns as stored.
+    pub fn for_stored_device(device_id: &str, kind: &str) -> Self {
+        Self::for_device(device_id, DeviceKind::from_stored(kind))
     }
 
     /// Accepts only `SetProfile` and `inspect`.
@@ -123,14 +118,11 @@ text_enum!(FactKind {
 
 text_enum!(Provenance {
     User => "user",
-    Source => "source",
-    Assistant => "assistant",
 });
 
 text_enum!(FactOrigin {
     Voice => "voice",
     Admin => "admin",
-    Learned => "learned",
     OwnerEdited => "owner-edited",
 });
 
@@ -138,15 +130,6 @@ text_enum!(FactStatus {
     Confirmed => "confirmed",
     Superseded => "superseded",
 });
-
-text_enum!(
-    /// `devices.memory_mode`, fixed for a Voice Session at admission.
-    MemoryMode {
-        Off => "off",
-        Read => "read",
-        ReadWrite => "read_write",
-    }
-);
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct MemoryFact {
@@ -209,8 +192,8 @@ pub enum MemoryChange {
 #[derive(Clone, Copy, Debug)]
 pub enum MemoryActor {
     Admin,
-    /// `mode` is the value admission fixed for the session, which is what keeps `apply` the single
-    /// place permissions are checked without giving `MemoryCore` a database.
+    /// `mode` is the `devices.memory_mode` admission fixed for the session, which is what keeps
+    /// `apply` the single place permissions are checked without giving `MemoryCore` a database.
     VoiceUser {
         device_db_id: i64,
         mode: MemoryMode,

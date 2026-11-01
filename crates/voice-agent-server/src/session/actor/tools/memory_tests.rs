@@ -1,7 +1,7 @@
 use super::*;
 use crate::{
     config::{McpResultDelivery, MemorySectionConfig},
-    database::{Database, devices::MemoryMode as StoredMode},
+    database::Database,
     services::memory::{
         DeviceKind, FactKind, MemoryActor, MemoryChange, MemoryCore, MemoryMode, MemoryScope,
         ReceiptAction,
@@ -81,15 +81,15 @@ async fn database() -> Arc<Database> {
     db
 }
 
-async fn add_device(db: &Database, device_id: &str, kind: &str, mode: StoredMode) -> i64 {
+async fn add_device(db: &Database, device_id: &str, kind: &str, mode: MemoryMode) -> i64 {
     let agent_id = crate::database::agents::get_agent_by(db, "studio")
         .await
         .unwrap()
         .id;
     let stored = match mode {
-        StoredMode::Off => "off",
-        StoredMode::Read => "read",
-        StoredMode::ReadWrite => "read_write",
+        MemoryMode::Off => "off",
+        MemoryMode::Read => "read",
+        MemoryMode::ReadWrite => "read_write",
     };
     sqlx::query(
         "INSERT INTO devices (device_id, agent_id, kind, enabled, memory_mode, created_at, \
@@ -111,7 +111,7 @@ async fn admitted(
     db: &Database,
     device_id: &str,
     kind: &str,
-    mode: StoredMode,
+    mode: MemoryMode,
 ) -> Option<SessionMemory> {
     let row = add_device(db, device_id, kind, mode).await;
     SessionMemory::admit(Some(&vaults.core), Some(db), row).await
@@ -209,7 +209,7 @@ async fn off_device_has_no_tool_and_no_memory_block() {
     let scope = physical_scope("device-off");
     vaults.remember(&scope, "Giờ mở cửa", "Mở lúc 7 giờ").await;
 
-    let memory = admitted(&vaults, &db, "device-off", "physical", StoredMode::Off).await;
+    let memory = admitted(&vaults, &db, "device-off", "physical", MemoryMode::Off).await;
     assert!(memory.is_none());
     let mut actor = actor_with(memory);
 
@@ -246,7 +246,7 @@ async fn read_device_is_offered_recall_only_and_sees_its_facts() {
     let scope = physical_scope("device-read");
     vaults.remember(&scope, "Giờ mở cửa", "Mở lúc 7 giờ").await;
 
-    let memory = admitted(&vaults, &db, "device-read", "physical", StoredMode::Read)
+    let memory = admitted(&vaults, &db, "device-read", "physical", MemoryMode::Read)
         .await
         .unwrap();
     assert_eq!(memory.mode, MemoryMode::Read);
@@ -271,7 +271,7 @@ async fn read_device_is_offered_recall_only_and_sees_its_facts() {
 async fn memory_is_not_offered_when_admission_finds_no_usable_device() {
     let vaults = Vaults::open();
     let db = database().await;
-    let row = add_device(&db, "device-a", "physical", StoredMode::Read).await;
+    let row = add_device(&db, "device-a", "physical", MemoryMode::Read).await;
 
     assert!(
         SessionMemory::admit(None, Some(&db), row).await.is_none(),
@@ -310,7 +310,7 @@ async fn memory_is_not_offered_when_admission_finds_no_usable_device() {
 async fn no_memory_tool_falls_through_to_silent_delivery() {
     let vaults = Vaults::open();
     let db = database().await;
-    let memory = admitted(&vaults, &db, "device-a", "physical", StoredMode::Read).await;
+    let memory = admitted(&vaults, &db, "device-a", "physical", MemoryMode::Read).await;
     let actor = actor_with(memory);
     for name in MEMORY_TOOL_NAMES {
         let call = tool_call("call", name, serde_json::json!({}));
@@ -336,7 +336,7 @@ async fn no_memory_tool_falls_through_to_silent_delivery() {
 async fn a_goodbye_in_the_same_batch_does_not_skip_the_memory_result() {
     let vaults = Vaults::open();
     let db = database().await;
-    let memory = admitted(&vaults, &db, "device-a", "physical", StoredMode::Read).await;
+    let memory = admitted(&vaults, &db, "device-a", "physical", MemoryMode::Read).await;
     let mut actor = actor_with(memory);
     begin_tool_turn(&mut actor);
     run_batch(
@@ -369,7 +369,7 @@ async fn recall_returns_untrusted_items_with_id_and_revision() {
     let (id, revision) = vaults
         .remember(&scope, "Đặt lịch", "Khách đặt lịch trước 2 giờ")
         .await;
-    let memory = admitted(&vaults, &db, "device-a", "physical", StoredMode::Read).await;
+    let memory = admitted(&vaults, &db, "device-a", "physical", MemoryMode::Read).await;
     let mut actor = actor_with(memory);
 
     // ASR drops the diacritics, and the fact still matches.
@@ -398,7 +398,7 @@ async fn recall_caps_the_limit_at_five_and_cuts_the_body_at_500_chars() {
             .remember(&scope, &format!("Fact {index}"), &body)
             .await;
     }
-    let memory = admitted(&vaults, &db, "device-a", "physical", StoredMode::Read).await;
+    let memory = admitted(&vaults, &db, "device-a", "physical", MemoryMode::Read).await;
     let mut actor = actor_with(memory);
 
     let payload = recall(
@@ -422,7 +422,7 @@ async fn recall_refuses_malformed_arguments_and_ignores_any_scope_from_the_model
     vaults
         .remember(&physical_scope("device-b"), "Của B", "bí mật riêng")
         .await;
-    let memory = admitted(&vaults, &db, "device-a", "physical", StoredMode::Read).await;
+    let memory = admitted(&vaults, &db, "device-a", "physical", MemoryMode::Read).await;
     let mut actor = actor_with(memory);
     begin_tool_turn(&mut actor);
     run_batch(
@@ -470,7 +470,7 @@ async fn two_devices_on_one_agent_recall_only_their_own_facts() {
     vaults
         .remember(&physical_scope("device-b"), "Của B", "chung của B")
         .await;
-    let memory = admitted(&vaults, &db, "device-a", "physical", StoredMode::Read).await;
+    let memory = admitted(&vaults, &db, "device-a", "physical", MemoryMode::Read).await;
     let mut actor = actor_with(memory);
 
     let payload = recall(&mut actor, serde_json::json!({"query": "chung"})).await;
@@ -490,7 +490,7 @@ async fn admin_forget_disappears_at_the_next_turn_of_an_open_session() {
     let scope = physical_scope("device-a");
     let (id, revision) = vaults.remember(&scope, "Sắp quên", "Nội dung").await;
     vaults.remember(&scope, "Còn lại", "Nội dung khác").await;
-    let memory = admitted(&vaults, &db, "device-a", "physical", StoredMode::Read).await;
+    let memory = admitted(&vaults, &db, "device-a", "physical", MemoryMode::Read).await;
     let mut actor = actor_with(memory);
     assert!(compose_next_turn(&mut actor).contains("Sắp quên"));
 
@@ -518,7 +518,7 @@ async fn admin_forget_disappears_at_the_next_turn_of_an_open_session() {
 async fn studio_assistant_uses_only_the_virtual_devices_vault_despite_a_bound_target() {
     let vaults = Vaults::open();
     let db = database().await;
-    let physical_row = add_device(&db, "kitchen", "physical", StoredMode::Read).await;
+    let physical_row = add_device(&db, "kitchen", "physical", MemoryMode::Read).await;
     vaults
         .remember(&physical_scope("kitchen"), "Của bếp", "chung của bếp")
         .await;
@@ -603,7 +603,7 @@ async fn memory_calls_log_no_arguments_and_no_fact_content() {
     vaults
         .remember(&scope, "tiêu đề riêng tư", "thân fact riêng tư")
         .await;
-    let memory = admitted(&vaults, &db, "device-a", "physical", StoredMode::Read).await;
+    let memory = admitted(&vaults, &db, "device-a", "physical", MemoryMode::Read).await;
     let mut actor = actor_with(memory);
 
     let log = CapturedLog::default();
@@ -654,7 +654,7 @@ async fn call_one(
 }
 
 async fn write_session(vaults: &Vaults, db: &Database, device_id: &str) -> SessionActor {
-    let memory = admitted(vaults, db, device_id, "physical", StoredMode::ReadWrite).await;
+    let memory = admitted(vaults, db, device_id, "physical", MemoryMode::ReadWrite).await;
     actor_with(memory)
 }
 
@@ -773,7 +773,7 @@ async fn hay_ghi_nho_in_an_external_mcp_tool_result_does_not_open_the_gate() {
     let db = database().await;
     let scope = physical_scope("device-a");
     let (id, revision) = vaults.remember(&scope, "Cũ", "Fact cũ").await;
-    let memory = admitted(&vaults, &db, "device-a", "physical", StoredMode::ReadWrite).await;
+    let memory = admitted(&vaults, &db, "device-a", "physical", MemoryMode::ReadWrite).await;
     let server = tests::GatedServer::answering(POISON).await;
     server.release();
     let telemetry = Arc::new(crate::telemetry::RecordingTelemetry::default());
@@ -977,7 +977,7 @@ async fn a_read_device_cannot_write_even_when_the_user_asks() {
     let vaults = Vaults::open();
     let db = database().await;
     let scope = physical_scope("device-read");
-    let memory = admitted(&vaults, &db, "device-read", "physical", StoredMode::Read).await;
+    let memory = admitted(&vaults, &db, "device-read", "physical", MemoryMode::Read).await;
     let mut actor = actor_with(memory);
 
     let result = call_one(
@@ -1350,8 +1350,10 @@ async fn write_calls_log_no_arguments_and_no_fact_content() {
 }
 
 /// Prints what the ticket asks to be reported, and asserts nothing: a timing limit would be flaky.
-/// `scripts/agent-test.sh run -- cargo test -p voice-agent-server --lib
-/// memory_begin_speech_delivery_benchmark -- --ignored --nocapture`
+/// `scripts/agent-test.sh` deletes its log on success, so the numbers have to go to a file of yours:
+/// `scripts/agent-test.sh run -- sh -c 'cargo test -p voice-agent-server --lib
+/// memory_begin_speech_delivery_benchmark -- --ignored --nocapture > /tmp/memory-bench.log 2>&1'`,
+/// then `grep memory_bench /tmp/memory-bench.log`.
 #[tokio::test]
 #[ignore = "benchmark; run explicitly and read the printed medians"]
 async fn memory_begin_speech_delivery_benchmark() {
@@ -1369,7 +1371,7 @@ async fn memory_begin_speech_delivery_benchmark() {
             )
             .await;
     }
-    let memory = admitted(&vaults, &db, "device-a", "physical", StoredMode::Read)
+    let memory = admitted(&vaults, &db, "device-a", "physical", MemoryMode::Read)
         .await
         .unwrap();
     let rows = memory.handle.current().rows.len();
