@@ -138,6 +138,15 @@ impl CatalogMediaBackend {
         resolve_media_tool_provider(&guard, settings.as_ref(), tool_name, required_tag, true)
     }
 
+    /// Resolve the Muse Task provider from the current catalog and Admin settings per call.
+    /// Keep the chat/tool-calling provider independent from this specialized provider.
+    pub fn agent_task_provider(&self) -> Result<Box<dyn crate::providers::LlmProvider>, String> {
+        self.select_provider("muse_task", "agent_task")
+            .ok_or_else(|| "no Muse agent_task provider available".to_owned())?
+            .to_llm_provider()
+            .map_err(|err| err.to_string())
+    }
+
     fn resolve_bridge(
         &self,
         label: &str,
@@ -214,7 +223,7 @@ pub(crate) fn resolve_media_tool_provider(
         {
             return Some(found.clone());
         }
-        if matches!(required_tag, "image" | "video" | "tts" | "asr" | "audio")
+        if matches!(required_tag, "image" | "video" | "tts" | "asr" | "audio" | "agent_task")
             && let Some(explicit_ref) = settings
                 .agents
                 .get(owner_id)
