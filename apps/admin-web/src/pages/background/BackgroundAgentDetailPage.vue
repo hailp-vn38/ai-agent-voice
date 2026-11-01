@@ -314,7 +314,7 @@ function resetToDefault() {
     emptyToolProviders[tool] = ''
   }
   form.value = {
-    enabled: true,
+    enabled: spec.default_enabled ?? true,
     provider_ref: null,
     tool_providers: emptyToolProviders,
     steps: spec.default_steps,

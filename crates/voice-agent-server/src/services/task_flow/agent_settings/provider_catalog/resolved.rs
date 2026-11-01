@@ -179,6 +179,9 @@ impl ResolvedLlmProvider {
 
     pub fn supports_tag(&self, tag: &str) -> bool {
         let normalized = tag.trim().to_ascii_lowercase();
+        if normalized == "agent_task" {
+            return self.is_muse_provider();
+        }
         if normalized == "asr" {
             if self.is_asr_adapter() {
                 return true;
@@ -336,6 +339,11 @@ impl ResolvedLlmProvider {
     }
 
     pub fn to_json_summary(&self) -> Value {
+        let mut tags = self.tags.clone();
+        tags.retain(|tag| !tag.trim().eq_ignore_ascii_case("agent_task"));
+        if self.supports_tag("agent_task") {
+            tags.push("agent_task".to_owned());
+        }
         let mut out = json!({
             "ref": self.provider_ref,
             "name": self.name,
@@ -348,7 +356,7 @@ impl ResolvedLlmProvider {
             "context_limit_tokens": self.context_limit_tokens,
             "reasoning_effort": self.reasoning_effort,
             "temperature_percent": self.temperature_percent,
-            "tags": self.tags,
+            "tags": tags,
         });
         if let Some(binding) = self.gateway_binding() {
             out["gateway_binding"] = json!(binding.as_config_string());

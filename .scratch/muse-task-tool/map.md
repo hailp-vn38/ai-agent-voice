@@ -10,6 +10,8 @@ Spec: [spec.md](spec.md). Base: 4315248cdb6019085bb02f509afa61e83d1efab9. Integr
 
 - Không sửa thư viện/schema; dùng seam đã được xác nhận trong spec.
 
+- [03 Catalog/Admin](issues/03-catalog.md): default OFF và live Muse provider selection; refresh discovery giữ Admin prompts; Admin HTTP, prompt upgrade, web UI/typecheck đã PASS.
+
 ## Fog
 
 - Spike Muse thật chưa chạy; cần credential và đo upstream.
