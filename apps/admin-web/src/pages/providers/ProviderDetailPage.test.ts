@@ -1,9 +1,13 @@
-import { flushPromises, mount } from '@vue/test-utils'
+import { enableAutoUnmount, flushPromises, mount } from '@vue/test-utils'
 import { reactive } from 'vue'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 
 import ProviderDetailPage from './ProviderDetailPage.vue'
+import ProviderFormModal from '@/components/admin/ProviderFormModal.vue'
+import ProviderConfigEditor from '@/components/providers/ProviderConfigEditor.vue'
 import { Badge } from '@/components/ui/badge'
+
+enableAutoUnmount(afterEach)
 
 const route = reactive({ params: { key: 'llm_primary' } })
 const { push, replace } = vi.hoisted(() => ({ push: vi.fn(), replace: vi.fn() }))
@@ -60,12 +64,13 @@ const fixture = {
   },
 }
 
-function render() {
+function render(realForm = false) {
   return mount(ProviderDetailPage, {
     global: {
       stubs: {
         ProviderTestPanel: { template: '<div data-test-panel>Manual test</div>' },
-        ProviderFormModal: true,
+        ProviderFormModal: !realForm,
+        Teleport: true,
         ConfirmDialog: true,
       },
     },
@@ -87,6 +92,33 @@ beforeEach(() => {
   })
   api.prepare.mockResolvedValue({})
   refreshAll.mockResolvedValue(undefined)
+})
+
+it.each([
+  { type: 'tts', adapter: 'kokoro' },
+  { type: 'llm', adapter: 'openai' },
+])('saves edits from the real $type modal and reloads the persisted provider', async ({ type, adapter }) => {
+  const current = { ...fixture, type, adapter, source: 'database', config_json: JSON.stringify({ model: 'original' }) }
+  const updated = { ...current, name: 'Updated provider', config_json: JSON.stringify({ model: 'updated' }), revision: 5 }
+  api.get.mockResolvedValueOnce(current).mockResolvedValue(updated)
+  api.update.mockResolvedValue(updated)
+  const wrapper = render(true)
+  await flushPromises()
+  const edit = wrapper.findAll('button').find((button) => button.text() === 'Edit')!
+  await edit.trigger('click')
+  await flushPromises()
+  const modal = wrapper.getComponent(ProviderFormModal)
+  await modal.get('input[required]').setValue('Updated provider')
+  modal.getComponent(ProviderConfigEditor).vm.$emit('update:modelValue', { model: 'updated' })
+  await modal.get('form').trigger('submit')
+  await flushPromises()
+  expect(api.update).toHaveBeenCalledExactlyOnceWith('llm_primary', {
+    name: 'Updated provider', adapter, config_json: { model: 'updated' }, enabled: true,
+  }, 4)
+  expect(api.get).toHaveBeenCalledTimes(2)
+  expect(refreshAll).toHaveBeenCalledOnce()
+  expect(wrapper.text()).toContain('Updated provider')
+  wrapper.unmount()
 })
 afterEach(() => {
   vi.clearAllMocks()

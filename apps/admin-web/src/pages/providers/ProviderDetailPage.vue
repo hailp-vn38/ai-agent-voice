@@ -1111,7 +1111,7 @@ onBeforeUnmount(() => {
       v-if="editableProvider && !isConfigProvider"
       v-model="editOpen"
       :provider="editableProvider"
-      @submit="save"
+      @save="save"
     />
 
     <ConfirmDialog
