@@ -356,6 +356,7 @@ async fn start_router_with_limits(
     let config = AppConfig {
         orchestrator: Default::default(),
         wiki: Default::default(),
+        memory: Default::default(),
         speaker_recognition: Default::default(),
         server: ServerConfig {
             bind: address,

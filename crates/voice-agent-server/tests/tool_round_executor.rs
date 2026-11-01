@@ -519,6 +519,7 @@ fn config_with_external(
     AppConfig {
         orchestrator: Default::default(),
         wiki: Default::default(),
+        memory: Default::default(),
         speaker_recognition: Default::default(),
         server: ServerConfig {
             bind: address,

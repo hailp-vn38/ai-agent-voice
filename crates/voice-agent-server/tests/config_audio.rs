@@ -40,6 +40,7 @@ fn valid_config() -> AppConfig {
     AppConfig {
         orchestrator: Default::default(),
         wiki: Default::default(),
+        memory: Default::default(),
         speaker_recognition: Default::default(),
         server: ServerConfig {
             bind: "127.0.0.1:8000".parse::<SocketAddr>().unwrap(),

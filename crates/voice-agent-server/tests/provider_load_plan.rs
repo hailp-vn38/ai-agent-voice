@@ -39,6 +39,7 @@ fn config(url: String) -> AppConfig {
     AppConfig {
         orchestrator: Default::default(),
         wiki: Default::default(),
+        memory: Default::default(),
         speaker_recognition: Default::default(),
         server: ServerConfig {
             bind: "127.0.0.1:0".parse().unwrap(),

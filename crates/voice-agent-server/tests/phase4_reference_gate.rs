@@ -142,6 +142,7 @@ async fn start(llm: Arc<dyn LlmProvider>, tts: Arc<dyn TtsProvider>) -> (String,
     let config = AppConfig {
         orchestrator: Default::default(),
         wiki: Default::default(),
+        memory: Default::default(),
         speaker_recognition: Default::default(),
         server: ServerConfig {
             bind: address,

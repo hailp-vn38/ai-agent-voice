@@ -5,8 +5,10 @@ use std::{
 };
 use url::Url;
 
+mod memory;
 mod orchestrator_wiki;
 mod validation;
+pub use memory::MemorySectionConfig;
 pub use orchestrator_wiki::{OrchestratorSectionConfig, WikiMcpConfig, WikiSectionConfig};
 
 pub use validation::{BenchmarkTarget, ConfigError};
@@ -17,6 +19,8 @@ pub struct AppConfig {
     pub orchestrator: OrchestratorSectionConfig,
     #[serde(default)]
     pub wiki: WikiSectionConfig,
+    #[serde(default)]
+    pub memory: MemorySectionConfig,
     pub server: ServerConfig,
     #[serde(default)]
     pub auth: AuthConfig,

@@ -392,6 +392,14 @@ enabled = false # Read-only tools for authenticated Studio Assistant sessions.
 # Authenticate via `Authorization: Bearer <token>` or `X-API-Key: <token>`.
 # Environment overrides: VOICE_WIKI_MCP_ENABLED, VOICE_WIKI_MCP_TOKEN,
 # VOICE_WIKI_MCP_READ_TOKEN, VOICE_WIKI_MCP_WRITE_TOKEN.
+[memory]
+# Per-Device Memory Vault, separate from the Wiki. Devices opt in through `memory_mode`.
+enabled = false
+vault_dir = "data/memory-vault"
+voice_summary_max_bytes = 4000
+max_facts_per_scope = 500
+max_fact_body_chars = 2000
+
 [wiki]
 enabled = false
 vault_dir = "data/wiki-vault"

@@ -181,6 +181,11 @@ impl AppConfig {
         if !self.wiki.valid() {
             return Err(ConfigError::Validation("invalid Wiki configuration".into()));
         }
+        if !self.memory.valid() {
+            return Err(ConfigError::Validation(
+                "invalid Memory configuration".into(),
+            ));
+        }
         validate_transport(self)?;
         validate_audio(self)?;
         validate_capacity(self)?;
@@ -953,6 +958,30 @@ url = "sqlite://data/voice-agent.db"
 "#
         ))
         .expect("the minimal configuration parses")
+    }
+
+    #[test]
+    fn memory_section_defaults_to_off_with_the_specified_limits() {
+        let memory = config("").memory;
+        assert!(!memory.enabled);
+        assert_eq!(memory.vault_dir, std::path::Path::new("data/memory-vault"));
+        assert_eq!(memory.voice_summary_max_bytes, 4_000);
+        assert_eq!(memory.max_facts_per_scope, 500);
+        assert_eq!(memory.max_fact_body_chars, 2_000);
+    }
+
+    #[test]
+    fn memory_section_rejects_zero_limits_even_while_disabled() {
+        for field in [
+            "voice_summary_max_bytes",
+            "max_facts_per_scope",
+            "max_fact_body_chars",
+        ] {
+            let error = config(&format!("[memory]\n{field} = 0"))
+                .validate()
+                .expect_err(field);
+            assert!(error.to_string().contains("Memory"), "{field}: {error}");
+        }
     }
 
     #[test]

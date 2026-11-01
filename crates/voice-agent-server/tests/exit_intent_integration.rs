@@ -203,6 +203,7 @@ async fn start(tool_was_advertised: Arc<AtomicBool>) -> (String, JoinHandle<()>)
     let config = AppConfig {
         orchestrator: Default::default(),
         wiki: Default::default(),
+        memory: Default::default(),
         speaker_recognition: Default::default(),
         server: ServerConfig {
             bind: address,

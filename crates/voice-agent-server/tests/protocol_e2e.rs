@@ -195,6 +195,7 @@ async fn start_pilot(outcome: AsrOutcome, pilot: bool) -> (String, JoinHandle<()
     let config = AppConfig {
         orchestrator: Default::default(),
         wiki: Default::default(),
+        memory: Default::default(),
         speaker_recognition: Default::default(),
         server: ServerConfig {
             bind: address,
@@ -257,6 +258,7 @@ async fn start_barge_in() -> (String, JoinHandle<()>) {
     let config = AppConfig {
         orchestrator: Default::default(),
         wiki: Default::default(),
+        memory: Default::default(),
         speaker_recognition: Default::default(),
         server: ServerConfig {
             bind: address,

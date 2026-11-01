@@ -461,6 +461,7 @@ fn config(url: String) -> AppConfig {
     AppConfig {
         orchestrator: Default::default(),
         wiki: Default::default(),
+        memory: Default::default(),
         speaker_recognition: Default::default(),
         server: ServerConfig {
             bind: address,

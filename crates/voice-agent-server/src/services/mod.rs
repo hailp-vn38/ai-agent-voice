@@ -1,5 +1,6 @@
 pub mod device;
 pub mod llm_gateway;
+pub mod memory;
 pub mod notification_hub;
 pub mod notifications;
 pub mod provider;

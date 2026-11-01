@@ -165,6 +165,17 @@ if tests_dir.is_dir():
         else:
             fallback_all = True
 
+# A test target with required-features cannot be named without them: cargo refuses the whole run.
+manifest = crate_dir / "Cargo.toml"
+if manifest.is_file():
+    for block in manifest.read_text(errors="ignore").split("[[test]]")[1:]:
+        block = block.split("\n[", 1)[0]
+        if "required-features" in block:
+            for line in block.splitlines():
+                key, _, value = line.partition("=")
+                if key.strip() == "name":
+                    matched_tests.discard(value.strip().strip('"'))
+
 if fallback_all and not matched_tests and not in_src:
     sys.exit(0)
 if in_src or not matched_tests:
