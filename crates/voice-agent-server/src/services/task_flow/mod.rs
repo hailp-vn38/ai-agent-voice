@@ -4,6 +4,7 @@
 pub mod agent_settings;
 pub mod charts;
 mod memory_tools;
+pub(crate) mod muse_task;
 mod projections;
 pub mod skills;
 mod voice;

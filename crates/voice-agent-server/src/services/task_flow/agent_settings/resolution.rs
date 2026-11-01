@@ -74,7 +74,7 @@ fn resolve_effective_agents(
             let enabled = if spec.mode == AgentMode::Primary {
                 true
             } else {
-                ovr.is_none_or(|o| o.enabled)
+                ovr.map_or(spec.default_enabled, |o| o.enabled)
             };
             let explicit_ref = ovr
                 .and_then(|o| o.provider_ref.as_deref())
@@ -167,10 +167,13 @@ fn resolve_effective_agents(
                     .default_subagents
                     .iter()
                     .filter(|sub_id| {
-                        settings
-                            .agents
-                            .get(**sub_id)
-                            .is_none_or(|sub_ovr| sub_ovr.enabled)
+                        settings.agents.get(**sub_id).map_or_else(
+                            || {
+                                super::specs::find_agent_spec(sub_id)
+                                    .is_some_and(|s| s.default_enabled)
+                            },
+                            |sub_ovr| sub_ovr.enabled,
+                        )
                     })
                     .map(|s| (*s).to_owned())
                     .collect();
@@ -448,6 +451,7 @@ pub fn project_agents_json(
                 },
                 "is_builtin": eff.is_builtin,
                 "enabled": eff.enabled,
+                "default_enabled": super::specs::find_agent_spec(&eff.id).is_none_or(|s| s.default_enabled),
                 "provider_ref": eff.explicit_ref,
                 "effective_provider_ref": eff.resolved_provider.provider_ref,
                 "effective_model": eff.resolved_provider.model,

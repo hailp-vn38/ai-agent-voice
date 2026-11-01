@@ -1,12 +1,12 @@
 //! Canonical defaults for Flow 1 (`daily_root`) & Flow 2 (`wiki_root`) Root Agents
-//! and their 8 specialist Subagents.
+//! and their specialist Subagents.
 
 use orchestrator_agent_rs::AgentMode;
 
 use crate::services::task_flow::workspace_seed::{
-    DAILY_ROOT_PROMPT, MEDIA_CREATOR_PROMPT, MEDIA_PROCESSOR_PROMPT, REMINDER_PLANNER_PROMPT,
-    REPORT_STAGER_PROMPT, SOURCE_COLLECTOR_PROMPT, WIKI_CURATOR_PROMPT, WIKI_INGESTOR_PROMPT,
-    WIKI_RESEARCHER_PROMPT, WIKI_ROOT_PROMPT,
+    CLOUD_WORKER_PROMPT, DAILY_ROOT_PROMPT, MEDIA_CREATOR_PROMPT, MEDIA_PROCESSOR_PROMPT,
+    REMINDER_PLANNER_PROMPT, REPORT_STAGER_PROMPT, SOURCE_COLLECTOR_PROMPT, WIKI_CURATOR_PROMPT,
+    WIKI_INGESTOR_PROMPT, WIKI_RESEARCHER_PROMPT, WIKI_ROOT_PROMPT,
 };
 
 /// Default user-facing Root Agent ID for Flow 1 (`daily_root`).
@@ -24,6 +24,8 @@ pub struct AgentSpec {
     /// Whether user/Voice tools (`task_create`, `reminder_create`) may directly target this root agent.
     /// `true` for Flow 1 (`daily_root`), `false` for internal Flow 2 (`wiki_root`) and all subagents.
     pub user_routable: bool,
+    /// Whether a missing persisted override enables this Built-in Sub-Agent.
+    pub default_enabled: bool,
     pub default_description: &'static str,
     pub default_prompt: &'static str,
     pub default_steps: u32,
@@ -37,6 +39,7 @@ pub struct AgentSpec {
 impl AgentSpec {
     pub const fn allowed_capability_tags(&self) -> &'static [&'static str] {
         match self.id.as_bytes() {
+            b"cloud_worker" => &["chat", "reasoning", "agent_task"],
             b"media_creator" => &["chat", "reasoning", "image", "video"],
             b"media_processor" => &["chat", "reasoning", "tts", "asr", "audio"],
             _ => &["chat", "reasoning"],
@@ -47,6 +50,7 @@ impl AgentSpec {
     /// (e.g. `"image_create"` -> `"image"`, `"video_create"` -> `"video"`, `"tts_synthesize"` -> `"tts"`, `"asr_transcribe"` -> `"asr"`).
     pub const fn tool_capability_tags(&self) -> &'static [(&'static str, &'static str)] {
         match self.id.as_bytes() {
+            b"cloud_worker" => &[("muse_task", "agent_task")],
             b"media_creator" => &[("image_create", "image"), ("video_create", "video")],
             b"media_processor" => &[("tts_synthesize", "tts"), ("asr_transcribe", "asr")],
             _ => &[],
@@ -154,6 +158,7 @@ pub const AGENT_SPECS: &[AgentSpec] = &[
         parent_id: None,
         mode: AgentMode::Primary,
         user_routable: true,
+        default_enabled: true,
         default_description: "Interactive & background multi-functional assistant: inspects and summarizes external sources (YouTube videos/playlists, PDFs, Web pages), researches the Wiki/Web, creates reports, generates images/diagrams/videos via media_creator, processes ASR/TTS/video concatenation via media_processor, manages reminders, and ONLY saves files into sources/ when explicitly requested by the user.",
         default_prompt: DAILY_ROOT_PROMPT,
         default_steps: 20,
@@ -168,6 +173,7 @@ pub const AGENT_SPECS: &[AgentSpec] = &[
             "media_creator",
             "media_processor",
             "reminder_planner",
+            "cloud_worker",
         ],
     },
     AgentSpec {
@@ -176,6 +182,7 @@ pub const AGENT_SPECS: &[AgentSpec] = &[
         parent_id: Some("daily_root"),
         mode: AgentMode::Subagent,
         user_routable: false,
+        default_enabled: true,
         default_description: "Inspects external sources using read-only extraction tools (YouTube videos/playlists via yt_list_playlist/yt_fetch_transcript, PDF via anydoc_inspect_pdf, or Web via fetch_html/html_*) to return structured summaries, deep analyses, and visual keypoints directly, OR calls the unified add_to_sources tool to save into sources/<domain>/<topic>/<slug>.md ONLY when the user explicitly requests saving/adding to sources/ or the Wiki.",
         default_prompt: SOURCE_COLLECTOR_PROMPT,
         default_steps: 35,
@@ -200,6 +207,7 @@ pub const AGENT_SPECS: &[AgentSpec] = &[
         parent_id: Some("daily_root"),
         mode: AgentMode::Subagent,
         user_routable: false,
+        default_enabled: true,
         default_description: "Read-only specialist for querying and reading the LLM Wiki and inspecting web pages to return structured summaries, deep analyses with citations, and visual keypoints.",
         default_prompt: WIKI_RESEARCHER_PROMPT,
         default_steps: 12,
@@ -215,6 +223,7 @@ pub const AGENT_SPECS: &[AgentSpec] = &[
         parent_id: Some("daily_root"),
         mode: AgentMode::Subagent,
         user_routable: false,
+        default_enabled: true,
         default_description: "Writes standalone Markdown reports via markdown_create (default), or stages synthesized discussions into sources/<domain>/<topic>/ via add_to_sources ONLY when explicitly asked to save/add to sources/ or the Wiki.",
         default_prompt: REPORT_STAGER_PROMPT,
         default_steps: 12,
@@ -235,6 +244,7 @@ pub const AGENT_SPECS: &[AgentSpec] = &[
         parent_id: Some("daily_root"),
         mode: AgentMode::Subagent,
         user_routable: false,
+        default_enabled: true,
         default_description: "Visual generation specialist: generates PNG illustrations and SVG vector diagrams/infographics via image_create (with agent-selected or default dimensions), and MP4 videos with built-in voiceover audio, burned-in subtitles, and automatic multi-clip merging via video_create.",
         default_prompt: MEDIA_CREATOR_PROMPT,
         default_steps: 12,
@@ -250,6 +260,7 @@ pub const AGENT_SPECS: &[AgentSpec] = &[
         parent_id: Some("daily_root"),
         mode: AgentMode::Subagent,
         user_routable: false,
+        default_enabled: true,
         default_description: "Audio/Speech, Video Post-Processing & Structured Artifact specialist: transcribes attached WAV audio or MP4 video artifacts into text and SRT subtitles via asr_transcribe, synthesizes standalone TTS audio via tts_synthesize ONLY for audio-only requests, concatenates existing MP4 video artifacts into a continuous primary video via video_concat, and publishes structured Job Artifacts (JSON/CSV/HTML/SRT) via artifact_create.",
         default_prompt: MEDIA_PROCESSOR_PROMPT,
         default_steps: 12,
@@ -276,6 +287,7 @@ pub const AGENT_SPECS: &[AgentSpec] = &[
         parent_id: Some("daily_root"),
         mode: AgentMode::Subagent,
         user_routable: false,
+        default_enabled: true,
         default_description: "Creates, lists, completes, and deletes user reminders and scheduled tasks.",
         default_prompt: REMINDER_PLANNER_PROMPT,
         default_steps: 10,
@@ -285,6 +297,22 @@ pub const AGENT_SPECS: &[AgentSpec] = &[
         suggested_skills: &["daily-task-reminder"],
         default_subagents: &[],
     },
+    AgentSpec {
+        id: "cloud_worker",
+        flow_id: "daily",
+        parent_id: Some("daily_root"),
+        mode: AgentMode::Subagent,
+        user_routable: false,
+        default_enabled: false,
+        default_description: "Use-once cloud specialist for long research and reports through Muse. Completes all send/collect turns before ending; follow-up requires a new Sub-Agent with explicit context. Available only for Chat/API tasks, never Voice tasks.",
+        default_prompt: CLOUD_WORKER_PROMPT,
+        default_steps: 20,
+        default_allowed_tools: &["muse_task"],
+        available_tools: &["muse_task"],
+        default_allowed_skills: &[],
+        suggested_skills: &[],
+        default_subagents: &[],
+    },
     // === Flow 2: Automated Karpathy LLM Wiki Pipeline (`wiki_root`) ===
     AgentSpec {
         id: "wiki_root",
@@ -292,6 +320,7 @@ pub const AGENT_SPECS: &[AgentSpec] = &[
         parent_id: None,
         mode: AgentMode::Primary,
         user_routable: false,
+        default_enabled: true,
         default_description: "Automated background Wiki pipeline coordinator triggered when new files arrive in sources/: ingests new files from sources/, updates/patches Wiki pages, synthesizes topics, and runs wiki_lint.",
         default_prompt: WIKI_ROOT_PROMPT,
         default_steps: 40,
@@ -307,6 +336,7 @@ pub const AGENT_SPECS: &[AgentSpec] = &[
         parent_id: Some("wiki_root"),
         mode: AgentMode::Subagent,
         user_routable: false,
+        default_enabled: true,
         default_description: "Compiles raw sources into wiki/sources/ and creates/patches entity & concept pages.",
         default_prompt: WIKI_INGESTOR_PROMPT,
         default_steps: 35,
@@ -327,6 +357,7 @@ pub const AGENT_SPECS: &[AgentSpec] = &[
         parent_id: Some("wiki_root"),
         mode: AgentMode::Subagent,
         user_routable: false,
+        default_enabled: true,
         default_description: "Creates topic syntheses and repairs structural issues via wiki_lint.",
         default_prompt: WIKI_CURATOR_PROMPT,
         default_steps: 35,

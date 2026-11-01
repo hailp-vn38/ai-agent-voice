@@ -519,7 +519,7 @@ it('shows shimmer placeholders in the explorer and note reader while loading', a
 it('toggles Explorer search, queries Wiki and File spaces, and opens matching documents', async () => {
   const fallback = requestJsonMock.getMockImplementation()!
   requestJsonMock.mockImplementation(async (url: string) => {
-    if (url === '/api/admin/knowledge/pages?q=Reciprocal+rank&space=wiki&mode=hybrid&limit=20') {
+    if (url === '/api/admin/knowledge/pages?q=Reciprocal+rank&space=wiki&mode=lex&limit=20') {
       return {
         items: [{
           id: 'wiki/concepts/hybrid-search.md',
@@ -545,13 +545,13 @@ it('toggles Explorer search, queries Wiki and File spaces, and opens matching do
         source_ref: null,
       }
     }
-    if (url === '/api/admin/knowledge/pages?q=Reciprocal+rank&space=raw&mode=hybrid&limit=20') {
+    if (url === '/api/admin/knowledge/pages?q=Reciprocal+rank&space=raw&mode=lex&limit=20') {
       return {
         items: [],
         next_cursor: null,
       }
     }
-    if (url === '/api/admin/knowledge/pages?q=barge-in&space=raw&mode=lex&limit=20') {
+    if (url === '/api/admin/knowledge/pages?q=barge-in&space=raw&mode=hybrid&limit=20') {
       return {
         items: [{
           id: 'sources/notes/field-observation.md',
@@ -590,7 +590,7 @@ it('toggles Explorer search, queries Wiki and File spaces, and opens matching do
     await flushPromises()
 
     expect(requestJsonMock).toHaveBeenCalledWith(
-      '/api/admin/knowledge/pages?q=Reciprocal+rank&space=wiki&mode=hybrid&limit=20',
+      '/api/admin/knowledge/pages?q=Reciprocal+rank&space=wiki&mode=lex&limit=20',
     )
     const wikiHit = wrapper.get('button.a-search-hit')
     expect(wikiHit.text()).toContain('Hybrid Search Architecture')
@@ -610,18 +610,18 @@ it('toggles Explorer search, queries Wiki and File spaces, and opens matching do
 
     expect(wrapper.find('input[aria-label="Search"]').exists()).toBe(true)
     expect(requestJsonMock).toHaveBeenCalledWith(
-      '/api/admin/knowledge/pages?q=Reciprocal+rank&space=raw&mode=hybrid&limit=20',
+      '/api/admin/knowledge/pages?q=Reciprocal+rank&space=raw&mode=lex&limit=20',
     )
     expect(wrapper.get('.a-search-empty').text()).toContain('No matching documents found.')
 
-    await wrapper.get('select[aria-label="Search mode"]').setValue('lex')
+    await wrapper.get('select[aria-label="Search mode"]').setValue('hybrid')
     const rawInput = wrapper.get('input[aria-label="Search"]')
     await rawInput.setValue('barge-in')
     await wrapper.get('form.a-search-panel').trigger('submit')
     await flushPromises()
 
     expect(requestJsonMock).toHaveBeenCalledWith(
-      '/api/admin/knowledge/pages?q=barge-in&space=raw&mode=lex&limit=20',
+      '/api/admin/knowledge/pages?q=barge-in&space=raw&mode=hybrid&limit=20',
     )
     const rawHit = wrapper.get('button.a-search-hit')
     expect(rawHit.text()).toContain('Field Observation')
