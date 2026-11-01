@@ -216,6 +216,10 @@ _Avoid_: Wiki Vault, knowledge store
 Phần của Memory Vault mà một thao tác được phép chạm tới, là một Device hoặc deployment; chỉ server xác định, Agent và Speaker không tham gia, và đây không phải ranh giới bảo mật.
 _Avoid_: Agent memory, Speaker memory, model-selected scope
 
+**Deployment Profile**:
+Hồ sơ dùng chung do Admin viết trong phần deployment của Memory Vault, đứng đầu Memory Summary của mọi Device; không thuộc Device nào và không phải Memory Fact.
+_Avoid_: Device Profile, Voice Profile, Session Profile
+
 **Memory Proposal**:
 Đề xuất do tự học tạo, chờ Admin xác nhận trước khi thành Memory Fact; thuộc giai đoạn sau, chưa có trong runtime.
 _Avoid_: unconfirmed Memory Fact, auto-learned fact

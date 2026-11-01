@@ -272,7 +272,32 @@ pub struct ImportBackupRequest<'a> {
 
 ---
 
-## 6. Kế hoạch Kiểm chứng Tự động (`scripts/agent-test.sh`)
+## 6. Vận hành: những gì Bundle không mang theo
+
+Bundle và Snapshot chỉ chứa database điều khiển. Hai quy tắc dưới đây là việc của người vận hành, server không tự kiểm tra được.
+
+### 6.1. Memory Vault phải sao lưu riêng
+
+Bundle chỉ giữ `devices.memory_mode`, không gồm Memory Vault ([ADR 0135](adr/0135-memory-core-runtime.md)). Sao lưu cả thư mục `[memory].vault_dir` (mặc định `data/memory-vault`), trong đó bắt buộc có:
+
+- `_deployment/tombstone.key`: khóa HMAC của Forget Tombstone. Mất khóa thì mọi tombstone cũ hết tác dụng, nên một fact đã quên có thể quay lại từ bản sao cũ. Khóa sai độ dài làm server từ chối mở vault. Bảo vệ file này như một bí mật và giữ quyền `0600` khi khôi phục.
+- `_deployment/profile.md`: Deployment Profile.
+- `devices/*/facts/` và `devices/*/tombstones.json`: luôn sao lưu và khôi phục cùng nhau, cùng với khóa ở trên. Thiếu tombstone thì fact đã quên trong bản sao sẽ quay lại.
+
+`devices/*/.index.sqlite` và `devices/*/MEMORY.md` được sinh lại, có thể bỏ qua. Lần khởi động sau khi khôi phục, `reconcile_all` dựng lại chúng và chỉ báo cáo, không xóa, các thư mục không khớp Device nào.
+
+### 6.2. Cấm khôi phục Bundle sang máy mới và chép kèm `tasks.db`
+
+Task và lịch của Device lưu chủ sở hữu là `device:<id>`, với `<id>` là id dòng của bảng `devices`, và id dòng không được giữ qua Bundle. Khôi phục Bundle sang máy mới **và** chép kèm `tasks.db` (trong `[orchestrator].tasks_store_dir`) thì task hoặc lịch cũ có thể trỏ sang Device khác và đọc Memory của Device đó.
+
+Khi khôi phục sang máy mới, chọn một trong hai:
+
+- Không chép `tasks.db`.
+- Nếu đã chép, xóa toàn bộ task và lịch cũ trước khi bật Background Task.
+
+---
+
+## 7. Kế hoạch Kiểm chứng Tự động (`scripts/agent-test.sh`)
 
 1. **Kiểm tra quy tắc đặt câu lệnh SQL**:
    - `python3 scripts/check-sqlx-placement.py` $\rightarrow$ `PASS: production SQLx queries belong to database/`.
