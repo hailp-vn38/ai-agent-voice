@@ -15,7 +15,14 @@ pub(super) async fn delete_device(
     Path(device_id): Path<String>,
     request: Request,
 ) -> Response {
-    delete_by_key(&state, &device_id, request, DeleteResource::Device).await
+    let purge = knowledge::DeviceVaultPurge::prepare(&state, &device_id).await;
+    let response = delete_by_key(&state, &device_id, request, DeleteResource::Device).await;
+    if response.status() == StatusCode::NO_CONTENT
+        && let Some(purge) = purge
+    {
+        purge.run().await;
+    }
+    response
 }
 
 pub(super) async fn delete_template(

@@ -119,6 +119,18 @@ fn knowledge_routes() -> Router<AppState> {
             "/memory/facts/{id}/forget",
             axum::routing::post(knowledge::memory_forget),
         )
+        .route(
+            "/memory/facts/{id}/discard",
+            axum::routing::post(knowledge::memory_discard),
+        )
+        .route(
+            "/memory/facts/{id}/pin",
+            axum::routing::post(knowledge::memory_pin),
+        )
+        .route(
+            "/memory/profile",
+            get(knowledge::memory_profile).post(knowledge::memory_profile_save),
+        )
         .route("/memory/summary", get(knowledge::memory_summary))
         .route("/memory/index", get(knowledge::memory_health))
         .route(

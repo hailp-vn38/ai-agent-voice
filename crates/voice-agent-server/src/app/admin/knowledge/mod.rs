@@ -12,12 +12,12 @@ mod tests;
 
 pub(super) use graph::{knowledge_graph, knowledge_health, knowledge_rebuild};
 pub(super) use memory::{
-    memory_create, memory_forget, memory_health, memory_read, memory_rebuild, memory_recall,
+    DeviceVaultPurge, memory_create, memory_discard, memory_forget, memory_health, memory_pin,
+    memory_profile, memory_profile_save, memory_read, memory_rebuild, memory_recall,
     memory_summary, memory_update,
 };
 pub(super) use pages::{
-    PageLines, SearchQuery, knowledge_create, knowledge_publish, knowledge_read, knowledge_search,
-    knowledge_update,
+    knowledge_create, knowledge_publish, knowledge_read, knowledge_search, knowledge_update,
 };
 pub(super) use raw::{
     knowledge_folder_create, knowledge_page_move, knowledge_raw_create, knowledge_raw_import,

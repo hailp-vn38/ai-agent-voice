@@ -94,6 +94,68 @@ async fn read_only_caller_cannot_invoke_write_tools() {
 }
 
 #[tokio::test]
+async fn memory_facts_are_not_reachable_through_knowledge_mcp_or_wiki_query() {
+    use crate::services::memory::{
+        DeviceKind, FactKind, MemoryActor, MemoryChange, MemoryCore, MemoryScope,
+    };
+
+    let (dir, engine) = test_engine();
+    let mcp = KnowledgeMcp::new(engine, None, true, 12_000);
+    let ctx = test_ctx(KnowledgeMcpAccess::ReadWrite);
+    mcp.call_tool(
+        &ctx,
+        "wiki_write_file",
+        json!({
+            "scope": "wiki",
+            "rel_path": "entities/control.md",
+            "content": "---\ntitle: Control\n---\n\n# Control\n\nwombatcontrol is in the Wiki.\n"
+        }),
+    )
+    .await
+    .expect("the Wiki page is written");
+
+    let vault = TempVaultDir(dir.0.with_extension("memory-vault"));
+    let core = MemoryCore::open(&crate::config::MemorySectionConfig {
+        enabled: true,
+        vault_dir: vault.0.clone(),
+        ..Default::default()
+    })
+    .expect("the vault opens");
+    core.apply(
+        &MemoryScope::for_device("kitchen", DeviceKind::Physical),
+        MemoryActor::Admin,
+        MemoryChange::Remember {
+            title: "zephyrquokka".into(),
+            hook: "zephyrquokka".into(),
+            body: "zephyrquokka is a personal fact.".into(),
+            kind: FactKind::User,
+            source_ref: None,
+        },
+    )
+    .await
+    .expect("the fact is stored");
+
+    let search = |text: &'static str| {
+        let (mcp, ctx) = (&mcp, &ctx);
+        async move {
+            mcp.call_tool(ctx, "wiki_query", json!({ "query": text }))
+                .await
+                .expect("wiki_query runs")
+                .to_string()
+        }
+    };
+    // The control proves the query can find what the vault holds.
+    assert!(search("wombatcontrol").await.contains("control"));
+    assert!(!search("zephyrquokka").await.contains("zephyrquokka is"));
+
+    let tree = mcp
+        .call_tool(&ctx, "wiki_tree", json!({}))
+        .await
+        .expect("wiki_tree runs");
+    assert!(!tree.to_string().contains("zephyrquokka"));
+}
+
+#[tokio::test]
 async fn read_write_caller_can_write_query_and_stage_sources() {
     let (_dir, engine) = test_engine();
     let notify = Arc::new(Notify::new());

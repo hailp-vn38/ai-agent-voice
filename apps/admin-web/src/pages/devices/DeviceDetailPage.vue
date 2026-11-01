@@ -6,7 +6,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { formatApiError } from '@/api/errors'
 import DeviceReminders from '@/components/devices/DeviceReminders.vue'
 import { devicesApi } from '@/api/devices'
-import type { AdminDevice } from '@/api/types/devices'
+import type { AdminDevice, MemoryMode } from '@/api/types/devices'
 import ConfirmDialog from '@/components/admin/ConfirmDialog.vue'
 import BaseModal from '@/components/admin/BaseModal.vue'
 import DetailHeader from '@/components/admin/DetailHeader.vue'
@@ -34,7 +34,7 @@ const speechText = ref('')
 const speaking = ref(false)
 const speechStatus = ref('')
 const speechError = ref('')
-const form = ref({ name: '', description: '', agentKey: '', templateKey: '' })
+const form = ref({ name: '', description: '', agentKey: '', templateKey: '', memoryMode: 'off' as MemoryMode })
 let activeRequest: AbortController | undefined
 
 const agent = computed(() => device.value ? store.getAgent(device.value.agent_key) : undefined)
@@ -104,6 +104,7 @@ function openEdit() {
     description: device.value.description ?? '',
     agentKey: device.value.agent_key,
     templateKey: device.value.template_key ?? '',
+    memoryMode: device.value.memory_mode,
   }
   editOpen.value = true
 }
@@ -118,6 +119,7 @@ async function saveEdit() {
       description: form.value.description.trim() || null,
       agent_key: form.value.agentKey,
       template_key: form.value.templateKey || null,
+      memory_mode: form.value.memoryMode,
     }, device.value.revision)
     editOpen.value = false
     await load()
@@ -268,6 +270,10 @@ onBeforeUnmount(() => activeRequest?.abort())
               <dd class="mt-1 text-sm font-medium">{{ device.enabled !== 0 ? t('devices.enabled') : t('devices.disabled') }}</dd>
             </div>
             <div>
+              <dt class="text-xs text-muted-foreground">{{ t('memoryV3.mode') }}</dt>
+              <dd data-device-memory-mode-value class="mt-1 text-sm font-medium">{{ t(`memoryV3.mode.${device.memory_mode}`) }}</dd>
+            </div>
+            <div>
               <dt class="text-xs text-muted-foreground">{{ t('deviceDetail.connection') }}</dt>
               <dd class="mt-1 text-sm text-muted-foreground">{{ t('deviceDetail.notAvailable') }}</dd>
             </div>
@@ -346,6 +352,15 @@ onBeforeUnmount(() => activeRequest?.abort())
           </select>
           <span class="text-xs text-muted-foreground">{{ t('deviceDetail.templateHint') }}</span>
         </label>
+        <label class="block space-y-1.5">
+          <span class="text-sm font-medium">{{ t('memoryV3.mode') }}</span>
+          <select v-model="form.memoryMode" data-device-memory-mode class="admin-input">
+            <option value="off">{{ t('memoryV3.mode.off') }}</option>
+            <option value="read">{{ t('memoryV3.mode.read') }}</option>
+            <option value="read_write">{{ t('memoryV3.mode.read_write') }}</option>
+          </select>
+          <span class="text-xs text-muted-foreground">{{ t('memoryV3.modeHint') }} {{ t('memoryV3.privateNotice') }}</span>
+        </label>
       </form>
       <template #footer>
         <div class="flex justify-end gap-2">
@@ -356,7 +371,7 @@ onBeforeUnmount(() => activeRequest?.abort())
     </BaseModal>
 
     <ConfirmDialog v-model="deleteOpen" :title="t('agentDevices.deleteTitle', { name: device?.name || device?.device_id || '' })"
-      :description="t('agentDevices.deleteDescription')" :confirm-label="t('agentDevices.delete')" tone="danger" @confirm="deleteDevice" />
+      :description="`${t('agentDevices.deleteDescription')} ${t('memoryV3.deleteWarning')}`" :confirm-label="t('agentDevices.delete')" tone="danger" @confirm="deleteDevice" />
     <DeviceReminders v-if="device?.kind === 'physical'" :device-id="device.device_id" />
   </section>
 </template>

@@ -88,6 +88,7 @@ pub async fn bootstrap_with_providers_and_secret_resolver(
     );
     crate::services::llm_gateway::SharedGatewayHub::set_global(Arc::clone(&state.llm_gateway_hub));
     let _ = state.llm_gateway_hub.reload_snapshot().await;
+    prepare_memory(&mut state);
     prepare_background(&mut state).await?;
     prepare_enrollment(&mut state).await?;
     Ok(router_with_state(state))
@@ -315,6 +316,7 @@ pub async fn startup_with_lifecycle_and_secret_resolver(
     crate::services::llm_gateway::SharedGatewayHub::set_global(Arc::clone(&state.llm_gateway_hub));
     let _ = state.llm_gateway_hub.reload_snapshot().await;
     prepare_builtin_speaker(&mut state).await;
+    prepare_memory(&mut state);
     prepare_background(&mut state).await?;
     prepare_enrollment(&mut state).await?;
     state
@@ -491,6 +493,7 @@ async fn managed_startup(
         }
     }
     prepare_builtin_speaker(&mut state).await;
+    prepare_memory(&mut state);
     prepare_background(&mut state).await?;
     prepare_enrollment(&mut state).await?;
     state
@@ -498,6 +501,52 @@ async fn managed_startup(
         .clone()
         .start(state.lifecycle.listening().clone());
     Ok(router_with_state(state))
+}
+
+/// Memory is never a condition for starting: a vault that cannot open leaves `memory_core` empty.
+/// Independent of `[wiki]`.
+fn prepare_memory(state: &mut AppState) {
+    if !state.config.memory.enabled {
+        return;
+    }
+    let core = match crate::services::memory::MemoryCore::open(&state.config.memory) {
+        Ok(core) => Arc::new(core),
+        Err(cause) => {
+            tracing::warn!(event = "memory_open_failed", code = cause.code());
+            return;
+        }
+    };
+    state.memory_core = Some(core.clone());
+    if let Some(database) = state.database.clone() {
+        tokio::spawn(reconcile_memory_at_startup(core, database));
+    }
+}
+
+async fn reconcile_memory_at_startup(
+    core: Arc<crate::services::memory::MemoryCore>,
+    database: Arc<Database>,
+) {
+    use crate::services::memory::{DeviceKind, MemoryScope};
+    // Without the whole Device list every vault would look like an orphan.
+    let Ok(devices) = database.memory_device_identities().await else {
+        tracing::warn!(
+            event = "memory_reconcile_failed",
+            reason = "devices_unreadable"
+        );
+        return;
+    };
+    let mut known: Vec<MemoryScope> = devices
+        .iter()
+        .map(|(device_id, kind)| MemoryScope::for_device(device_id, DeviceKind::from_stored(kind)))
+        .collect();
+    known.push(MemoryScope::deployment());
+    let report = core.reconcile_all(&known).await;
+    tracing::info!(
+        event = "memory_reconciled",
+        reconciled = report.reconciled,
+        failed = report.failed,
+        orphans = report.orphans.len(),
+    );
 }
 
 async fn prepare_background(state: &mut AppState) -> Result<(), BootstrapError> {

@@ -76,6 +76,8 @@ impl Default for AdminTaskControlState {
 #[derive(Clone)]
 pub struct AppState {
     pub wiki_engine: Option<Arc<llm_wiki::WikiEngine>>,
+    /// `None` when `[memory]` is off or the vault could not open; the server runs either way.
+    pub memory_core: Option<Arc<crate::services::memory::MemoryCore>>,
     pub orchestrator: Option<Arc<orchestrator_agent_rs::Orchestrator>>,
     pub task_manager: Option<Arc<orchestrator_flow_rs::TaskManager>>,
     pub autoflow_notify: Option<Arc<tokio::sync::Notify>>,
@@ -850,6 +852,7 @@ impl AppState {
         ));
         let state = Self {
             wiki_engine: None,
+            memory_core: None,
             orchestrator: None,
             task_manager: None,
             autoflow_notify: None,

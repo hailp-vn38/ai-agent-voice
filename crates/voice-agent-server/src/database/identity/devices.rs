@@ -30,7 +30,6 @@ impl MemoryMode {
 }
 
 /// What admission and Task tools need to build a Memory scope for a Device row.
-#[allow(dead_code)] // Connected to MemoryCore by the admission and Task tickets.
 #[derive(Clone, Debug, PartialEq, Eq, FromRow)]
 pub(crate) struct MemoryBinding {
     pub(crate) device_id: String,
@@ -40,7 +39,6 @@ pub(crate) struct MemoryBinding {
 }
 
 /// `None` when no Device has this row id.
-#[allow(dead_code)] // Connected to MemoryCore by the admission and Task tickets.
 pub(crate) async fn memory_binding(
     database: &Database,
     device_db_id: i64,
@@ -266,6 +264,16 @@ impl Database {
 }
 
 impl Database {
+    /// Every Device as `(device_id, kind)`, unpaged: startup convergence needs them all to tell a
+    /// vault that has a Device from an orphan.
+    pub(crate) async fn memory_device_identities(
+        &self,
+    ) -> Result<Vec<(String, String)>, sqlx::Error> {
+        sqlx::query_as("SELECT device_id,kind FROM devices")
+            .fetch_all(self.pool())
+            .await
+    }
+
     /// Resolve the incarnation used by the active-session registry without loading assignments.
     pub(crate) async fn device_row_id(&self, device_id: &str) -> Result<Option<i64>, sqlx::Error> {
         sqlx::query_scalar("SELECT id FROM devices WHERE device_id=?")

@@ -5,6 +5,7 @@ import { RouterLink } from 'vue-router'
 
 import { assistantApi, type AssistantSettings } from '@/api/assistant'
 import { isApiError } from '@/api/errors'
+import type { MemoryMode } from '@/api/types/devices'
 import ConfirmDialog from '@/components/admin/ConfirmDialog.vue'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -20,6 +21,7 @@ const saved = ref<AssistantSettings>()
 const agent = ref('')
 const template = ref('')
 const enabled = ref(false)
+const memoryMode = ref<MemoryMode>('off')
 const loading = ref(true)
 const saving = ref(false)
 const error = ref('')
@@ -34,7 +36,8 @@ const dirty = computed(
     !saved.value?.configured ||
     saved.value.agent_key !== agent.value ||
     (saved.value.template_key ?? '') !== template.value ||
-    saved.value.enabled !== enabled.value,
+    saved.value.enabled !== enabled.value ||
+    (saved.value.memory_mode ?? 'off') !== memoryMode.value,
 )
 
 watch(agent, () => {
@@ -48,6 +51,7 @@ async function load() {
     agent.value = saved.value.agent_key ?? ''
     template.value = saved.value.template_key ?? ''
     enabled.value = saved.value.enabled
+    memoryMode.value = saved.value.memory_mode ?? 'off'
   } catch (e) {
     error.value = isApiError(e) ? e.code : 'connection_failed'
   } finally {
@@ -67,6 +71,7 @@ async function save() {
         agent_key: agent.value,
         template_key: template.value || null,
         enabled: enabled.value,
+        memory_mode: memoryMode.value,
       },
       saved.value?.revision ?? undefined,
     )
@@ -172,6 +177,16 @@ defineExpose({ reload: load })
             </select>
           </label>
         </div>
+
+        <label class="block space-y-1.5 text-xs">
+          <span class="font-semibold">{{ t('memoryV3.mode') }}</span>
+          <select v-model="memoryMode" data-assistant-memory-mode class="admin-input h-9 w-full text-xs" :disabled="saving">
+            <option value="off">{{ t('memoryV3.mode.off') }}</option>
+            <option value="read">{{ t('memoryV3.mode.read') }}</option>
+            <option value="read_write">{{ t('memoryV3.mode.read_write') }}</option>
+          </select>
+          <span class="block text-[11px] text-muted-foreground">{{ t('memoryV3.modeHint') }} {{ t('memoryV3.privateNotice') }}</span>
+        </label>
 
         <div v-if="effectiveTemplate" class="flex flex-wrap gap-2.5 text-xs">
           <template v-for="kind in (['vad', 'asr', 'llm', 'tts'] as const)" :key="kind">

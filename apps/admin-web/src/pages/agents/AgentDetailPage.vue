@@ -540,7 +540,7 @@ async function confirmDeleteDevice() {
       tone="danger"
       @confirm="confirmDeleteDevice"
     >
-      <p>{{ t('agentDevices.deleteDescription') }}</p>
+      <p>{{ t('agentDevices.deleteDescription') }} {{ t('memoryV3.deleteWarning') }}</p>
     </ConfirmDialog>
 
     <ConfirmDialog

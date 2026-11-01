@@ -241,7 +241,7 @@ onBeforeUnmount(() => activeRequest?.abort())
     <ConfirmDialog
       :model-value="Boolean(deleteTarget)"
       :title="t('agentDevices.deleteTitle', { name: deleteTarget?.name || deleteTarget?.device_id || '' })"
-      :description="t('agentDevices.deleteDescription')"
+      :description="`${t('agentDevices.deleteDescription')} ${t('memoryV3.deleteWarning')}`"
       :confirm-label="t('agentDevices.delete')"
       tone="danger"
       @update:model-value="(value) => { if (!value) deleteTarget = undefined }"

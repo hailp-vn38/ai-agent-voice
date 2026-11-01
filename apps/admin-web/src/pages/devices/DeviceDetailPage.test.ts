@@ -121,4 +121,34 @@ describe('DeviceDetailPage', () => {
     expect(devicesApi.get).toHaveBeenCalledTimes(2)
     wrapper.unmount()
   })
+
+  it('warns that deleting a Device deletes its Memory vault', async () => {
+    const wrapper = shallowMount(DeviceDetailPage, { global: { stubs: { RouterLink: true } } })
+    await flushPromises()
+    const dialog = wrapper.findComponent({ name: 'ConfirmDialog' })
+    expect(dialog.props('description')).toMatch(/Memory vault is deleted/)
+    wrapper.unmount()
+  })
+
+  it('shows the Memory mode and saves a change to it with the revision', async () => {
+    route.query.edit = '1'
+    vi.mocked(devicesApi.get).mockImplementation(async (id) => ({ ...sample(id), memory_mode: 'read' }))
+    const wrapper = shallowMount(DeviceDetailPage, {
+      global: { stubs: { RouterLink: true, BaseModal: { template: '<div><slot /></div>' } } },
+    })
+    await flushPromises()
+    expect(wrapper.get('[data-device-memory-mode-value]').text()).toBe('Read')
+
+    const select = wrapper.get('[data-device-memory-mode]')
+    expect((select.element as HTMLSelectElement).value).toBe('read')
+    await select.setValue('read_write')
+    await wrapper.get('#device-detail-edit-form').trigger('submit')
+    await flushPromises()
+    expect(devicesApi.update).toHaveBeenCalledWith(
+      'device-a',
+      expect.objectContaining({ memory_mode: 'read_write' }),
+      5,
+    )
+    wrapper.unmount()
+  })
 })
