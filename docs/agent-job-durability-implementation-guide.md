@@ -869,6 +869,8 @@ Tool luôn tạo dòng `submitting` trước khi gọi backend, kể cả với 
 
 Session dùng chung nên history có thể đã có lượt cũ, vì vậy phải so số lượt thay vì kiểm tra có `message.user` hay không. Hàng đầu và hàng hai cần spike xác nhận `session_id` được giữ. Vì `session_id` do client tạo trước khi gửi, ta ghi nó ngay ở `submitting`.
 
+Bảng trên chỉ áp dụng khi đối soát một lượt có thể đã gửi. Lấy `user_turns_before` trước khi gửi thì khác: session mới do client vừa sinh có mốc `0` mà không đọc history, vì Muse có thể chưa phục vụ history của session chưa có lượt nào. Session dùng lại mà đọc history lỗi thì trả lỗi provider thường, không dùng `TOOL_OUTCOME_UNKNOWN`, vì lượt đó chắc chắn chưa được gửi.
+
 Tool chỉ trả được `ToolError`, nên `run_host` cần đổi lỗi có mã này thành `Dispatch::Unknown` khi effect là `Resumable`. Run sẽ dừng ở `interrupted` như luồng hiện có: session từ chối input mới, operator có thể resolve, và mỗi lần khởi động lại sẽ thử đối soát một lần trong giới hạn `max_resume_attempts`.
 
 Thứ tự ghi của bước cuối phải là: `artifacts().put` cho mọi file, rồi `advance(committed, artifact_ids, result_json)`. Bước này không xóa session, vì session thuộc cả job; việc xóa nằm ở mục [Dọn dẹp](#dọn-dẹp). Crash ở giữa khiến artifact file có thể bị thừa nhưng không có tác dụng phụ khác; `artifact_staging_grace` đã xử lý file chưa có metadata.

@@ -7,6 +7,8 @@ pub(super) struct TurnJournal<'a> {
     io: Option<&'a dyn OperationJournal>,
     request: Value,
     deadline: Instant,
+    /// The session id was just generated here and no turn has been sent on it yet.
+    fresh_session: bool,
 }
 
 impl<'a> TurnJournal<'a> {
@@ -14,6 +16,7 @@ impl<'a> TurnJournal<'a> {
         io: Option<&'a dyn OperationJournal>,
         op: Option<&ToolOperation>,
         deadline: Instant,
+        fresh_session: bool,
     ) -> Self {
         let request = op
             .and_then(|op| op.request_json.as_deref())
@@ -24,6 +27,7 @@ impl<'a> TurnJournal<'a> {
             io,
             request,
             deadline,
+            fresh_session,
         }
     }
 
@@ -87,11 +91,19 @@ impl<'a> TurnJournal<'a> {
         if self.io.is_none() {
             return Ok(());
         }
-        let before = count_remote_user_turns(lease).await.ok_or_else(|| {
-            WorkflowFailure::OutcomeUnknown(
-                "could not count remote user turns before sending".into(),
-            )
-        })?;
+        // A fresh session has no turns by construction, and Muse may not serve its history yet.
+        // On a reused session a failed read happens before this turn is sent, so the outcome is
+        // known: nothing was submitted and the caller may treat it as an ordinary provider error.
+        let before = if std::mem::take(&mut self.fresh_session) {
+            0
+        } else {
+            count_remote_user_turns(lease).await.ok_or_else(|| {
+                WorkflowFailure::Upstream(
+                    UpstreamFailureKind::Transient,
+                    "could not count remote user turns before sending".into(),
+                )
+            })?
+        };
         self.check_deadline()?;
         self.request["pending_turn"] = json!(items);
         self.record(OperationUpdate {

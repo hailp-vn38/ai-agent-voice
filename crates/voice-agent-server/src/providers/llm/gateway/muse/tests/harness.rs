@@ -35,6 +35,8 @@ pub(in crate::providers::llm::gateway) struct FakeVmAccount {
     stream_delay: Mutex<Option<std::time::Duration>>,
     read_delay: Mutex<Option<std::time::Duration>>,
     lose_stream_ack: std::sync::atomic::AtomicBool,
+    history_failure_status: Mutex<Option<u32>>,
+    history_requires_turn: std::sync::atomic::AtomicBool,
 }
 
 impl FakeVmAccount {
@@ -50,7 +52,21 @@ impl FakeVmAccount {
             stream_delay: Mutex::new(None),
             read_delay: Mutex::new(None),
             lose_stream_ack: std::sync::atomic::AtomicBool::new(false),
+            history_failure_status: Mutex::new(None),
+            history_requires_turn: std::sync::atomic::AtomicBool::new(false),
         })
+    }
+
+    /// `/chat/history` answers 404 until this account has received its first `/chat/stream`.
+    pub fn with_history_unavailable_before_first_turn(self: &Arc<Self>) -> Arc<Self> {
+        self.history_requires_turn
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+        Arc::clone(self)
+    }
+
+    /// Makes every `/chat/history` read from now on answer with this error status.
+    pub fn set_history_failure_status(&self, status: u32) {
+        *self.history_failure_status.lock().unwrap() = Some(status);
     }
 
     pub fn with_stream_delay(self: &Arc<Self>, delay: std::time::Duration) -> Arc<Self> {
@@ -335,6 +351,21 @@ impl MuseVmSender for FakeVmSender {
                     }));
                 }
             } else if path.starts_with("/chat/history") {
+                let forced_failure = *self.account.history_failure_status.lock().unwrap();
+                let no_turn_yet = self
+                    .account
+                    .history_requires_turn
+                    .load(std::sync::atomic::Ordering::SeqCst)
+                    && self.account.stream_requests.lock().unwrap().is_empty();
+                if let Some(status) = forced_failure.or(no_turn_yet.then_some(404)) {
+                    send_json_response(
+                        &self.tx,
+                        stream_id,
+                        status,
+                        &json!({ "ok": false, "error": "history unavailable" }),
+                    );
+                    continue;
+                }
                 let mut q = self.account.active_history.lock().unwrap();
                 let events = if q.len() > 1 {
                     q.pop_front().unwrap_or_default()

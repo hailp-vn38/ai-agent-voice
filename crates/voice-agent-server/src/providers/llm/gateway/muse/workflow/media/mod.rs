@@ -109,6 +109,7 @@ pub(crate) async fn run_media_turn_once(
     let forced_sid = existing_op
         .and_then(|op| op.remote_session_id.clone())
         .or_else(|| retained.as_ref().map(|s| s.session_id.clone()));
+    let fresh_session = forced_sid.is_none();
     let mut lease = match forced_sid {
         Some(sid) => pool.acquire_existing_session(sid).await,
         None => pool.acquire_fresh().await,
@@ -166,6 +167,7 @@ pub(crate) async fn run_media_turn_once(
                     started_running,
                     journal,
                     existing_op,
+                    fresh_session,
                     &mut completed_batch_paths,
                 ),
             )
@@ -210,7 +212,7 @@ pub(crate) async fn resume_media_turn_once(
     op: &orchestrator_agent_rs::ToolOperation,
     journal: Option<&dyn OperationJournal>,
 ) -> Result<LlmOutput, WorkflowFailure> {
-    let mut turn_journal = TurnJournal::new(journal, Some(op), deadline);
+    let mut turn_journal = TurnJournal::new(journal, Some(op), deadline, false);
     if op.status == orchestrator_agent_rs::ToolOperationStatus::Running
         && op.batch_index > 0
         && turn_journal.pending_items().is_none()
@@ -392,11 +394,12 @@ async fn execute_media_turn_on_lease(
     started_running: &std::sync::atomic::AtomicBool,
     journal: Option<&dyn OperationJournal>,
     existing_op: Option<&orchestrator_agent_rs::ToolOperation>,
+    fresh_session: bool,
     completed_batch_paths: &mut Vec<String>,
 ) -> Result<LlmOutput, WorkflowFailure> {
     let mut event_rx = lease.client().subscribe_events();
 
-    let mut turn_journal = TurnJournal::new(journal, existing_op, deadline);
+    let mut turn_journal = TurnJournal::new(journal, existing_op, deadline, fresh_session);
     let mut all_parts: Vec<MediaPart> = Vec::new();
     let mut messages: Vec<String> = Vec::new();
     for (index, batch) in batches.iter().enumerate() {
@@ -921,8 +924,9 @@ async fn download_video_paths(
 }
 
 pub(crate) async fn count_remote_user_turns(lease: &mut VmOperationLease) -> Option<u32> {
-    let history_path = format!("/chat/history?session_id={}", lease.session_id());
-    let resp = lease
+    let session_id = lease.session_id().to_string();
+    let history_path = format!("/chat/history?session_id={session_id}");
+    let resp = match lease
         .client()
         .send_request(
             "GET",
@@ -933,16 +937,33 @@ pub(crate) async fn count_remote_user_turns(lease: &mut VmOperationLease) -> Opt
             false,
         )
         .await
-        .ok()?;
+    {
+        Ok(resp) => resp,
+        Err(err) => {
+            tracing::warn!(%session_id, error = ?err, "could not request Muse chat history");
+            return None;
+        }
+    };
     if resp.status != 200 {
+        tracing::warn!(%session_id, status = resp.status, "Muse chat history request failed");
         return None;
     }
-    let history_json = resp.json().ok()?;
-    let evs = history_json
+    let history_json = match resp.json() {
+        Ok(json) => json,
+        Err(err) => {
+            tracing::warn!(%session_id, error = ?err, "Muse chat history is not valid JSON");
+            return None;
+        }
+    };
+    let Some(evs) = history_json
         .get("result")
         .and_then(|r| r.get("chat_events"))
         .or_else(|| history_json.get("chat_events"))
-        .and_then(Value::as_array)?;
+        .and_then(Value::as_array)
+    else {
+        tracing::warn!(%session_id, "Muse chat history has no chat_events array");
+        return None;
+    };
     let count = evs
         .iter()
         .filter(|e| {

@@ -7,7 +7,9 @@ use super::harness::{
 };
 use super::media::{full_video_turn, single_video_history};
 use crate::providers::llm::gateway::LlmGatewayProvider;
-use crate::providers::llm::{DurableMediaProvider, LlmError, OperationJournal, OperationState};
+use crate::providers::llm::{
+    DurableMediaProvider, LlmError, LlmOperation, OperationJournal, OperationState,
+};
 use crate::services::llm_gateway::{GatewayBinding, GatewayVendor};
 use orchestrator_agent_rs::{OperationUpdate, ToolOperation, ToolOperationStatus};
 
@@ -218,6 +220,73 @@ async fn duration_repairs_are_journaled_per_batch() {
             .iter()
             .any(|u| u.repairs_used.is_some_and(|n| n > 1)),
         "the repair count must reset in the next batch"
+    );
+}
+
+fn video_request(duration_secs: u32, continuation_key: Option<&str>) -> LlmOperation {
+    LlmOperation::VideoGeneration {
+        prompt: "story".into(),
+        width: 640,
+        height: 360,
+        duration_secs,
+        first_frame: None,
+        continuation_key: continuation_key.map(str::to_string),
+    }
+}
+
+/// A client-generated session has no remote turns yet, so its baseline must not depend on reading
+/// a history that Muse may not serve until the first turn arrives.
+#[tokio::test]
+async fn fresh_session_submits_when_history_is_unreadable_before_first_turn() {
+    let acc = FakeVmAccount::new(vec![full_video_turn("sandbox:///home/user/video.mp4")])
+        .with_file("video.mp4", mp4_with_duration(30))
+        .with_history_unavailable_before_first_turn();
+    let provider = build_gateway_muse_provider(
+        &[SINGLE_COOKIE],
+        FakeMuseVmTransport::new(vec![acc.clone()]),
+    )
+    .await;
+    let journal = Journal::default();
+    let result = provider
+        .submit(&video_request(30, None), None, &journal)
+        .await;
+    assert!(result.is_ok(), "{result:?}");
+    assert_eq!(acc.stream_requests().len(), 1);
+    let updates = journal.0.lock().unwrap();
+    let pending = updates
+        .iter()
+        .find(|u| u.status == Some(ToolOperationStatus::Submitting))
+        .expect("the pending turn must be journaled before sending");
+    assert_eq!(pending.user_turns_before, Some(0));
+    assert!(pending.remote_session_id.is_some());
+}
+
+/// Nothing was sent, so this is a plain provider error instead of an unknown outcome that blocks
+/// the session until an operator resolves it.
+#[tokio::test]
+async fn reused_session_history_failure_before_send_is_not_outcome_unknown() {
+    let acc = FakeVmAccount::new(vec![full_video_turn("sandbox:///home/user/video.mp4")])
+        .with_file("video.mp4", mp4_with_duration(30));
+    let provider = build_gateway_muse_provider(
+        &[SINGLE_COOKIE],
+        FakeMuseVmTransport::new(vec![acc.clone()]),
+    )
+    .await;
+    let request = video_request(30, Some("history-failure-job"));
+    provider
+        .submit(&request, None, &Journal::default())
+        .await
+        .unwrap();
+    acc.set_history_failure_status(503);
+
+    let journal = Journal::default();
+    let result = provider.submit(&request, None, &journal).await;
+
+    assert!(matches!(result, Err(LlmError::Transient)), "{result:?}");
+    assert_eq!(acc.stream_requests().len(), 1, "no second turn may be sent");
+    assert!(
+        journal.0.lock().unwrap().is_empty(),
+        "an unsent turn must not leave a submission baseline"
     );
 }
 
