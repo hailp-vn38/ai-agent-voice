@@ -1,12 +1,12 @@
 # ADR 0125 — Knowledge Job uses native tools, shared Job Skills and automatic publication
 
+> **Trạng thái hiện hành: lịch sử, kiến trúc đã được thay thế (2026-11-01).** Runtime hiện tại theo [ADR 0127](0127-orchestrator-flow-task-and-wiki-runtime.md). Các trạng thái, contract và mốc triển khai bên dưới thuộc JobEngine cũ, được giữ để tra cứu quyết định; không dùng làm hướng dẫn triển khai mới.
+
 **Status:** Accepted and locally implemented. Native v2 remains an explicit opt-in; production deployment is separate. See [qualification](../knowledge/ai-ingest-fixed-job-qualification-v3.md).
 
 **Date:** 2026-10-19.
 
-**Requirements:** [Knowledge fixed Job](../knowledge/ai-ingest-fixed-job-requirements-v3.md).
-
-**Implementation:** [Implementation plan](../knowledge/ai-ingest-fixed-job-implementation-v3.md).
+Các bản yêu cầu và hướng dẫn triển khai Job V3 đã được loại bỏ; quyết định và [biên bản kiểm chứng lịch sử](../knowledge/ai-ingest-fixed-job-qualification-v3.md) được giữ lại.
 
 The user requires a Knowledge Job that uses existing Job V3 native tool communication, chooses additional Job Skills, and publishes Wiki changes automatically. ADR 0123's one-turn Structured Output and review-first updates prevent that workflow. Add an explicit version 2 Knowledge execution contract on the existing `knowledge_ingest_v3` mode; retain version 1 for historical Jobs and Review decisions. Do not reinterpret queued version 1 work or require Structured Output for version 2.
 

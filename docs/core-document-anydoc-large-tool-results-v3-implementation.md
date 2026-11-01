@@ -1,5 +1,7 @@
 # Core Document + AnyDoc & Large Tool Results — Implementation Specification (V3)
 
+> **Tài liệu lịch sử (2026-11-01).** Nội dung triển khai Plugin/Job V3 bên dưới thuộc runtime trước [ADR 0127](adr/0127-orchestrator-flow-task-and-wiki-runtime.md). Không áp dụng các bước triển khai này cho TaskManager/WorkspaceToolKit hiện tại.
+
 > **Status:** Implementation in progress on `feat/core-anydoc-large-tool-results-v3`; GitHub Actions validation is in progress; avoid marking the implementation complete until the CI gates pass. Reviewed specification (2026-10-19).
 > **Date:** 2026-10-19
 > **Repository:** [`hailp-vn38/ai-agent-voice`](https://github.com/hailp-vn38/ai-agent-voice)
@@ -58,7 +60,7 @@ Key ADRs / design invariants:
 - [`ADR 0116`](adr/0116-plugin-value-settings-and-manual-jobs.md): manual no-LLM Job and pinned plugin settings.
 - [`ADR 0117`](adr/0117-knowledge-core-plugin-adapter.md): Knowledge Core owns canonical Source/Wiki publication.
 - [`ADR 0115 (artifacts)`](adr/0115-job-owned-local-artifacts-v3.md): existing Job Artifact ownership and durable publisher.
-- [`Flow 10`](flows/10-agent-job-opencode-v3.md), [`Flow 11`](flows/11-core-plugin-activation-v3.md), [`Flow 12`](flows/12-plugin-settings-and-manual-operation-v3.md).
+- [Runtime thay thế — ADR 0127](adr/0127-orchestrator-flow-task-and-wiki-runtime.md), [`Flow 11`](flows/11-core-plugin-activation-v3.md), [`Flow 12`](flows/12-plugin-settings-and-manual-operation-v3.md).
 
 **Before editing:** verify current branch head, current migrations, and test baselines; these findings describe the inspected tree, not a guarantee of no later commits.
 
@@ -450,8 +452,6 @@ Complete the test matrix in §11, plus one smoke run for each document family an
 ## 14. Document updates required during implementation
 
 - Add one compact **ADR amendment** covering Large Tool Result persistence versus model-visible observation and the choice to extend existing Core Document; avoid duplicating this implementation guide.
-- Update `docs/flows/10-agent-job-opencode-v3.md`, `docs/flows/11-core-plugin-activation-v3.md`, `docs/flows/12-plugin-settings-and-manual-operation-v3.md` for new operations, metadata-only runner RPC, limits and failure semantics.
-- Update `docs/agent-job-v3-artifacts-implementation.md` only for SDK `attach_file` and the new output bound; do not copy this spec wholesale.
 - Update Knowledge ADR/Flow 13 **only if** the later explicit import is implemented; this release does not claim the current Source vault accepts binaries.
 
 ---

@@ -2,6 +2,8 @@
 
 Cập nhật: 2026-10-31
 
+> **Thiết kế gốc, cập nhật trạng thái 2026-11-01.** Phần “Hiện trạng” và các bảng lỗi bên dưới ghi nhận thời điểm phân tích, trước các sửa đổi độ bền. Khi triển khai, dùng [hướng dẫn hiện hành](agent-job-durability-implementation-guide.md), đặc biệt mục “Điều chỉnh so với thiết kế” và “Trạng thái triển khai”; không dùng các bảng này để kết luận lỗi vẫn tồn tại.
+
 Đợt sửa Muse video sau job `eb0a5434` đã thêm session theo job, sửa thời lượng trong session, chia lô, lỗi timeout riêng và dừng `video_create` khi hủy, nhưng chỉ trong một process. Chi tiết ở [hướng dẫn triển khai](agent-job-durability-implementation-guide.md#nền-đã-có-từ-đợt-sửa-muse-video). Các bảng bằng chứng bên dưới mô tả trạng thái lúc phân tích, kèm ghi chú nơi đã thay đổi.
 
 ## Tóm tắt

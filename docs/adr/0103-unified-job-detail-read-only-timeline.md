@@ -1,5 +1,7 @@
 # Unified Job Detail Timeline Is a Read-Only Projection
 
+> **Trạng thái hiện hành: cần đọc theo phạm vi (2026-11-01).** Các chi tiết JobEngine, Plugin Runtime và schema Job cũ bên dưới là lịch sử. Runtime hiện tại theo [ADR 0127](0127-orchestrator-flow-task-and-wiki-runtime.md); hợp đồng JSON Jobs còn được duy trì qua lớp projection.
+
 Status: accepted (Web implementation, 2026-10-14).
 
 The Job Detail page uses the approved **B · Timeline focus** layout and projects one chronological view from the existing Job read view and cursor-paginated metadata-only Job Events. It groups LLM lifecycle stages into one activity, correlates plugin Steps and fork/join events by durable IDs, and keeps the Inspector read-only. We chose this over a second server-side activity log, a new event-streaming transport, or separate legacy/V2 timelines because the database already owns the authoritative Job/Step states and ordered event cursor. SSE remains an invalidation hint, not a source of activity truth. Agent Run IDs are distinct from LLM invocation IDs; legacy Jobs never receive fabricated child runs or coverage. The approved visual composition (four KPIs, left Unified Timeline, right Active Agents/Inspector/Source Coverage) is unchanged.

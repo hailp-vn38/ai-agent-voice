@@ -28,8 +28,7 @@ The V2 Root emits JSON delegate/finish decisions and reconstructs joined_childre
 More Root JSON repairs; injecting joined_children into ordinary user prompts; a new LlmProvider wrapper or provider-qualification registry; recursive Agents; automatic model switching; copying provider-native reasoning metadata across providers.
 
 ## References
-- [Implementation](../agent-job-opencode-implementation.md)
-- [V3 flow](../flows/10-agent-job-opencode-v3.md)
+- [Runtime thay thế — ADR 0127](0127-orchestrator-flow-task-and-wiki-runtime.md)
 - [ADR 0103](0103-hierarchical-agent-job-v2.md)
 - [ADR 0113](0113-hybrid-agent-job-native-tool-calling.md)
 

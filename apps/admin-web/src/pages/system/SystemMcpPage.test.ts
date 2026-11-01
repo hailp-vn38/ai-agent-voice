@@ -61,7 +61,10 @@ describe('SystemMcpPage', () => {
     await flushPromises()
 
     const baseUrlInput = wrapper.get('[data-testid="mcp-base-url-input"]')
-    expect((baseUrlInput.element as HTMLInputElement).value).toContain('/mcp/knowledge')
+    expect((baseUrlInput.element as HTMLInputElement).value).toBe(initialState.base_url)
+    expect(wrapper.get('[data-testid="mcp-config-snippet"]').text()).toContain(
+      initialState.base_url,
+    )
     expect(wrapper.get('[data-testid="mcp-config-snippet"]').text()).toContain(
       'Bearer <YOUR_MCP_TOKEN>',
     )

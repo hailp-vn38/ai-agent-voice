@@ -1,5 +1,7 @@
 # ADR 0094 — Rust-owned bounded DAG with frozen Plugin Choices
 
+> **Trạng thái hiện hành: lịch sử, kiến trúc đã được thay thế (2026-11-01).** Runtime hiện tại theo [ADR 0127](0127-orchestrator-flow-task-and-wiki-runtime.md). Các trạng thái, contract và mốc triển khai bên dưới thuộc JobEngine cũ, được giữ để tra cứu quyết định; không dùng làm hướng dẫn triển khai mới.
+
 ## Status
 Proposed, 2026-10-13.
 

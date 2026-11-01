@@ -1,8 +1,10 @@
 # Core TTS Plugin V3 — Implementation record and verification gates
 
+> **Tài liệu lịch sử (2026-11-01).** Nội dung triển khai Plugin/Job V3 bên dưới thuộc runtime trước [ADR 0127](adr/0127-orchestrator-flow-task-and-wiki-runtime.md). Không áp dụng các bước triển khai này cho TaskManager/WorkspaceToolKit hiện tại.
+
 **Reference:** `feat/agent-job-v3-opencode-session-runtime`. **Implementation branch:** `feat/core-tts-provider-plugin-v3`. **Status:** Implementation work committed incrementally; native Rust build/E2E qualification pending.
 
-**Related:** [Flow 13](flows/13-core-tts-v3.md), [ADR 0117](adr/0117-core-tts-provider-pinning.md), [Core activation](adr/0115-core-plugin-activation-policy.md), [Plugin value settings](adr/0116-plugin-value-settings-and-manual-jobs.md), [Job Artifact implementation](agent-job-v3-artifacts-implementation.md).
+**Related:** [Flow 13](flows/13-core-tts-v3.md), [ADR 0117](adr/0117-core-tts-provider-pinning.md), [Core activation](adr/0115-core-plugin-activation-policy.md), [Plugin value settings](adr/0116-plugin-value-settings-and-manual-jobs.md), [Runtime thay thế — ADR 0127](adr/0127-orchestrator-flow-task-and-wiki-runtime.md).
 
 ## Intent and scope
 

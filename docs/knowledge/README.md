@@ -7,8 +7,6 @@ Status: implementation branch. Base: `feat/agent-job-v3-opencode-session-runtime
 Architecture is **file-first hybrid**. Knowledge and Memory are separate domain modules with one internal Markdown/indexing implementation. The existing application SQLite DB remains authoritative for Agent Jobs, Providers, Plugins, and all execution history; `knowledge_index.db` and `memory_index.db` are independently rebuildable read projections.
 
 - [Implementation and staged acceptance](implementation-v3.md)
-- [Knowledge fixed Job: skill/prompt riêng, tool loop và tự publish — phân tích yêu cầu, chưa triển khai](ai-ingest-fixed-job-requirements-v3.md)
-- [Knowledge fixed Job — module/interface, data, recovery và thứ tự triển khai](ai-ingest-fixed-job-implementation-v3.md)
 - [ADR 0125 — native Knowledge tools, Job Skills và tự publish](../adr/0125-knowledge-job-tools-skills-and-publication.md)
 - [AI Ingest, Review Queue, Auto Publish and Knowledge Provider Settings (proposed; aligned to current branch)](ai-ingest-auto-publish-implementation-v3.md)
 - [2026-10-19 branch delta audit: 145 commits and implementation seams](ai-ingest-branch-reconciliation-2026-10-19.md)

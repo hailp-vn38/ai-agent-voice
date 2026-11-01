@@ -1,5 +1,7 @@
 # Flow index
 
+Task nền hiện tại dùng [ADR 0127](../adr/0127-orchestrator-flow-task-and-wiki-runtime.md), [Flow 16](16-task-flow-multi-kind-artifacts.md) và [Web Timeline](09-agent-job-web-timeline.md). Các flow Plugin V3 bên dưới là lịch sử của runtime đã thay thế. Flow 08 Hybrid và Flow 10 OpenCode đã được loại bỏ.
+
 1. [WebSocket](01-websocket.md)
 2. [VAD](02-vad.md)
 3. [ASR](03-asr.md)
@@ -7,9 +9,7 @@
 5. [TTS](05-tts.md)
 6. [Interrupt / cancellation](06-interrupt-cancellation.md)
 7. [Device MCP](07-device-mcp.md)
-8. [Agent Job Hybrid — Rust server](08-agent-job-hybrid.md)
-9. [Agent Job Hybrid — Web Timeline B](09-agent-job-web-timeline.md)
-10. [Agent Job V3 — OpenCode-style Root/Child Sessions](10-agent-job-opencode-v3.md)
+9. [Background Task — Web Timeline](09-agent-job-web-timeline.md)
 11. [Core Plugin Activation V3](11-core-plugin-activation-v3.md)
 12. [Plugin Settings & Manual Operation V3](12-plugin-settings-and-manual-operation-v3.md)
 13. [Knowledge + Memory V3 — Admin API import, draft and publish](13-knowledge-v3.md)

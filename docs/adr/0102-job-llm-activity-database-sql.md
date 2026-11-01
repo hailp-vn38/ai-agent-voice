@@ -1,5 +1,7 @@
 # ADR 0102 — Durable Job LLM Activity and Database-Owned SQL
 
+> **Trạng thái hiện hành: cần đọc theo phạm vi (2026-11-01).** Các chi tiết JobEngine, Plugin Runtime và schema Job cũ bên dưới là lịch sử. Runtime hiện tại theo [ADR 0127](0127-orchestrator-flow-task-and-wiki-runtime.md); hợp đồng JSON Jobs còn được duy trì qua lớp projection.
+
 Status: Accepted for implementation, 2026-10-14.
 
 ## Context

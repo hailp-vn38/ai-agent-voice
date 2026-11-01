@@ -1,8 +1,9 @@
 # ADR 0114 — Built-in Core Operations share the Agent Job execution seam
 
+> **Trạng thái hiện hành: lịch sử.** Đã được thay thế bởi [ADR 0127](0127-orchestrator-flow-task-and-wiki-runtime.md); các bước Core Operation/Job bên dưới không áp dụng cho WorkspaceToolKit hiện tại.
+
 - **Status:** Accepted; bundled catalog scope amended (2026-10-14)
 - **Reference:** `feat/agent-job-hybrid-structured-tools`
-- **Related:** ADR 0103, ADR 0113, `docs/flows/08-agent-job-hybrid.md`
 
 ## Context
 

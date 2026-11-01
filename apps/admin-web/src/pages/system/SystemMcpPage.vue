@@ -85,11 +85,9 @@ function syncFormFromState(data: KnowledgeMcpState) {
 }
 
 const resolvedBaseUrl = computed(() => {
+  if (state.value?.base_url) return state.value.base_url
   const path = state.value?.path || '/mcp/knowledge'
-  if (typeof window !== 'undefined' && window.location?.origin) {
-    return `${window.location.origin}${path.startsWith('/') ? path : `/${path}`}`
-  }
-  return state.value?.base_url || `http://127.0.0.1:8000${path}`
+  return `http://127.0.0.1:8000${path.startsWith('/') ? path : `/${path}`}`
 })
 
 function resolvePlaintextToken(tok: KnowledgeMcpToken): string | undefined {

@@ -1,61 +1,34 @@
-# Flow 16 — Unified Task Flow (`orchestrator_flow_rs`) & Multi-Kind Task Artifacts
+# Flow 16 — Background Task và Multi-Kind Task Artifacts
 
-Tài liệu này mô tả luồng thực thi Task nền hợp nhất trên `voice-agent-server` sử dụng `orchestrator_flow_rs` (`TaskManager`) và `orchestrator_agent_rs` (`Orchestrator`), cùng cơ chế xuất bản, liệt kê và tải xuống **Multi-Kind Task Artifacts** (Báo cáo Markdown, Hình ảnh PNG/SVG, Âm thanh TTS WAV, và Dữ liệu JSON/CSV) qua các Subagent.
+Cập nhật: 2026-11-01. Quyết định nền tảng: [ADR 0127](../adr/0127-orchestrator-flow-task-and-wiki-runtime.md). Web timeline: [Flow 09](09-agent-job-web-timeline.md).
 
----
+## Khởi tạo và thực thi
 
-## 1. Kiến trúc Dual-Flow & Hệ thống Subagent trên `voice-agent-server`
+`crates/voice-agent-server/src/services/task_flow/mod.rs` khởi tạo WikiEngine, Orchestrator và TaskManager. TaskManager được prepare trước để cung cấp HostTool, sau đó bind Orchestrator cùng WikiAutoFlowBinding và bắt đầu chạy. TaskManager sở hữu `tasks.db` và `tasks.owner.lock`; công việc tiếp tục độc lập với Voice Session hay request Admin đã tạo nó.
 
-`crates/voice-agent-server/src/services/task_flow/mod.rs` khởi tạo `TaskManager` và `Orchestrator` với 2 Flow chính:
+- `daily_root` nhận công việc người dùng và điều phối Sub-Agent theo catalog/cấu hình đang có.
+- `wiki_root` xử lý Wiki Auto-Flow khi có Markdown mới trong `sources/`.
+- Voice dùng TaskToolSuite qua `services/task_flow/voice.rs`; Admin tạo và quản lý Task qua `app/admin/background/jobs.rs`.
+- `/api/admin/jobs*` là API tương thích cho Background Task, không phải JobEngine cũ.
 
-### Flow 1 (`daily_root`) — Thu thập Thông tin & Trợ lý Đa chức năng
-- **Root Agent (`daily_root`, `user_routable: true`)**: Chỉ có tool `subagent`, là điểm vào chuẩn duy nhất (`DEFAULT_USER_ROOT_AGENT_ID`) nhận toàn bộ Job từ người dùng / Voice Agent (`task_create`, `reminder_create`) và điều phối tới 5 Subagent chuyên biệt có ranh giới công cụ ghi (write seams) tách biệt:
-  1. `source_collector`: Thu thập nguồn ngoài (`COLLECTOR_TOOL_NAMES`: YouTube Playlist qua `yt_list_playlist` / `yt_fetch_transcript`, tài liệu PDF qua `anydoc_inspect_pdf` / `anydoc_save_to_sources`, hoặc trang Web qua `fetch_html` / `html_extract_*`), phân loại chủ đề `<domain>/<topic>` và lưu file Markdown thô vào `sources/<domain>/<topic>/` (tự động kích hoạt Flow 2).
-  2. `wiki_researcher`: Tra cứu chỉ-đọc kho tri thức Wiki (`wiki_query`, `wiki_get`, `wiki_tree`, `wiki_graph_neighbors`) và trích xuất trang Web (`fetch_html`, `html_extract_*`).
-  3. `report_stager`: Tổng hợp nội dung thảo luận vào `sources/<domain>/<topic>/` qua `add_to_sources` hoặc xuất báo cáo độc lập qua `markdown_create` / `markdown_read`.
-  4. `media_creator`: Chuyên gia tạo hình ảnh minh họa/sơ đồ (`image_create` cho `image/png` và `image/svg+xml`), tạo video (`video_create` cho `video/mp4`), tổng hợp giọng nói TTS qua tool (`tts_synthesize` cho `audio/wav`), và xuất dữ liệu cấu trúc (`artifact_create`).
-  5. `reminder_planner`: Quản lý lịch hẹn và lời nhắc (`reminder_create`, `reminder_list`, `reminder_complete`, `reminder_delete`).
+Cấu hình Agent và tool được resolve trong `services/task_flow/agent_settings/`. Danh mục Sub-Agent và skill có thể được Admin thay đổi, nên không dùng danh sách vai trò hoặc số lượng Agent cố định làm contract runtime. Xem [quản trị Sub-Agent](../subagent-catalog-and-web-management-implementation-guide.md) và [Job Skill Catalog](../job-skill-catalog-and-web-management-implementation-guide.md).
 
-### Flow 2 (`wiki_root`) — Đường ống Biên soạn Tri thức Karpathy LLM Wiki Tự động
-- **Root Agent (`wiki_root`, `user_routable: false`)**: Tự động kích hoạt qua `WikiAutoFlowBinding` khi phát hiện có file mới thêm vào `sources/`, điều phối tuần tự 2 Subagent (`wiki_ingestor`, `wiki_curator`) để biên soạn trang Wiki, tổng hợp Synthesis và kiểm toán `wiki_lint` (hoàn toàn không chứa tool thu thập ngoại vi).
-- **Bảo vệ Điều hướng (`VoiceTaskSubmit`)**:
-  - `VoiceTaskSubmit::tool_definitions()` sử dụng `is_user_routable_root_agent` để chỉ hiển thị các Root Agent có `user_routable == true` (`daily_root`) trong schema `target_agent`.
-  - `VoiceTaskSubmit::execute()` sử dụng `normalize_user_target_agent` để tự động chuyển hướng mọi lệnh gọi legacy (`task_create` hoặc `reminder_create`) có `target_agent = "wiki_root"` (hoặc `"<flow>/wiki_root"`) sang `"daily_root"`.
-- **Đồng bộ Prompts, Built-in Skills & Cấu hình Lưu trữ**:
-  - Toàn bộ hằng số System Prompt chuẩn (`DAILY_ROOT_PROMPT`, `WIKI_ROOT_PROMPT`, `MEDIA_CREATOR_PROMPT`, ...) được dùng chung từ `orchestrator_flow_rs::prompts`. 6 Built-in Job Skills mặc định (`wiki-taxonomy`, `wiki-ingest`, `wiki-query`, `wiki-lint`, `daily-synthesis-staging`, `daily-task-reminder`) được nhúng từ `crates/voice-agent-server/builtin-skills/<id>/SKILL.md` và seed sang thư mục runtime `skills/` khi khởi động.
-  - Danh mục `available_skills` của mọi Subagent (`mode != Primary`) được tổng hợp động từ các skill hợp lệ trong `skills/` (bao gồm cả Built-in và Custom Job Skills do Admin tạo trên Web UI theo ADR 0128). Khi nạp `agent_settings.json`, hệ thống chỉ lọc `allowed_tools` theo `spec.available_tools` (hoặc theo tool pool của Flow đối với Custom Sub-Agent), còn `allowed_skills` được đối chiếu động với danh mục `skills/` hiện hành.
-- **Quản trị Built-in Sub-Agent & Custom Sub-Agent theo Flow (ADR 0129)**:
-  - `PersistedBackgroundSettings` (`agent_settings.json`) đóng vai trò Single State Owner cho cả 7 **Built-in Sub-Agents** (`is_builtin = true`) và các **Custom Sub-Agents** (`is_builtin = false`) do Admin tạo thêm qua `POST /api/admin/background/agents` hoặc xoá qua `DELETE /api/admin/background/agents/{id}` (bảo vệ bằng `If-Match: "<revision>"`).
-  - Mỗi Custom Sub-Agent gắn với một Flow (`flow_id: "daily" | "wiki"`), kế thừa giới hạn tool pool của Flow đó (`CUSTOM_DAILY_SUBAGENT_TOOLS` cho Flow 1, và `CUSTOM_WIKI_SUBAGENT_TOOLS` không chứa tool thu thập ngoại vi cho Flow 2), tự động sinh tệp `<prompts_dir>/<id>.md`, đồng thời cập nhật khối `<active_subagents>` vào tệp prompt của Root Orchestrator (`daily_root.md`, `wiki_root.md`) và nạp nóng qua `Orchestrator::reconfigure`.
+## Xuất bản và đọc artifact
 
----
+HostTool tạo báo cáo Markdown, hình ảnh, video, âm thanh hoặc dữ liệu cấu trúc qua ArtifactStore của Orchestrator. Artifact gắn với cây Session của Task và mang metadata về Agent/tool tạo ra nó. Đây là cơ chế thay thế worker `/work/out` và bảng `job_artifacts` của Job V3 cũ.
 
-## 2. Luồng Xuất bản & Truy vấn Multi-Kind Task Artifacts
+1. Tool xuất bản bytes qua `ctx.artifacts().put(...)`; ArtifactStore quản lý staging, checksum, commit và metadata.
+2. `TaskManager::get_task_detail_any_scope` cung cấp TaskDetailView và artifact thuộc Task.
+3. `project_task_to_admin_job` trong `services/task_flow/projections.rs` xuất metadata tương thích: ID, tên, MIME, loại, vai trò, kích thước, SHA-256, producer Session/Agent/tool và `download_url`.
+4. `GET /api/admin/jobs/{id}/artifacts/{artifact_id}` gọi `read_task_artifact_bytes_any_scope`. Handler hiện nằm ở `app/admin/background/artifacts.rs`; việc đọc phải qua TaskManager để kiểm tra quyền sở hữu và dữ liệu lưu trữ.
+5. `GET /api/admin/artifacts` cung cấp catalog có lọc theo Task, flow, Agent, loại và vai trò artifact.
 
-1. **Xuất bản từ Subagent (`HostTool`)**:
-   - Khi `media_creator` hoặc `report_stager` gọi `markdown_create`, `image_create`, `video_create`, `tts_synthesize`, hoặc `artifact_create`, công cụ thực thi `ctx.artifacts().put(ArtifactInput::from_bytes(...))`.
-   - `orchestrator_agent_rs::ArtifactStore` ghi dữ liệu vào `staging/`, tính SHA-256, `fsync`, đổi tên nguyên tử sang `committed/<storage_key>`, và lưu bản ghi vào bảng `artifacts` gắn với `root_session_id = task.session_id`.
-2. **Tổng hợp trong `TaskDetailView` & `AdminJob` (`projections.rs`)**:
-   - Khi Admin UI gọi `GET /api/admin/jobs/{id}`, `tm.get_task_detail_any_scope(&id)` truy vấn đồng thời `FamilySnapshot` và `Orchestrator::list_family_artifacts` cho `task.session_id`.
-   - `project_task_to_admin_job` ánh xạ `detail.artifacts` sang mảng JSON `"artifacts"`:
-     ```json
-     {
-       "id": "art-...",
-       "artifact_id": "art-...",
-       "task_id": "<job_id>",
-       "name": "b200-voiceover.wav",
-       "mime_type": "audio/wav",
-       "kind": "audio",
-       "role": "primary",
-       "size_bytes": 16044,
-       "sha256": "<sha256_hex>",
-       "producer_session_id": "<child_session_id>",
-       "producer_agent_id": "media_creator",
-       "producer_tool_name": "tts_synthesize",
-       "download_url": "/api/admin/jobs/<job_id>/artifacts/art-..."
-     }
-     ```
-   - Đồng thời `"budget_used"` bổ sung các chỉ số: `total_artifacts`, `primary_artifacts`, `report_artifacts`, `image_artifacts`, `video_artifacts`, `audio_artifacts`, `artifact_ids`.
-3. **Tải xuống có xác minh SHA-256 (`GET /api/admin/jobs/{id}/artifacts/{artifact_id}`)**:
-   - Handler `artifact` trong `crates/voice-agent-server/src/app/admin/background.rs` gọi `tm.read_task_artifact_bytes_any_scope(&id, &artifact_id)`.
-   - Hệ thống kiểm tra `artifact_id` phải thuộc đúng `root_session_id` của Task `{id}`, xác minh kích thước file và chữ ký SHA-256 trên dòng dữ liệu đọc ra, rồi trả về HTTP `200 OK` kèm `Content-Type`, `Content-Disposition: inline; filename="..."` và `ETag: "<sha256>"`.
+Không dùng tên file hiển thị làm storage key. Không tự đọc đường dẫn artifact do model trả về để bỏ qua TaskManager.
+
+## Recovery, chờ và ngân sách
+
+Trạng thái Task và Agent Run do runtime quyết định. Chính sách hiện hành nằm ở [ADR 0133](../adr/0133-durable-waiting-retry-and-job-budgets.md), [ADR 0134](../adr/0134-resumable-tool-operations-and-job-muse-sessions.md) và [hướng dẫn độ bền Job](../agent-job-durability-implementation-guide.md).
+
+Retry/restart không đặt lại ngân sách của cùng một turn. Tool có tác dụng phụ chưa rõ kết quả không được chạy lại mù; tool Resumable phải đối soát từ journal. Task Follow-up là yêu cầu mới và có ngân sách mới. Run chờ được lưu bền, còn Task hết ngân sách ánh xạ sang `stopped` và giữ kết quả từng phần.
+
+Các test local và gate provider thật có phạm vi khác nhau; trạng thái kiểm chứng xem [biên bản durability](../providers/agent-job-durability-validation-2026-10-31.md).

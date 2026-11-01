@@ -1,7 +1,9 @@
 # Knowledge native Job qualification
 
+> **Biên bản lịch sử (đánh dấu 2026-11-01).** Kết quả bên dưới chỉ áp dụng baseline được ghi, thuộc Knowledge Job V3 trước [ADR 0127](../adr/0127-orchestrator-flow-task-and-wiki-runtime.md). Không dùng để xác nhận TaskManager/Wiki Auto-Flow hiện tại đã được kiểm chứng. Các bản yêu cầu và hướng dẫn triển khai V3 cũ đã được loại bỏ.
+
 Implementation baseline: `4317b8fe79d352cf06dd652b5b2970fc294dd366`.
-The implementation follows [P0–P7](ai-ingest-fixed-job-implementation-v3.md) and [ADR 0125](../adr/0125-knowledge-job-tools-skills-and-publication.md).
+Baseline này triển khai thiết kế Knowledge Job cũ theo [ADR 0125](../adr/0125-knowledge-job-tools-skills-and-publication.md).
 
 ## Contracts and rollout
 

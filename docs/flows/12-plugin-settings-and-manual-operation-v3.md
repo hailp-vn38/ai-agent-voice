@@ -1,6 +1,8 @@
 # Flow 12 — Plugin Value Settings and Manual Operation V3
 
-**Status:** Implemented on `feat/plugin-settings-manual-run-v3` (2026-10-15), pending CI / deployment verification. Supplements [Flow 10](10-agent-job-opencode-v3.md) and [Flow 11](11-core-plugin-activation-v3.md).
+> **Tài liệu lịch sử (2026-11-01).** Nội dung triển khai Plugin/Job V3 bên dưới thuộc runtime trước [ADR 0127](../adr/0127-orchestrator-flow-task-and-wiki-runtime.md). Không áp dụng các bước triển khai này cho TaskManager/WorkspaceToolKit hiện tại.
+
+**Status:** Implemented on `feat/plugin-settings-manual-run-v3` (2026-10-15), pending CI / deployment verification. Supplements [Runtime thay thế — ADR 0127](../adr/0127-orchestrator-flow-task-and-wiki-runtime.md) and [Flow 11](11-core-plugin-activation-v3.md).
 
 ## A. Settings write and immutable authority
 

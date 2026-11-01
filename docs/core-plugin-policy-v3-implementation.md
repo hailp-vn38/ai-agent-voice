@@ -1,6 +1,8 @@
 # Core Plugin Policy V3 — Implementation and Acceptance
 
-Status: Implemented in branch `feat/agent-job-v3-core-plugin-policy`, based on `feat/agent-job-v3-opencode-session-runtime`. Related: [ADR 0115](adr/0115-core-plugin-activation-policy.md), [Flow 11](flows/11-core-plugin-activation-v3.md), [OpenCode V3 Flow](flows/10-agent-job-opencode-v3.md).
+> **Tài liệu lịch sử (2026-11-01).** Nội dung triển khai Plugin/Job V3 bên dưới thuộc runtime trước [ADR 0127](adr/0127-orchestrator-flow-task-and-wiki-runtime.md). Không áp dụng các bước triển khai này cho TaskManager/WorkspaceToolKit hiện tại.
+
+Status: Implemented in branch `feat/agent-job-v3-core-plugin-policy`, based on `feat/agent-job-v3-opencode-session-runtime`. Related: [ADR 0115](adr/0115-core-plugin-activation-policy.md), [Flow 11](flows/11-core-plugin-activation-v3.md), [Runtime thay thế — ADR 0127](adr/0127-orchestrator-flow-task-and-wiki-runtime.md).
 
 ## Scope
 
