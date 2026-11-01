@@ -781,3 +781,180 @@ async fn legacy_between_batch_checkpoint_requires_reconciliation() {
     );
     assert!(acc.stream_requests().is_empty());
 }
+
+fn turn_with_chat_error(message: &str) -> super::harness::FakeStreamTurn {
+    super::harness::FakeStreamTurn::media_reply(
+        vec![],
+        vec![],
+        vec![serde_json::json!({ "event": "chat.error", "payload": { "message": message } })],
+    )
+}
+
+fn glitch_history() -> Vec<Vec<serde_json::Value>> {
+    vec![vec![
+        serde_json::json!({ "role": "user", "display_text": "prompt" }),
+        serde_json::json!({ "role": "assistant", "status": "completed", "display_text": "We hit a glitch" }),
+    ]]
+}
+
+async fn settle_spawned_cleanup() {
+    for _ in 0..20 {
+        tokio::task::yield_now().await;
+    }
+}
+
+/// Lỗi của lượt đang chạy phải giữ session để attempt sau nối lại; chỉ khi job kết thúc mới xóa.
+async fn assert_running_failure_keeps_job_session(
+    turn: super::harness::FakeStreamTurn,
+    job_key: &str,
+    is_expected: fn(&LlmError) -> bool,
+) {
+    use super::super::pool::{SharedMusePool, release_job_session};
+    let acc = FakeVmAccount::new(vec![turn]);
+    let transport = FakeMuseVmTransport::new(vec![acc.clone()]);
+    let provider = build_gateway_muse_provider(&[SINGLE_COOKIE], transport.clone()).await;
+    let lease = provider
+        .hub
+        .acquire_lease(&GatewayBinding::Pool(GatewayVendor::Muse))
+        .unwrap();
+    let _pool = SharedMusePool::for_gateway_lease(
+        &reqwest::Client::new(),
+        &lease.account_key,
+        lease.access_token.expose(),
+        Some(transport),
+    );
+
+    let result = provider
+        .submit(&video_request(30, Some(job_key)), None, &Journal::default())
+        .await;
+
+    assert!(
+        result.as_ref().is_err_and(is_expected),
+        "unexpected result: {result:?}"
+    );
+    settle_spawned_cleanup().await;
+    assert_eq!(acc.stream_requests().len(), 1);
+    assert!(
+        acc.deleted_sessions().is_empty(),
+        "the running turn must survive for a later attempt: {:?}",
+        acc.deleted_sessions()
+    );
+
+    let session_id = acc.stream_requests()[0]["session_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert_eq!(
+        release_job_session(job_key).await.as_deref(),
+        Some(session_id.as_str()),
+        "the job must still own the session it retained"
+    );
+    assert_eq!(acc.deleted_sessions(), [session_id]);
+}
+
+#[tokio::test]
+async fn chat_error_on_running_turn_keeps_job_session() {
+    assert_running_failure_keeps_job_session(
+        turn_with_chat_error("stream interrupted"),
+        "running-chat-error",
+        |err| matches!(err, LlmError::Transient),
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn glitch_reply_on_running_turn_keeps_job_session() {
+    let turn = super::harness::FakeStreamTurn::media_reply(vec![], glitch_history(), vec![]);
+    assert_running_failure_keeps_job_session(turn, "running-glitch", |err| {
+        matches!(err, LlmError::Transient)
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn quota_error_on_running_turn_keeps_job_session() {
+    assert_running_failure_keeps_job_session(
+        turn_with_chat_error("You reached your limit"),
+        "running-quota",
+        |err| matches!(err, LlmError::RateLimited { .. }),
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn glitch_reply_while_resuming_keeps_job_session() {
+    let acc = FakeVmAccount::new(vec![]);
+    acc.set_history_polls(glitch_history());
+    let provider = build_gateway_muse_provider(
+        &[SINGLE_COOKIE],
+        FakeMuseVmTransport::new(vec![acc.clone()]),
+    )
+    .await;
+    let mut resumed = state(operation(&provider, 0), 30);
+    resumed.continuation_key = Some("resume-glitch".into());
+
+    let result = provider.resume(&resumed, &Journal::default()).await;
+
+    assert!(matches!(result, Err(LlmError::Transient)), "{result:?}");
+    settle_spawned_cleanup().await;
+    assert!(
+        acc.deleted_sessions().is_empty(),
+        "resume must keep the session for the next attempt: {:?}",
+        acc.deleted_sessions()
+    );
+}
+
+#[tokio::test]
+async fn running_failure_without_job_still_deletes_the_session() {
+    let acc = FakeVmAccount::new(vec![turn_with_chat_error("stream interrupted")]);
+    let provider = build_gateway_muse_provider(
+        &[SINGLE_COOKIE],
+        FakeMuseVmTransport::new(vec![acc.clone()]),
+    )
+    .await;
+
+    let result = provider
+        .submit(&video_request(30, None), None, &Journal::default())
+        .await;
+
+    assert!(matches!(result, Err(LlmError::Transient)), "{result:?}");
+    settle_spawned_cleanup().await;
+    assert_eq!(acc.deleted_sessions().len(), 1);
+}
+
+/// Nhánh này xóa slot nên không còn ai dọn session, kể cả với lease đang retain.
+#[tokio::test]
+async fn failure_before_the_turn_runs_deletes_the_abandoned_job_session() {
+    use super::super::pool::release_job_session;
+    let mut rejected = turn_with_chat_error("unused");
+    rejected.status = 429;
+    let acc = FakeVmAccount::new(vec![
+        full_video_turn("sandbox:///home/user/video.mp4"),
+        rejected,
+    ])
+    .with_file("video.mp4", mp4_with_duration(30));
+    let provider = build_gateway_muse_provider(
+        &[SINGLE_COOKIE],
+        FakeMuseVmTransport::new(vec![acc.clone()]),
+    )
+    .await;
+    let request = video_request(30, Some("abandoned-before-running"));
+    provider
+        .submit(&request, None, &Journal::default())
+        .await
+        .unwrap();
+
+    let result = provider.submit(&request, None, &Journal::default()).await;
+
+    assert!(
+        matches!(result, Err(LlmError::RateLimited { .. })),
+        "{result:?}"
+    );
+    settle_spawned_cleanup().await;
+    let session_id = acc.stream_requests()[0]["session_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert_eq!(acc.deleted_sessions(), [session_id]);
+    assert_eq!(release_job_session("abandoned-before-running").await, None);
+}

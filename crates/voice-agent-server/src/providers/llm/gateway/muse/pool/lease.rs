@@ -36,9 +36,14 @@ impl VmOperationLease {
     }
 
     /// Keeps the Muse session after this operation so a later call of the same job can continue it.
-    /// Failures that condemn the account (`fail_account`) still delete the session.
+    /// Account failures (`fail_account`) keep it too, so a later attempt can resume the running turn.
     pub fn retain_session(&mut self) {
         self.retain_session = true;
+    }
+
+    /// Undoes `retain_session` when no later call will come back to this session.
+    pub fn abandon_session(&mut self) {
+        self.retain_session = false;
     }
 
     pub fn matched_hot(&self) -> Option<&HotConversation> {
@@ -69,7 +74,7 @@ impl VmOperationLease {
         self.cleaned = true;
         self.saved_as_hot = false;
         let sid = self.session_id.trim();
-        if !sid.is_empty() && self.client.is_connected() {
+        if !self.retain_session && !sid.is_empty() && self.client.is_connected() {
             let _ = self.client.delete_session(sid).await;
         }
         self.pool.fail_account(self.account_index, kind).await;

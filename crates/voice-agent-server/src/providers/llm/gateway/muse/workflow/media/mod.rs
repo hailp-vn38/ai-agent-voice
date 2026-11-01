@@ -177,6 +177,10 @@ pub(crate) async fn run_media_turn_once(
 
     if let Err(WorkflowFailure::Upstream(err_kind, _)) = &res {
         let was_running = started_running.load(std::sync::atomic::Ordering::Relaxed);
+        // The job forgets this session below, so nothing else would ever delete it.
+        if !was_running {
+            lease.abandon_session();
+        }
         lease.fail_account(*err_kind).await;
         if !was_running && let (Some(entry), Some(slot)) = (&job, gate.as_mut()) {
             **slot = None;
