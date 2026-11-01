@@ -86,8 +86,7 @@ fn protobuf_request_and_multi_chunk_reassembly_roundtrip() {
         ("accept", "application/json"),
         ("content-type", "application/json"),
     ];
-    let app_req =
-        encode_application_request("POST", "/fs/write", headers, Some(&large_body), true);
+    let app_req = encode_application_request("POST", "/fs/write", headers, Some(&large_body), true);
     let svc_frame = encode_service_frame(42, &app_req);
     let svc_req = encode_service_request(SERVICE_DAEMON, &svc_frame);
 
@@ -246,9 +245,10 @@ fn flatten_messages_and_media_prompts_preserve_structure() {
         !orch_flat.contains("<available_skills>"),
         "available_skills XML must be stripped for Muse prompt"
     );
-    assert!(orch_flat.contains(
-        "[System]\nBạn tìm kiếm tổng hợp thông tin sau đó trả lời bằng một tin nhắn"
-    ));
+    assert!(
+        orch_flat
+            .contains("[System]\nBạn tìm kiếm tổng hợp thông tin sau đó trả lời bằng một tin nhắn")
+    );
     assert!(orch_flat.contains("[User]\nTìm thông tin về Chiến tranh Triều Tiên."));
 
     let img_prompt = format_image_prompt("A neon city", 1920, 1080, true);
@@ -264,17 +264,11 @@ fn flatten_messages_and_media_prompts_preserve_structure() {
 fn remove_background_to_rgba_png_clears_border_background() {
     let encoded = make_test_rgba_png(16, 16, 4..12);
     let out_bytes = remove_background_to_rgba_png(&encoded).expect("remove background");
-    let (w, _h, rgba) =
-        decode_uncompressed_or_simple_png(&out_bytes).expect("decode output png");
-    assert_eq!(
-        rgba[3],
-        0,
-        "corner background must be transparent"
-    );
+    let (w, _h, rgba) = decode_uncompressed_or_simple_png(&out_bytes).expect("decode output png");
+    assert_eq!(rgba[3], 0, "corner background must be transparent");
     let center_idx = ((8 * w + 8) * 4 + 3) as usize;
     assert_eq!(
-        rgba[center_idx],
-        255,
+        rgba[center_idx], 255,
         "center foreground must remain opaque"
     );
 }

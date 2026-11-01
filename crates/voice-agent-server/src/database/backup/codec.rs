@@ -49,9 +49,7 @@ pub(super) fn compute_bundle_checksum(
     Ok(digest.iter().map(|b| format!("{b:02x}")).collect())
 }
 
-pub(super) fn encode_bundle_json(
-    mut bundle: DatabaseBackupBundle,
-) -> Result<Vec<u8>, BackupError> {
+pub(super) fn encode_bundle_json(mut bundle: DatabaseBackupBundle) -> Result<Vec<u8>, BackupError> {
     bundle.checksum_sha256 = Some(compute_bundle_checksum(&bundle)?);
     serde_json::to_vec_pretty(&bundle).map_err(|_| BackupError::InvalidFormat)
 }
@@ -98,13 +96,12 @@ pub(super) async fn export_sqlite_snapshot(
     sqlx::query(&vacuum_sql).execute(pool).await?;
 
     if scope == BackupScope::ConfigOnly {
-        let opts = SqliteConnectOptions::from_str(
-            guard.path.to_str().ok_or(BackupError::Unavailable)?,
-        )
-        .map_err(|_| BackupError::Unavailable)?
-        .create_if_missing(false)
-        .foreign_keys(false)
-        .busy_timeout(Duration::from_secs(5));
+        let opts =
+            SqliteConnectOptions::from_str(guard.path.to_str().ok_or(BackupError::Unavailable)?)
+                .map_err(|_| BackupError::Unavailable)?
+                .create_if_missing(false)
+                .foreign_keys(false)
+                .busy_timeout(Duration::from_secs(5));
         let temp_pool = SqlitePoolOptions::new()
             .max_connections(1)
             .connect_with(opts)
@@ -158,16 +155,15 @@ async fn read_bundle_from_sqlite_bytes(
         .await
         .map_err(|_| BackupError::Unavailable)?;
 
-    let opts = SqliteConnectOptions::from_str(
-        guard.path.to_str().ok_or(BackupError::InvalidFormat)?,
-    )
-    .map_err(|_| BackupError::InvalidFormat)?
-    .read_only(true)
-    .create_if_missing(false)
-    .pragma("trusted_schema", "OFF")
-    .pragma("cell_size_check", "ON")
-    .pragma("query_only", "ON")
-    .busy_timeout(Duration::from_secs(5));
+    let opts =
+        SqliteConnectOptions::from_str(guard.path.to_str().ok_or(BackupError::InvalidFormat)?)
+            .map_err(|_| BackupError::InvalidFormat)?
+            .read_only(true)
+            .create_if_missing(false)
+            .pragma("trusted_schema", "OFF")
+            .pragma("cell_size_check", "ON")
+            .pragma("query_only", "ON")
+            .busy_timeout(Duration::from_secs(5));
 
     let temp_pool = SqlitePoolOptions::new()
         .max_connections(1)

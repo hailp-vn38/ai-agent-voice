@@ -98,10 +98,10 @@ pub(crate) fn extract_sse_error_detail(val: &Value) -> Option<String> {
             return Some(format!("{code}: {msg}"));
         }
     }
-    if let Some(inc) = val
-        .get("incomplete_details")
-        .or_else(|| val.get("response").and_then(|r| r.get("incomplete_details")))
-        && let Some(reason) = inc.get("reason").and_then(Value::as_str)
+    if let Some(inc) = val.get("incomplete_details").or_else(|| {
+        val.get("response")
+            .and_then(|r| r.get("incomplete_details"))
+    }) && let Some(reason) = inc.get("reason").and_then(Value::as_str)
         && !reason.trim().is_empty()
     {
         return Some(format!("incomplete response (reason={})", reason.trim()));

@@ -391,16 +391,7 @@ pub(crate) async fn open_sse_stream_with_detail(
     request: &LlmRequest,
     err_slot: ErrorDetailSlot,
 ) -> Result<LlmEventStream, WireError> {
-    open_sse_stream_internal(
-        http,
-        endpoint_base,
-        lease,
-        config,
-        request,
-        None,
-        err_slot,
-    )
-    .await
+    open_sse_stream_internal(http, endpoint_base, lease, config, request, None, err_slot).await
 }
 
 async fn open_sse_stream_internal(
@@ -648,8 +639,7 @@ async fn open_sse_stream_internal(
                                         let fallback_text = extract_message_item_text(item);
                                         if !fallback_text.is_empty() {
                                             emitted_text = true;
-                                            let _ =
-                                                tx.send(Ok(LlmEvent::TextDelta(fallback_text)));
+                                            let _ = tx.send(Ok(LlmEvent::TextDelta(fallback_text)));
                                         }
                                     } else if matches!(itype, "function_call" | "custom_tool_call")
                                         && pending_tools.is_empty()

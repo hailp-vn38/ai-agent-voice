@@ -261,8 +261,8 @@ fn build_gemini_envelope(
         }));
     }
 
-    let session_num = (uuid::Uuid::new_v4().as_u128() % 9_000_000_000_000_000_000)
-        + 1_000_000_000_000_000_000;
+    let session_num =
+        (uuid::Uuid::new_v4().as_u128() % 9_000_000_000_000_000_000) + 1_000_000_000_000_000_000;
     let mut inner_req = json!({
         "sessionId": format!("-{session_num}"),
         "contents": contents,
@@ -416,11 +416,7 @@ fn emit_gemini_response_parts(
             let _ = tx.send(Ok(LlmEvent::TextDelta(text.to_owned())));
         }
         if let Some(fc) = part.get("functionCall") {
-            let name = fc
-                .get("name")
-                .and_then(Value::as_str)
-                .unwrap_or("")
-                .trim();
+            let name = fc.get("name").and_then(Value::as_str).unwrap_or("").trim();
             if !name.is_empty() {
                 *tool_seq += 1;
                 let id = fc
@@ -548,15 +544,8 @@ pub(crate) async fn execute_vision(
     })];
     let dummy_req = LlmRequest::text_turn(prompt.to_owned());
     let body = build_gemini_envelope(lease, config, &dummy_req, Some(vision_contents));
-    let resp = send_gemini_request(
-        http,
-        endpoint_base,
-        "generateContent",
-        false,
-        lease,
-        &body,
-    )
-    .await?;
+    let resp =
+        send_gemini_request(http, endpoint_base, "generateContent", false, lease, &body).await?;
     let val: Value = resp.json().await.map_err(|_| WireError::Other)?;
     let mut collected = String::new();
     for_each_visible_part(&val, |part| {

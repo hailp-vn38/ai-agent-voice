@@ -2,7 +2,9 @@ use super::super::*;
 use base64::{Engine, engine::general_purpose::STANDARD as BASE64};
 use sqlx::{Row, SqlitePool};
 
-pub(super) async fn fetch_speakers(pool: &SqlitePool) -> Result<Vec<BackupSpeakerRow>, BackupError> {
+pub(super) async fn fetch_speakers(
+    pool: &SqlitePool,
+) -> Result<Vec<BackupSpeakerRow>, BackupError> {
     let rows = sqlx::query(
         "SELECT key, name, description, enabled, created_at, updated_at
          FROM speakers ORDER BY key ASC",

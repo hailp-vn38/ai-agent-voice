@@ -294,9 +294,12 @@ impl LlmProvider for LlmGatewayProvider {
             } => {
                 self.ensure_tag(LlmCapabilityTag::Vision)?;
                 let max_total = self.config.resolved_limits().max_total;
-                tokio::time::timeout(max_total, self.run_vision(&prompt, &image_bytes, &mime_type))
-                    .await
-                    .map_err(|_| LlmError::Timeout)?
+                tokio::time::timeout(
+                    max_total,
+                    self.run_vision(&prompt, &image_bytes, &mime_type),
+                )
+                .await
+                .map_err(|_| LlmError::Timeout)?
             }
             LlmOperation::ImageGeneration {
                 prompt,

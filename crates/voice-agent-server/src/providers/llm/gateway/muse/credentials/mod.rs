@@ -203,8 +203,8 @@ pub(crate) fn normalize_cookie_header(raw: &str) -> Result<String, String> {
     let mut map = BTreeMap::new();
 
     if trimmed.starts_with('[') {
-        let items: Vec<Value> = serde_json::from_str(trimmed)
-            .map_err(|e| format!("invalid cookie JSON array: {e}"))?;
+        let items: Vec<Value> =
+            serde_json::from_str(trimmed).map_err(|e| format!("invalid cookie JSON array: {e}"))?;
         for item in items {
             if let (Some(name), Some(val)) = (
                 item.get("name").and_then(Value::as_str),

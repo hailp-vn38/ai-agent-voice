@@ -106,7 +106,9 @@ impl LlmGatewayProvider {
                     |pool| {
                         let req_ref = &req;
                         let img_slice = std::slice::from_ref(&ref_img);
-                        async move { run_chat_turn_once(&pool, req_ref, img_slice, timeout, |_| {}).await }
+                        async move {
+                            run_chat_turn_once(&pool, req_ref, img_slice, timeout, |_| {}).await
+                        }
                     },
                 )
                 .await?;

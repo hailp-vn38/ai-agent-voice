@@ -428,14 +428,11 @@ impl GeminiOAuthDriver {
 }
 
 pub(crate) fn parse_weekly_quota_summary(data: &Value) -> Vec<GatewayQuotaWindow> {
-    let groups = data
-        .get("groups")
-        .and_then(Value::as_array)
-        .or_else(|| {
-            data.get("quotaSummary")
-                .and_then(|q| q.get("groups"))
-                .and_then(Value::as_array)
-        });
+    let groups = data.get("groups").and_then(Value::as_array).or_else(|| {
+        data.get("quotaSummary")
+            .and_then(|q| q.get("groups"))
+            .and_then(Value::as_array)
+    });
     let Some(groups) = groups else {
         return Vec::new();
     };
@@ -465,10 +462,7 @@ pub(crate) fn parse_weekly_quota_summary(data: &Value) -> Vec<GatewayQuotaWindow
                 .to_ascii_lowercase();
             let bucket_text = format!(
                 "{} {}",
-                bucket
-                    .get("bucketId")
-                    .and_then(Value::as_str)
-                    .unwrap_or(""),
+                bucket.get("bucketId").and_then(Value::as_str).unwrap_or(""),
                 bucket
                     .get("displayName")
                     .and_then(Value::as_str)
@@ -573,8 +567,7 @@ fn parse_gemini_quota_payload_with_tier(
                 unit: Some("req".to_owned()),
             });
         }
-    } else if !is_free_tier
-        && let Some(models_obj) = data.get("models").and_then(Value::as_object)
+    } else if !is_free_tier && let Some(models_obj) = data.get("models").and_then(Value::as_object)
     {
         for &model_key in IMPORTANT_ANTIGRAVITY_MODELS {
             let Some(info) = models_obj.get(model_key) else {
@@ -764,10 +757,7 @@ impl OAuthVendorDriver for GeminiOAuthDriver {
         let ctx = self
             .fetch_code_assist_context(&bundle.access_token, false)
             .await;
-        let project_id = ctx
-            .project_id
-            .clone()
-            .or_else(|| existing_project.clone());
+        let project_id = ctx.project_id.clone().or_else(|| existing_project.clone());
         let discovered_to_persist = if existing_project.is_none() {
             project_id.clone()
         } else {
@@ -833,7 +823,11 @@ impl OAuthVendorDriver for GeminiOAuthDriver {
             .fetch_weekly_summary_windows(&bundle.access_token, project_id.as_deref())
             .await;
         for w in weekly_windows {
-            if !snapshot.windows.iter().any(|existing| existing.name == w.name) {
+            if !snapshot
+                .windows
+                .iter()
+                .any(|existing| existing.name == w.name)
+            {
                 if w.remaining_percentage <= 0.0 {
                     snapshot.limit_reached = true;
                 }

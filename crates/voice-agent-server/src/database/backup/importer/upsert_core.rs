@@ -145,9 +145,9 @@ pub(super) async fn upsert_providers_and_templates(
                     b.template_key, b.provider_type
                 ))
             })?;
-            let &pid = provider_map.get(pkey).ok_or_else(|| {
-                BackupError::InvalidReference(format!("provider:{pkey}"))
-            })?;
+            let &pid = provider_map
+                .get(pkey)
+                .ok_or_else(|| BackupError::InvalidReference(format!("provider:{pkey}")))?;
             (Some(pid), None)
         } else {
             (None, b.config_provider_key.clone())
@@ -472,9 +472,11 @@ pub(super) async fn upsert_mcp_and_devices(
             )));
         };
         let tid = match d.template_key.as_deref() {
-            Some(tk) => Some(*template_map.get(tk).ok_or_else(|| {
-                BackupError::InvalidReference(format!("template:{tk}"))
-            })?),
+            Some(tk) => Some(
+                *template_map
+                    .get(tk)
+                    .ok_or_else(|| BackupError::InvalidReference(format!("template:{tk}")))?,
+            ),
             None => None,
         };
         upsert_device_row(tx, d, aid, tid, now).await?;

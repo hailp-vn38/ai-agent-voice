@@ -310,15 +310,20 @@ async fn json_and_sqlite_roundtrip_preserve_revisions_web_assistant_and_constrai
 
     assert!(outcome.report.applied_background_settings);
     assert!(outcome.report.applied_knowledge_mcp_settings);
-    assert!(sys_mcp_token.is_cancelled(), "system_mcp token must be invalidated by Database::import_backup");
-    assert!(spk_token.is_cancelled(), "speaker token must be invalidated by Database::import_backup");
+    assert!(
+        sys_mcp_token.is_cancelled(),
+        "system_mcp token must be invalidated by Database::import_backup"
+    );
+    assert!(
+        spk_token.is_cancelled(),
+        "speaker token must be invalidated by Database::import_backup"
+    );
 
     // Verify monotonic revision bump: provider 'llm-main' was at rev 10, must now be 11
-    let prov_rev: i64 =
-        sqlx::query_scalar("SELECT revision FROM providers WHERE key = 'llm-main'")
-            .fetch_one(dst_db.pool())
-            .await
-            .unwrap();
+    let prov_rev: i64 = sqlx::query_scalar("SELECT revision FROM providers WHERE key = 'llm-main'")
+        .fetch_one(dst_db.pool())
+        .await
+        .unwrap();
     assert_eq!(prov_rev, 11);
 
     // Verify singleton web_assistant preserved destination device_id ('web_assistant_dest_uuid')
@@ -337,7 +342,10 @@ async fn json_and_sqlite_roundtrip_preserve_revisions_web_assistant_and_constrai
     .fetch_one(dst_db.pool())
     .await
     .unwrap();
-    assert!(rem_sync_rev >= 7, "device_reminder_sync.schedule_revision must be >= imported reminder's schedule_revision (7)");
+    assert!(
+        rem_sync_rev >= 7,
+        "device_reminder_sync.schedule_revision must be >= imported reminder's schedule_revision (7)"
+    );
 
     let hist_text: String = sqlx::query_scalar(
         "SELECT h.text FROM history_messages h
@@ -429,7 +437,10 @@ async fn json_and_sqlite_roundtrip_preserve_revisions_web_assistant_and_constrai
         })
         .await
         .expect("import sqlite with credential scrub");
-    assert_eq!(outcome_other_key.report.detected_format, BackupFormat::Sqlite);
+    assert_eq!(
+        outcome_other_key.report.detected_format,
+        BackupFormat::Sqlite
+    );
     assert_eq!(outcome_other_key.effective_scope, BackupScope::ConfigOnly);
     assert_eq!(outcome_other_key.report.credentials.unreadable, 4);
 

@@ -654,10 +654,7 @@ fn tts_constraints_and_voice_resolution_across_all_adapters() {
 
     // 5. Kokoro VI (`manh_dung` male default -> `ngoc_huyen` female)
     let kokoro = make_prov("kokoro_vi_onnx", "kokoro_vi_contextbox:manh_dung");
-    assert_eq!(
-        kokoro.resolve_tts_voice(None, Some("female")),
-        "ngoc_huyen"
-    );
+    assert_eq!(kokoro.resolve_tts_voice(None, Some("female")), "ngoc_huyen");
     assert_eq!(kokoro.resolve_tts_voice(None, Some("male")), "manh_dung");
 
     // 6. ChillAudio WS (`BV075_streaming` male default -> `BV421_vivn_streaming` female)
@@ -694,7 +691,9 @@ async fn server_tts_runtime_synthesizes_with_female_voice_override_when_bound_to
             &mut self,
             request: &crate::providers::TtsSynthesisRequest,
             _cancelled: &std::sync::atomic::AtomicBool,
-            on_pcm: &mut dyn FnMut(crate::audio::PcmF32Mono) -> Result<(), crate::providers::TtsError>,
+            on_pcm: &mut dyn FnMut(
+                crate::audio::PcmF32Mono,
+            ) -> Result<(), crate::providers::TtsError>,
         ) -> Result<(), crate::providers::TtsError> {
             if request.selection.voice != "__readiness__" && request.selection.language == "und" {
                 return Err(crate::providers::TtsError::UnsupportedLanguage(
@@ -935,15 +934,16 @@ async fn server_tts_runtime_synthesizes_with_female_voice_override_when_bound_to
 #[test]
 fn chillaudio_validate_and_synthesize_diagnostic_accept_supported_voices() {
     use crate::providers::TtsProvider;
-    let provider = crate::providers::tts::ChillAudioWsProvider::new(crate::config::ChillAudioWsConfig {
-        ws_url: "ws://127.0.0.1:9/ws".parse().unwrap(),
-        app_key: crate::config::SecretString::new("key"),
-        token: crate::config::SecretString::new("token"),
-        voice: "BV075_streaming".into(),
-        language: "vi".into(),
-        timeout_ms: 500,
-        preload: false,
-    });
+    let provider =
+        crate::providers::tts::ChillAudioWsProvider::new(crate::config::ChillAudioWsConfig {
+            ws_url: "ws://127.0.0.1:9/ws".parse().unwrap(),
+            app_key: crate::config::SecretString::new("key"),
+            token: crate::config::SecretString::new("token"),
+            voice: "BV075_streaming".into(),
+            language: "vi".into(),
+            timeout_ms: 500,
+            preload: false,
+        });
     for valid_voice in [
         "BV421_vivn_streaming",
         "vi_female_huong",
@@ -999,10 +999,7 @@ fn chillaudio_validate_and_synthesize_diagnostic_accept_supported_voices() {
     ));
 
     assert_eq!(
-        crate::providers::tts::voice_catalog::split_adapter_model_and_voice(
-            "openai",
-            "tts-1:onyx"
-        ),
+        crate::providers::tts::voice_catalog::split_adapter_model_and_voice("openai", "tts-1:onyx"),
         ("tts-1", Some("onyx"))
     );
     assert_eq!(

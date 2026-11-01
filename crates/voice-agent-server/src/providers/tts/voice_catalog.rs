@@ -105,11 +105,8 @@ pub const KOKORO_MALE_VOICES: &[&str] = &[
     "storyvert",
 ];
 
-pub const CHILLAUDIO_FEMALE_VOICES: &[&str] = &[
-    "BV421_vivn_streaming",
-    "vi_female_huong",
-    "BV074_streaming",
-];
+pub const CHILLAUDIO_FEMALE_VOICES: &[&str] =
+    &["BV421_vivn_streaming", "vi_female_huong", "BV074_streaming"];
 pub const CHILLAUDIO_MALE_VOICES: &[&str] = &["BV075_streaming"];
 
 pub const VIFASTTTS_FEMALE_VOICES: &[&str] = &["ngoc_huyen"];
@@ -320,63 +317,59 @@ pub fn catalog_for_adapter(
     let vieneu_model = resolve_vieneu_model(model_or_voice_spec, runtime_default_voice);
     let (_, spec_voice) = split_model_and_voice_spec(model_or_voice_spec);
 
-    let (fallback_default, female_slice, male_slice, guidance): (
-        &str,
-        &[&str],
-        &[&str],
-        &str,
-    ) = match adapter {
-        "vieneu" => match vieneu_model {
-            VieneuModel::V3TurboFp32 => (
-                "hai_dang",
-                VIENEU_TURBO_FEMALE_VOICES,
-                VIENEU_TURBO_MALE_VOICES,
-                "For a female voice on VieNeu v3 Turbo, choose one of the advertised female_voices (default female: 'ngoc_huyen'). For a male voice, choose one of male_voices (default male: 'hai_dang').",
+    let (fallback_default, female_slice, male_slice, guidance): (&str, &[&str], &[&str], &str) =
+        match adapter {
+            "vieneu" => match vieneu_model {
+                VieneuModel::V3TurboFp32 => (
+                    "hai_dang",
+                    VIENEU_TURBO_FEMALE_VOICES,
+                    VIENEU_TURBO_MALE_VOICES,
+                    "For a female voice on VieNeu v3 Turbo, choose one of the advertised female_voices (default female: 'ngoc_huyen'). For a male voice, choose one of male_voices (default male: 'hai_dang').",
+                ),
+                VieneuModel::V3NanoFp32 => (
+                    "minh_quan",
+                    VIENEU_NANO_FEMALE_VOICES,
+                    VIENEU_NANO_MALE_VOICES,
+                    "For a female voice on VieNeu v3 Nano, choose one of ['my_duyen', 'mai_anh', 'truc_ly', 'ai_han'] (default female: 'my_duyen'). For a male voice, choose one of male_voices (default male: 'minh_quan').",
+                ),
+            },
+            "zerotts_onnx" => (
+                "giahuy",
+                ZEROTTS_FEMALE_VOICES,
+                ZEROTTS_MALE_VOICES,
+                "For a female voice on ZeroTTS, choose 'maichi', 'baotrang', 'hamy', or 'kimoanh'. For a male voice, choose 'giahuy', 'huuduc', 'quangminh', or 'tiendat'.",
             ),
-            VieneuModel::V3NanoFp32 => (
-                "minh_quan",
-                VIENEU_NANO_FEMALE_VOICES,
-                VIENEU_NANO_MALE_VOICES,
-                "For a female voice on VieNeu v3 Nano, choose one of ['my_duyen', 'mai_anh', 'truc_ly', 'ai_han'] (default female: 'my_duyen'). For a male voice, choose one of male_voices (default male: 'minh_quan').",
+            "edge_tts" => (
+                "vi-VN-HoaiMyNeural",
+                EDGE_ADVERTISED_FEMALE_VOICES,
+                EDGE_ADVERTISED_MALE_VOICES,
+                "For Vietnamese female narration choose 'vi-VN-HoaiMyNeural'; for Vietnamese male narration choose 'vi-VN-NamMinhNeural'.",
             ),
-        },
-        "zerotts_onnx" => (
-            "giahuy",
-            ZEROTTS_FEMALE_VOICES,
-            ZEROTTS_MALE_VOICES,
-            "For a female voice on ZeroTTS, choose 'maichi', 'baotrang', 'hamy', or 'kimoanh'. For a male voice, choose 'giahuy', 'huuduc', 'quangminh', or 'tiendat'.",
-        ),
-        "edge_tts" => (
-            "vi-VN-HoaiMyNeural",
-            EDGE_ADVERTISED_FEMALE_VOICES,
-            EDGE_ADVERTISED_MALE_VOICES,
-            "For Vietnamese female narration choose 'vi-VN-HoaiMyNeural'; for Vietnamese male narration choose 'vi-VN-NamMinhNeural'.",
-        ),
-        "kokoro_vi_onnx" => (
-            "diem_trinh",
-            KOKORO_FEMALE_VOICES,
-            KOKORO_MALE_VOICES,
-            "For a female voice on Kokoro Vietnamese, choose 'ngoc_huyen' or 'diem_trinh'. For a male voice, choose 'manh_dung' or 'duc_an'.",
-        ),
-        "chillaudio_ws" => (
-            "BV421_vivn_streaming",
-            CHILLAUDIO_FEMALE_VOICES,
-            CHILLAUDIO_MALE_VOICES,
-            "For a female voice on ChillAudio, choose 'BV421_vivn_streaming', 'vi_female_huong', or 'BV074_streaming'. For a male voice, choose 'BV075_streaming'.",
-        ),
-        "vifasttts_onnx" => (
-            "ngoc_huyen",
-            VIFASTTTS_FEMALE_VOICES,
-            VIFASTTTS_MALE_VOICES,
-            "ViFastTTS supports a single Vietnamese female voice: 'ngoc_huyen'.",
-        ),
-        _ => (
-            "alloy",
-            OPENAI_FEMALE_VOICES,
-            OPENAI_MALE_VOICES,
-            "For a female voice on OpenAI Speech, choose 'nova', 'shimmer', 'coral', or 'sage'. For a male voice, choose 'onyx', 'echo', 'ash', 'ballad', or 'fable'.",
-        ),
-    };
+            "kokoro_vi_onnx" => (
+                "diem_trinh",
+                KOKORO_FEMALE_VOICES,
+                KOKORO_MALE_VOICES,
+                "For a female voice on Kokoro Vietnamese, choose 'ngoc_huyen' or 'diem_trinh'. For a male voice, choose 'manh_dung' or 'duc_an'.",
+            ),
+            "chillaudio_ws" => (
+                "BV421_vivn_streaming",
+                CHILLAUDIO_FEMALE_VOICES,
+                CHILLAUDIO_MALE_VOICES,
+                "For a female voice on ChillAudio, choose 'BV421_vivn_streaming', 'vi_female_huong', or 'BV074_streaming'. For a male voice, choose 'BV075_streaming'.",
+            ),
+            "vifasttts_onnx" => (
+                "ngoc_huyen",
+                VIFASTTTS_FEMALE_VOICES,
+                VIFASTTTS_MALE_VOICES,
+                "ViFastTTS supports a single Vietnamese female voice: 'ngoc_huyen'.",
+            ),
+            _ => (
+                "alloy",
+                OPENAI_FEMALE_VOICES,
+                OPENAI_MALE_VOICES,
+                "For a female voice on OpenAI Speech, choose 'nova', 'shimmer', 'coral', or 'sage'. For a male voice, choose 'onyx', 'echo', 'ash', 'ballad', or 'fable'.",
+            ),
+        };
 
     let resolved_default = runtime_default_voice
         .and_then(|v| match_adapter_voice(adapter, vieneu_model, v).map(|(id, _)| id))
@@ -445,8 +438,8 @@ pub fn resolve_tts_voice(
     });
 
     if let Some(gender) = target_gender {
-        let default_gender = match_adapter_voice(adapter, vieneu_model, &catalog.default_voice)
-            .map(|(_, g)| g);
+        let default_gender =
+            match_adapter_voice(adapter, vieneu_model, &catalog.default_voice).map(|(_, g)| g);
         if default_gender == Some(gender) {
             return catalog.default_voice;
         }

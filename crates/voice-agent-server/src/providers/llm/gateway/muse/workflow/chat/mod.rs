@@ -298,11 +298,8 @@ where
                 && resp.status == 200
                 && let Ok(history_json) = resp.json()
             {
-                if is_stale_followup_history(
-                    &history_json,
-                    expected_user_turns,
-                    &effective_prompt,
-                ) {
+                if is_stale_followup_history(&history_json, expected_user_turns, &effective_prompt)
+                {
                     if message_done_seen && !session_running_seen && !emitted_text.trim().is_empty()
                     {
                         completed = true;
@@ -319,7 +316,11 @@ where
                         return Err(WorkflowFailure::Upstream(kind, reason));
                     }
                     let mut emit_delta = |d| on_signal(ChatSignal::Delta(d));
-                    if reconcile_and_emit_history_text(&mut emitted_text, &history_text, &mut emit_delta) {
+                    if reconcile_and_emit_history_text(
+                        &mut emitted_text,
+                        &history_text,
+                        &mut emit_delta,
+                    ) {
                         unchanged_ticks = 0;
                         last_polled_text = history_text.clone();
                     }

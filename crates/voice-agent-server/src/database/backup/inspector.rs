@@ -237,20 +237,19 @@ pub(super) async fn inspect_bundle(
     let mut resources = Vec::new();
     let mut totals = BackupTotals::default();
 
-    let mut add_resource =
-        |name: &str, in_backup: u64, (c, u, d, un): (u64, u64, u64, u64)| {
-            totals.to_create += c;
-            totals.to_update += u;
-            totals.to_delete += d;
-            totals.unchanged += un;
-            resources.push(BackupResourceCount {
-                resource: name.to_owned(),
-                in_backup,
-                to_create: c,
-                to_update: u,
-                to_delete: d,
-            });
-        };
+    let mut add_resource = |name: &str, in_backup: u64, (c, u, d, un): (u64, u64, u64, u64)| {
+        totals.to_create += c;
+        totals.to_update += u;
+        totals.to_delete += d;
+        totals.unchanged += un;
+        resources.push(BackupResourceCount {
+            resource: name.to_owned(),
+            in_backup,
+            to_create: c,
+            to_update: u,
+            to_delete: d,
+        });
+    };
 
     // Core keyed tables
     for (resource, sql, backup_keys) in [
@@ -304,11 +303,10 @@ pub(super) async fn inspect_bundle(
         "SELECT device_id FROM devices WHERE kind = 'physical'",
     )
     .await?;
-    let has_existing_web_assistant: i64 = sqlx::query_scalar(
-        "SELECT EXISTS(SELECT 1 FROM devices WHERE kind = 'web_assistant')",
-    )
-    .fetch_one(pool)
-    .await?;
+    let has_existing_web_assistant: i64 =
+        sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM devices WHERE kind = 'web_assistant')")
+            .fetch_one(pool)
+            .await?;
     let backup_physical: HashSet<String> = bundle
         .devices
         .iter()
@@ -390,10 +388,9 @@ pub(super) async fn inspect_bundle(
             diff_key_sets(&backup_history, &existing_history, options.mode),
         );
 
-        let existing_inbox_rows =
-            sqlx::query("SELECT id, dedup_key FROM notifications_inbox")
-                .fetch_all(pool)
-                .await?;
+        let existing_inbox_rows = sqlx::query("SELECT id, dedup_key FROM notifications_inbox")
+            .fetch_all(pool)
+            .await?;
         let existing_ids: HashSet<String> =
             existing_inbox_rows.iter().map(|r| r.get("id")).collect();
         let existing_dedups: HashSet<String> = existing_inbox_rows
@@ -416,8 +413,7 @@ pub(super) async fn inspect_bundle(
                 in_c += 1;
             }
         }
-        let unmatched_existing =
-            existing_inbox_rows.len().saturating_sub(matched_existing) as u64;
+        let unmatched_existing = existing_inbox_rows.len().saturating_sub(matched_existing) as u64;
         let (in_d, in_un) = match options.mode {
             ImportMode::Merge => (0, unmatched_existing),
             ImportMode::Replace => (unmatched_existing, 0),

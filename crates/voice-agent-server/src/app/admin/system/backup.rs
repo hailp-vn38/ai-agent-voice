@@ -43,27 +43,35 @@ fn parse_import_options(query: ImportBackupQuery) -> Result<BackupImportOptions,
 
 fn map_backup_error(request: &Request, err: BackupError) -> Response {
     match err {
-        BackupError::EmptyPayload => error(request, StatusCode::BAD_REQUEST, "backup_payload_empty"),
-        BackupError::PayloadTooLarge => {
-            error(request, StatusCode::PAYLOAD_TOO_LARGE, "backup_payload_too_large")
+        BackupError::EmptyPayload => {
+            error(request, StatusCode::BAD_REQUEST, "backup_payload_empty")
         }
+        BackupError::PayloadTooLarge => error(
+            request,
+            StatusCode::PAYLOAD_TOO_LARGE,
+            "backup_payload_too_large",
+        ),
         BackupError::InvalidFormat => {
             error(request, StatusCode::BAD_REQUEST, "backup_invalid_format")
         }
         BackupError::ChecksumMismatch => {
             error(request, StatusCode::BAD_REQUEST, "backup_checksum_mismatch")
         }
-        BackupError::UnsupportedVersion => {
-            error(request, StatusCode::BAD_REQUEST, "backup_unsupported_version")
-        }
+        BackupError::UnsupportedVersion => error(
+            request,
+            StatusCode::BAD_REQUEST,
+            "backup_unsupported_version",
+        ),
         BackupError::UnreadableCredentials => error(
             request,
             StatusCode::UNPROCESSABLE_ENTITY,
             "backup_unreadable_credentials",
         ),
-        BackupError::InvalidReference(_) => {
-            error(request, StatusCode::UNPROCESSABLE_ENTITY, "backup_reference_invalid")
-        }
+        BackupError::InvalidReference(_) => error(
+            request,
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "backup_reference_invalid",
+        ),
         BackupError::Busy => error(request, StatusCode::SERVICE_UNAVAILABLE, "database_busy"),
         BackupError::Unavailable => error(
             request,
@@ -118,10 +126,9 @@ pub(in crate::app::admin) async fn export_backup(
                 header::CONTENT_TYPE,
                 HeaderValue::from_static(exported.content_type),
             );
-            if let Ok(disposition) = HeaderValue::from_str(&format!(
-                "attachment; filename=\"{}\"",
-                exported.filename
-            )) {
+            if let Ok(disposition) =
+                HeaderValue::from_str(&format!("attachment; filename=\"{}\"", exported.filename))
+            {
                 response
                     .headers_mut()
                     .insert(header::CONTENT_DISPOSITION, disposition);

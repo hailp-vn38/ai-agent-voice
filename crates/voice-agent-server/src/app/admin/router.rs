@@ -321,11 +321,9 @@ fn system_routes() -> Router<AppState> {
         )
         .route(
             "/system/backup/import",
-            axum::routing::post(system::import_backup).layer(
-                axum::extract::DefaultBodyLimit::max(
-                    crate::database::backup::MAX_BACKUP_BODY_BYTES + 80 * 1024,
-                ),
-            ),
+            axum::routing::post(system::import_backup).layer(axum::extract::DefaultBodyLimit::max(
+                crate::database::backup::MAX_BACKUP_BODY_BYTES + 80 * 1024,
+            )),
         )
         .route(
             "/system/assistant-device",

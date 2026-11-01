@@ -73,7 +73,12 @@ pub(crate) async fn extract_wss_via_chromium(
     let page = engine
         .open_page(context_key, &cookie_params)
         .await
-        .map_err(|e| (UpstreamFailureKind::Transient, format!("cdp open_page: {e}")))?;
+        .map_err(|e| {
+            (
+                UpstreamFailureKind::Transient,
+                format!("cdp open_page: {e}"),
+            )
+        })?;
 
     let result = async {
         page.navigate(NEW_THREAD_URL)
@@ -114,10 +119,7 @@ pub(crate) async fn extract_wss_via_chromium(
                     "Chromium fallback missing authToken".to_string(),
                 )
             })?;
-        let notary_token = val
-            .get("notaryToken")
-            .and_then(Value::as_str)
-            .unwrap_or("");
+        let notary_token = val.get("notaryToken").and_then(Value::as_str).unwrap_or("");
         let discovered_email = val
             .get("email")
             .and_then(Value::as_str)

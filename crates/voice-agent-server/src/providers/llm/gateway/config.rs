@@ -141,8 +141,10 @@ pub struct LlmGatewayConfig {
 
 impl LlmGatewayConfig {
     pub fn default_timeout_profile(&self) -> TimeoutProfile {
-        if matches!(&self.gateway_binding, GatewayBinding::Pool(GatewayVendor::Muse))
-            || self.model.trim().to_ascii_lowercase().starts_with("muse")
+        if matches!(
+            &self.gateway_binding,
+            GatewayBinding::Pool(GatewayVendor::Muse)
+        ) || self.model.trim().to_ascii_lowercase().starts_with("muse")
         {
             TimeoutProfile::Agentic
         } else {
@@ -219,7 +221,8 @@ mod tests {
 
     #[test]
     fn profile_resolve_legacy_60s_does_not_cap_standard_or_agentic() {
-        let raw = r#"{"gateway_binding":"pool:openai_codex","model":"gpt-5.3-codex","timeout_ms":60000}"#;
+        let raw =
+            r#"{"gateway_binding":"pool:openai_codex","model":"gpt-5.3-codex","timeout_ms":60000}"#;
         let cfg: LlmGatewayConfig = serde_json::from_str(raw).expect("parse legacy config");
         assert!(cfg.valid());
         let limits = cfg.resolved_limits();
@@ -238,7 +241,11 @@ mod tests {
 
     #[test]
     fn profile_resolve_legacy_larger_than_default_raises_max_total() {
-        let limits = resolve(Some(TimeoutProfile::Standard), CustomLimits::default(), 900_000);
+        let limits = resolve(
+            Some(TimeoutProfile::Standard),
+            CustomLimits::default(),
+            900_000,
+        );
         assert_eq!(limits.first_byte, Duration::from_secs(120));
         assert_eq!(limits.idle, Duration::from_secs(90));
         assert_eq!(limits.max_total, Duration::from_secs(900));

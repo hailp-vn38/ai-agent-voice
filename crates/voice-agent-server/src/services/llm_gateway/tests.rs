@@ -1475,17 +1475,11 @@ async fn gemini_antigravity_driver_oauth_onboard_user_and_dual_client_refresh() 
 
     // 1. Verify authorize URL uses Antigravity client_id and scopes
     let auth_url = driver
-        .build_pkce_authorize_url(
-            "st_123",
-            "chal_456",
-            "http://localhost:8085/oauth2callback",
-        )
+        .build_pkce_authorize_url("st_123", "chal_456", "http://localhost:8085/oauth2callback")
         .expect("authorize url");
-    assert!(
-        auth_url.contains(
-            "client_id=1071006060591-tmhssin2h21lcre235vtolojh4g403ep.apps.googleusercontent.com"
-        )
-    );
+    assert!(auth_url.contains(
+        "client_id=1071006060591-tmhssin2h21lcre235vtolojh4g403ep.apps.googleusercontent.com"
+    ));
     assert!(auth_url.contains("cclog"));
     assert!(auth_url.contains("experimentsandconfigs"));
 
@@ -1510,10 +1504,7 @@ async fn gemini_antigravity_driver_oauth_onboard_user_and_dual_client_refresh() 
     assert_eq!(onboard_calls.load(Ordering::SeqCst), 1);
 
     let extra_headers = driver.extra_headers_for(&exchanged.bundle);
-    assert!(extra_headers.contains(&(
-        "User-Agent".to_owned(),
-        ANTIGRAVITY_USER_AGENT.to_owned()
-    )));
+    assert!(extra_headers.contains(&("User-Agent".to_owned(), ANTIGRAVITY_USER_AGENT.to_owned())));
 
     // 3. Verify dual-client refresh fallback for legacy GEMINI_CLI_CLIENT_ID token + lazy project ID discovery
     let legacy_bundle = OAuthTokenBundle {
@@ -1770,7 +1761,10 @@ async fn llm_gateway_muse_auto_refresh_multi_tier_fallback_and_watchdog_recovery
         .proactive_refresh_expiring(300)
         .await
         .expect("watchdog proactive_refresh_expiring");
-    assert_eq!(recovered_count, 1, "watchdog must auto-recover Muse account from oauth_exchange_failed");
+    assert_eq!(
+        recovered_count, 1,
+        "watchdog must auto-recover Muse account from oauth_exchange_failed"
+    );
 
     let accounts_after = hub
         .list_accounts(Some(GatewayVendor::Muse))
@@ -1787,5 +1781,3 @@ async fn llm_gateway_muse_auto_refresh_multi_tier_fallback_and_watchdog_recovery
             .is_ok()
     );
 }
-
-

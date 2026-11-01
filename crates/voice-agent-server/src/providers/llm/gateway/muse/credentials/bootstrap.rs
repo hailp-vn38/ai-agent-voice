@@ -185,7 +185,12 @@ pub(crate) async fn fetch_wss_from_cookie_http(
         .header(USER_AGENT, DEFAULT_USER_AGENT)
         .send()
         .await
-        .map_err(|e| (UpstreamFailureKind::Transient, format!("GET {base}/ failed: {e}")))?;
+        .map_err(|e| {
+            (
+                UpstreamFailureKind::Transient,
+                format!("GET {base}/ failed: {e}"),
+            )
+        })?;
 
     let page_status = page_resp.status().as_u16();
     current_cookie = merge_set_cookies(&current_cookie, page_resp.headers());
@@ -195,10 +200,12 @@ pub(crate) async fn fetch_wss_from_cookie_http(
             format!("GET {base}/ unauthorized (HTTP {page_status})"),
         ));
     }
-    let html = page_resp
-        .text()
-        .await
-        .map_err(|e| (UpstreamFailureKind::Transient, format!("failed reading {base}/ body: {e}")))?;
+    let html = page_resp.text().await.map_err(|e| {
+        (
+            UpstreamFailureKind::Transient,
+            format!("failed reading {base}/ body: {e}"),
+        )
+    })?;
 
     if let Some((wss_url, vm_id)) = extract_wss_from_ssr_html(&html) {
         return Ok(BootstrappedMuseSession {

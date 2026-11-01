@@ -212,16 +212,10 @@ pub fn parse_accounts(raw: &str) -> Vec<MuseAccountCredential> {
                 .map(|(idx, mut acc)| {
                     acc.label = sanitize_account_label(&acc.label, idx);
                     if acc.wss_expires.is_none() {
-                        acc.wss_expires = acc
-                            .wss_url
-                            .as_deref()
-                            .and_then(get_wss_expiry_unix_secs);
+                        acc.wss_expires = acc.wss_url.as_deref().and_then(get_wss_expiry_unix_secs);
                     }
                     if acc.vm_id.is_none() {
-                        acc.vm_id = acc
-                            .wss_url
-                            .as_deref()
-                            .and_then(extract_vm_id_from_wss_url);
+                        acc.vm_id = acc.wss_url.as_deref().and_then(extract_vm_id_from_wss_url);
                     }
                     acc
                 })
@@ -280,10 +274,7 @@ pub fn parse_accounts(raw: &str) -> Vec<MuseAccountCredential> {
                     .as_deref()
                     .map(parse_cookie_header)
                     .unwrap_or_default();
-                let wss_expires = parsed
-                    .wss_url
-                    .as_deref()
-                    .and_then(get_wss_expiry_unix_secs);
+                let wss_expires = parsed.wss_url.as_deref().and_then(get_wss_expiry_unix_secs);
                 let vm_id = parsed
                     .wss_url
                     .as_deref()

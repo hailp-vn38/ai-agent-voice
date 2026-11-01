@@ -187,4 +187,3 @@ async fn voice_ignores_activity() {
         })
     );
 }
-

@@ -40,11 +40,7 @@ impl KokoroViWorker {
         if !config.voicepacks.contains_key(&config.default_voice) {
             return Err(TtsError::UnsupportedVoice(config.default_voice.clone()));
         }
-        let session = build_session(
-            &config.model,
-            &config.runtime_library,
-            config.num_threads,
-        )?;
+        let session = build_session(&config.model, &config.runtime_library, config.num_threads)?;
         Ok(Self {
             session,
             tokenizer: config.tokenizer.clone(),
@@ -89,13 +85,12 @@ impl TtsWorker for KokoroViWorker {
         if cancelled.load(Ordering::Acquire) {
             return Err(TtsError::Failed);
         }
-        let voice_id = if request.selection.voice.is_empty()
-            || request.selection.voice == "__readiness__"
-        {
-            self.default_voice.as_str()
-        } else {
-            request.selection.voice.as_str()
-        };
+        let voice_id =
+            if request.selection.voice.is_empty() || request.selection.voice == "__readiness__" {
+                self.default_voice.as_str()
+            } else {
+                request.selection.voice.as_str()
+            };
         let voicepack = self
             .voicepacks
             .get(voice_id)

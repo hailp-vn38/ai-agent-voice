@@ -1507,4 +1507,3 @@ async fn codex_reasoning_activity() {
     );
     assert!(events.contains(&LlmEvent::TextDelta("Ket qua".to_owned())));
 }
-

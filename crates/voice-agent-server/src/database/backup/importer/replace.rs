@@ -294,10 +294,9 @@ async fn prune_physical_devices(
         .filter(|d| d.kind != "web_assistant")
         .map(|d| d.device_id.as_str())
         .collect();
-    let existing_devices =
-        sqlx::query("SELECT id, device_id FROM devices WHERE kind = 'physical'")
-            .fetch_all(&mut **tx)
-            .await?;
+    let existing_devices = sqlx::query("SELECT id, device_id FROM devices WHERE kind = 'physical'")
+        .fetch_all(&mut **tx)
+        .await?;
     for row in existing_devices {
         let id: i64 = row.get("id");
         let dev_id: String = row.get("device_id");
@@ -400,21 +399,15 @@ async fn prune_mcp_servers_and_subtables(
         if !keep_mcp_bindings.contains(&(aid, sid)) {
             touched.agent_ids.insert(aid);
             touched.server_ids.insert(sid);
-            sqlx::query(
-                "DELETE FROM agent_mcp_bindings WHERE agent_id = ? AND mcp_server_id = ?",
-            )
-            .bind(aid)
-            .bind(sid)
-            .execute(&mut **tx)
-            .await?;
+            sqlx::query("DELETE FROM agent_mcp_bindings WHERE agent_id = ? AND mcp_server_id = ?")
+                .bind(aid)
+                .bind(sid)
+                .execute(&mut **tx)
+                .await?;
         }
     }
 
-    let keep_servers: HashSet<&str> = bundle
-        .mcp_servers
-        .iter()
-        .map(|s| s.key.as_str())
-        .collect();
+    let keep_servers: HashSet<&str> = bundle.mcp_servers.iter().map(|s| s.key.as_str()).collect();
     let existing_servers = sqlx::query("SELECT id, key FROM mcp_servers")
         .fetch_all(&mut **tx)
         .await?;
@@ -448,11 +441,12 @@ async fn prune_agents_templates_and_providers(
         .filter_map(|a| agent_map.get(&a.key).copied())
         .collect();
 
-    if let Some((wa_id, wa_agent_id, wa_template_id)) = sqlx::query_as::<_, (i64, i64, Option<i64>)>(
-        "SELECT id, agent_id, template_id FROM devices WHERE kind = 'web_assistant'",
-    )
-    .fetch_optional(&mut **tx)
-    .await?
+    if let Some((wa_id, wa_agent_id, wa_template_id)) =
+        sqlx::query_as::<_, (i64, i64, Option<i64>)>(
+            "SELECT id, agent_id, template_id FROM devices WHERE kind = 'web_assistant'",
+        )
+        .fetch_optional(&mut **tx)
+        .await?
     {
         let keep_template_ids: HashSet<i64> = bundle
             .agent_templates

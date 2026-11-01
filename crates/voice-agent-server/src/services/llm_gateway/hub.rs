@@ -2275,9 +2275,7 @@ impl LlmGatewayHub {
             true
         };
 
-        if should_update_db
-            && let Some(pool) = &self.pool
-        {
+        if should_update_db && let Some(pool) = &self.pool {
             let _ = sqlx::query(
                 "UPDATE llm_gateway_accounts \
                  SET status = CASE WHEN enabled = 0 THEN 'disabled' ELSE 'active' END, \

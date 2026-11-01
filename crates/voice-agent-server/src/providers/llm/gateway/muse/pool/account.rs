@@ -69,14 +69,11 @@ impl MuseAccountState {
             return None;
         }
         self.refresh_status(now);
-        let pos = self
-            .hot_sessions
-            .iter()
-            .position(|(hot, _)| {
-                !hot.turns.is_empty()
-                    && prior_turns.len() >= hot.turns.len()
-                    && prior_turns[..hot.turns.len()] == hot.turns[..]
-            })?;
+        let pos = self.hot_sessions.iter().position(|(hot, _)| {
+            !hot.turns.is_empty()
+                && prior_turns.len() >= hot.turns.len()
+                && prior_turns[..hot.turns.len()] == hot.turns[..]
+        })?;
         Some(self.hot_sessions.remove(pos).0)
     }
 

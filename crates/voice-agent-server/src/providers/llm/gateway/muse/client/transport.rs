@@ -9,9 +9,7 @@ use tokio_tungstenite::tungstenite::http::HeaderValue;
 use tokio_tungstenite::tungstenite::protocol::WebSocketConfig;
 
 use super::super::noise::{CipherState, NoiseXXInitiator};
-use super::super::proto::{
-    DecodedServiceFrame, NoiseFrameDecoder, decode_service_response_frame,
-};
+use super::super::proto::{DecodedServiceFrame, NoiseFrameDecoder, decode_service_response_frame};
 use super::types::VmError;
 
 /// Internal seam allowing replacement of the live WebSocket Noise transport with `FakeMuseVmTransport` in tests.

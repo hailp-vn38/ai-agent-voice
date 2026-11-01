@@ -512,10 +512,7 @@ pub(crate) fn normalize_wiki_markdown_tables(markdown: &str) -> String {
             while idx < lines.len() {
                 let row = lines[idx];
                 let row_trim = row.trim();
-                if row_trim.is_empty()
-                    || !row_trim.contains('|')
-                    || is_non_table_block_line(row)
-                {
+                if row_trim.is_empty() || !row_trim.contains('|') || is_non_table_block_line(row) {
                     break;
                 }
                 out.push(escape_wikilink_pipes_in_table_row(row));

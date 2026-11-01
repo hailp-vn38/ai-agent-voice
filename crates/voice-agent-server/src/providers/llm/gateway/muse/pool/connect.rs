@@ -64,59 +64,59 @@ impl SharedMusePool {
             ));
         }
 
-        let wss_url = if self.inner.has_custom_transport {
-            let vm_name = cred.vm_id.as_deref().unwrap_or(&cred.label);
-            format!("wss://hatch.metaaivm.com/v1/noise?vm_id={vm_name}&app_id=hatch-web")
-        } else {
-            let cookie_header = format_cookie_header(&cred.cookies);
-            let bootstrapped =
-                match fetch_wss_from_cookie_http(&self.inner.http, &cookie_header, SITE_URL).await {
-                    Ok(session) => session,
-                    Err((UpstreamFailureKind::Transient, _))
-                        if self.inner.fallback_browser.is_some() =>
+        let wss_url =
+            if self.inner.has_custom_transport {
+                let vm_name = cred.vm_id.as_deref().unwrap_or(&cred.label);
+                format!("wss://hatch.metaaivm.com/v1/noise?vm_id={vm_name}&app_id=hatch-web")
+            } else {
+                let cookie_header = format_cookie_header(&cred.cookies);
+                let bootstrapped =
+                    match fetch_wss_from_cookie_http(&self.inner.http, &cookie_header, SITE_URL)
+                        .await
                     {
-                        let engine = self
-                            .inner
-                            .fallback_browser
-                            .as_ref()
-                            .expect("fallback_browser checked");
-                        let ctx_key = format!("muse-bootstrap-{account_index}");
-                        extract_wss_via_chromium(&**engine, &ctx_key, &cred.cookies).await?
-                    }
-                    Err(err) => return Err(err),
-                };
+                        Ok(session) => session,
+                        Err((UpstreamFailureKind::Transient, _))
+                            if self.inner.fallback_browser.is_some() =>
+                        {
+                            let engine = self
+                                .inner
+                                .fallback_browser
+                                .as_ref()
+                                .expect("fallback_browser checked");
+                            let ctx_key = format!("muse-bootstrap-{account_index}");
+                            extract_wss_via_chromium(&**engine, &ctx_key, &cred.cookies).await?
+                        }
+                        Err(err) => return Err(err),
+                    };
 
-            let mut persist_target = None;
-            let wss_url = {
-                let mut state = self.inner.state.lock().unwrap_or_else(|e| e.into_inner());
-                if let Some(acc) = state.accounts.get_mut(account_index) {
-                    let mut discovered_email = None;
-                    let wss = bootstrapped.apply_to(&mut acc.credential, &mut discovered_email);
-                    if let Some(gw_key) = &acc.gateway_account_key {
-                        persist_target = Some((
-                            gw_key.clone(),
-                            acc.credential.clone(),
-                            discovered_email,
-                        ));
+                let mut persist_target = None;
+                let wss_url = {
+                    let mut state = self.inner.state.lock().unwrap_or_else(|e| e.into_inner());
+                    if let Some(acc) = state.accounts.get_mut(account_index) {
+                        let mut discovered_email = None;
+                        let wss = bootstrapped.apply_to(&mut acc.credential, &mut discovered_email);
+                        if let Some(gw_key) = &acc.gateway_account_key {
+                            persist_target =
+                                Some((gw_key.clone(), acc.credential.clone(), discovered_email));
+                        }
+                        wss
+                    } else {
+                        bootstrapped.wss_url
                     }
-                    wss
-                } else {
-                    bootstrapped.wss_url
+                };
+                if let Some((account_key, updated_cred, discovered_email)) = persist_target {
+                    tokio::spawn(async move {
+                        crate::services::llm_gateway::SharedGatewayHub::global()
+                            .persist_muse_runtime_credential(
+                                &account_key,
+                                updated_cred,
+                                discovered_email,
+                            )
+                            .await;
+                    });
                 }
+                wss_url
             };
-            if let Some((account_key, updated_cred, discovered_email)) = persist_target {
-                tokio::spawn(async move {
-                    crate::services::llm_gateway::SharedGatewayHub::global()
-                        .persist_muse_runtime_credential(
-                            &account_key,
-                            updated_cred,
-                            discovered_email,
-                        )
-                        .await;
-                });
-            }
-            wss_url
-        };
 
         let client = connect_and_init_client(&*self.inner.transport, &wss_url)
             .await

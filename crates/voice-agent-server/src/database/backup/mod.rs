@@ -260,18 +260,12 @@ impl Database {
     ) -> Result<ExportedBackup, BackupError> {
         let now = chrono::Utc::now();
         let timestamp = now.format("%Y%m%d-%H%M%S").to_string();
-        let filename = format!(
-            "voice-agent-backup-{timestamp}.{}",
-            req.format.extension()
-        );
+        let filename = format!("voice-agent-backup-{timestamp}.{}", req.format.extension());
         let bytes = match req.format {
             BackupFormat::Json => {
-                let bundle = codec::export_bundle_from_pool(
-                    &self.pool,
-                    req.scope,
-                    req.companion_settings,
-                )
-                .await?;
+                let bundle =
+                    codec::export_bundle_from_pool(&self.pool, req.scope, req.companion_settings)
+                        .await?;
                 codec::encode_bundle_json(bundle)?
             }
             BackupFormat::Sqlite => codec::export_sqlite_snapshot(&self.pool, req.scope).await?,

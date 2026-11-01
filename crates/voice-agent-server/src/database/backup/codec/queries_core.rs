@@ -1,7 +1,9 @@
 use super::super::*;
 use sqlx::{Row, SqlitePool};
 
-pub(super) async fn fetch_providers(pool: &SqlitePool) -> Result<Vec<BackupProviderRow>, BackupError> {
+pub(super) async fn fetch_providers(
+    pool: &SqlitePool,
+) -> Result<Vec<BackupProviderRow>, BackupError> {
     let rows = sqlx::query(
         "SELECT key, name, type, adapter, config_json, credential_json, enabled, created_at, updated_at
          FROM providers ORDER BY key ASC",
@@ -24,7 +26,9 @@ pub(super) async fn fetch_providers(pool: &SqlitePool) -> Result<Vec<BackupProvi
         .collect())
 }
 
-pub(super) async fn fetch_templates(pool: &SqlitePool) -> Result<Vec<BackupTemplateRow>, BackupError> {
+pub(super) async fn fetch_templates(
+    pool: &SqlitePool,
+) -> Result<Vec<BackupTemplateRow>, BackupError> {
     let rows = sqlx::query(
         "SELECT key, name, description, language, prompt, enabled, created_at, updated_at
          FROM agent_templates ORDER BY key ASC",
@@ -118,7 +122,9 @@ pub(super) async fn fetch_agent_template_assignments(
         .collect())
 }
 
-pub(super) async fn fetch_mcp_servers(pool: &SqlitePool) -> Result<Vec<BackupMcpServerRow>, BackupError> {
+pub(super) async fn fetch_mcp_servers(
+    pool: &SqlitePool,
+) -> Result<Vec<BackupMcpServerRow>, BackupError> {
     let rows = sqlx::query(
         "SELECT key, name, transport, url, headers_json, auth_type, auth_header_name,
                 connect_timeout_ms, request_timeout_ms, enabled, credential_json, created_at, updated_at

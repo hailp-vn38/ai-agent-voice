@@ -288,10 +288,20 @@ async fn wiki_write_tools_normalize_markdown_tables_for_external_markdown_apps()
         .content;
 
     // 1. Prose WikiLink outside table keeps unescaped pipe `|`
-    assert!(saved.contains("Đoạn văn có [[wiki/concepts/trading/fair-value-gap|Fair Value Gap (FVG)]] ngoài bảng."));
+    assert!(saved.contains(
+        "Đoạn văn có [[wiki/concepts/trading/fair-value-gap|Fair Value Gap (FVG)]] ngoài bảng."
+    ));
     // 2. Blank line inserted between heading and table header, and after table before paragraph
-    assert!(saved.contains("## Tiến triển bằng chứng theo nguồn\n\n| Nguồn | Luận điểm chính | Ghi chú |"));
-    assert!(saved.contains("| Đã escape sẵn | Giữ nguyên |\n\nĐoạn văn ngay sau bảng không có dòng trống."));
+    assert!(
+        saved.contains(
+            "## Tiến triển bằng chứng theo nguồn\n\n| Nguồn | Luận điểm chính | Ghi chú |"
+        )
+    );
+    assert!(
+        saved.contains(
+            "| Đã escape sẵn | Giữ nguyên |\n\nĐoạn văn ngay sau bảng không có dòng trống."
+        )
+    );
     // 3. Unescaped WikiLink pipe inside table cell is escaped as `\|` for Obsidian / external GFM apps
     assert!(saved.contains(
         "| [[wiki/sources/trading/fvg/the-secret-fvg-breakaway-gap\\|The Secret FVG that we don't trade back into]] | Breakaway Gap | `a | b` |"
