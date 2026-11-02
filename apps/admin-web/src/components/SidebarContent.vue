@@ -39,7 +39,7 @@ const { t } = useI18n()
       </button>
     </div>
 
-    <nav class="flex-1 space-y-5 overflow-x-hidden overflow-y-auto py-5 transition-[padding] duration-300 motion-reduce:transition-none"
+    <nav class="flex-1 space-y-5 overflow-x-hidden overflow-y-auto py-5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden transition-[padding] duration-300 motion-reduce:transition-none"
       :class="collapsed ? 'px-2' : 'px-3'" :aria-label="t('nav.open')">
       <section v-for="(group, groupIndex) in navigationGroups" :key="group.label"
         class="space-y-1" :class="collapsed && groupIndex > 0 ? 'border-t border-border/60 pt-4' : ''">
