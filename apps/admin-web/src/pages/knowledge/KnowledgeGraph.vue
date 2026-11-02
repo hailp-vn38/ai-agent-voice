@@ -52,6 +52,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   open: [id: string]
   rebuild: []
+  'node-hover': [id: string | null]
   'update:focusMode': [value: boolean]
 }>()
 
@@ -1001,6 +1002,7 @@ function draw() {
     const id = event.target.id()
     const node = nodes.find(n => n.id === id)
     hoverText.value = node ? node.title + ' · ' + node.path : ''
+    emit('node-hover', id)
     applyFocusClasses(id)
   })
   cy.on('mouseover', 'edge', event => {
@@ -1011,6 +1013,7 @@ function draw() {
     hoverText.value = ''
     applyFocusClasses(null)
   })
+  cy.on('mouseout', 'node', () => emit('node-hover', null))
 
   if (activeId.value) {
     cy.getElementById(activeId.value).select()

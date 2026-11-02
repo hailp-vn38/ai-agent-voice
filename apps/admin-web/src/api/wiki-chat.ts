@@ -12,6 +12,7 @@ export interface WikiChatTool {
   name: string
   state: 'running' | 'completed' | 'failed'
   query?: string
+  pages: string[]
 }
 
 export interface AnswerGraph {
@@ -116,11 +117,19 @@ export async function askWiki(
         const payload = eventObject(frame.data)
         if (frame.event === 'tool' && typeof payload.call_id === 'string' && typeof payload.name === 'string') {
           if (payload.state === 'running' || payload.state === 'completed' || payload.state === 'failed') {
+            const pages = Array.isArray(payload.pages)
+              ? [...new Set(payload.pages.filter((path): path is string =>
+                typeof path === 'string' && path.length <= 512 &&
+                (path.startsWith('wiki/') || path.startsWith('sources/')) &&
+                !path.includes('\\') && !path.split('/').some(segment => segment === '..' || segment === ''),
+              ))].slice(0, 20)
+              : []
             handlers.onTool({
               call_id: payload.call_id,
               name: payload.name,
               state: payload.state,
               ...(typeof payload.query === 'string' ? { query: payload.query } : {}),
+              pages,
             })
           }
         } else if (frame.event === 'graph') {

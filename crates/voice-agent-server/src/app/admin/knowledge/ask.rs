@@ -49,6 +49,7 @@ enum AskEvent {
         name: String,
         state: &'static str,
         query: Option<String>,
+        pages: Vec<String>,
     },
     Graph(Value),
     Delta(String),
@@ -291,6 +292,7 @@ async fn run_ask(
                     name: call.name.clone(),
                     state: "running",
                     query: query.clone(),
+                    pages: Vec::new(),
                 },
                 &cancellation,
             )
@@ -312,6 +314,7 @@ async fn run_ask(
                         name: call.name,
                         state: "failed",
                         query,
+                        pages: Vec::new(),
                     },
                     &cancellation,
                 )
@@ -332,6 +335,7 @@ async fn run_ask(
             match tool_result {
                 Ok(outcome) => {
                     let changed = record_evidence(&mut evidence, &call.name, &outcome.metadata);
+                    let pages = evidence_paths(&call.name, &outcome.metadata);
                     let mut bounded = bound_result_chars(
                         json!({"content": outcome.content, "metadata": outcome.metadata}),
                         limits.max_result_chars,
@@ -350,6 +354,7 @@ async fn run_ask(
                             name: call.name.clone(),
                             state: "completed",
                             query,
+                            pages,
                         },
                         &cancellation,
                     )
@@ -399,6 +404,7 @@ async fn run_ask(
                             name: call.name,
                             state: "failed",
                             query,
+                            pages: Vec::new(),
                         },
                         &cancellation,
                     )
@@ -418,6 +424,7 @@ async fn run_ask(
                             name: call.name,
                             state: "failed",
                             query,
+                            pages: Vec::new(),
                         },
                         &cancellation,
                     )
@@ -579,9 +586,11 @@ fn ask_event_to_sse(event: AskEvent) -> Event {
             name,
             state,
             query,
-        } => Event::default()
-            .event("tool")
-            .data(json!({"call_id":call_id,"name":name,"state":state,"query":query}).to_string()),
+            pages,
+        } => Event::default().event("tool").data(
+            json!({"call_id":call_id,"name":name,"state":state,"query":query,"pages":pages})
+                .to_string(),
+        ),
         AskEvent::Graph(graph) => Event::default().event("graph").data(graph.to_string()),
         AskEvent::Delta(text) => Event::default()
             .event("delta")
@@ -685,6 +694,53 @@ fn record_evidence(
         _ => {}
     }
     changed
+}
+
+fn evidence_paths(tool_name: &str, metadata: &Value) -> Vec<String> {
+    let mut paths = Vec::new();
+    match tool_name {
+        "wiki_query" => {
+            if let Some(results) = metadata.get("results").and_then(Value::as_array) {
+                for result in results {
+                    push_evidence_path(&mut paths, result.get("rel_path").and_then(Value::as_str));
+                }
+            }
+        }
+        "wiki_get" => {
+            push_evidence_path(&mut paths, metadata.get("rel_path").and_then(Value::as_str))
+        }
+        "wiki_multi_get" => {
+            if let Some(docs) = metadata.get("docs").and_then(Value::as_array) {
+                for doc in docs {
+                    push_evidence_path(
+                        &mut paths,
+                        doc.pointer("/info/rel_path")
+                            .or_else(|| doc.get("rel_path"))
+                            .and_then(Value::as_str),
+                    );
+                }
+            }
+        }
+        _ => {}
+    }
+    paths
+}
+
+fn push_evidence_path(paths: &mut Vec<String>, path: Option<&str>) {
+    let Some(path) = path else { return };
+    if paths.len() >= 20
+        || path.len() > 512
+        || !(path.starts_with("wiki/") || path.starts_with("sources/"))
+        || std::path::Path::new(path).is_absolute()
+        || path.contains('\\')
+        || path
+            .split('/')
+            .any(|segment| segment.is_empty() || segment == "." || segment == "..")
+        || paths.iter().any(|existing| existing == path)
+    {
+        return;
+    }
+    paths.push(path.to_owned());
 }
 
 async fn make_graph_snapshot(
@@ -1361,6 +1417,18 @@ model = "fake"
             .unwrap();
         assert_eq!(response.status(), StatusCode::OK);
         let body = response.text().await.unwrap();
+        let completed_tool = sse_payloads(&body, "tool")
+            .into_iter()
+            .find(|tool| tool["state"] == "completed")
+            .expect("completed wiki_multi_get tool event");
+        assert_eq!(
+            completed_tool["pages"],
+            serde_json::json!([
+                "wiki/concepts/known.md",
+                "wiki/concepts/related-a.md",
+                "wiki/concepts/related-b.md"
+            ])
+        );
         let graphs = sse_payloads(&body, "graph");
         let final_node = graphs.last().unwrap()["nodes"]
             .as_array()
