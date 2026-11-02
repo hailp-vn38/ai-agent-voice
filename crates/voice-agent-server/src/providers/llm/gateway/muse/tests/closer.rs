@@ -170,11 +170,15 @@ impl Lifecycle {
         }
     }
     async fn start_child(&self, existing: Option<&str>) -> (String, String) {
+        self.start_child_with(
+            existing,
+            json!({"prompt":"Research", "output":"markdown", "delete_session_on_finish":true}),
+        )
+        .await
+    }
+    async fn start_child_with(&self, existing: Option<&str>, args: Value) -> (String, String) {
         self.model.queue("subagent", json!({"agent":"cloud", "description":"Report", "prompt":"Research", "session_id":existing}));
-        let call = self.model.queue(
-            "muse_task",
-            json!({"prompt":"Research", "output":"markdown"}),
-        );
+        let call = self.model.queue("muse_task", args);
         let turn = self
             .orch
             .submit(&self.caller, &self.root, "Research".into())
@@ -292,6 +296,62 @@ async fn muse_task_closer_archives_before_delete_and_parent_keeps_artifact() {
             .remote_deleted_at
             .is_some()
     );
+    lifecycle.finish().await;
+}
+
+#[tokio::test]
+async fn muse_task_closer_keeps_remote_session_by_default_after_archiving_child() {
+    let lifecycle = Lifecycle::boot().await;
+    let (_call, turn) = lifecycle
+        .start_child_with(None, json!({"prompt":"Research", "output":"markdown"}))
+        .await;
+    lifecycle.wait_root(&turn).await;
+    let child = lifecycle.child_session().await;
+    let ops = lifecycle.orch.list_tool_operations().await.unwrap();
+    super::super::pool::restore_job_sessions_from_operations(&ops).await;
+    let entry = super::super::pool::job_entry(&format!("muse_task:{child}"));
+    assert!(entry.lock().await.is_some());
+
+    SubagentMuseCloser::sweep(&lifecycle.orch).await.unwrap();
+    SubagentMuseCloser::sweep(&lifecycle.orch).await.unwrap();
+
+    assert!(lifecycle.vm.delete_attempts().is_empty());
+    assert!(
+        lifecycle.orch.list_tool_operations().await.unwrap()[0]
+            .operation
+            .remote_deleted_at
+            .is_none()
+    );
+    assert!(
+        lifecycle
+            .orch
+            .get_session(&lifecycle.caller, &child)
+            .await
+            .unwrap()
+            .archived
+    );
+    // The child no longer holds the session once it has finished.
+    assert!(entry.lock().await.is_none());
+    assert!(entry.account_hint().is_none());
+    lifecycle.finish().await;
+}
+
+#[tokio::test]
+async fn muse_task_closer_delete_request_on_any_turn_covers_the_whole_child() {
+    let lifecycle = Lifecycle::boot().await;
+    let (_call, turn) = lifecycle
+        .start_child_with(None, json!({"prompt":"Research", "output":"markdown"}))
+        .await;
+    lifecycle.wait_root(&turn).await;
+    let child = lifecycle.child_session().await;
+    let (_call, turn) = lifecycle.start_child(Some(&child)).await;
+    lifecycle.wait_root(&turn).await;
+
+    SubagentMuseCloser::sweep(&lifecycle.orch).await.unwrap();
+
+    let mut deleted = lifecycle.vm.deleted_sessions();
+    deleted.sort();
+    assert_eq!(deleted, ["closer-remote-1", "closer-remote-2"]);
     lifecycle.finish().await;
 }
 

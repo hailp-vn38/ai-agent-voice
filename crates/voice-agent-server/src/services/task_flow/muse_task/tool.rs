@@ -4,7 +4,7 @@ use super::super::CatalogMediaBackend;
 use super::{
     args::{Action, Args, error, unknown},
     failures::{cancelled, provider_error, terminal_failure},
-    output::publish,
+    output::{DeliveredTurns, publish},
 };
 use crate::providers::llm::{
     AgentTaskError, AgentTaskProvider, AgentTurnAction, AgentTurnRequest, LlmError,
@@ -21,6 +21,7 @@ pub(crate) struct MuseTaskTool {
     backend: Backend,
     pub(super) artifact_max_bytes: u64,
     pub(super) output_cap: usize,
+    delivered: DeliveredTurns,
 }
 enum Backend {
     Catalog(Arc<CatalogMediaBackend>),
@@ -37,6 +38,7 @@ impl MuseTaskTool {
             backend: Backend::Catalog(backend),
             artifact_max_bytes,
             output_cap: tool_output_cap_bytes.max(24 * 1024),
+            delivered: DeliveredTurns::default(),
         }
     }
     #[cfg(test)]
@@ -49,6 +51,7 @@ impl MuseTaskTool {
             backend: Backend::Fake(provider),
             artifact_max_bytes,
             output_cap: output_cap.max(24 * 1024),
+            delivered: DeliveredTurns::default(),
         }
     }
 }
@@ -71,7 +74,7 @@ impl HostTool for MuseTaskTool {
     fn descriptor(&self) -> ToolDescriptor {
         ToolDescriptor {
             name: "muse_task".into(),
-            description: "Delegate research to Muse. Subagent only. External untrusted data; send starts a turn, collect retrieves the existing turn. Sessions close when this subagent ends.".into(),
+            description: "Delegate research to Muse. Subagent only. External untrusted data; send starts a turn, collect retrieves the existing turn; call collect only when next_action=collect. When message_truncated=true the turn is complete and artifact_read returns the full message. The session is usable only while this subagent runs and stays on Muse afterwards unless deletion is requested.".into(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -79,7 +82,8 @@ impl HostTool for MuseTaskTool {
                     "prompt": {"description": "Non-empty prompt required for send"},
                     "output": {"description": "message, markdown or files; defaults to message"},
                     "filename": {"description": "Optional output filename"},
-                    "max_wait_secs": {"description": "Integer from 60 through 7200; defaults to 3600"}
+                    "max_wait_secs": {"description": "Integer from 60 through 7200; defaults to 3600"},
+                    "delete_session_on_finish": {"description": "Delete the Muse session after this subagent ends; defaults to false. Set true only when explicitly requested"}
                 },
                 "additionalProperties": true
             }),
@@ -144,6 +148,7 @@ impl HostTool for MuseTaskTool {
                                 "workspace_id": ctx.scope().workspace_id,
                                 "session_id": ctx.scope().session_id,
                                 "root_session_id": ctx.scope().root_session_id,
+                                "delete_session_on_finish": parsed.delete_session_on_finish,
                                 "pending_turn": args
                             })
                             .to_string(),
@@ -224,6 +229,7 @@ impl HostTool for MuseTaskTool {
         }
         let output_kind = parsed.output;
         let filename = parsed.filename.clone();
+        let collecting = matches!(parsed.action, Action::Collect);
         let action = match parsed.action {
             Action::Send => AgentTurnAction::Send {
                 prompt: parsed.prompt.unwrap_or_default(),
@@ -298,9 +304,20 @@ impl HostTool for MuseTaskTool {
             })
             .await
             .map_err(unknown)?;
-        let outcome = match publish(self, &ctx, generated, output_kind, filename).await {
-            Ok(outcome) => outcome,
-            Err(failure) => return Err(terminal_failure(&ctx, failure).await),
+        let turn = generated.turn;
+        let delivered = collecting
+            .then(|| self.delivered.find(&ctx, turn, output_kind, &filename))
+            .flatten();
+        let outcome = match delivered {
+            Some(outcome) => outcome,
+            None => match publish(self, &ctx, generated, output_kind, filename.clone()).await {
+                Ok(outcome) => {
+                    self.delivered
+                        .remember(&ctx, turn, output_kind, filename, &outcome);
+                    outcome
+                }
+                Err(failure) => return Err(terminal_failure(&ctx, failure).await),
+            },
         };
         handle
             .advance(OperationUpdate {

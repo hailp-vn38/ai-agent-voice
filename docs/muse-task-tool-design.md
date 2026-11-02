@@ -7,7 +7,7 @@ Liên quan: [ADR 0130](adr/0130-internal-llm-gateway-oauth-account-pools.md), [A
 
 ## Kết luận
 
-Xây một Host Tool `Resumable` tên `muse_task`, chỉ dùng trong subagent. **Một phiên subagent ứng với đúng một Muse session.** Mọi lần gọi tool trong subagent đó dùng chung session. Khi subagent hoàn thành, hệ thống xóa Muse session và lưu trữ (archive) phiên subagent.
+Xây một Host Tool `Resumable` tên `muse_task`, chỉ dùng trong subagent. **Một phiên subagent ứng với đúng một Muse session.** Mọi lần gọi tool trong subagent đó dùng chung session. Khi subagent hoàn thành, hệ thống lưu trữ (archive) phiên subagent và giữ Muse session; chỉ xóa khi lời gọi tool có `delete_session_on_finish=true` ([ADR 0137](adr/0137-subagent-owned-muse-task-sessions.md)).
 
 Ba quyết định chính:
 

@@ -92,6 +92,32 @@ async fn agent_task_gateway_files_reminds_exactly_once() {
 }
 
 #[tokio::test]
+async fn agent_task_gateway_reports_a_linked_file_it_could_not_download() {
+    let account = FakeVmAccount::new(vec![FakeStreamTurn::chat_reply(
+        vec![],
+        "Saved [gone.csv](sandbox:///home/user/gone.csv) [MUSE_TASK_DONE]",
+    )]);
+    let provider = build_gateway_muse_provider(
+        &[SINGLE_COOKIE],
+        FakeMuseVmTransport::new(vec![account.clone()]),
+    )
+    .await;
+    let output = provider
+        .agent_task()
+        .unwrap()
+        .run_turn(
+            &request(&format!("muse_task:{}", uuid::Uuid::new_v4())),
+            &Journal::default(),
+            &|_| {},
+        )
+        .await
+        .unwrap();
+    assert!(output.files.iter().all(|file| file.filename != "gone.csv"));
+    assert!(output.files_missing);
+    assert_eq!(account.stream_requests().len(), 1);
+}
+
+#[tokio::test]
 async fn agent_task_gateway_downloads_unique_supported_files_only() {
     let account=FakeVmAccount::new(vec![FakeStreamTurn::chat_reply(vec![],"See sandbox:///home/user/report.csv and sandbox:///home/user/report.csv plus sandbox:///home/user/tool.sh [MUSE_TASK_DONE]")]).with_file("report.csv",b"a,b\n1,2".to_vec()).with_file("tool.sh",b"echo nope".to_vec());
     let provider = build_gateway_muse_provider(

@@ -1,6 +1,8 @@
 //! Admin HTTP handlers for Knowledge and Memory routes backed by `llm_wiki::WikiEngine`
 //! and `orchestrator_flow_rs::TaskManager`.
 
+mod answer_graph;
+mod ask;
 mod graph;
 mod memory;
 mod pages;
@@ -10,6 +12,7 @@ mod sources;
 #[cfg(test)]
 mod tests;
 
+pub(in crate::app::admin) use ask::knowledge_ask;
 pub(super) use graph::{knowledge_graph, knowledge_health, knowledge_rebuild};
 pub(super) use memory::{
     DeviceVaultPurge, memory_create, memory_discard, memory_forget, memory_health, memory_pin,

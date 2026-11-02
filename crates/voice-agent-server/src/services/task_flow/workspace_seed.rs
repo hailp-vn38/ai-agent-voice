@@ -1,6 +1,6 @@
 //! Default agent system prompts and Built-in Job Skills seeded into the workspace if absent.
 //!
-//! Canonical prompt constants are shared from [`orchestrator_flow_rs::prompts`], while the 8
+//! Canonical prompt constants are shared from [`orchestrator_flow_rs::prompts`], while the
 //! Built-in Job Skills live in `crates/voice-agent-server/builtin-skills/<id>/SKILL.md` so the
 //! server can seed runtime `skills/` and restore defaults on demand.
 
@@ -14,11 +14,17 @@ pub use orchestrator_flow_rs::{
 
 /// Server-owned prompt: Muse Task is a Host Tool, outside the library's built-in tools.
 pub const CLOUD_WORKER_PROMPT: &str = r#"You are `cloud_worker`, a use-once Sub-Agent of daily_root.
-Use only muse_task to perform the explicitly delegated cloud research or report task.
+Use only muse_task to perform the explicitly delegated cloud research or report task, and
+artifact_read to read artifacts muse_task returned.
 Complete all necessary send and collect turns with Muse before ending. When next_action=collect,
 call muse_task with action=collect; never resend the same prompt to poll or retry a running turn.
-Your Muse session closes after this Sub-Agent ends. Follow-up requires a new Sub-Agent with context
-explicitly supplied by the parent.
+Do not call collect when next_action=none. message_truncated=true means the turn is complete and only
+the preview was returned: read message_artifact_id with artifact_read, and never send Muse another
+turn to rewrite, shorten or re-verify a finished report. Judge dates against the current date in your
+instructions and completed_at: data dated up to then is not from the future.
+You can use your Muse session only while this Sub-Agent runs. Follow-up requires a new Sub-Agent with
+context explicitly supplied by the parent. The session stays on Muse after you end. Set
+delete_session_on_finish=true on muse_task only when the delegated task explicitly says to delete it.
 For research and reports, call muse_task with output=markdown so the full report is kept as an
 artifact, and use the same output on collect. Do not rewrite, expand or restructure the Muse report.
 Return to the parent only: status, artifact IDs and filenames, at most 10 bullets of key findings
@@ -46,6 +52,7 @@ pub const WIKI_TAXONOMY_SKILL: &str =
     include_str!("../../../builtin-skills/wiki-taxonomy/SKILL.md");
 pub const WIKI_INGEST_SKILL: &str = include_str!("../../../builtin-skills/wiki-ingest/SKILL.md");
 pub const WIKI_QUERY_SKILL: &str = include_str!("../../../builtin-skills/wiki-query/SKILL.md");
+pub const WIKI_CHAT_SKILL: &str = include_str!("../../../builtin-skills/wiki-chat/SKILL.md");
 pub const WIKI_LINT_SKILL: &str = include_str!("../../../builtin-skills/wiki-lint/SKILL.md");
 pub const DAILY_SYNTHESIS_STAGING_SKILL: &str =
     include_str!("../../../builtin-skills/daily-synthesis-staging/SKILL.md");
@@ -64,6 +71,7 @@ pub const BUILTIN_SKILLS: &[(&str, &str)] = &[
     ("wiki-taxonomy", WIKI_TAXONOMY_SKILL),
     ("wiki-ingest", WIKI_INGEST_SKILL),
     ("wiki-query", WIKI_QUERY_SKILL),
+    ("wiki-chat", WIKI_CHAT_SKILL),
     ("wiki-lint", WIKI_LINT_SKILL),
     ("daily-synthesis-staging", DAILY_SYNTHESIS_STAGING_SKILL),
     ("daily-task-reminder", DAILY_TASK_REMINDER_SKILL),

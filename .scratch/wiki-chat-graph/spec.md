@@ -1,6 +1,6 @@
 # Hỏi wiki và Graph theo câu trả lời
 
-Status: ready-for-agent
+Status: ready-for-human
 
 Tài liệu nguồn: [thiết kế](../../docs/knowledge/wiki-chat-graph-design.md), [triển khai](../../docs/knowledge/wiki-chat-graph-implementation.md). Nếu khác nhau về cách test, spec này được ưu tiên.
 

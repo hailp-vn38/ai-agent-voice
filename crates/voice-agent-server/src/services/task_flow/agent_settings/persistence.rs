@@ -6,6 +6,7 @@ use std::path::Path;
 
 use orchestrator_agent_rs::{AgentMode, valid_skill_id};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 
 use super::DEFAULT_ORCHESTRATOR_PROVIDER_REF;
 use super::specs::{
@@ -14,6 +15,22 @@ use super::specs::{
 use crate::services::task_flow::workspace_seed::daily_root_prompt_with_routing_guidance;
 
 const AGENT_SETTINGS_FILE: &str = "agent_settings.json";
+
+/// SHA-256 of the trimmed `cloud_worker` default prompts of earlier releases. The Admin form saves
+/// the prompt it shows, so an unedited copy would otherwise pin an old default forever.
+const OLD_CLOUD_WORKER_DEFAULT_PROMPTS: &[&str] = &[
+    "fde64e70d90917fd1b8c40b5bc653b4690f2da843c724b255c7345be71eacac7",
+    "94f78b0e8afab5f8c9d35cca7410046da155ed8587ec4dee4634cb5032f97810",
+    "19a0f19656f7fa03aa67ab1f086cf5e96ad1815141df1229a9148a4ced49ee69",
+];
+
+fn is_old_cloud_worker_default_prompt(prompt: &str) -> bool {
+    let digest: String = Sha256::digest(prompt.trim().as_bytes())
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect();
+    OLD_CLOUD_WORKER_DEFAULT_PROMPTS.contains(&digest.as_str())
+}
 
 pub(crate) fn default_true() -> bool {
     true
@@ -152,6 +169,8 @@ pub struct PersistedBackgroundSettings {
     pub orchestrator_llm_provider: String,
     #[serde(default = "default_provider_ref")]
     pub worker_llm_provider: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wiki_chat_llm_provider: Option<String>,
     #[serde(default)]
     pub agents: BTreeMap<String, AgentConfigOverride>,
 }
@@ -163,6 +182,7 @@ impl Default for PersistedBackgroundSettings {
             revision: 1,
             orchestrator_llm_provider: default_provider_ref(),
             worker_llm_provider: default_provider_ref(),
+            wiki_chat_llm_provider: None,
             agents: BTreeMap::new(),
         }
     }
@@ -196,6 +216,15 @@ pub fn load_persisted_settings(store_dir: &Path) -> Option<PersistedBackgroundSe
         for (tool, pref) in migrated_proc_tools {
             proc_map.entry(tool).or_insert(pref);
         }
+    }
+
+    if let Some(cloud_worker) = settings.agents.get_mut("cloud_worker")
+        && cloud_worker
+            .system_prompt
+            .as_deref()
+            .is_some_and(is_old_cloud_worker_default_prompt)
+    {
+        cloud_worker.system_prompt = None;
     }
 
     settings.agents.retain(|id, ovr| {
@@ -289,8 +318,11 @@ fn format_active_subagents_block(
     } else {
         ""
     };
-    let cloud_worker_rules = if lines.iter().any(|line| line.starts_with("- `cloud_worker`")) {
-        "When delegating to `cloud_worker`:\n- List every requested goal and its order before the first delegation. For example, \"A sau khi hoàn thành tiếp với B\" means A first, then B.\n- Use one new `cloud_worker` per goal, and wait for each to finish before starting the next.\n- Do not add constraints the user did not ask for, such as forbidding artifacts.\n- Say a goal or earlier work is done only if a Sub-Agent result in this session shows it.\n- In the final answer, report each goal's outcome, include the returned artifact IDs and source URLs, keep reported data limitations, and say the content comes from an external service.\n"
+    let cloud_worker_rules = if lines
+        .iter()
+        .any(|line| line.starts_with("- `cloud_worker`"))
+    {
+        "When delegating to `cloud_worker`:\n- List every requested goal and its order before the first delegation. For example, \"A sau khi hoàn thành tiếp với B\" means A first, then B.\n- Use one new `cloud_worker` per goal, and wait for each to finish before starting the next.\n- Do not add constraints the user did not ask for, such as forbidding artifacts.\n- Say a goal or earlier work is done only if a Sub-Agent result in this session shows it.\n- In the final answer, report each goal's outcome, include the returned artifact IDs and source URLs, keep reported data limitations, and say the content comes from an external service.\n- Muse sessions are kept by default. Tell `cloud_worker` to delete its session only when the user explicitly asks for that.\n"
     } else {
         ""
     };

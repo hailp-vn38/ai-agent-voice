@@ -1,7 +1,137 @@
 //! Admin JSON projections from [`TaskView`] / [`TaskDetailView`] to the Admin Web UI contract.
 
+use orchestrator_agent_rs::{
+    CallerContext, Orchestrator, OrchestratorError, PageRequest, RunSummary,
+};
 use orchestrator_flow_rs::{TaskDetailView, TaskStatus, TaskView};
 use serde_json::{Value, json};
+use std::collections::HashMap;
+
+/// Every persisted run of each agent session in creation order, including attempts resumed after
+/// a restart and follow-up turns. [`TaskDetailView`] only carries the latest one.
+pub type SessionRuns = HashMap<String, Vec<RunSummary>>;
+
+/// A session whose history cannot be read is left out and keeps its latest-run figures.
+pub async fn load_session_runs(
+    orchestrator: &Orchestrator,
+    caller: &CallerContext,
+    detail: &TaskDetailView,
+) -> SessionRuns {
+    let mut runs = SessionRuns::new();
+    for session in detail.all_agents() {
+        match list_session_runs(orchestrator, caller, &session.session_id).await {
+            Ok(attempts) => {
+                runs.insert(session.session_id.clone(), attempts);
+            }
+            Err(error) => tracing::warn!(
+                task_id = %detail.task.id,
+                session_id = %session.session_id,
+                %error,
+                "failed to read job run history"
+            ),
+        }
+    }
+    runs
+}
+
+async fn list_session_runs(
+    orchestrator: &Orchestrator,
+    caller: &CallerContext,
+    session_id: &str,
+) -> Result<Vec<RunSummary>, OrchestratorError> {
+    let mut attempts = Vec::new();
+    let mut request = PageRequest::first(100);
+    loop {
+        let page = orchestrator
+            .list_runs(caller, session_id, None, request)
+            .await?;
+        attempts.extend(page.items);
+        match page.next_cursor {
+            Some(cursor) => request = PageRequest::after(cursor, 100),
+            None => return Ok(attempts),
+        }
+    }
+}
+
+/// Summed `(steps, input_tokens, output_tokens)` across attempts.
+fn attempt_totals(attempts: &[RunSummary]) -> [u64; 3] {
+    attempts.iter().fold([0; 3], |totals, run| {
+        [
+            totals[0].saturating_add(u64::from(run.steps)),
+            totals[1].saturating_add(run.input_tokens),
+            totals[2].saturating_add(run.output_tokens),
+        ]
+    })
+}
+
+/// Replaces latest-attempt usage and the job-wide span on each agent run with its full history,
+/// and adds the attempts that were left out to the job totals.
+pub fn apply_session_runs_to_job(job: &mut Value, runs: &SessionRuns) {
+    const USAGE_KEYS: [&str; 3] = ["llm_rounds", "input_tokens", "output_tokens"];
+    let mut missing = [0u64; 3];
+    for agent_run in job["agent_runs"].as_array_mut().into_iter().flatten() {
+        let Some(attempts) = agent_run["agent_run_id"]
+            .as_str()
+            .and_then(|id| runs.get(id))
+        else {
+            continue;
+        };
+        let (Some(first), Some(last)) = (attempts.first(), attempts.last()) else {
+            continue;
+        };
+        let totals = attempt_totals(attempts);
+        for (index, key) in USAGE_KEYS.into_iter().enumerate() {
+            let reported = agent_run[key].as_u64().unwrap_or(0);
+            missing[index] = missing[index].saturating_add(totals[index].saturating_sub(reported));
+            agent_run[key] = json!(totals[index]);
+        }
+        agent_run["started_at"] = json!(first.started_at.to_string());
+        agent_run["finished_at"] = json!(last.finished_at.map(|at| at.to_string()));
+    }
+    let missing_tokens = missing[1].saturating_add(missing[2]);
+    for (section, keys) in [
+        (
+            "budget_used",
+            ["steps", "input_tokens", "output_tokens", "total_tokens"],
+        ),
+        (
+            "execution_summary",
+            [
+                "total_steps",
+                "total_input_tokens",
+                "total_output_tokens",
+                "total_tokens",
+            ],
+        ),
+    ] {
+        let Some(section) = job.get_mut(section).and_then(Value::as_object_mut) else {
+            continue;
+        };
+        let added = [missing[0], missing[1], missing[2], missing_tokens];
+        for (key, added) in keys.into_iter().zip(added) {
+            if let Some(reported) = section.get(key).and_then(Value::as_u64) {
+                section.insert(key.to_string(), json!(reported.saturating_add(added)));
+            }
+        }
+    }
+}
+
+/// Reports full-history usage on `agent_run_finished`, which the job page reads over `agent_runs`.
+pub fn apply_session_runs_to_events(events: &mut [Value], runs: &SessionRuns) {
+    for event in events {
+        if event["event_type"] != "agent_run_finished" {
+            continue;
+        }
+        let payload = &mut event["payload"];
+        let Some(attempts) = payload["agent_run_id"].as_str().and_then(|id| runs.get(id)) else {
+            continue;
+        };
+        let [steps, input_tokens, output_tokens] = attempt_totals(attempts);
+        payload["steps"] = json!(steps);
+        payload["input_tokens"] = json!(input_tokens);
+        payload["output_tokens"] = json!(output_tokens);
+    }
+}
 
 fn map_task_status_to_admin_job_status(status: TaskStatus) -> &'static str {
     match status {

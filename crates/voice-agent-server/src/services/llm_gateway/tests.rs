@@ -9,9 +9,9 @@ use crate::{
 
 use super::{
     CreatePoolModelRequest, FakeOAuthVendorDriver, GatewayAccountStatus, GatewayBinding,
-    GatewayCallOutcome, GatewayError, GatewayVendor, LlmGatewayHub, OAuthCallbackSubmission,
-    OAuthLoginMode, OAuthPollStatus, OAuthVendorDriver, StartOAuthLoginRequest,
-    UpdateGatewayAccountPatch, UpdatePoolModelPatch,
+    GatewayCallOutcome, GatewayError, GatewayVendor, ImportCookieAccountRequest, LlmGatewayHub,
+    OAuthCallbackSubmission, OAuthLoginMode, OAuthPollStatus, OAuthVendorDriver,
+    StartOAuthLoginRequest, UpdateGatewayAccountPatch, UpdatePoolModelPatch,
 };
 
 async fn test_hub_with_fakes() -> (
@@ -744,66 +744,19 @@ async fn hub_fetches_caches_and_routes_around_exhausted_account_quotas() {
 }
 
 #[tokio::test]
-async fn llm_gateway_muse_cookie_paste_interactive_cdp_capture_and_session_renewal() {
+async fn llm_gateway_muse_cookie_paste_rejects_login_flow_and_renews_session() {
     use axum::{
         Router,
         http::HeaderMap,
         response::IntoResponse,
         routing::{get, post},
     };
-    use serde_json::{Value, json};
-    use std::sync::Mutex;
-    use std::time::Duration;
+    use serde_json::json;
     use tokio::net::TcpListener;
 
     use super::vendors::muse::MuseOAuthDriver;
-    use crate::providers::llm::gateway::muse::{
-        cdp::{BrowserEngine, BrowserPage, CdpError, CookieParam},
-        config::parse_accounts,
-    };
+    use crate::providers::llm::gateway::muse::config::parse_accounts;
 
-    struct FakeMuseLoginPage {
-        cookies: Arc<Mutex<BTreeMap<String, String>>>,
-    }
-
-    #[async_trait::async_trait]
-    impl BrowserPage for FakeMuseLoginPage {
-        async fn navigate(&self, _url: &str) -> Result<(), CdpError> {
-            Ok(())
-        }
-        async fn evaluate_json(
-            &self,
-            _expression: &str,
-            _await_promise: bool,
-            _timeout: Duration,
-        ) -> Result<Value, CdpError> {
-            Ok(Value::Null)
-        }
-        async fn get_cookies(&self, _urls: &[&str]) -> Result<BTreeMap<String, String>, CdpError> {
-            Ok(self.cookies.lock().unwrap().clone())
-        }
-        async fn close(&self) {}
-    }
-
-    struct FakeMuseLoginEngine {
-        cookies: Arc<Mutex<BTreeMap<String, String>>>,
-    }
-
-    #[async_trait::async_trait]
-    impl BrowserEngine for FakeMuseLoginEngine {
-        async fn open_page(
-            &self,
-            _context_key: &str,
-            _cookies: &[CookieParam],
-        ) -> Result<Arc<dyn BrowserPage>, CdpError> {
-            Ok(Arc::new(FakeMuseLoginPage {
-                cookies: Arc::clone(&self.cookies),
-            }))
-        }
-        async fn dispose_context(&self, _context_key: &str) {}
-    }
-
-    // 1. Test interactive CDP login capture via `poll_oauth_login`
     let db = Database::connect(&DatabaseConfig {
         url: "sqlite::memory:".into(),
         max_connections: 1,
@@ -813,77 +766,36 @@ async fn llm_gateway_muse_cookie_paste_interactive_cdp_capture_and_session_renew
     .expect("sqlite memory");
     let cipher: Arc<dyn crate::database::secrets::SecretResolver> =
         Arc::new(CredentialCipher::new(1, &[0x42; 32]).expect("cipher"));
-    let shared_cookies: Arc<Mutex<BTreeMap<String, String>>> =
-        Arc::new(Mutex::new(BTreeMap::new()));
-    let fake_login_engine: Arc<dyn BrowserEngine> = Arc::new(FakeMuseLoginEngine {
-        cookies: Arc::clone(&shared_cookies),
-    });
 
-    let mut drivers: BTreeMap<GatewayVendor, Arc<dyn OAuthVendorDriver>> = BTreeMap::new();
-    for vendor in GatewayVendor::ALL {
-        if vendor == GatewayVendor::Muse {
-            drivers.insert(
-                vendor,
-                Arc::new(MuseOAuthDriver::with_browser_engine(Arc::clone(
-                    &fake_login_engine,
-                ))),
-            );
-        } else {
-            drivers.insert(vendor, Arc::new(FakeOAuthVendorDriver::new(vendor)));
-        }
-    }
-    let hub = Arc::new(LlmGatewayHub::with_drivers(
-        Some(db.pool().clone()),
-        Arc::clone(&cipher),
-        drivers,
-    ));
-
-    let ch_cdp = hub
-        .start_oauth_login(StartOAuthLoginRequest {
-            vendor: GatewayVendor::Muse,
-            label: "Muse Interactive CDP".to_owned(),
-            redirect_uri: None,
-        })
-        .await
-        .expect("start muse login");
-    assert_eq!(ch_cdp.mode, OAuthLoginMode::Pkce);
-    assert!(
-        ch_cdp
-            .authorize_url
-            .as_deref()
-            .unwrap_or("")
-            .starts_with("https://muse.ai/thread/new")
+    // 1. Muse has no browser login: the OAuth session flow refuses it outright.
+    assert_eq!(
+        GatewayVendor::Muse.login_mode(),
+        OAuthLoginMode::CookiePaste
     );
-
-    // Poll #1 before user logs into the Chromium window -> Pending
-    let poll1 = hub
-        .poll_oauth_login(&ch_cdp.session_id)
-        .await
-        .expect("poll 1");
-    assert!(matches!(poll1, OAuthPollStatus::Pending { .. }));
-
-    // Simulate user completing login in the Chromium window -> cookies appear in Network.getCookies
-    {
-        let mut guard = shared_cookies.lock().unwrap();
-        guard.insert("hatch_sess".to_owned(), "cdp_sess_1".to_owned());
-        guard.insert("hatch_gw".to_owned(), "cdp_gw_1".to_owned());
-        guard.insert("hatch_vml".to_owned(), "cdp_vml_1".to_owned());
-        guard.insert(
-            "hatch_native_auth_device".to_owned(),
-            "cdp_dev_1".to_owned(),
-        );
-    }
-
-    // Poll #2 automatically captures the 4 cookies, seals them into SQLite, and returns Completed!
-    let poll2 = hub
-        .poll_oauth_login(&ch_cdp.session_id)
-        .await
-        .expect("poll 2");
-    let OAuthPollStatus::Completed { account: cdp_acc } = poll2 else {
-        panic!("expected Completed from interactive CDP poll, got {poll2:?}");
-    };
-    assert_eq!(cdp_acc.vendor, GatewayVendor::Muse);
-    assert_eq!(cdp_acc.label, "Muse Interactive CDP");
+    let mut drivers: BTreeMap<GatewayVendor, Arc<dyn OAuthVendorDriver>> = BTreeMap::new();
+    drivers.insert(GatewayVendor::Muse, Arc::new(MuseOAuthDriver::new()));
+    let offline_hub =
+        LlmGatewayHub::with_drivers(Some(db.pool().clone()), Arc::clone(&cipher), drivers);
+    assert!(matches!(
+        offline_hub
+            .start_oauth_login(StartOAuthLoginRequest {
+                vendor: GatewayVendor::Muse,
+                label: "Muse Browser Login".to_owned(),
+                redirect_uri: None,
+            })
+            .await,
+        Err(GatewayError::ValidationFailed)
+    ));
+    assert!(matches!(
+        offline_hub
+            .import_cookie_account(ImportCookieAccountRequest {
+                vendor: GatewayVendor::Muse,
+                label: "Muse Missing Session".to_owned(),
+                cookies: "theme=dark; dpr=2".to_owned(),
+            })
+            .await,
+        Err(GatewayError::OAuthExchangeFailed(_))
+    ));
 
     // 2. Test manual Cookie header paste (with spaces & `Cookie:` prefix) + online session renewal
     let app = Router::new()
@@ -928,29 +840,18 @@ async fn llm_gateway_muse_cookie_paste_interactive_cdp_capture_and_session_renew
     );
     let online_hub = Arc::new(LlmGatewayHub::with_drivers(
         Some(db.pool().clone()),
-        cipher,
+        Arc::clone(&cipher),
         online_drivers,
     ));
 
-    let ch_paste = online_hub
-        .start_oauth_login(StartOAuthLoginRequest {
+    let pasted_acc = online_hub
+        .import_cookie_account(ImportCookieAccountRequest {
             vendor: GatewayVendor::Muse,
             label: "Muse Manual Paste".to_owned(),
-            redirect_uri: None,
+            cookies: "Cookie: hatch_sess=sess_initial; hatch_gw=gw_initial; hatch_vml=vml_initial; hatch_native_auth_device=dev_initial".to_owned(),
         })
         .await
-        .expect("start paste login");
-
-    let pasted_acc = online_hub
-        .complete_oauth_login(
-            &ch_paste.session_id,
-            OAuthCallbackSubmission {
-                callback_url_or_code: "Cookie: hatch_sess=sess_initial; hatch_gw=gw_initial; hatch_vml=vml_initial; hatch_native_auth_device=dev_initial".to_owned(),
-                state: None,
-            },
-        )
-        .await
-        .expect("complete_oauth_login with raw Cookie header containing spaces");
+        .expect("import_cookie_account with raw Cookie header containing spaces");
 
     assert_eq!(pasted_acc.vendor, GatewayVendor::Muse);
     assert_eq!(
@@ -976,15 +877,6 @@ async fn llm_gateway_muse_cookie_paste_interactive_cdp_capture_and_session_renew
 
     // 3. Test pasting full browser export JSON `{"url":"https://muse.ai","cookies":[...]}`
     //    with realistic multi-kilobyte `hatch_gw` / `hatch_vml` values (> 5 KiB raw JSON)
-    let ch_json_export = online_hub
-        .start_oauth_login(StartOAuthLoginRequest {
-            vendor: GatewayVendor::Muse,
-            label: "Muse Browser Export JSON".to_owned(),
-            redirect_uri: None,
-        })
-        .await
-        .expect("start json export login");
-
     let large_gw = format!("v1%3A{}", "y0hVepRAOkKYuBVg".repeat(140));
     let large_vml = format!("v1%3A{}", "bJ1uZtpKsBWOgtjA".repeat(145));
     let browser_export_payload = serde_json::json!({
@@ -1004,15 +896,13 @@ async fn llm_gateway_muse_cookie_paste_interactive_cdp_capture_and_session_renew
     .to_string();
 
     let json_acc = online_hub
-        .complete_oauth_login(
-            &ch_json_export.session_id,
-            OAuthCallbackSubmission {
-                callback_url_or_code: browser_export_payload,
-                state: None,
-            },
-        )
+        .import_cookie_account(ImportCookieAccountRequest {
+            vendor: GatewayVendor::Muse,
+            label: "Muse Browser Export JSON".to_owned(),
+            cookies: browser_export_payload,
+        })
         .await
-        .expect("complete_oauth_login with browser export JSON");
+        .expect("import_cookie_account with browser export JSON");
 
     assert_eq!(json_acc.vendor, GatewayVendor::Muse);
     assert_eq!(json_acc.expires_at, Some(1_793_359_056));
@@ -1034,6 +924,56 @@ async fn llm_gateway_muse_cookie_paste_interactive_cdp_capture_and_session_renew
     assert_eq!(
         json_creds[0].cookies.get("hatch_vml").map(String::as_str),
         Some(large_vml.as_str())
+    );
+
+    // 4. Cookies upstream reports as unauthorized are rejected instead of saved as a dead account.
+    let unauthorized_app = Router::new().route(
+        "/api/session",
+        get(|| async { axum::http::StatusCode::UNAUTHORIZED }),
+    );
+    let unauthorized_listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+    let unauthorized_addr = unauthorized_listener.local_addr().expect("addr");
+    tokio::spawn(async move {
+        let _ = axum::serve(unauthorized_listener, unauthorized_app).await;
+    });
+    let mut unauthorized_drivers: BTreeMap<GatewayVendor, Arc<dyn OAuthVendorDriver>> =
+        BTreeMap::new();
+    unauthorized_drivers.insert(
+        GatewayVendor::Muse,
+        Arc::new(MuseOAuthDriver::with_test_endpoints(
+            format!("http://{unauthorized_addr}/api/session"),
+            format!("http://{unauthorized_addr}/api/hatch/vm/wake"),
+        )),
+    );
+    let unauthorized_hub =
+        LlmGatewayHub::with_drivers(Some(db.pool().clone()), cipher, unauthorized_drivers);
+    let accounts_before = online_hub
+        .list_accounts(Some(GatewayVendor::Muse))
+        .await
+        .expect("list before")
+        .len();
+    let rejected = unauthorized_hub
+        .import_cookie_account(ImportCookieAccountRequest {
+            vendor: GatewayVendor::Muse,
+            label: "Muse Expired Cookie".to_owned(),
+            cookies: "hatch_sess=expired; hatch_gw=g; hatch_vml=v; hatch_native_auth_device=d"
+                .to_owned(),
+        })
+        .await;
+    match rejected {
+        Err(GatewayError::OAuthExchangeFailed(detail)) => {
+            assert_eq!(detail, "muse_cookie_unauthorized");
+        }
+        Err(other) => panic!("expected unauthorized cookie rejection, got {other:?}"),
+        Ok(_) => panic!("unauthorized cookie must not create an account"),
+    }
+    assert_eq!(
+        online_hub
+            .list_accounts(Some(GatewayVendor::Muse))
+            .await
+            .expect("list after")
+            .len(),
+        accounts_before
     );
 }
 
@@ -1675,22 +1615,12 @@ async fn llm_gateway_muse_auto_refresh_multi_tier_fallback_and_watchdog_recovery
 
     // Seed a Muse account with an ALREADY-EXPIRED wss:// URL + valid hatch_sess cookie (hybrid credential)
     let expired_hybrid = "wss://hatch.metaaivm.com/v1/noise?vm_id=vm_old_expired&auth_token=tok_old&app_id=hatch-web&request_id=req1&notary_token=v1.timeout:1700000000.sig\nhatch_sess=sess_init; hatch_gw=gw_init; hatch_vml=vml_init; hatch_native_auth_device=dev_init";
-    let ch = hub
-        .start_oauth_login(StartOAuthLoginRequest {
+    let acc = hub
+        .import_cookie_account(ImportCookieAccountRequest {
             vendor: GatewayVendor::Muse,
             label: "Muse Hybrid Auto-Renew".to_owned(),
-            redirect_uri: None,
+            cookies: expired_hybrid.to_owned(),
         })
-        .await
-        .expect("start login");
-    let acc = hub
-        .complete_oauth_login(
-            &ch.session_id,
-            OAuthCallbackSubmission {
-                callback_url_or_code: expired_hybrid.to_owned(),
-                state: None,
-            },
-        )
         .await
         .expect("complete login");
 

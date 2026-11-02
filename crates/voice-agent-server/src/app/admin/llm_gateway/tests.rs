@@ -84,6 +84,64 @@ async fn admin_llm_gateway_routes_and_provider_binding_lifecycle() {
     let vendors = vendors_body["vendors"].as_array().unwrap();
     assert_eq!(vendors.len(), 5);
 
+    let muse = vendors.iter().find(|v| v["vendor"] == "muse").unwrap();
+    assert_eq!(muse["login_mode"], "cookie_paste");
+
+    // Muse connects through pasted cookies only, never through an OAuth session.
+    let muse_start = client
+        .post(format!("{base}/llm-gateway/oauth/start"))
+        .bearer_auth("gateway-admin-token")
+        .json(&json!({ "vendor": "muse", "label": "Muse Browser Login" }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(muse_start.status(), StatusCode::BAD_REQUEST);
+
+    let cookie_import_unauth = client
+        .post(format!("{base}/llm-gateway/accounts/cookie-import"))
+        .json(&json!({ "vendor": "muse", "label": "Muse", "cookies": "hatch_sess=s" }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(cookie_import_unauth.status(), StatusCode::UNAUTHORIZED);
+
+    let cookie_import_wrong_vendor = client
+        .post(format!("{base}/llm-gateway/accounts/cookie-import"))
+        .bearer_auth("gateway-admin-token")
+        .json(&json!({ "vendor": "anthropic", "label": "Claude", "cookies": "a=b" }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(cookie_import_wrong_vendor.status(), StatusCode::BAD_REQUEST);
+
+    let cookie_import = client
+        .post(format!("{base}/llm-gateway/accounts/cookie-import"))
+        .bearer_auth("gateway-admin-token")
+        .json(&json!({
+            "vendor": "muse",
+            "label": "Muse Cookie #1",
+            "cookies": "hatch_sess=s1; hatch_gw=g1; hatch_vml=v1; hatch_native_auth_device=d1"
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(cookie_import.status(), StatusCode::OK);
+    let cookie_import_body: Value = cookie_import.json().await.unwrap();
+    assert_eq!(cookie_import_body["account"]["vendor"], "muse");
+    assert_eq!(cookie_import_body["account"]["label"], "Muse Cookie #1");
+    assert!(!cookie_import_body.to_string().contains("hatch_sess"));
+    let muse_account_key = cookie_import_body["account"]["account_key"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let muse_delete = client
+        .delete(format!("{base}/llm-gateway/accounts/{muse_account_key}"))
+        .bearer_auth("gateway-admin-token")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(muse_delete.status(), StatusCode::OK);
+
     // 2. Start OAuth login via POST /llm-gateway/oauth/start and complete via GET /llm-gateway/oauth/callback (browser redirect without Bearer header)
     let start_resp = client
         .post(format!("{base}/llm-gateway/oauth/start"))

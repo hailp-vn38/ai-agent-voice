@@ -20,8 +20,8 @@ use crate::database::Database;
 use crate::database::credentials::CredentialCipher;
 use crate::providers::llm::gateway::{LlmGatewayConfig, LlmGatewayProvider};
 use crate::services::llm_gateway::{
-    FakeOAuthVendorDriver, GatewayBinding, GatewayVendor, LlmGatewayHub, OAuthCallbackSubmission,
-    OAuthVendorDriver, StartOAuthLoginRequest,
+    FakeOAuthVendorDriver, GatewayBinding, GatewayVendor, ImportCookieAccountRequest,
+    LlmGatewayHub, OAuthVendorDriver,
 };
 
 pub(in crate::providers::llm::gateway) struct FakeVmAccount {
@@ -555,22 +555,12 @@ pub(super) async fn build_gateway_muse_provider(
     ));
 
     for (idx, cookie) in account_cookies.iter().enumerate() {
-        let ch = hub
-            .start_oauth_login(StartOAuthLoginRequest {
+        let acc = hub
+            .import_cookie_account(ImportCookieAccountRequest {
                 vendor: GatewayVendor::Muse,
                 label: format!("Muse Test #{idx}"),
-                redirect_uri: None,
+                cookies: (*cookie).to_string(),
             })
-            .await
-            .expect("start oauth");
-        let acc = hub
-            .complete_oauth_login(
-                &ch.session_id,
-                OAuthCallbackSubmission {
-                    callback_url_or_code: (*cookie).to_string(),
-                    state: None,
-                },
-            )
             .await
             .expect("complete oauth");
         let priority = 100i64.saturating_sub(idx as i64 * 10);

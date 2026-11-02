@@ -301,10 +301,21 @@ pub(crate) fn bound_result_chars(mut value: Value, max_chars: usize) -> Value {
     if let Some(obj) = value.as_object_mut()
         && let Some(Value::String(content)) = obj.get_mut("content")
     {
+        // Budget against the escaped size: quotes and newlines grow when serialized,
+        // and JSON-in-string content can otherwise overflow and lose everything.
         let budget = max_chars.saturating_sub(256);
-        let mut cut = budget.min(content.len());
-        while cut > 0 && !content.is_char_boundary(cut) {
-            cut -= 1;
+        let mut escaped_len = 0;
+        let mut cut = content.len();
+        for (index, character) in content.char_indices() {
+            escaped_len += match character {
+                '"' | '\\' | '\n' | '\r' | '\t' | '\u{8}' | '\u{c}' => 2,
+                c if c < ' ' => 6,
+                c => c.len_utf8(),
+            };
+            if escaped_len > budget {
+                cut = index;
+                break;
+            }
         }
         content.truncate(cut);
         content.push_str("\n...[truncated]");

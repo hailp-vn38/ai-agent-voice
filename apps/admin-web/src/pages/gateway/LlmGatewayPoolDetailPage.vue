@@ -27,6 +27,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { useI18n } from '@/composables/useI18n'
 import {
+  loginModeLabel,
   primaryQuotaPercent,
   quotaBarColorClass,
   statusBadgeClass,
@@ -644,7 +645,7 @@ onMounted(() => {
               <div class="flex items-center justify-between py-2">
                 <dt class="text-muted-foreground">OAuth Mode</dt>
                 <dd class="font-medium text-foreground">
-                  {{ poolDetail.login_mode === 'device_code' ? 'Device code' : 'OAuth PKCE' }}
+                  {{ loginModeLabel(poolDetail.login_mode) }}
                 </dd>
               </div>
               <div class="flex items-center justify-between gap-2 py-2">

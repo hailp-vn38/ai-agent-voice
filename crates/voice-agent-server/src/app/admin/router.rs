@@ -63,6 +63,10 @@ fn knowledge_routes() -> Router<AppState> {
             axum::routing::post(knowledge::processing::reject),
         )
         .route("/knowledge/tree", get(knowledge::knowledge_tree))
+        .route(
+            "/knowledge/ask",
+            axum::routing::post(knowledge::knowledge_ask),
+        )
         .route("/knowledge/graph", get(knowledge::knowledge_graph))
         .route(
             "/knowledge/charts/{*path}",
@@ -489,6 +493,10 @@ fn provider_and_gateway_routes() -> Router<AppState> {
                 .delete(llm_gateway::delete_pool_model),
         )
         .route("/llm-gateway/accounts", get(llm_gateway::list_accounts))
+        .route(
+            "/llm-gateway/accounts/cookie-import",
+            axum::routing::post(llm_gateway::import_cookie_account),
+        )
         .route("/llm-gateway/quotas", get(llm_gateway::list_quotas))
         .route(
             "/llm-gateway/oauth/start",

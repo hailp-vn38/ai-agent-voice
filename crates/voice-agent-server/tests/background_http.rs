@@ -552,7 +552,10 @@ prompts_dir = "{}"
     let cloud_worker = agents.iter().find(|a| a["id"] == "cloud_worker").unwrap();
     assert_eq!(cloud_worker["enabled"], false);
     assert_eq!(cloud_worker["default_enabled"], false);
-    assert_eq!(cloud_worker["available_tools"], json!(["muse_task"]));
+    assert_eq!(
+        cloud_worker["available_tools"],
+        json!(["muse_task", "artifact_read"])
+    );
     assert_eq!(
         cloud_worker["tool_capability_tags"]["muse_task"],
         "agent_task"
@@ -769,12 +772,13 @@ skills_dir = "{}"
     let skills = initial["skills"]
         .as_array()
         .expect("skills array in settings");
-    assert_eq!(skills.len(), 9);
+    assert_eq!(skills.len(), 10);
     for expected_id in [
         "daily-synthesis-staging",
         "daily-task-reminder",
         "trading-chart",
         "web-fetch-policy",
+        "wiki-chat",
         "wiki-ingest",
         "wiki-lint",
         "wiki-query",
@@ -797,7 +801,7 @@ skills_dir = "{}"
         .find(|a| a["id"] == "wiki_researcher")
         .unwrap();
     let researcher_avail = researcher["available_skills"].as_array().unwrap();
-    assert_eq!(researcher_avail.len(), 9);
+    assert_eq!(researcher_avail.len(), 10);
     assert_eq!(researcher_avail[0], "wiki-query");
     assert_eq!(researcher_avail[1], "web-fetch-policy");
     assert_eq!(researcher_avail[2], "wiki-taxonomy");
@@ -1769,6 +1773,152 @@ prompts_dir = "{}"
         StatusCode::BAD_REQUEST,
         "an unknown verdict is rejected before anything else"
     );
+
+    server.abort();
+}
+
+#[tokio::test]
+async fn background_settings_save_survives_deleted_provider_refs() {
+    let temp_root =
+        std::env::temp_dir().join(format!("background-stale-refs-{}", uuid::Uuid::new_v4()));
+    let store_dir = temp_root.join("orch-store");
+    std::fs::create_dir_all(&store_dir).unwrap();
+    std::fs::write(
+        store_dir.join("agent_settings.json"),
+        json!({
+            "revision": 5,
+            "orchestrator_llm_provider": "deleted-orchestrator",
+            "worker_llm_provider": "deleted-worker",
+            "wiki_chat_llm_provider": "deleted-wiki-chat",
+            "agents": {
+                "wiki_researcher": {"enabled": true, "provider_ref": "deleted-researcher"},
+                "media_processor": {
+                    "enabled": true,
+                    "tool_providers": {"tts_synthesize": "deleted-tts"}
+                }
+            }
+        })
+        .to_string(),
+    )
+    .unwrap();
+    let config: AppConfig = toml::from_str(&format!(
+        r#"
+[server]
+bind = "127.0.0.1:0"
+public_ws_url = "ws://127.0.0.1:0/voice/v1/"
+[provider_defaults]
+vad = "test"
+asr = "test"
+llm = "test"
+tts = "test"
+[database]
+url = "sqlite://{}"
+[api]
+enabled = true
+admin_token = "background-test-token"
+[orchestrator]
+store_dir = "{}"
+prompts_dir = "{}"
+"#,
+        temp_root.join("voice-agent.db").display(),
+        store_dir.display(),
+        temp_root.join("prompts").display(),
+    ))
+    .unwrap();
+    let router = bootstrap_with_providers(config, Arc::new(ProviderSet::unavailable()))
+        .await
+        .unwrap();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base = format!("http://{}/api/admin", listener.local_addr().unwrap());
+    let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    let client = Client::new();
+    let agent = |settings: &Value, id: &str| {
+        settings["agents"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|a| a["id"] == id)
+            .unwrap()
+            .clone()
+    };
+
+    let initial: Value = client
+        .get(format!("{base}/background/settings"))
+        .bearer_auth("background-test-token")
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(initial["orchestrator_llm_provider"], "orchestrator:default");
+    assert_eq!(initial["worker_llm_provider"], "orchestrator:default");
+    assert_eq!(initial["wiki_chat_llm_provider"], Value::Null);
+    assert_eq!(
+        agent(&initial, "wiki_researcher")["provider_ref"],
+        Value::Null
+    );
+    assert_eq!(
+        agent(&initial, "media_processor")["tool_providers"],
+        json!({})
+    );
+    let revision = initial["revision"].as_i64().unwrap();
+
+    // A newly chosen ref is still rejected, even while stale refs are carried over.
+    let rejected = client
+        .put(format!("{base}/background/settings"))
+        .bearer_auth("background-test-token")
+        .header("If-Match", format!("\"{revision}\""))
+        .json(&json!({
+            "enabled": true,
+            "agents": {"source_collector": {"enabled": true, "provider_ref": "never-existed"}}
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(rejected.status(), StatusCode::BAD_REQUEST);
+
+    let saved = client
+        .put(format!("{base}/background/settings"))
+        .bearer_auth("background-test-token")
+        .header("If-Match", format!("\"{revision}\""))
+        .json(&json!({
+            "enabled": true,
+            "agents": {"source_collector": {"enabled": true, "steps": 7}}
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(saved.status(), StatusCode::OK);
+    let saved: Value = saved.json().await.unwrap();
+    assert_eq!(agent(&saved, "source_collector")["steps"], 7);
+
+    // An unrelated save must not erase the refs: a disabled provider can come back.
+    let persisted: Value = serde_json::from_str(
+        &std::fs::read_to_string(store_dir.join("agent_settings.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(persisted["worker_llm_provider"], "deleted-worker");
+    assert_eq!(persisted["wiki_chat_llm_provider"], "deleted-wiki-chat");
+    assert_eq!(
+        persisted["agents"]["wiki_researcher"]["provider_ref"],
+        "deleted-researcher"
+    );
+
+    let created = client
+        .post(format!("{base}/background/agents"))
+        .bearer_auth("background-test-token")
+        .header("If-Match", format!("\"{}\"", saved["revision"]))
+        .json(&json!({
+            "id": "custom_after_delete",
+            "flow_id": "daily",
+            "description": "Created while stale refs remain",
+            "system_prompt": "Do the work."
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(created.status(), StatusCode::CREATED);
 
     server.abort();
 }

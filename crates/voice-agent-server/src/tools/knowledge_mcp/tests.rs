@@ -376,3 +376,18 @@ async fn wiki_write_tools_normalize_markdown_tables_for_external_markdown_apps()
     // 5. Fenced code block content is untouched
     assert!(saved.contains("| [[not/escaped/in/code|Code Block Link]] | Value |"));
 }
+
+#[test]
+fn bound_result_chars_keeps_escape_heavy_content() {
+    let content = "\"key\": \"value\",\n".repeat(2_000);
+    let raw = json!({"content": content, "metadata": {"results": ["dropped"]}});
+
+    let bounded = bound_result_chars(raw, 12_000);
+
+    assert!(serde_json::to_string(&bounded).unwrap().len() <= 12_000);
+    assert_eq!(bounded["truncated"], true);
+    let kept = bounded["content"].as_str().unwrap();
+    assert!(kept.len() > 5_000);
+    assert!(kept.starts_with("\"key\""));
+    assert!(kept.ends_with("...[truncated]"));
+}

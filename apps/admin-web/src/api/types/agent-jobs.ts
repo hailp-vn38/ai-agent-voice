@@ -92,6 +92,8 @@ export interface SaveJobSkillInput {
 }
 export interface BackgroundSettings {
   llm_providers?: BackgroundProviderOption[]
+  wiki_chat_llm_providers?: BackgroundProviderOption[]
+  wiki_chat_llm_provider?: string | null
   runtime_ready: boolean
   enabled: boolean
   orchestrator_llm_provider: string | null
@@ -104,6 +106,7 @@ export interface BackgroundSettingsUpdate {
   enabled: boolean
   orchestrator_llm_provider: string | null
   worker_llm_provider: string | null
+  wiki_chat_llm_provider?: string | null
   agents?: Record<string, BackgroundAgentConfigUpdate>
 }
 

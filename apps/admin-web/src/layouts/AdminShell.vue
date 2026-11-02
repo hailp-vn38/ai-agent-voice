@@ -59,7 +59,7 @@ onBeforeUnmount(() => {
 <template>
   <div class="min-h-screen bg-background text-foreground">
     <AppSidebar :collapsed="sidebarCollapsed" @toggle="toggleAdminSidebar" />
-    <AssistantWidget />
+    <AssistantWidget v-if="!isKnowledge" />
 
     <div class="transition-[padding-left] duration-300 ease-in-out motion-reduce:transition-none"
       :class="sidebarCollapsed ? 'lg:pl-[72px]' : 'lg:pl-64'">

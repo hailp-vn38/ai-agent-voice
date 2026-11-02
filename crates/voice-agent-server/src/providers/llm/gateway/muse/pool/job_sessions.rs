@@ -266,6 +266,27 @@ async fn release_job_session_inner(key: &str, idle_only: bool) -> Option<String>
     Some(session_id)
 }
 
+/// Drops local state for a session that stays on Muse. Sends nothing to the VM.
+pub(crate) async fn forget_job_session(key: &str) {
+    let entry = {
+        let map = JOB_ENTRIES.lock().unwrap_or_else(|e| e.into_inner());
+        map.get(key).cloned()
+    };
+    let Some(entry) = entry else {
+        return;
+    };
+    let mut slot = entry.gate.lock().await;
+    *slot = None;
+    entry.set_account_hint(None);
+    let mut map = JOB_ENTRIES.lock().unwrap_or_else(|e| e.into_inner());
+    if map
+        .get(key)
+        .is_some_and(|current| Arc::ptr_eq(current, &entry))
+    {
+        map.remove(key);
+    }
+}
+
 /// Cleanup must address every recorded remote session, not only the latest
 /// session retained under a job's continuation key.
 pub(crate) async fn release_recorded_job_session(

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, toRaw, watch } from 'vue'
 import cytoscape, { type Core } from 'cytoscape'
 import {
   Globe,
@@ -27,11 +27,13 @@ type GraphNode = {
   revision: number
   category?: string
   tags?: string[]
+  tier?: 'cited' | 'read' | 'retrieved' | 'context'
+  score?: number | null
 }
 type GraphReference = { line: number; raw_target: string; alias?: string; anchor?: string }
 type GraphEdge = { source_id: string; target_id: string; kind: string; lines: number[]; references: GraphReference[] }
 type GraphUnresolved = { source_id: string; source_line: number; raw_target: string; reason: string }
-type GraphSnapshot = { nodes: GraphNode[]; edges: GraphEdge[]; unresolved: GraphUnresolved[]; truncated: boolean }
+type GraphSnapshot = { nodes: GraphNode[]; edges: GraphEdge[]; unresolved: GraphUnresolved[]; truncated: boolean; revision?: number }
 type NodeGroup = 'concept' | 'entity' | 'synthesis' | 'source' | 'system' | 'draft'
 
 const MIN_ZOOM = 0.28
@@ -45,10 +47,14 @@ const props = defineProps<{
   centerId?: string | null
   reloadToken: number
   focusMode?: boolean
+  answerGraph?: GraphSnapshot | null
+  inactive?: boolean
 }>()
 const emit = defineEmits<{
   open: [id: string]
+  'open-side': [id: string]
   rebuild: []
+  'node-hover': [id: string | null]
   'update:focusMode': [value: boolean]
 }>()
 
@@ -67,12 +73,14 @@ const isFocusMode = computed({
   },
 })
 
-const scope = ref<'global' | 'local'>('global')
+const scope = ref<'global' | 'local' | 'query' | 'answer'>('global')
+const queryText = ref('')
 const depth = ref(1)
 const graph = ref<GraphSnapshot | null>(null)
 const selectedId = ref<string | null>(null)
 const activeId = ref<string | null>(null)
 const selectedEdgeId = ref<string | null>(null)
+const nodeInspectorOpen = ref(false)
 const loading = ref(false)
 const error = ref('')
 const isStale = ref(false)
@@ -111,6 +119,7 @@ let zoomRafId: number | null = null
 let targetZoom = 1
 let zoomAnchor = { x: 0, y: 0 }
 let resizeObserver: ResizeObserver | null = null
+let lastFitWidth = 0
 
 const nodeSizeScale = computed(() => nodeSizePercent.value / 100)
 
@@ -232,7 +241,8 @@ const visibleEdges = computed(() => visibleGraph.value.edges)
 
 const effectiveSelectedId = computed(() => activeId.value ?? selectedId.value)
 const current = computed(() => visibleNodes.value.find(node => node.id === effectiveSelectedId.value) ?? null)
-const inspectorOpen = computed(() => Boolean(selectedEdgeId.value))
+const inspectorOpen = computed(() => Boolean(selectedEdgeId.value) ||
+  (scope.value === 'answer' && nodeInspectorOpen.value))
 
 const selectedEdge = computed(() => {
   if (!selectedEdgeId.value) return null
@@ -259,6 +269,8 @@ function name(id: string): string { return names.value.get(id) ?? id }
 const graphHeadingText = computed(() => {
   if (activeId.value || selectedEdgeId.value) return 'Node connections'
   if (scope.value === 'local') return 'Current note'
+  if (scope.value === 'query') return 'Query graph'
+  if (scope.value === 'answer') return t('knowledgeV3.graphAnswer')
   return 'All connections'
 })
 
@@ -639,18 +651,32 @@ function relayout() {
   requestAnimationFrame(placePanel)
 }
 
-function selectScope(nextScope: 'global' | 'local') {
+function selectScope(nextScope: 'global' | 'local' | 'query' | 'answer') {
+  if (nextScope === 'answer' && !props.answerGraph) return
   if (nextScope === 'local' && !props.centerId) return
   scope.value = nextScope
+  nodeInspectorOpen.value = false
   if (nextScope === 'local' && props.centerId) {
     selectedId.value = props.centerId
     activeId.value = props.centerId
   }
+  if (nextScope === 'query') {
+    graph.value = null
+    error.value = ''
+    return
+  }
+}
+
+function submitQuery() {
+  if (scope.value !== 'query' || !queryText.value.trim()) return
+  void loadGraph()
 }
 
 function clearSelection() {
   activeId.value = null
   selectedEdgeId.value = null
+  nodeInspectorOpen.value = false
+  if (scope.value === 'answer') selectedId.value = null
   if (cy && typeof cy.elements === 'function') {
     cy.elements().unselect()
   }
@@ -658,16 +684,45 @@ function clearSelection() {
   placePanel()
 }
 
-function chooseNode(id: string) {
+function chooseNode(id: string, beside = false) {
+  if (beside) {
+    emit('open-side', id)
+    return
+  }
   selectedEdgeId.value = null
   selectedId.value = id
   activeId.value = null
-  emit('open', id)
+  if (scope.value === 'answer') {
+    nodeInspectorOpen.value = true
+    cy?.getElementById(id).select()
+    applyFocusClasses(id)
+    void nextTick(() => requestAnimationFrame(placePanel))
+  } else {
+    nodeInspectorOpen.value = false
+    emit('open', id)
+  }
 }
 
 function chooseNodeFromSearch(id: string) {
   nodeSearchOpen.value = false
   chooseNode(id)
+}
+
+function focusNode(id: string, showInspector = true) {
+  if (!visibleNodes.value.some(node => node.id === id)) return
+  selectedEdgeId.value = null
+  selectedId.value = id
+  activeId.value = id
+  nodeInspectorOpen.value = showInspector && scope.value === 'answer'
+  const node = cy?.getElementById(id)
+  node?.select()
+  if (node && cy && typeof cy.center === 'function') cy.center(node)
+  applyFocusClasses(id)
+  void nextTick(() => requestAnimationFrame(placePanel))
+}
+
+function highlightNode(id: string | null) {
+  applyFocusClasses(id && visibleNodes.value.some(node => node.id === id) ? id : null)
 }
 
 function focusEdge(edge: GraphEdge) {
@@ -733,6 +788,7 @@ function applyFocusClasses(hoveredId: string | null) {
 }
 
 function draw() {
+  lastFitWidth = canvas.value?.clientWidth ?? 0
   stopSmoothZoom()
   cy?.destroy()
   cy = null
@@ -759,7 +815,8 @@ function draw() {
     ...nodes.map(n => {
       const deg = degreeById.get(n.id) ?? 0
       const baseSize = Math.min(26, (isLocal ? 13 : 11) + Math.round(Math.sqrt(deg) * 3.2))
-      const size = Math.max(8, Math.round(baseSize * scale))
+      const tierMultiplier = n.tier === 'cited' ? 1.75 : n.tier === 'read' ? 1.5 : n.tier === 'retrieved' ? 1.25 : 1
+      const size = Math.max(8, Math.round(baseSize * tierMultiplier * scale))
       const group = classifyNodeGroup(n)
       const isMinor = !isLocal && nodes.length > 14 && deg <= 1 ? 'yes' : 'no'
       return {
@@ -769,6 +826,7 @@ function draw() {
           shortLabel: compactNodeLabel(n.title, isLocal ? 26 : 22),
           selectedLabel: compactNodeLabel(n.title, 38),
           status: n.status,
+          tier: n.tier,
           group,
           size,
           minor: isMinor,
@@ -832,6 +890,10 @@ function draw() {
       { selector: 'node[group = "source"]', style: { 'background-color': palette.source } },
       { selector: 'node[group = "system"]', style: { 'background-color': palette.system } },
       { selector: 'node[status = "draft"]', style: { 'background-color': palette.draft } },
+      { selector: 'node[tier = "cited"]', style: { 'border-width': 4, 'border-opacity': 1 } },
+      { selector: 'node[tier = "read"]', style: { 'border-width': 3.4, 'border-opacity': 0.95 } },
+      { selector: 'node[tier = "retrieved"]', style: { 'border-width': 2.8, 'border-opacity': 0.9 } },
+      { selector: 'node[tier = "context"]', style: { 'border-width': 1.6, 'border-opacity': 0.62 } },
       {
         selector: 'node:selected',
         style: {
@@ -919,10 +981,12 @@ function draw() {
   clampViewportZoom()
 
   cy.on('tap', 'node', event => {
-    chooseNode(event.target.id())
+    const pointer = event.originalEvent as MouseEvent | undefined
+    chooseNode(event.target.id(), Boolean(pointer?.metaKey || pointer?.ctrlKey))
   })
   cy.on('tap', 'edge', event => {
     selectedEdgeId.value = event.target.id()
+    nodeInspectorOpen.value = false
     if (!activeId.value) {
       activeId.value = selectedId.value
     }
@@ -947,6 +1011,7 @@ function draw() {
     const id = event.target.id()
     const node = nodes.find(n => n.id === id)
     hoverText.value = node ? node.title + ' · ' + node.path : ''
+    emit('node-hover', id)
     applyFocusClasses(id)
   })
   cy.on('mouseover', 'edge', event => {
@@ -957,6 +1022,7 @@ function draw() {
     hoverText.value = ''
     applyFocusClasses(null)
   })
+  cy.on('mouseout', 'node', () => emit('node-hover', null))
 
   if (activeId.value) {
     cy.getElementById(activeId.value).select()
@@ -966,6 +1032,15 @@ function draw() {
 }
 
 async function loadGraph() {
+  if (scope.value === 'answer') {
+    if (props.answerGraph) renderAnswerGraph(props.answerGraph)
+    return
+  }
+  if (scope.value === 'query' && !queryText.value.trim()) {
+    graph.value = null
+    loading.value = false
+    return
+  }
   const version = ++requestVersion
   if (scope.value === 'local' && !props.centerId) {
     graph.value = null
@@ -986,6 +1061,7 @@ async function loadGraph() {
       scope: scope.value,
       limit: 500,
       ...(scope.value === 'local' ? { center_id: props.centerId ?? '', depth: depth.value } : {}),
+      ...(scope.value === 'query' ? { q: queryText.value.trim() } : {}),
     }))
     if (version !== requestVersion) return
     graph.value = result
@@ -1010,7 +1086,26 @@ async function loadGraph() {
   }
 }
 
+function renderAnswerGraph(answerGraph: GraphSnapshot) {
+  // Revisions restart for every answer, so only object identity tells snapshots apart.
+  if (scope.value === 'answer' && graph.value && toRaw(graph.value) === toRaw(answerGraph)) return
+  requestVersion++
+  scope.value = 'answer'
+  graph.value = answerGraph
+  error.value = ''
+  isStale.value = false
+  loading.value = false
+  selectedEdgeId.value = null
+  nodeInspectorOpen.value = false
+  selectedId.value = answerGraph.nodes.find(node => node.id === selectedId.value)?.id
+    ?? answerGraph.nodes[0]?.id
+    ?? null
+  activeId.value = null
+  void nextTick(() => draw())
+}
+
 function onKeydown(event: KeyboardEvent) {
+  if (props.inactive) return
   if (event.key === 'Escape') {
     viewMenuOpen.value = false
     nodeSearchOpen.value = false
@@ -1026,17 +1121,32 @@ function onKeydown(event: KeyboardEvent) {
 }
 
 watch([scope, depth, () => props.centerId, () => props.reloadToken], () => { void loadGraph() })
+watch(() => props.answerGraph, answerGraph => {
+  if (answerGraph) {
+    if (scope.value === 'answer') renderAnswerGraph(answerGraph)
+    else scope.value = 'answer'
+  } else if (scope.value === 'answer') {
+    scope.value = 'global'
+  }
+})
 watch(dark, () => { if (graph.value) draw() })
 watch([showAllLabels, focusNeighbors], () => { applyFocusClasses(null) })
 watch([nodeSizePercent, fontSizePercent], () => { if (graph.value) draw() })
 
 onMounted(() => {
-  void loadGraph()
+  if (props.answerGraph) renderAnswerGraph(props.answerGraph)
+  else void loadGraph()
   window.addEventListener('keydown', onKeydown)
   if (typeof ResizeObserver !== 'undefined' && canvasWrap.value) {
     resizeObserver = new ResizeObserver(() => {
       if (cy && typeof cy.resize === 'function') {
         cy.resize()
+        // Revealing a tab or splitting a pane changes the width a lot; small drags keep the user's view.
+        const width = canvas.value?.clientWidth ?? 0
+        if (width > 0 && Math.abs(width - lastFitWidth) > lastFitWidth * 0.15) {
+          lastFitWidth = width
+          fitGraph()
+        }
       }
       placePanel()
     })
@@ -1053,6 +1163,8 @@ onBeforeUnmount(() => {
   cy?.destroy()
   cy = null
 })
+
+defineExpose({ focusNode, highlightNode })
 </script>
 
 <template>
@@ -1094,6 +1206,24 @@ onBeforeUnmount(() => {
             <Globe :size="13" />
             <span>{{ t('knowledgeV3.graphGlobal') }}</span>
           </button>
+          <button v-if="answerGraph" type="button" class="kg-tool-btn"
+            :class="{ on: scope === 'answer' }" @click="selectScope('answer')">
+            <Crosshair :size="13" />
+            <span>{{ t('knowledgeV3.graphAnswer') }}</span>
+          </button>
+          <button
+            type="button"
+            class="kg-tool-btn"
+            :class="{ on: scope === 'query' }"
+            @click="selectScope('query')"
+          >
+            <Search :size="13" />
+            <span>{{ t('knowledgeV3.graphQuery') }}</span>
+          </button>
+          <form v-if="scope === 'query'" class="kg-query-form" @submit.prevent="submitQuery">
+            <input v-model="queryText" :aria-label="t('knowledgeV3.graphQueryInput')" :placeholder="t('knowledgeV3.graphQueryPlaceholder')">
+            <button type="submit">{{ t('knowledgeV3.graphQueryRun') }}</button>
+          </form>
           <button
             type="button"
             class="kg-tool-btn"
@@ -1171,6 +1301,7 @@ onBeforeUnmount(() => {
           {{ visibleNodes.length }} nodes · {{ visibleEdges.length }} links
         </span>
         <span v-if="graph?.truncated" class="kg-truncated">{{ t('knowledgeV3.graphTruncated') }}</span>
+        <span v-if="scope === 'query' && graph && !visibleNodes.length" class="kg-truncated">{{ t('knowledgeV3.graphQueryNoResults') }}</span>
 
         <button
           type="button"
@@ -1278,6 +1409,9 @@ onBeforeUnmount(() => {
             <span>{{ t('knowledgeV3.graphOpen') }}</span>
             <span aria-hidden="true">&#8599;</span>
           </button>
+          <button type="button" class="kg-btn" @click="emit('open-side', current.id)">
+            {{ t('knowledgeV3.openToSide') }}
+          </button>
           <button type="button" class="kg-btn" @click="isolateCurrentNode">
             Focus node
           </button>
@@ -1362,6 +1496,7 @@ onBeforeUnmount(() => {
         <span><i :style="{ background: groupColor('entity') }"></i>Entity</span>
         <span><i :style="{ background: groupColor('synthesis') }"></i>Synthesis</span>
         <span><i :style="{ background: groupColor('source') }"></i>Source</span>
+        <span v-if="scope === 'query'" class="kg-tier-legend">{{ t('knowledgeV3.graphTierLegend') }}</span>
       </div>
 
       <!-- Bottom-Right Smooth Zoom Controls (Prototype .zoom) -->
@@ -1384,7 +1519,7 @@ onBeforeUnmount(() => {
 
       <!-- Bottom-Center Help / Hover Pill (Prototype #help) -->
       <div v-if="hoverText || !inspectorOpen" class="kg-help">
-        {{ hoverText || 'Click any node to open note · Drag to pan · Scroll to zoom' }}
+        {{ hoverText || t('knowledgeV3.graphHelp') }}
       </div>
 
       <!-- Loading & Empty states -->

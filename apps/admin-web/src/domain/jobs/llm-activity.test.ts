@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import type { JobEvent } from '@/api/types/agent-jobs'
+import type { AgentRunView, JobEvent } from '@/api/types/agent-jobs'
 import { llmTokenSummary, projectLlmRuns } from './llm-activity'
 
 const event = (sequence: number, type: JobEvent['event_type'], runId: string, other: Record<string, unknown> = {}): JobEvent => ({
@@ -116,5 +116,31 @@ describe('projectLlmRuns', () => {
       outputTokens: 80,
     })
     expect(llmTokenSummary(runs)).toEqual({ tokens: 200, known: 1, total: 2 })
+  })
+
+  it('prefers refreshed agent run usage over a cached finished event after a resume', () => {
+    const events: JobEvent[] = [
+      {
+        sequence: 1,
+        event_type: 'agent_run_started',
+        created_at: '2026-10-14T02:42:01Z',
+        step_key: null,
+        payload: { agent_run_id: 'root-sess', run_id: 'run-1', attempt: 0 },
+      },
+      {
+        sequence: 2,
+        event_type: 'agent_run_finished',
+        created_at: '2026-10-14T02:42:02Z',
+        step_key: null,
+        payload: { agent_run_id: 'root-sess', run_id: 'run-1', status: 'interrupted', input_tokens: 100, output_tokens: 10 },
+      },
+    ]
+    const agentRuns = [
+      { agent_run_id: 'root-sess', role: 'daily_root', status: 'succeeded', input_tokens: 300, output_tokens: 30 },
+    ] as AgentRunView[]
+
+    const runs = projectLlmRuns(events, 'succeeded', agentRuns)
+
+    expect(llmTokenSummary(runs).tokens).toBe(330)
   })
 })

@@ -4,11 +4,12 @@ import { ApiError } from '@/api/errors'
 import { setLocale, translate } from '@/composables/useI18n'
 import KnowledgeGraph from './KnowledgeGraph.vue'
 
-const { requestJsonMock, events, drawMock, fitMock } = vi.hoisted(() => ({
+const { requestJsonMock, events, drawMock, fitMock, centerMock } = vi.hoisted(() => ({
   requestJsonMock: vi.fn(),
-  events: {} as Record<string, (event: { target: { id: () => string } }) => void>,
+  events: {} as Record<string, (event: { target: { id: () => string }; originalEvent?: { metaKey?: boolean } }) => void>,
   drawMock: vi.fn(),
   fitMock: vi.fn(),
+  centerMock: vi.fn(),
 }))
 vi.mock('@/api/client', () => ({
   requestJson: requestJsonMock,
@@ -22,10 +23,11 @@ vi.mock('cytoscape', () => ({
     drawMock(options)
     return {
       destroy: vi.fn(),
-      on: (event: string, selector: string, callback: (event: { target: { id: () => string } }) => void) => {
+      on: (event: string, selector: string, callback: (event: { target: { id: () => string }; originalEvent?: { metaKey?: boolean } }) => void) => {
         events[event + ':' + selector] = callback
       },
       fit: fitMock,
+      center: centerMock,
       layout: () => ({ run: vi.fn() }),
       getElementById: () => ({ select: vi.fn() }),
     }
@@ -74,6 +76,18 @@ it('selects an edge and exposes the original Wikilink alias and anchor', async (
   } finally { wrapper.unmount() }
 })
 
+it('opens a node beside Graph on Ctrl or Cmd click', async () => {
+  const wrapper = mount(KnowledgeGraph, { props: { reloadToken: 0 } })
+  try {
+    await flushPromises()
+    events['tap:node']({ target: { id: () => 'wiki_agent' }, originalEvent: { metaKey: true } })
+    expect(wrapper.emitted('open-side')?.[0]).toEqual(['wiki_agent'])
+    expect(wrapper.emitted('open')).toBeUndefined()
+    events['tap:node']({ target: { id: () => 'wiki_agent' }, originalEvent: {} })
+    expect(wrapper.emitted('open')?.[0]).toEqual(['wiki_agent'])
+  } finally { wrapper.unmount() }
+})
+
 it('queries the selected one-hop local neighborhood and can re-layout', async () => {
   const wrapper = mount(KnowledgeGraph, { props: { centerId: 'wiki_agent', reloadToken: 0 } })
   try {
@@ -88,6 +102,102 @@ it('queries the selected one-hop local neighborhood and can re-layout', async ()
       button.text() === translate('knowledgeV3.graphRelayout'))
     await relayout!.trigger('click')
     expect(fitMock).not.toHaveBeenCalled()
+  } finally { wrapper.unmount() }
+})
+
+it('queries a topic and styles retrieved tiers without changing the node type colors', async () => {
+  requestJsonMock
+    .mockResolvedValueOnce(snapshot)
+    .mockResolvedValueOnce({
+      ...snapshot,
+      nodes: snapshot.nodes.map((node, index) => ({
+        ...node,
+        tier: index === 0 ? 'retrieved' : 'context',
+        score: index === 0 ? 0.82 : null,
+      })),
+      truncated: true,
+    })
+  const wrapper = mount(KnowledgeGraph, { props: { centerId: 'wiki_agent', reloadToken: 0 } })
+  try {
+    await flushPromises()
+    const query = wrapper.findAll('button').find(button =>
+      button.text() === translate('knowledgeV3.graphQuery'))!
+    await query.trigger('click')
+    const input = wrapper.get('input[aria-label="' + translate('knowledgeV3.graphQueryInput') + '"]')
+    await input.setValue('trading')
+    await wrapper.find('form.kg-query-form').trigger('submit')
+    await flushPromises()
+
+    expect(requestJsonMock).toHaveBeenLastCalledWith(expect.stringContaining('scope=query'))
+    expect(requestJsonMock).toHaveBeenLastCalledWith(expect.stringContaining('q=trading'))
+    expect(wrapper.text()).toContain(translate('knowledgeV3.graphTruncated'))
+    const options = drawMock.mock.calls.at(-1)?.[0] as {
+      elements: Array<{ data: { tier?: string } }>
+      style: Array<{ selector: string; style: Record<string, unknown> }>
+    }
+    expect(options.elements[0]?.data.tier).toBe('retrieved')
+    expect(options.style.map(rule => rule.selector)).toContain('node[tier = "retrieved"]')
+    expect(options.style.map(rule => rule.selector)).toContain('node[group = "concept"]')
+    expect(wrapper.text()).toContain(translate('knowledgeV3.graphTierLegend'))
+  } finally { wrapper.unmount() }
+})
+
+it('draws an answer graph from its prop, avoids API reloads, and opens node details in place', async () => {
+  const answerGraph = {
+    revision: 1,
+    nodes: [{ ...snapshot.nodes[0]!, tier: 'read' as const, score: 0.77 }],
+    edges: [],
+    unresolved: [],
+    truncated: false,
+  }
+  const wrapper = mount(KnowledgeGraph, {
+    props: { centerId: null, reloadToken: 0, answerGraph },
+  })
+  try {
+    await flushPromises()
+    expect(requestJsonMock).not.toHaveBeenCalled()
+    expect(drawMock).toHaveBeenCalledOnce()
+    expect(wrapper.text()).toContain(translate('knowledgeV3.graphAnswer'))
+    expect(drawMock.mock.calls[0]?.[0].elements[0]?.data.tier).toBe('read')
+
+    events['tap:node']?.({ target: { id: () => 'wiki_agent' } })
+    await flushPromises()
+    expect(wrapper.get('aside.kg-inspect').classes()).not.toContain('is-hidden')
+    expect(wrapper.emitted('open')).toBeUndefined()
+    const openPage = wrapper.get('.kg-inspect-actions .kg-btn-primary')
+    await openPage.trigger('click')
+    expect(wrapper.emitted('open')?.[0]).toEqual(['wiki_agent'])
+
+    const exposed = wrapper.vm as unknown as {
+      focusNode: (id: string) => void
+      highlightNode: (id: string | null) => void
+    }
+    exposed.focusNode('wiki_agent')
+    exposed.highlightNode('wiki_agent')
+    exposed.highlightNode(null)
+    expect(centerMock).toHaveBeenCalledOnce()
+
+    await wrapper.setProps({ answerGraph: { ...answerGraph, revision: 2 } })
+    await flushPromises()
+    expect(drawMock).toHaveBeenCalledTimes(2)
+    const earlierAnswer = { ...answerGraph, revision: 2, nodes: [{ ...answerGraph.nodes[0]!, title: 'Earlier answer' }] }
+    await wrapper.setProps({ answerGraph: earlierAnswer })
+    await flushPromises()
+    expect(drawMock).toHaveBeenCalledTimes(3)
+    expect(drawMock.mock.calls[2]?.[0].elements[0]?.data.title).toBe('Earlier answer')
+    await wrapper.setProps({ reloadToken: 1 })
+    await flushPromises()
+    expect(drawMock).toHaveBeenCalledTimes(3)
+    expect(requestJsonMock).not.toHaveBeenCalled()
+  } finally { wrapper.unmount() }
+})
+
+it('leaves Global nodes without a tier so answer styling cannot change them', async () => {
+  const wrapper = mount(KnowledgeGraph, { props: { centerId: null, reloadToken: 0 } })
+  try {
+    await flushPromises()
+    const elements = drawMock.mock.calls.at(-1)?.[0].elements as Array<{ data: { tier?: string } }>
+    expect(elements[0]?.data.tier).toBeUndefined()
   } finally { wrapper.unmount() }
 })
 

@@ -27,9 +27,11 @@ const settings = ref<BackgroundSettings | null>(null)
 const draft = ref<{
   orchestrator_llm_provider: string | null
   worker_llm_provider: string | null
+  wiki_chat_llm_provider: string | null
 }>({
   orchestrator_llm_provider: null,
   worker_llm_provider: null,
+  wiki_chat_llm_provider: null,
 })
 const loading = ref(true)
 const saving = ref(false)
@@ -51,6 +53,7 @@ const dirty = computed(() => {
   return (
     settings.value.orchestrator_llm_provider !== draft.value.orchestrator_llm_provider ||
     settings.value.worker_llm_provider !== draft.value.worker_llm_provider
+    || settings.value.wiki_chat_llm_provider !== draft.value.wiki_chat_llm_provider
   )
 })
 
@@ -77,6 +80,7 @@ async function load() {
     draft.value = {
       orchestrator_llm_provider: config.orchestrator_llm_provider,
       worker_llm_provider: config.worker_llm_provider,
+      wiki_chat_llm_provider: config.wiki_chat_llm_provider ?? null,
     }
     unavailable.value = false
   } catch (cause) {
@@ -98,6 +102,7 @@ async function save() {
       enabled: settings.value.enabled,
       orchestrator_llm_provider: draft.value.orchestrator_llm_provider,
       worker_llm_provider: draft.value.worker_llm_provider,
+      wiki_chat_llm_provider: draft.value.wiki_chat_llm_provider ?? '',
     }
     const result = await agentJobsApi.updateSettings(payload, settings.value.revision)
     settings.value = {
@@ -109,6 +114,7 @@ async function save() {
     draft.value = {
       orchestrator_llm_provider: settings.value.orchestrator_llm_provider,
       worker_llm_provider: settings.value.worker_llm_provider,
+      wiki_chat_llm_provider: settings.value.wiki_chat_llm_provider ?? null,
     }
     notice.value = t('jobUi.saved')
   } catch (cause) {
@@ -271,6 +277,35 @@ onBeforeUnmount(() => controller?.abort())
             <Badge variant="outline">reasoning</Badge>
           </template>
         </div>
+      </section>
+
+      <section class="studio-panel space-y-3 p-4">
+        <div>
+          <h2 class="text-sm font-semibold">{{ t('jobUi.providersWikiChatTitle') }}</h2>
+          <p class="mt-0.5 text-xs text-muted-foreground">
+            {{ t('jobUi.providersWikiChatSubtitle') }}
+          </p>
+        </div>
+        <label class="block space-y-1.5">
+          <span class="block text-xs font-semibold">{{ t('jobUi.providersDefaultLabel') }}</span>
+          <select
+            v-model="draft.wiki_chat_llm_provider"
+            class="admin-input h-9 text-xs"
+            data-wiki-chat-provider
+            :disabled="saving"
+          >
+            <option :value="null">{{ t('jobUi.chooseProvider') }}</option>
+            <option v-for="option in chatProviderOptions" :key="option.ref" :value="option.ref">
+              {{ formatProviderOptionLabel(option) }}
+            </option>
+            <option
+              v-if="draft.wiki_chat_llm_provider && !chatProviderOptions.some(p => p.ref === draft.wiki_chat_llm_provider)"
+              :value="draft.wiki_chat_llm_provider"
+            >
+              {{ draft.wiki_chat_llm_provider }} ({{ t('jobUi.unavailable') }})
+            </option>
+          </select>
+        </label>
       </section>
 
       <!-- Worker · Subagents -->

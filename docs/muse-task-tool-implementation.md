@@ -230,7 +230,7 @@ Vòng lặp:
 1. `list_tool_operations`, lọc key có `MUSE_TASK_KEY_PREFIX` và `remote_deleted_at` rỗng, gom theo key.
 2. Lấy `CallerContext` và `session_id` từ `request_json` (tool ghi khi `begin`).
 3. `list_runs` đọc hết các trang, lấy dòng cuối, vì API sắp xếp tăng dần.
-4. `decide_closure` trả `Close` → `archive_session` → đọc lại run, có run đang chạy thì dừng → `release_recorded_job_session` cho từng operation → `mark_remote_session_deleted`.
+4. `decide_closure` trả `Close` → `archive_session` → đọc lại run, có run đang chạy thì dừng. Không operation nào có `delete_session_on_finish=true` thì `forget_job_session` và giữ phiên trên Muse. Có yêu cầu xóa thì `release_recorded_job_session` cho từng operation → `mark_remote_session_deleted`.
 
 Một operation có `request_json` hỏng thì ghi log và bỏ qua, không làm dừng vòng lặp.
 

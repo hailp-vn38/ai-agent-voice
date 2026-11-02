@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
-import { Network, Link2, FileText, Folder, FolderOpen, FolderPlus, FilePlus2, Pencil, ChevronsUp, BookOpen, ArrowUpRight, ChevronDown, ChevronRight, Search, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen } from '@lucide/vue'
-import { renderMarkdown, markdownOutline, parseMarkdownProperties, stripMarkdownFrontmatter } from '@/lib/markdown'
+import { Network, Link2, Copy, Download, FileText, Folder, FolderOpen, FolderPlus, FilePlus2, Pencil, ChevronsUp, BookOpen, ArrowUpRight, ChevronDown, ChevronRight, Search, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, Columns2, ListTree, Sparkles, SquarePlus, X } from '@lucide/vue'
+import { renderMarkdown, markdownOutline } from '@/lib/markdown'
 import { renderMermaidBlocks } from './mermaidRenderer'
 import { renderTradingChartBlocks } from './tradingChartRenderer'
 import { useTheme } from '@/composables/useTheme'
@@ -12,7 +12,12 @@ import { requestJson, jsonRequest, withQuery } from '@/api/client'
 import { formatApiError, isApiError } from '@/api/errors'
 import PageHeader from '@/components/admin/PageHeader.vue'
 import { Button } from '@/components/ui/button'
+import { ActionMenu, MenuItem } from '@/components/ui/action-menu'
 import { useI18n } from '@/composables/useI18n'
+import { useWikiChat, type WikiChatFile } from './useWikiChat'
+import WikiChatPanel from './WikiChatPanel.vue'
+import KnowledgeNoteView, { noteIntroduction } from './KnowledgeNoteView.vue'
+import { useKnowledgeWorkspace, type NoteDoc, type Page, type RawFile, type TabRef, type TreeSpace, type WorkspacePane, type WorkspaceTab } from './useKnowledgeWorkspace'
 
 type SearchMode = 'hybrid' | 'lex' | 'vec'
 type Hit = {
@@ -27,17 +32,45 @@ type Hit = {
   match_line?: number
   score?: number
 }
-type TreeSpace = 'raw' | 'wiki' | 'drafts'
 type TreeNode = { type: 'file' | 'folder'; space: TreeSpace; path: string; name: string; editable: boolean; id?: string; revision?: number; status?: string; has_staged_draft?: boolean }
 type RecentItem = { space: TreeSpace; path: string; title: string; id?: string }
-type RawFile = { path: string; body: string; sha256: string }
-type Page = { id: string; title: string; body: string; revision: number; status: string; source_ref: string | null }
+type OpenMode = 'current' | 'tab' | 'side'
+type RightTab = 'outline' | 'chat'
 type Health = { health: string; document_count: number; last_complete_scan_at: number | null }
 type Source = { id: string; version: number; name: string; provenance: string; sha256: string }
 
 const { t } = useI18n()
 const { dark } = useTheme()
 const route = useRoute()
+const {
+  messages: wikiChatMessages,
+  activeGraph: activeAnswerGraph,
+  busy: wikiChatBusy,
+  chatDrawerOpen,
+  pinnedFiles: wikiChatPinnedFiles,
+  pinFile: pinWikiChatFile,
+  unpinFile: unpinWikiChatFile,
+  send: sendWikiChat,
+  stop: stopWikiChat,
+  retry: retryWikiChat,
+  reset: resetWikiChat,
+  showGraphOf: showChatGraph,
+} = useWikiChat()
+const graphControls = ref<{ focusNode: (id: string, showInspector?: boolean) => void; highlightNode: (id: string | null) => void } | null>(null)
+const highlightedChatNode = ref<string | null>(null)
+const MIN_WIDTH_TO_SPLIT_FOR_CITATION = 600
+const readingRightTab = ref<RightTab>('outline')
+// Stays mounted once used, so a draft and the scroll position survive switching tabs and views.
+const chatMounted = ref(false)
+// A conversation in progress keeps its answer on screen while the sources are read.
+watch(() => wikiChatMessages.value.length, count => {
+  if (count) selectRightTab('chat')
+  else readingRightTab.value = 'outline'
+})
+function setGraphControls(instance: unknown) {
+  // Moving Graph between panes mounts the new instance before the old ref clears.
+  if (instance) graphControls.value = instance as NonNullable<typeof graphControls.value>
+}
 
 const VAULT_SPACE_KEY = 'voice-agent-knowledge-vault-space'
 const EXPLORER_STATE_KEY = 'voice-agent-knowledge-explorer-state-v1'
@@ -46,6 +79,44 @@ const OUTLINE_COLLAPSED_KEY = 'voice-agent-knowledge-outline-collapsed'
 const PROPERTIES_COLLAPSED_KEY = 'voice-agent-knowledge-properties-collapsed'
 const RECENT_COLLAPSED_KEY = 'voice-agent-knowledge-recent-collapsed'
 const RECENT_ITEMS_KEY = 'voice-agent-knowledge-recent-v1'
+const PANEL_WIDTHS_KEY = 'voice-agent-knowledge-panel-widths-v1'
+const MIN_WORKSPACE_WIDTH = 320
+const PANEL_WIDTH_LIMITS = { explorer: [220, 520], right: [240, 640] } as const
+// A drag this far past a panel's minimum width hides the panel; less snaps back to the minimum.
+const PANEL_HIDE_MARGIN = 40
+type PanelName = keyof typeof PANEL_WIDTH_LIMITS
+function restoredPanelWidths(): Partial<Record<PanelName, number>> {
+  try {
+    const saved: unknown = JSON.parse(window.localStorage.getItem(PANEL_WIDTHS_KEY) ?? '{}')
+    if (!saved || typeof saved !== 'object' || Array.isArray(saved)) return {}
+    const widths: Partial<Record<PanelName, number>> = {}
+    const entry = saved as Record<string, unknown>
+    for (const panel of ['explorer', 'right'] as const) {
+      // Outline and chat each had a width before they shared one right panel.
+      const width = panel === 'right' ? entry.right ?? entry.chat ?? entry.outline : entry[panel]
+      if (typeof width !== 'number' || !Number.isFinite(width)) continue
+      const [min, max] = PANEL_WIDTH_LIMITS[panel]
+      widths[panel] = Math.max(min, Math.min(max, width))
+    }
+    return widths
+  } catch {
+    return {}
+  }
+}
+const panelWidths = ref(restoredPanelWidths())
+const isResizing = ref(false)
+const hidingPanel = ref<PanelName | null>(null)
+const rootEl = ref<HTMLElement | null>(null)
+function savePanelWidths() {
+  try {
+    window.localStorage.setItem(PANEL_WIDTHS_KEY, JSON.stringify(panelWidths.value))
+  } catch { /* Storage can be disabled; keep the in-memory widths. */ }
+}
+function panelStyle(panel: PanelName, collapsed: boolean) {
+  const width = panelWidths.value[panel]
+  // A collapsed panel takes its width of 0 from CSS.
+  return width && !collapsed ? { width: width + 'px' } : undefined
+}
 function restoredExplorerCollapsed(): boolean {
   try {
     return window.localStorage.getItem(EXPLORER_COLLAPSED_KEY) === 'true'
@@ -75,9 +146,13 @@ function restoredRecentCollapsed(): boolean {
   }
 }
 const explorerCollapsed = ref(restoredExplorerCollapsed())
-const outlineCollapsed = ref(restoredOutlineCollapsed())
+// Outline and chat are two views of one right panel, so they share its width and collapsed state.
+const rightPanelCollapsed = ref(restoredOutlineCollapsed())
 const propertiesCollapsed = ref(restoredPropertiesCollapsed())
 const recentCollapsed = ref(restoredRecentCollapsed())
+function sameRecentFile(left: RecentItem, right: RecentItem): boolean {
+  return left.space === right.space && (left.path === right.path || (!!left.id && left.id === right.id))
+}
 function restoredRecentItems(): RecentItem[] {
   try {
     const raw = window.localStorage.getItem(RECENT_ITEMS_KEY)
@@ -91,12 +166,13 @@ function restoredRecentItems(): RecentItem[] {
       const space = entry.space
       if (space !== 'wiki' && space !== 'raw' && space !== 'drafts') continue
       if (!validExplorerPath(entry.path, space) || typeof entry.title !== 'string' || !entry.title.trim()) continue
-      items.push({
+      const item: RecentItem = {
         space,
         path: entry.path,
         title: entry.title.trim(),
         ...(typeof entry.id === 'string' && entry.id.trim() ? { id: entry.id.trim() } : {}),
-      })
+      }
+      if (!items.some(existing => sameRecentFile(existing, item))) items.push(item)
     }
     return items
   } catch {
@@ -114,9 +190,7 @@ function recordRecentItem(item: RecentItem) {
   }
   recentItems.value = [
     normalized,
-    ...recentItems.value.filter(entry =>
-      !(entry.space === normalized.space && (normalized.id && entry.id ? entry.id === normalized.id : entry.path === normalized.path)),
-    ),
+    ...recentItems.value.filter(entry => !sameRecentFile(entry, normalized)),
   ].slice(0, 20)
   try {
     window.localStorage.setItem(RECENT_ITEMS_KEY, JSON.stringify(recentItems.value))
@@ -128,11 +202,56 @@ function toggleExplorer() {
     window.localStorage.setItem(EXPLORER_COLLAPSED_KEY, String(explorerCollapsed.value))
   } catch { /* Storage can be disabled; keep the default. */ }
 }
-function toggleOutline() {
-  outlineCollapsed.value = !outlineCollapsed.value
+function toggleRightPanel() {
+  rightPanelCollapsed.value = !rightPanelCollapsed.value
   try {
-    window.localStorage.setItem(OUTLINE_COLLAPSED_KEY, String(outlineCollapsed.value))
+    window.localStorage.setItem(OUTLINE_COLLAPSED_KEY, String(rightPanelCollapsed.value))
   } catch { /* Storage can be disabled; keep the default. */ }
+}
+function toggleChatDrawer() {
+  chatDrawerOpen.value = !chatDrawerOpen.value
+  if (chatDrawerOpen.value) selectRightTab('chat')
+}
+function selectRightTab(tab: RightTab) {
+  readingRightTab.value = tab
+  if (tab === 'chat') chatMounted.value = true
+}
+/** A citation shows its node on Graph and opens the page, leaving the answer in view. */
+async function openCitation(path: string) {
+  // The page itself opens next, so Graph only marks the node instead of covering itself with its card.
+  graphControls.value?.focusNode(path, false)
+  if (path.startsWith('sources/')) { await openSourceCitation(path); return }
+  const open = findOpenTab(tab => tabHoldsPath(tab, 'wiki', path))
+  if (open) { await activateTab(open.pane, open.tab); return }
+  const id = tree.value.find(node => node.space === 'wiki' && node.path === path)?.id ?? path
+  const graphPane = workspace.graphPane.value
+  if (!paneShowsGraph(graphPane)) { await openWikiPage(id, 'tab'); return }
+  // Graph stays visible: the page goes beside it, in a pane already there when there is one.
+  const index = panes.value.indexOf(graphPane)
+  const neighbour = panes.value[index + 1] ?? panes.value[index - 1]
+  if (neighbour) { await openWikiPage(id, 'tab', neighbour); return }
+  const width = panesEl.value?.querySelector('[data-pane-id="' + graphPane.id + '"]')?.getBoundingClientRect().width ?? 0
+  await openWikiPage(id, width >= MIN_WIDTH_TO_SPLIT_FOR_CITATION ? 'side' : 'tab', graphPane)
+}
+/** The chat names Source files by their vault path; the workspace shows them under `raw/`. */
+async function openSourceCitation(path: string) {
+  const rawPath = 'raw/' + path.slice('sources/'.length)
+  const open = findOpenTab(tab => tabHoldsPath(tab, 'raw', rawPath))
+  if (open) { await activateTab(open.pane, open.tab); return }
+  if (!prepareOpenTarget('tab')) return
+  await switchExplorerSpace('raw')
+  await openRawNote(rawPath, rawPath.split('/').pop() ?? rawPath)
+}
+async function showAnswerOnGraph(id: string) {
+  showChatGraph(id)
+  if (viewMode.value !== 'graph') await showGraph()
+}
+function highlightChatCitation(path: string | null) {
+  highlightedChatNode.value = path
+  graphControls.value?.highlightNode(path)
+}
+function onKnowledgeGraphNodeHover(path: string | null) {
+  highlightedChatNode.value = path
 }
 function toggleProperties() {
   propertiesCollapsed.value = !propertiesCollapsed.value
@@ -224,6 +343,15 @@ watch(activeSpace, space => {
   try { window.localStorage.setItem(VAULT_SPACE_KEY, space) } catch { /* storage unavailable */ }
 })
 const tree = ref<TreeNode[]>([])
+const chatSuggestions = computed(() => tree.value
+  .filter(node => node.space === 'wiki' && node.type === 'folder' &&
+    node.path.startsWith('wiki/') && node.path.split('/').filter(Boolean).length === 2)
+  .sort((left, right) => left.name.localeCompare(right.name))
+  .slice(0, 3)
+  .map(node => ({
+    label: node.name,
+    prompt: t('knowledgeV3.chatSuggestionQuestion', { folder: node.name }),
+  })))
 const openFolders = ref<Set<string>>(foldersForSpace(activeSpace.value))
 const selectedPath = ref<string>(explorerPreferences[activeSpace.value]?.selectedPath ?? activeSpace.value)
 watch([activeSpace, openFolders, selectedPath], ([space, folders, path]) => {
@@ -235,11 +363,31 @@ watch([activeSpace, openFolders, selectedPath], ([space, folders, path]) => {
     window.localStorage.setItem(EXPLORER_STATE_KEY, JSON.stringify(explorerPreferences))
   } catch { /* Storage unavailable; preserve in-memory navigation. */ }
 })
+const workspace = useKnowledgeWorkspace(validExplorerPath)
+const { panes, focusedPaneId, graphPaneId, focusedPane, boundTab } = workspace
 const viewMode = ref<'read' | 'graph' | 'compose'>('read')
+// Drafts are not in the index the chat reads from, so only Wiki and Source files can be attached.
+const openChatFile = computed<WikiChatFile | null>(() => {
+  if (viewMode.value !== 'read') return null
+  const tab = boundTab.value
+  const target = tab.doc ?? tab.ref
+  if (!target) return null
+  const path = target.space === 'wiki' ? target.path
+    : target.space === 'raw' ? target.path.replace(/^raw\//, 'sources/') : ''
+  return path.startsWith('wiki/') || path.startsWith('sources/') ? { path, title: target.title } : null
+})
 const graphFocusMode = ref(false)
+const graphMounted = ref(false)
 watch(viewMode, mode => {
   if (mode !== 'graph') graphFocusMode.value = false
-})
+  if (focusedPaneId.value === graphPaneId.value) focusedPane.value.graphActive = mode === 'graph'
+}, { flush: 'sync' })
+// Graph has no note of its own to outline, so its right panel is always the chat.
+const rightPanel = computed<RightTab>(() => viewMode.value === 'graph' ? 'chat' : readingRightTab.value)
+watch(rightPanel, panel => { if (panel === 'chat') chatMounted.value = true }, { immediate: true, flush: 'sync' })
+function paneShowsGraph(pane: WorkspacePane): boolean {
+  return pane.id === graphPaneId.value && pane.graphActive
+}
 const composeOpen = ref(false)
 const composeBaseFolder = ref('raw')
 const newNoteFolder = ref<string | null>(null)
@@ -299,7 +447,6 @@ async function confirmInlineNote() {
   const heading = fileName.slice(0, -3)
   busy.value = true
   error.value = ''
-  notice.value = ''
   try {
     rawFile.value = await requestJson<RawFile>('/api/admin/knowledge/raw/files',
       jsonRequest('POST', { folder_path: folder, file_name: fileName, body: '' }))
@@ -398,7 +545,6 @@ async function onFileDrop(event: DragEvent, targetFolderPath?: string) {
       && !window.confirm(t('knowledgeV3.discardChanges'))) return
   busy.value = true
   error.value = ''
-  notice.value = ''
   try {
     if (activeSpace.value !== 'raw') {
       cancelInlineNote()
@@ -450,7 +596,6 @@ async function onFileDrop(event: DragEvent, targetFolderPath?: string) {
         path: selectedPath.value,
         title: title.value,
       })
-      notice.value = t('knowledgeV3.rawSaved')
       await refreshTree()
       await refreshHealth()
     }
@@ -473,7 +618,16 @@ function startEditNote() {
 async function saveNote() {
   if (busy.value || !editorDirty.value || (!rawFile.value && !selected.value)) return
   await save()
-  if (!error.value) editorSavedBody.value = body.value
+  if (error.value) return
+  editorSavedBody.value = body.value
+  // Other tabs on this file show the saved text, and later saves use its new revision.
+  const doc = liveDoc.value
+  if (!doc) return
+  for (const pane of panes.value) {
+    for (const tab of pane.tabs) {
+      if (tab.id !== boundTab.value.id && tab.doc?.path === doc.path) tab.doc = { ...doc }
+    }
+  }
 }
 async function closeEditor() {
   if (busy.value) return
@@ -505,9 +659,65 @@ function insertWikiLink() {
   linkAlias.value = ''
   void nextTick(() => { el.focus(); el.setSelectionRange(start + link.length, start + link.length) })
 }
-async function openGraphWiki(id: string) {
+function tabHoldsPage(tab: WorkspaceTab, id: string): boolean {
+  return tab.doc?.page?.id === id || tab.ref?.id === id
+}
+function tabHoldsPath(tab: WorkspaceTab, space: TreeSpace, path: string): boolean {
+  return (tab.doc?.space ?? tab.ref?.space) === space && (tab.doc?.path ?? tab.ref?.path) === path
+}
+function linkOpenMode(event: MouseEvent): OpenMode {
+  if (event.button === 1) return 'tab'
+  if (event.metaKey || event.ctrlKey) return event.altKey ? 'side' : 'tab'
+  return 'current'
+}
+/** Makes an empty tab the bound one, so the next note load lands in it instead of the open note. */
+function prepareOpenTarget(requested: OpenMode, source: WorkspacePane = focusedPane.value): boolean {
+  if (!leaveComposeForNavigation()) return false
+  // Replacing the note hidden behind Graph would show nothing, so Graph keeps it and opens a new tab.
+  const mode = requested === 'current' && viewMode.value === 'graph' ? 'tab' : requested
+  if (mode === 'current') return true
+  let target = source
+  if (mode === 'side') {
+    const pane = workspace.splitRight(source)
+    target = pane ?? panes.value[panes.value.indexOf(source) + 1] ?? panes.value[panes.value.indexOf(source) - 1] ?? source
+    focusedPaneId.value = target.id
+  } else {
+    focusedPaneId.value = target.id
+  }
+  const current = workspace.activeTab(target)
+  if (current.doc || current.ref) workspace.addTab(target)
+  else target.graphActive = false
   viewMode.value = 'read'
+  graphCoversEmptyTab = false
+  showDocInRefs(null)
+  boundTab.value.pending = true
+  return true
+}
+async function activateFoundTab(found: { pane: WorkspacePane; tab: WorkspaceTab } | null): Promise<boolean> {
+  if (!found) return false
+  await activateTab(found.pane, found.tab)
+  return true
+}
+function findOpenTab(match: (tab: WorkspaceTab) => boolean, within?: WorkspacePane) {
+  for (const pane of within ? [within] : panes.value) {
+    const tab = pane.tabs.find(match)
+    if (tab) return { pane, tab }
+  }
+  return null
+}
+async function openWikiPage(id: string, mode: OpenMode, source: WorkspacePane = focusedPane.value) {
+  // Side opens reuse a note visible anywhere; a tab open stays within its own pane.
+  const scope = mode === 'side' ? undefined : source
+  if (await activateFoundTab(findOpenTab(tab => tabHoldsPage(tab, id), scope))) return
+  if (!prepareOpenTarget(mode, source)) return
+  await switchExplorerSpace('wiki')
   await openPage(id)
+}
+async function openGraphWiki(id: string) {
+  await openWikiPage(id, 'tab', workspace.graphPane.value)
+}
+async function openGraphWikiSide(id: string) {
+  await openWikiPage(id, 'side', workspace.graphPane.value)
 }
 function refreshGraph() { graphReloadToken.value++ }
 let treeRequestVersion = 0
@@ -541,7 +751,320 @@ const treeLoading = ref(false)
 const noteLoading = ref(false)
 const linkedLoading = ref(false)
 const error = ref('')
-const notice = ref('')
+let noteRequestVersion = 0
+
+// The focused pane's active tab is bound to the single-note refs above; every other tab keeps a snapshot.
+const liveDoc = computed<NoteDoc | null>(() => selected.value || rawFile.value || readOnlySource.value
+  ? {
+      space: activeSpace.value,
+      path: selectedPath.value,
+      title: title.value,
+      body: body.value,
+      page: selected.value,
+      rawFile: rawFile.value,
+      readOnly: readOnlySource.value,
+      sourceRef: sourceRef.value,
+    }
+  : null)
+let movingExplorer = false
+// Set while Graph stands in for an empty tab, so the first note opened replaces it.
+let graphCoversEmptyTab = false
+watch(liveDoc, doc => {
+  if (movingExplorer) return
+  const tab = boundTab.value
+  if (doc && graphCoversEmptyTab) {
+    graphCoversEmptyTab = false
+    viewMode.value = 'read'
+  }
+  tab.doc = doc
+  if (doc) {
+    tab.ref = {
+      space: doc.space,
+      path: doc.path,
+      title: doc.title,
+      ...(doc.page ? { id: doc.page.id } : {}),
+    }
+  }
+}, { flush: 'sync' })
+watch(() => panes.value.map(pane => [pane.size, pane.activeTabId, pane.tabs.map(tab => tab.ref)]), workspace.persist,
+  { deep: true })
+watch(focusedPaneId, workspace.persist)
+function showDocInRefs(doc: NoteDoc | null) {
+  noteRequestVersion++
+  if (noteLoading.value) {
+    noteLoading.value = false
+    busy.value = false
+  }
+  selected.value = doc?.page ?? null
+  rawFile.value = doc?.rawFile ?? null
+  readOnlySource.value = doc?.readOnly ?? false
+  title.value = doc?.title ?? ''
+  body.value = doc?.body ?? ''
+  sourceRef.value = doc?.sourceRef ?? ''
+  selectedPath.value = doc?.path ?? activeSpace.value
+  editorSavedBody.value = body.value
+  preview.value = false
+  activeHeading.value = ''
+}
+/** Moves the Explorer to another space without touching the note bound to the focused tab. */
+async function switchExplorerSpace(space: TreeSpace) {
+  if (activeSpace.value === space) return
+  const shouldRerunSearch = searchOpen.value && Boolean(q.value.trim())
+  cancelInlineNote()
+  // The Explorer's own selection must not be recorded as the bound tab's note path.
+  movingExplorer = true
+  activeSpace.value = space
+  tree.value = []
+  openFolders.value = foldersForSpace(space)
+  selectedPath.value = explorerPreferences[space]?.selectedPath ?? space
+  movingExplorer = false
+  searchHits.value = []
+  searchExecuted.value = false
+  try {
+    await refreshTree()
+    if (shouldRerunSearch) await search()
+  } catch (cause) { error.value = formatApiError(cause) }
+}
+async function showBoundTab() {
+  const tab = boundTab.value
+  const space = tab.doc?.space ?? tab.ref?.space
+  const switching = space ? switchExplorerSpace(space) : Promise.resolve()
+  showDocInRefs(tab.doc)
+  await switching
+  if (!tab.doc && tab.ref && tab === boundTab.value) await openTabRef(tab.ref)
+}
+async function openTabRef(target: TabRef) {
+  const node = tree.value.find(item => item.space === target.space && item.type === 'file'
+    && (item.path === target.path || (!!target.id && item.id === target.id)))
+  if (node) await chooseNode(node)
+  else if (target.space === 'raw') await openRawNote(target.path, target.title)
+  else await openPage(target.id || target.path, target.path)
+}
+const workspaceReady = ref(false)
+const focusedTabIsEmpty = computed(() => {
+  const tab = boundTab.value
+  return workspaceReady.value && !tab.doc && !tab.ref && !tab.pending && !tab.loading
+    && !busy.value && !noteLoading.value && !treeLoading.value && viewMode.value !== 'compose'
+})
+watch(focusedTabIsEmpty, empty => {
+  if (!empty) return
+  const pane = focusedPane.value
+  // Only the pane hosting Graph can show it; any other pane without a file has nothing to show.
+  if (pane.id !== graphPaneId.value && workspace.closePane(pane)) {
+    afterLayoutChange()
+    return
+  }
+  graphCoversEmptyTab = true
+  graphMounted.value = true
+  viewMode.value = 'graph'
+}, { immediate: true })
+function focusPane(pane: WorkspacePane): boolean {
+  if (pane.id === focusedPaneId.value) return true
+  if (!leaveComposeForNavigation()) return false
+  focusedPaneId.value = pane.id
+  viewMode.value = pane.graphActive ? 'graph' : 'read'
+  void showBoundTab()
+  return true
+}
+async function activateTab(pane: WorkspacePane, tab: WorkspaceTab) {
+  if (!focusPane(pane)) return
+  if (viewMode.value === 'compose') {
+    if (tab.id === pane.activeTabId) { await closeEditor(); return }
+    if (!leaveComposeForNavigation()) return
+  }
+  const changed = tab.id !== pane.activeTabId
+  pane.activeTabId = tab.id
+  viewMode.value = 'read'
+  if (changed) await showBoundTab()
+}
+function afterLayoutChange() {
+  // An editor open in the focused tab is unaffected by another tab or pane closing.
+  if (viewMode.value === 'compose') return
+  viewMode.value = focusedPane.value.graphActive ? 'graph' : 'read'
+  void showBoundTab()
+}
+async function closeTab(pane: WorkspacePane, tab: WorkspaceTab) {
+  if (viewMode.value === 'compose' && tab.id === boundTab.value.id) { await closeEditor(); return }
+  workspace.closeTab(pane, tab.id)
+  // Closing only rebinds when it changed what the focused pane shows.
+  if (!tab.doc || pane.id === focusedPaneId.value || !panes.value.includes(pane)) afterLayoutChange()
+}
+function closePane(pane: WorkspacePane) {
+  if (pane.id === focusedPaneId.value && !leaveComposeForNavigation()) return
+  if (workspace.closePane(pane)) afterLayoutChange()
+}
+function splitPane(pane: WorkspacePane) {
+  if (!focusPane(pane)) return
+  const doc = workspace.activeTab(pane).doc
+  const tabRef = workspace.activeTab(pane).ref
+  if (!prepareOpenTarget('side', pane)) return
+  const tab = boundTab.value
+  tab.pending = false
+  tab.ref = tabRef
+  tab.doc = doc
+  void showBoundTab()
+}
+const panesEl = ref<HTMLElement | null>(null)
+
+// A mouse wheel only reports vertical movement, so turn it into horizontal scrolling over the tabs.
+function scrollTabList(event: WheelEvent) {
+  const list = event.currentTarget as HTMLElement
+  if (list.scrollWidth <= list.clientWidth || Math.abs(event.deltaX) >= Math.abs(event.deltaY)) return
+  event.preventDefault()
+  list.scrollLeft += event.deltaY
+}
+
+// Keep the active tab visible when it is opened or selected while the list is scrolled away from it.
+watch(() => panes.value.map(pane => [pane.activeTabId, paneShowsGraph(pane)]).join() + viewMode.value, () => {
+  panesEl.value?.querySelectorAll<HTMLElement>('.a-tab-list').forEach(list => {
+    const active = list.querySelector('.active')
+    if (!active) return
+    const listBox = list.getBoundingClientRect()
+    const tabBox = active.getBoundingClientRect()
+    const pinnedGraph = list.querySelector('.a-graph-tab')
+    const visibleLeft = pinnedGraph && active !== pinnedGraph ? pinnedGraph.getBoundingClientRect().right : listBox.left
+    if (tabBox.left < visibleLeft) list.scrollLeft -= visibleLeft - tabBox.left
+    else if (tabBox.right > listBox.right) list.scrollLeft += tabBox.right - listBox.right
+  })
+}, { flush: 'post' })
+function trackHorizontalDrag(event: PointerEvent, onMove: (deltaX: number) => void, onEnd?: () => void) {
+  event.preventDefault()
+  const startX = event.clientX
+  isResizing.value = true
+  const move = (next: PointerEvent) => onMove(next.clientX - startX)
+  const end = () => {
+    window.removeEventListener('pointermove', move)
+    window.removeEventListener('pointerup', end)
+    window.removeEventListener('pointercancel', end)
+    isResizing.value = false
+    onEnd?.()
+  }
+  window.addEventListener('pointermove', move)
+  window.addEventListener('pointerup', end)
+  window.addEventListener('pointercancel', end)
+}
+/** The widest a panel may get while the panels beside it keep their minimum room. */
+function panelWidthRange(panel: PanelName): { width: number; min: number; max: number } | null {
+  const element = panel === 'explorer' ? '.a-explorer' : rightPanel.value === 'chat' ? '.wiki-chat-panel' : '.a-outline'
+  const target = rootEl.value?.querySelector(element)
+  const beside = rootEl.value?.querySelector('.a-workspace')
+  if (!target || !beside) return null
+  const width = target.getBoundingClientRect().width
+  const room = beside.getBoundingClientRect().width - MIN_WORKSPACE_WIDTH
+  const [min, limit] = PANEL_WIDTH_LIMITS[panel]
+  return { width, min, max: Math.max(min, Math.min(limit, width + Math.max(0, room))) }
+}
+function hidePanel(panel: PanelName) {
+  if (panel === 'explorer') { if (!explorerCollapsed.value) toggleExplorer() }
+  else if (!rightPanelCollapsed.value) toggleRightPanel()
+}
+function startPanelResize(event: PointerEvent, panel: PanelName) {
+  const range = panelWidthRange(panel)
+  if (!range) return
+  const direction = panel === 'explorer' ? 1 : -1
+  const hideBelow = range.min - PANEL_HIDE_MARGIN
+  let width = range.width
+  trackHorizontalDrag(event, deltaX => {
+    width = Math.max(0, Math.min(range.max, range.width + deltaX * direction))
+    panelWidths.value[panel] = Math.round(width)
+    hidingPanel.value = width < hideBelow ? panel : null
+  }, () => {
+    hidingPanel.value = null
+    if (width < hideBelow) {
+      // Opening the panel again returns it to the width it had before this drag.
+      panelWidths.value[panel] = Math.round(range.width)
+      hidePanel(panel)
+    } else {
+      panelWidths.value[panel] = Math.round(Math.max(range.min, width))
+    }
+    savePanelWidths()
+  })
+}
+function nudgePanel(panel: PanelName, deltaX: number) {
+  const range = panelWidthRange(panel)
+  if (!range) return
+  const direction = panel === 'explorer' ? 1 : -1
+  panelWidths.value[panel] = Math.round(Math.max(range.min, Math.min(range.max, range.width + deltaX * direction)))
+  savePanelWidths()
+}
+function startPaneResize(event: PointerEvent, index: number) {
+  const left = panes.value[index]
+  const right = panes.value[index + 1]
+  const leftEl = panesEl.value?.querySelector('[data-pane-id="' + left?.id + '"]')
+  const rightEl = panesEl.value?.querySelector('[data-pane-id="' + right?.id + '"]')
+  if (!left || !right || !leftEl || !rightEl) return
+  const leftWidth = leftEl.getBoundingClientRect().width
+  const totalWidth = leftWidth + rightEl.getBoundingClientRect().width
+  const totalSize = left.size + right.size
+  const minWidth = Math.min(280, totalWidth / 2)
+  trackHorizontalDrag(event, deltaX => {
+    const width = Math.max(minWidth, Math.min(totalWidth - minWidth, leftWidth + deltaX))
+    left.size = totalSize * width / totalWidth
+    right.size = totalSize - left.size
+  })
+}
+function tabTitle(tab: WorkspaceTab): string {
+  return tab.doc?.title || tab.ref?.title || t('common.loading')
+}
+function isFocusedTab(pane: WorkspacePane, tab: WorkspaceTab): boolean {
+  return pane.id === focusedPaneId.value && tab.id === pane.activeTabId
+}
+function isTabLoading(pane: WorkspacePane, tab: WorkspaceTab): boolean {
+  return isFocusedTab(pane, tab)
+    ? tab.pending || noteLoading.value || (treeLoading.value && !selected.value && !rawFile.value && !readOnlySource.value)
+    : tab.loading
+}
+function panePath(tab: WorkspaceTab): string {
+  return (tab.doc?.path ?? tab.ref?.path ?? '').replace(/^[^/]+\/?/, '')
+}
+function editPaneNote(pane: WorkspacePane) {
+  if (focusPane(pane)) startEditNote()
+}
+async function copyPaneNoteLink(pane: WorkspacePane) {
+  if (focusPane(pane)) await copyNoteLink()
+}
+async function copyPaneNoteContent(pane: WorkspacePane) {
+  const doc = workspace.activeTab(pane).doc
+  if (!doc) return
+  try {
+    await navigator.clipboard.writeText(doc.body)
+  } catch (cause) { error.value = formatApiError(cause) }
+}
+function downloadPaneNote(pane: WorkspacePane) {
+  const doc = workspace.activeTab(pane).doc
+  if (!doc) return
+  const url = URL.createObjectURL(new Blob([doc.body], { type: 'text/markdown;charset=utf-8' }))
+  const link = document.createElement('a')
+  link.href = url
+  link.download = doc.path.split('/').pop() || 'note.md'
+  document.body.appendChild(link)
+  link.click()
+  link.remove()
+  window.setTimeout(() => URL.revokeObjectURL(url), 0)
+}
+async function loadBackgroundTab(tab: WorkspaceTab) {
+  const target = tab.ref
+  if (tab.doc || !target) return
+  tab.loading = true
+  try {
+    if (target.space === 'raw') {
+      const file = await requestJson<RawFile>(withQuery('/api/admin/knowledge/raw/files', { path: target.path }))
+      tab.doc = { space: 'raw', path: file.path || target.path, title: target.title, body: file.body,
+        page: null, rawFile: file, readOnly: false, sourceRef: '' }
+    } else {
+      const page = await requestJson<Page>('/api/admin/knowledge/pages/' + encodeURIComponent(target.id || target.path))
+      tab.doc = { space: target.space, path: target.path, title: page.title, body: page.body,
+        page, rawFile: null, readOnly: false, sourceRef: page.source_ref ?? '' }
+    }
+  } catch (cause) { error.value = formatApiError(cause) }
+  finally { tab.loading = false }
+}
+async function restoreWorkspace() {
+  await Promise.all(panes.value
+    .filter(pane => pane.id !== focusedPaneId.value)
+    .map(pane => loadBackgroundTab(workspace.activeTab(pane))))
+  await showBoundTab()
+}
 
 function newDraft() {
   rawFile.value = null
@@ -554,7 +1077,6 @@ function newDraft() {
   body.value = ''
   sourceRef.value = ''
   error.value = ''
-  notice.value = ''
 }
 async function refreshSources() {
   try {
@@ -566,7 +1088,6 @@ async function importSource() {
   if (!sourceName.value.trim() || !sourceContent.value.trim() || !sourceProvenance.value.trim() || busy.value) return
   busy.value = true
   error.value = ''
-  notice.value = ''
   try {
     const source = await requestJson<Source>('/api/admin/knowledge/sources',
       jsonRequest('POST', { name: sourceName.value, provenance: sourceProvenance.value,
@@ -575,7 +1096,6 @@ async function importSource() {
     sourceName.value = ''
     sourceContent.value = ''
     sourceProvenance.value = ''
-    notice.value = t('knowledgeV3.sourceImported')
     await refreshSources()
     await refreshTree()
   } catch (cause) { error.value = formatApiError(cause) }
@@ -585,7 +1105,6 @@ async function publish() {
   if (!selected.value || selected.value.status !== 'draft' || !sourceRef.value.trim() || busy.value) return
   busy.value = true
   error.value = ''
-  notice.value = ''
   try {
     const record = await requestJson<Page>(
       `/api/admin/knowledge/pages/${encodeURIComponent(selected.value.id)}/publish`,
@@ -599,7 +1118,6 @@ async function publish() {
       await refreshTree()
     }
     refreshGraph()
-    notice.value = t('knowledgeV3.published')
     await refreshHealth()
     if (q.value.trim()) await search()
     else await listPages()
@@ -627,6 +1145,7 @@ function leaveComposeForNavigation(): boolean {
   if (viewMode.value === 'compose') {
     if (editorDirty.value && !window.confirm(t('knowledgeV3.discardChanges'))) return false
     composeOpen.value = false
+    body.value = editorSavedBody.value
     viewMode.value = 'read'
   }
   cancelInlineNote()
@@ -638,8 +1157,11 @@ async function openRawNote(path: string, displayTitle: string) {
   busy.value = true
   noteLoading.value = true
   error.value = ''
+  const version = ++noteRequestVersion
+  const openingTab = boundTab.value
   try {
     const result = await requestJson<RawFile>(withQuery('/api/admin/knowledge/raw/files', { path }))
+    if (version !== noteRequestVersion) return
     rawFile.value = result
     title.value = displayTitle.replace(/\.md$/i, '')
     body.value = result.body
@@ -650,10 +1172,13 @@ async function openRawNote(path: string, displayTitle: string) {
       path: selectedPath.value,
       title: title.value,
     })
-  } catch (cause) { error.value = formatApiError(cause) }
+  } catch (cause) { if (version === noteRequestVersion) error.value = formatApiError(cause) }
   finally {
-    busy.value = false
-    noteLoading.value = false
+    openingTab.pending = false
+    if (version === noteRequestVersion) {
+      busy.value = false
+      noteLoading.value = false
+    }
   }
 }
 async function search() {
@@ -682,8 +1207,8 @@ async function search() {
   } catch (cause) { error.value = formatApiError(cause) }
   finally { busy.value = false }
 }
-async function openSearchHit(hit: Hit) {
-  if (!leaveComposeForNavigation()) return
+async function openSearchHit(hit: Hit, mode: OpenMode = 'current') {
+  if (!prepareOpenTarget(mode)) return
   const uiPath = hit.path ?? hit.id
   if ((hit.space ?? activeSpace.value) === 'raw') {
     await openRawNote(uiPath, hit.title || uiPath)
@@ -697,15 +1222,17 @@ async function openPage(id: string, nodePath?: string) {
   busy.value = true
   noteLoading.value = true
   error.value = ''
+  const version = ++noteRequestVersion
+  const openingTab = boundTab.value
   try {
     const page = await requestJson<Page>(
       `/api/admin/knowledge/pages/${encodeURIComponent(id)}`,
     )
+    if (version !== noteRequestVersion) return
     selected.value = page
     const physical = tree.value.find(n => n.space === activeSpace.value && n.id === page.id)
     const resolvedPath = nodePath || physical?.path || ('wiki/' + page.id.replace(/^wiki\//, ''))
-    if (nodePath) selectedPath.value = nodePath
-    else if (physical) selectedPath.value = physical.path
+    selectedPath.value = nodePath || physical?.path || resolvedPath
     title.value = page.title
     body.value = page.body
     sourceRef.value = page.source_ref ?? ''
@@ -715,10 +1242,13 @@ async function openPage(id: string, nodePath?: string) {
       title: page.title,
       id: page.id,
     })
-  } catch (cause) { error.value = formatApiError(cause) }
+  } catch (cause) { if (version === noteRequestVersion) error.value = formatApiError(cause) }
   finally {
-    busy.value = false
-    noteLoading.value = false
+    openingTab.pending = false
+    if (version === noteRequestVersion) {
+      busy.value = false
+      noteLoading.value = false
+    }
   }
 }
 async function save() {
@@ -729,7 +1259,6 @@ async function save() {
     try {
       rawFile.value = await requestJson<RawFile>('/api/admin/knowledge/raw/files',
         jsonRequest('PUT', { path: rawFile.value.path, body: body.value, expected_sha256: rawFile.value.sha256 }))
-      notice.value = t('knowledgeV3.rawSaved')
     } catch (cause) { error.value = formatApiError(cause) }
     finally { busy.value = false }
     return
@@ -737,7 +1266,6 @@ async function save() {
   if (!title.value.trim()) return
   busy.value = true
   error.value = ''
-  notice.value = ''
   try {
     const isEdit = selected.value !== null
     const path = isEdit
@@ -757,7 +1285,6 @@ async function save() {
     const physical = tree.value.find(n => n.space === 'wiki' && n.id === page.id)
     if (physical) selectedPath.value = physical.path
     refreshGraph()
-    notice.value = t('knowledgeV3.saved')
     await refreshHealth()
     if (q.value.trim()) await search()
     else await listPages()
@@ -771,7 +1298,6 @@ async function rebuild() {
     await requestJson('/api/admin/knowledge/index/rebuild', { method: 'POST' })
     await refreshHealth()
     refreshGraph()
-    notice.value = t('knowledgeV3.rebuilt')
   } catch (cause) { error.value = formatApiError(cause) }
   finally { busy.value = false }
 }
@@ -794,6 +1320,8 @@ async function refreshTree() {
   }
 }
 function resetExplorer(space: TreeSpace, preserveSearch = false) {
+  // The note on screen keeps its tab; the other space's note opens in a tab of its own.
+  if (boundTab.value.doc || boundTab.value.ref) workspace.addTab(focusedPane.value)
   viewMode.value = 'read'
   activeSpace.value = space
   tree.value = []
@@ -817,7 +1345,6 @@ function resetExplorer(space: TreeSpace, preserveSearch = false) {
   pageCatalog.value = []
   nextCursor.value = null
   error.value = ''
-  notice.value = ''
 }
 async function restoreSelectedNote(space: TreeSpace, hash = '', fallback = false) {
   const savedPath = explorerPreferences[space]?.selectedPath
@@ -844,6 +1371,16 @@ async function selectSpace(space: TreeSpace) {
   if (activeSpace.value === space || busy.value) return
   if (viewMode.value === 'compose' && editorDirty.value
       && !window.confirm(t('knowledgeV3.discardChanges'))) return
+  const pane = focusedPane.value
+  const openInSpace = pane.tabs.find(tab => (tab.doc?.space ?? tab.ref?.space) === space)
+  if (openInSpace) {
+    composeOpen.value = false
+    body.value = viewMode.value === 'compose' ? editorSavedBody.value : body.value
+    viewMode.value = 'read'
+    pane.activeTabId = openInSpace.id
+    await showBoundTab()
+    return
+  }
   const shouldRerunSearch = searchOpen.value && Boolean(q.value.trim())
   cancelInlineNote()
   resetExplorer(space, searchOpen.value)
@@ -887,10 +1424,11 @@ async function chooseNode(node: TreeNode) {
       sourceRef.value = source.id + ':' + source.version
       if (node.name === 'original.md' || node.name === 'extracted.md') {
         noteLoading.value = true
+        const version = ++noteRequestVersion
         try {
           const response = await requestJson<{ text: string }>(
             '/api/admin/knowledge/sources/' + encodeURIComponent(source.id))
-          body.value = response.text
+          if (version === noteRequestVersion) body.value = response.text
         } catch (cause) { error.value = formatApiError(cause) }
         finally { noteLoading.value = false }
       } else body.value = JSON.stringify(source, null, 2)
@@ -899,8 +1437,19 @@ async function chooseNode(node: TreeNode) {
   }
   await openRawNote(node.path, node.name)
 }
-async function openRecentItem(item: RecentItem) {
-  if (busy.value || !leaveComposeForNavigation()) return
+async function openTreeFile(event: MouseEvent, node: TreeNode, requested?: OpenMode) {
+  if (event.type === 'auxclick' && event.button !== 1) return
+  const mode = requested ?? linkOpenMode(event)
+  const scope = mode === 'side' ? undefined : focusedPane.value
+  if (await activateFoundTab(findOpenTab(tab => tabHoldsPath(tab, node.space, node.path), scope))) return
+  if (!prepareOpenTarget(mode)) return
+  await chooseNode(node)
+}
+async function openRecentItem(item: RecentItem, mode: OpenMode = 'current') {
+  if (busy.value) return
+  if (await activateFoundTab(findOpenTab(tab => tabHoldsPath(tab, item.space, item.path)
+    || (!!item.id && tabHoldsPage(tab, item.id)), mode === 'side' ? undefined : focusedPane.value))) return
+  if (!prepareOpenTarget(mode)) return
   viewMode.value = 'read'
   if (activeSpace.value !== item.space) {
     const shouldRerunSearch = searchOpen.value && Boolean(q.value.trim())
@@ -970,7 +1519,6 @@ async function importRawAsSource() {
     sourceRef.value = imported.id + ':' + imported.version
     await refreshSources()
     await refreshTree()
-    notice.value = t('knowledgeV3.sourceImported')
   } catch (cause) { error.value = formatApiError(cause) }
   finally { busy.value = false }
 }
@@ -998,7 +1546,6 @@ async function moveSelected() {
       const next = tree.value.find(n => n.path === result.path)
       if (next) await chooseNode(next)
       refreshGraph()
-      notice.value = t('knowledgeV3.moved')
     }
   } catch (cause) {
     if (isApiError(cause) && cause.code === 'wiki_move_breaks_links') {
@@ -1011,41 +1558,14 @@ async function moveSelected() {
 }
 
 
-const readerViewport = ref<HTMLElement | null>(null)
-const outlineLinks = computed(() => markdownOutline(readingText.value))
+const outlineLinks = computed(() => markdownOutline(noteIntroduction(body.value, title.value).rest))
 const activeHeading = ref('')
 const linkedNotes = ref<{ id: string; title: string }[]>([])
 let linkedRequestVersion = 0
 
-const noteProperties = computed(() => parseMarkdownProperties(body.value))
-const visibleMarkdown = computed(() => {
-  const markdown = stripMarkdownFrontmatter(body.value).trimStart()
-  const first = /^#\s+(.+?)\s*(?:\r?\n|$)/.exec(markdown)
-  return first && first[1].trim().toLowerCase() === title.value.trim().toLowerCase()
-    ? markdown.slice(first[0].length).trimStart()
-    : markdown
-})
-const introduction = computed(() => {
-  const text = visibleMarkdown.value
-  const boundary = text.indexOf('\n\n')
-  if (boundary < 0) return { lead: '', rest: text }
-  const first = text.slice(0, boundary).trim()
-  if (!first || /^(#{1,6}\s|[-*+]\s|>\s|\x60{3}|~{3}|\d+\.\s|\|)/.test(first)) {
-    return { lead: '', rest: text }
-  }
-  return { lead: first, rest: text.slice(boundary + 2).trimStart() }
-})
-const readingText = computed(() => introduction.value.rest)
-const leadHtml = computed(() => introduction.value.lead ? renderMarkdown(introduction.value.lead) : '')
-const renderedBody = computed(() => renderMarkdown(readingText.value))
 const composePreviewViewport = ref<HTMLElement | null>(null)
-watch([() => renderedBody.value, () => body.value, viewMode, preview, dark], () => {
-  if (viewMode.value === 'read') {
-    void nextTick(() => {
-      void renderMermaidBlocks(readerViewport.value, dark.value)
-      void renderTradingChartBlocks(readerViewport.value, dark.value)
-    })
-  } else if (viewMode.value === 'compose' && preview.value) {
+watch([() => body.value, viewMode, preview, dark], () => {
+  if (viewMode.value === 'compose' && preview.value) {
     void nextTick(() => {
       void renderMermaidBlocks(composePreviewViewport.value, dark.value)
       void renderTradingChartBlocks(composePreviewViewport.value, dark.value)
@@ -1053,8 +1573,6 @@ watch([() => renderedBody.value, () => body.value, viewMode, preview, dark], () 
   }
 }, { flush: 'post' })
 
-const notePath = computed(() => selectedPath.value.replace(/^[^/]+\/?/, ''))
-const noteTitle = computed(() => title.value || t('knowledgeV3.selectFile'))
 const readableNodes = computed(() => visibleTree.value.filter(node => node.path !== activeSpace.value))
 function treeTitle(node: TreeNode) {
   if (node.type === 'folder') return node.name
@@ -1062,12 +1580,9 @@ function treeTitle(node: TreeNode) {
   const hit = node.id ? pageCatalog.value.find(item => item.id === node.id) : null
   return hit?.title || node.name.replace(/\.md$/i, '')
 }
-function showReading() {
-  if (viewMode.value === 'compose') void closeEditor()
-  else viewMode.value = 'read'
-}
 function startNewFile() { beginInlineNote() }
 async function showGraph() {
+  if (!focusPane(workspace.graphPane.value)) return
   if (viewMode.value === 'compose') {
     if (editorDirty.value && !window.confirm(t('knowledgeV3.discardChanges'))) return
     composeOpen.value = false
@@ -1076,45 +1591,48 @@ async function showGraph() {
     const node = tree.value.find(item => item.path === selectedPath.value)
     if (node?.type === 'file') await chooseNode(node)
   }
-  if (activeSpace.value !== 'wiki') await selectSpace('wiki')
+  graphCoversEmptyTab = false
+  // An open File note keeps the File Explorer; only an empty tab can follow Graph to Knowledge.
+  if (activeSpace.value !== 'wiki' && !liveDoc.value) await switchExplorerSpace('wiki')
+  graphMounted.value = true
   viewMode.value = 'graph'
-}
-function closeNote() {
-  if (viewMode.value === 'compose') { void closeEditor(); return }
-  selected.value = null
-  rawFile.value = null
-  title.value = ''
-  body.value = ''
-  selectedPath.value = activeSpace.value
-  viewMode.value = 'read'
 }
 function gotoHeading(id: string) {
   activeHeading.value = id
-  const target = Array.from(readerViewport.value?.querySelectorAll('[id]') || [])
+  const viewport = panesEl.value?.querySelector('[data-pane-id="' + focusedPaneId.value + '"] .a-reader-viewport')
+  const target = Array.from(viewport?.querySelectorAll('[id]') || [])
     .find(node => node.getAttribute('id') === id)
   target?.scrollIntoView({ block: 'start', behavior: 'smooth' })
 }
-async function openWikiTarget(target: string) {
+async function openWikiTarget(target: string, mode: OpenMode = 'current') {
   const file = target.split('#')[0].replace(/\\/g, '/').replace(/^wiki\//, '').replace(/\.md$/i, '').toLowerCase()
-  if (activeSpace.value !== 'wiki') await selectSpace('wiki')
+  const tab = boundTab.value
+  const hadNote = Boolean(tab.doc)
+  await switchExplorerSpace('wiki')
   const node = tree.value.find(item => item.space === 'wiki' && item.type === 'file' && item.id &&
     (item.path.replace(/^wiki\//, '').replace(/\.md$/i, '').toLowerCase() === file ||
       item.name.replace(/\.md$/i, '').toLowerCase() === file ||
       pageCatalog.value.some(hit => hit.id === item.id && hit.title.toLowerCase() === file)))
-  if (node?.id) await openPage(node.id, node.path)
+  if (!node?.id) {
+    // An unresolved link leaves the open note, and the Explorer that matches it, as they were.
+    if (hadNote && tab.id === boundTab.value.id) await showBoundTab()
+    return
+  }
+  if (await activateFoundTab(findOpenTab(tab => tabHoldsPage(tab, node.id!), mode === 'side' ? undefined : focusedPane.value))) return
+  if (!prepareOpenTarget(mode)) return
+  await openPage(node.id, node.path)
 }
 function onMarkdownClick(event: MouseEvent) {
   const anchor = (event.target as HTMLElement | null)?.closest<HTMLAnchorElement>('a[data-wikilink]')
   if (!anchor) return
   event.preventDefault()
-  void openWikiTarget(anchor.dataset.wikilink ?? '')
+  void openWikiTarget(anchor.dataset.wikilink ?? '', linkOpenMode(event))
 }
 async function copyNoteLink() {
   if (!selected.value) return
   try {
     await navigator.clipboard.writeText(window.location.origin + '/knowledge#' + encodeURIComponent(selected.value.id))
-    notice.value = 'Note link copied'
-  } catch { notice.value = selectedPath.value }
+  } catch (cause) { error.value = formatApiError(cause) }
 }
 async function refreshLinkedNotes(id: string) {
   const version = ++linkedRequestVersion
@@ -1163,6 +1681,9 @@ async function openJobLink() {
 }
 watch(() => [route.query.source, route.query.wiki], () => { void openJobLink() })
 onMounted(() => {
+  // Only a first visit opens a default note; someone who closed every file stays on Graph.
+  // Read before the tree loads, because that load rewrites the in-memory preferences.
+  const closedEveryFile = explorerPreferences[activeSpace.value]?.selectedPath === activeSpace.value
   void refreshHealth()
   void refreshSources()
   void listPages()
@@ -1170,16 +1691,20 @@ onMounted(() => {
     let hash = ''
     try { hash = decodeURIComponent(window.location.hash.slice(1)) } catch { /* ignore invalid hash */ }
     if (route.query.source || route.query.wiki) await openJobLink()
-    else await restoreSelectedNote(activeSpace.value, hash, true)
+    else if (workspace.wasRestored) await restoreWorkspace()
+    else await restoreSelectedNote(activeSpace.value, hash, !closedEveryFile)
   }).catch(cause => { error.value = formatApiError(cause) })
+    .finally(() => { workspaceReady.value = true })
 })
 </script>
 
 <template>
-  <section class="knowledge-a" :class="{
+  <section ref="rootEl" class="knowledge-a" :data-hiding-panel="hidingPanel ?? undefined"
+    :style="panelWidths.right ? { '--knowledge-right-width': panelWidths.right + 'px' } : undefined" :class="{
+    'is-resizing': isResizing,
     'is-dragging-file': isDraggingFile,
     'is-explorer-collapsed': explorerCollapsed,
-    'is-outline-collapsed': outlineCollapsed,
+    'is-outline-collapsed': rightPanelCollapsed,
     'is-graph-focus': viewMode === 'graph' && graphFocusMode,
     'is-graph-view': viewMode === 'graph',
   }" aria-label="Knowledge Vault"
@@ -1187,7 +1712,7 @@ onMounted(() => {
     @dragleave="onPageDragLeave" @drop.prevent="onFileDrop($event)">
     <div v-if="isDraggingFile" class="a-drop-banner" role="status">{{ t('knowledgeV3.dropMarkdownHint') }}</div>
     <aside id="knowledge-explorer-panel" class="a-explorer"
-      :class="{ 'is-collapsed': explorerCollapsed }" :aria-hidden="explorerCollapsed">
+      :class="{ 'is-collapsed': explorerCollapsed }" :style="panelStyle('explorer', explorerCollapsed)" :aria-hidden="explorerCollapsed">
       <div class="a-pane-heading">
         <div class="a-source-tabs" role="tablist" aria-label="Knowledge source">
           <button v-for="space in storageSpaces" :key="space.id" type="button" role="tab"
@@ -1234,7 +1759,7 @@ onMounted(() => {
             <p v-if="!searchHits.length" class="a-search-empty">{{ t('knowledgeV3.noSearchResults') }}</p>
             <button v-for="hit in searchHits" :key="hit.id" type="button"
               class="a-search-hit" :class="{ active: selectedPath === (hit.path || hit.id) }"
-              @click="openSearchHit(hit)">
+              @click="openSearchHit(hit, linkOpenMode($event))" @auxclick.prevent="$event.button === 1 && openSearchHit(hit, 'tab')">
               <div class="a-search-hit-header">
                 <FileText :size="14" class="shrink-0 opacity-60" />
                 <span class="a-search-hit-title">{{ hit.title }}</span>
@@ -1285,14 +1810,23 @@ onMounted(() => {
               <span class="tree-new-note-extension">{{ newNoteName.toLowerCase().endsWith('.md') ? '' : '.md' }}</span>
             </form>
           </template>
-          <button v-else type="button" role="treeitem"
-            class="tree-leaf" :class="{ active: selectedPath === node.path }"
-            :style="{ paddingLeft: (23 + Math.max(0, node.path.split('/').length - 2) * 13) + 'px' }"
-            :title="node.path" :aria-selected="selectedPath === node.path" @click="chooseNode(node)">
-            <FileText />
-            <span class="file-name">{{ treeTitle(node) }}</span>
-            <span v-if="node.has_staged_draft || node.status === 'draft'" class="ml-auto size-1.5 shrink-0 rounded-full bg-amber-500"></span>
-          </button>
+          <div v-else class="tree-leaf-row">
+            <button type="button" role="treeitem"
+              class="tree-leaf" :class="{ active: selectedPath === node.path }"
+              :style="{ paddingLeft: (23 + Math.max(0, node.path.split('/').length - 2) * 13) + 'px' }"
+              :title="node.path" :aria-selected="selectedPath === node.path"
+              @click="openTreeFile($event, node)" @auxclick.prevent="openTreeFile($event, node)">
+              <FileText />
+              <span class="file-name">{{ treeTitle(node) }}</span>
+              <span v-if="node.has_staged_draft || node.status === 'draft'" class="ml-auto size-1.5 shrink-0 rounded-full bg-amber-500"></span>
+            </button>
+            <div class="tree-leaf-actions">
+              <button type="button" class="tree-leaf-action" :aria-label="t('knowledgeV3.openInNewTab') + ': ' + treeTitle(node)"
+                :title="t('knowledgeV3.openInNewTab')" @click.stop="openTreeFile($event, node, 'tab')"><SquarePlus :size="14" /></button>
+              <button type="button" class="tree-leaf-action" :aria-label="t('knowledgeV3.openToSide') + ': ' + treeTitle(node)"
+                :title="t('knowledgeV3.openToSide')" @click.stop="openTreeFile($event, node, 'side')"><Columns2 :size="14" /></button>
+            </div>
+          </div>
         </template>
         <form v-if="newNoteFolder === activeSpace" class="tree-new-note tree-new-note-root"
           @submit.prevent="confirmInlineNote">
@@ -1320,7 +1854,7 @@ onMounted(() => {
             type="button" class="a-recent-item"
             :class="{ active: activeSpace === item.space && (selectedPath === item.path || (item.id && selected?.id === item.id)) }"
             :title="item.path"
-            @click="openRecentItem(item)">
+            @click="openRecentItem(item, linkOpenMode($event))" @auxclick.prevent="$event.button === 1 && openRecentItem(item, 'tab')">
             <FileText :size="14" class="shrink-0 opacity-60" />
             <span class="a-recent-title">{{ item.title }}</span>
           </button>
@@ -1333,174 +1867,178 @@ onMounted(() => {
       </div>
     </aside>
 
+    <div v-if="!explorerCollapsed" class="a-panel-resizer a-panel-resizer-explorer" role="separator" tabindex="0"
+      aria-orientation="vertical" :aria-label="t('knowledgeV3.resizeExplorer')"
+      @pointerdown="startPanelResize($event, 'explorer')"
+      @keydown.left.prevent="nudgePanel('explorer', -16)" @keydown.right.prevent="nudgePanel('explorer', 16)"></div>
     <section class="a-workspace">
-      <div class="a-tabs">
-        <button class="a-tab" type="button" :aria-pressed="viewMode === 'read'" @click="showReading">
-          <FileText /><span class="tab-name">{{ noteTitle }}</span><span class="opacity-40 text-[13px]" @click.stop="closeNote">×</span>
-        </button>
-        <button v-if="composeOpen" type="button" class="other-tab" :class="{active: viewMode === 'compose'}"
-          :aria-pressed="viewMode === 'compose'" @click="viewMode = 'compose'">
-          <Pencil :size="15" class="inline-block mr-1" /> {{ newFileName }}
-        </button>
-        <button class="other-tab" :class="{ active: viewMode === 'graph' }"
-          type="button" :aria-pressed="viewMode === 'graph'" @click="showGraph"><Network :size="15" class="inline-block mr-1" /> Graph</button>
-        <div class="a-spacer"></div>
-        <div class="a-tab-actions">
-          <template v-if="viewMode !== 'graph'">
-            <button v-if="viewMode !== 'compose' && (selected || rawFile) && activeSpace !== 'drafts' && !readOnlySource"
-              class="icon-button" type="button" :title="t('knowledgeV3.edit')"
-              :aria-label="t('knowledgeV3.edit')" @click="startEditNote"><Pencil :size="16" /></button>
-            <button class="icon-button" type="button" title="Copy a note link" aria-label="Copy a note link" :disabled="!selected" @click="copyNoteLink"><Link2 :size="16" /></button>
-          </template>
-          <button class="icon-button" :class="{ active: !explorerCollapsed }" type="button"
-            :title="explorerCollapsed ? 'Expand explorer' : 'Collapse explorer'"
-            :aria-label="explorerCollapsed ? 'Expand explorer' : 'Collapse explorer'"
-            :aria-expanded="!explorerCollapsed"
-            :aria-pressed="!explorerCollapsed"
-            aria-controls="knowledge-explorer-panel"
-            @click="toggleExplorer">
-            <PanelLeftOpen v-if="explorerCollapsed" :size="16" />
-            <PanelLeftClose v-else :size="16" />
-          </button>
-          <button class="icon-button" :class="{ active: !outlineCollapsed }" type="button"
-            :title="outlineCollapsed ? 'Expand outline & links' : 'Collapse outline & links'"
-            :aria-label="outlineCollapsed ? 'Expand outline & links' : 'Collapse outline & links'"
-            :aria-expanded="!outlineCollapsed"
-            :aria-pressed="!outlineCollapsed"
-            aria-controls="knowledge-outline-panel"
-            @click="toggleOutline">
-            <PanelRightOpen v-if="outlineCollapsed" :size="16" />
-            <PanelRightClose v-else :size="16" />
-          </button>
-        </div>
-      </div>
-      <div v-if="viewMode === 'read'" class="a-pathbar">
-        <Folder :size="15" /><span>knowledge</span><span>/</span><span>{{ activeSpace }}</span><span>/</span>
-        <span class="active-path">{{ notePath }}</span>
-        <div class="path-actions"><BookOpen :size="15" /><span>Reading view</span></div>
-      </div>
       <p v-if="error" class="a-error" role="alert">{{ error }}</p>
-      <p v-if="notice" class="a-notice" role="status">{{ notice }}</p>
-      <main v-if="viewMode === 'compose'" class="a-reader-viewport knowledge-edit-viewport">
-        <form class="knowledge-note-editor" @submit.prevent="saveNote">
-          <div class="knowledge-edit-toolbar">
-            <div class="knowledge-edit-breadcrumb">
-              <FileText :size="15" class="shrink-0" />
-              <span>{{ composeBaseFolder }}/</span>
-              <strong>{{ newFileName }}</strong>
-              <span v-if="selected?.status === 'draft'" class="knowledge-draft-pill">{{ t('knowledgeV3.draftStatus') }}</span>
+      <div ref="panesEl" class="a-panes">
+        <template v-for="(pane, paneIndex) in panes" :key="pane.id">
+          <div v-if="paneIndex > 0" class="a-pane-resizer" role="separator" aria-orientation="vertical"
+            @pointerdown="startPaneResize($event, paneIndex - 1)"></div>
+          <div class="a-pane" :class="{ 'is-focused': panes.length > 1 && pane.id === focusedPaneId }"
+            :data-pane-id="pane.id" :style="{ flexGrow: pane.size }" @pointerdown.capture="focusPane(pane)">
+            <div class="a-tabs">
+              <div v-if="paneIndex === 0" class="a-tab-actions a-tab-actions-left">
+                <button class="icon-button" :class="{ active: !explorerCollapsed }" type="button"
+                  :title="explorerCollapsed ? 'Expand explorer' : 'Collapse explorer'"
+                  :aria-label="explorerCollapsed ? 'Expand explorer' : 'Collapse explorer'"
+                  :aria-expanded="!explorerCollapsed"
+                  :aria-pressed="!explorerCollapsed"
+                  aria-controls="knowledge-explorer-panel"
+                  @click="toggleExplorer">
+                  <PanelLeftOpen v-if="explorerCollapsed" :size="16" />
+                  <PanelLeftClose v-else :size="16" />
+                </button>
+              </div>
+              <div class="a-tab-list" @wheel="scrollTabList">
+                <button v-if="pane.id === graphPaneId" class="other-tab a-graph-tab" :class="{ active: paneShowsGraph(pane) }"
+                  type="button" :aria-pressed="paneShowsGraph(pane)" @click="showGraph"><Network :size="15" class="inline-block mr-1" /> Graph</button>
+                <button v-for="tab in pane.tabs.filter(item => item.doc || item.ref || item.pending)" :key="tab.id" class="a-tab" type="button"
+                  :class="{ active: tab.id === pane.activeTabId && !paneShowsGraph(pane) && !(pane.id === focusedPaneId && viewMode === 'compose') }"
+                  :aria-pressed="tab.id === pane.activeTabId && !paneShowsGraph(pane) && !(pane.id === focusedPaneId && viewMode === 'compose')"
+                  :title="tab.doc?.path ?? tab.ref?.path ?? tabTitle(tab)"
+                  @click="activateTab(pane, tab)" @auxclick.prevent="$event.button === 1 && closeTab(pane, tab)">
+                  <FileText /><span class="tab-name">{{ tabTitle(tab) }}</span>
+                  <span class="a-tab-close" :aria-label="t('knowledgeV3.closeTab')" @click.stop="closeTab(pane, tab)">×</span>
+                </button>
+                <button v-if="composeOpen && pane.id === focusedPaneId" type="button" class="other-tab" :class="{active: viewMode === 'compose'}"
+                  :aria-pressed="viewMode === 'compose'" @click="viewMode = 'compose'">
+                  <Pencil :size="15" class="inline-block mr-1" /> {{ newFileName }}
+                </button>
+              </div>
+              <div class="a-pane-actions">
+                <button class="icon-button" type="button" :title="t('knowledgeV3.splitRight')" :aria-label="t('knowledgeV3.splitRight')"
+                  :disabled="panes.length >= 4 || !(workspace.activeTab(pane).doc || workspace.activeTab(pane).ref)" @click="splitPane(pane)"><Columns2 :size="16" /></button>
+                <button v-if="panes.length > 1" class="icon-button" type="button" :title="t('knowledgeV3.closePane')"
+                  :aria-label="t('knowledgeV3.closePane')" @click="closePane(pane)"><X :size="16" /></button>
+              </div>
+              <div v-if="paneIndex === panes.length - 1" class="a-tab-actions">
+                <button class="icon-button" :class="{ active: !(rightPanelCollapsed) }" type="button"
+                  :title="rightPanel === 'chat' ? (rightPanelCollapsed ? t('knowledgeV3.chatExpand') : t('knowledgeV3.chatCollapse')) : (rightPanelCollapsed ? 'Expand outline & links' : 'Collapse outline & links')"
+                  :aria-label="rightPanel === 'chat' ? (rightPanelCollapsed ? t('knowledgeV3.chatExpand') : t('knowledgeV3.chatCollapse')) : (rightPanelCollapsed ? 'Expand outline & links' : 'Collapse outline & links')"
+                  :aria-expanded="!(rightPanelCollapsed)"
+                  :aria-pressed="!(rightPanelCollapsed)"
+                  :aria-controls="rightPanel === 'chat' ? 'wiki-chat-panel' : 'knowledge-outline-panel'"
+                  @click="toggleRightPanel">
+                  <PanelRightOpen v-if="rightPanelCollapsed" :size="16" />
+                  <PanelRightClose v-else :size="16" />
+                </button>
+              </div>
             </div>
-            <div class="knowledge-edit-actions">
-              <span class="knowledge-edit-save-state">
-                {{ editorDirty ? t('knowledgeV3.unsaved') : t('knowledgeV3.savedStatus') }}
-              </span>
-              <button type="button" class="knowledge-secondary-button" :aria-pressed="preview"
-                @click="preview = !preview">{{ preview ? t('knowledgeV3.hidePreview') : t('knowledgeV3.preview') }}</button>
-              <button type="submit" class="knowledge-save-button" :disabled="editorSaving">
-                {{ activeSpace === 'wiki' ? t('knowledgeV3.save') : t('knowledgeV3.saveRaw') }}
-              </button>
-              <button type="button" class="knowledge-close-editor" :aria-label="t('knowledgeV3.closeEditor')"
-                @click="closeEditor">×</button>
+            <div v-if="!paneShowsGraph(pane) && !(pane.id === focusedPaneId && viewMode === 'compose')" class="a-pathbar">
+              <Folder :size="15" /><span>knowledge</span><span>/</span><span>{{ workspace.activeTab(pane).doc?.space ?? workspace.activeTab(pane).ref?.space ?? activeSpace }}</span><span>/</span>
+              <span class="active-path">{{ panePath(workspace.activeTab(pane)) }}</span>
+              <div class="path-actions">
+                <button v-if="workspace.activeTab(pane).doc && workspace.activeTab(pane).doc?.space !== 'drafts' && !workspace.activeTab(pane).doc?.readOnly"
+                  class="icon-button" type="button" :title="t('knowledgeV3.edit')"
+                  :aria-label="t('knowledgeV3.edit')" @click="editPaneNote(pane)"><Pencil :size="16" /></button>
+                <button class="icon-button" type="button" :title="t('knowledgeV3.readingView')"
+                  :aria-label="t('knowledgeV3.readingView')" aria-pressed="true"
+                  @click="activateTab(pane, workspace.activeTab(pane))"><BookOpen :size="15" /></button>
+                <ActionMenu :label="t('knowledgeV3.noteActions')">
+                  <MenuItem :disabled="!workspace.activeTab(pane).doc" @select="downloadPaneNote(pane)">
+                    <Download class="size-4 shrink-0" aria-hidden="true" /> {{ t('knowledgeV3.downloadNote') }}
+                  </MenuItem>
+                  <MenuItem :disabled="!workspace.activeTab(pane).doc?.page" @select="copyPaneNoteLink(pane)">
+                    <Link2 class="size-4 shrink-0" aria-hidden="true" /> {{ t('knowledgeV3.copyNoteLink') }}
+                  </MenuItem>
+                  <MenuItem :disabled="!workspace.activeTab(pane).doc" @select="copyPaneNoteContent(pane)">
+                    <Copy class="size-4 shrink-0" aria-hidden="true" /> {{ t('knowledgeV3.copyNoteContent') }}
+                  </MenuItem>
+                </ActionMenu>
+              </div>
             </div>
-          </div>
-          <div class="knowledge-edit-content">
-            <div class="knowledge-edit-note">
-              <h1>{{ title }}</h1>
-              <textarea id="knowledge-note-body" v-model="body" :disabled="busy"
-                :placeholder="t('knowledgeV3.startWriting')" spellcheck="true"
-                aria-label="Markdown editor"
-                @keydown.ctrl.s.prevent="saveNote" @keydown.meta.s.prevent="saveNote"></textarea>
-            </div>
-            <div v-if="preview" ref="composePreviewViewport" class="knowledge-edit-preview markdown-body"
-              v-html="renderMarkdown(body)" @click="onMarkdownClick"></div>
-          </div>
-          <p v-if="activeSpace === 'wiki'" class="knowledge-edit-footnote">
-            {{ t('knowledgeV3.draftNotice') }}
-          </p>
-        </form>
-      </main>
-      <main v-else-if="viewMode === 'read'" ref="readerViewport" class="a-reader-viewport">
-        <article
-          v-if="noteLoading || (treeLoading && !selected && !rawFile && !readOnlySource)"
-          data-knowledge-detail-skeleton
-          role="status"
-          aria-busy="true"
-          :aria-label="t('common.loading')"
-          class="doc"
-        >
-          <div class="card-shimmer space-y-5 rounded-xl p-1" aria-hidden="true">
-            <div class="h-3 w-40 rounded bg-muted/50" />
-            <div class="h-10 w-2/3 rounded-lg bg-muted/60" />
-            <div class="space-y-2 pt-1">
-              <div class="h-4 w-full rounded bg-muted/40" />
-              <div class="h-4 w-5/6 rounded bg-muted/40" />
-            </div>
-            <div class="doc-divider"></div>
-            <div class="space-y-3">
-              <div class="h-6 w-48 rounded bg-muted/60" />
-              <div class="h-3.5 w-full rounded bg-muted/40" />
-              <div class="h-3.5 w-11/12 rounded bg-muted/40" />
-              <div class="h-3.5 w-3/4 rounded bg-muted/40" />
-            </div>
-            <div class="space-y-3 pt-4">
-              <div class="h-5 w-40 rounded bg-muted/60" />
-              <div class="h-3.5 w-full rounded bg-muted/40" />
-              <div class="h-3.5 w-4/5 rounded bg-muted/40" />
-            </div>
-          </div>
-        </article>
-        <article v-else-if="selected || rawFile || readOnlySource" class="doc">
-          <div class="doc-overline"><span>{{ activeSpace }} / Markdown note</span><span>·</span><span>Knowledge vault</span></div>
-          <h1>{{ noteTitle }}</h1>
-          <section v-if="noteProperties.length" class="doc-properties" aria-label="Note properties">
-            <button type="button" class="doc-properties-toggle"
-              :aria-expanded="!propertiesCollapsed"
-              aria-controls="knowledge-doc-properties-list"
-              @click="toggleProperties">
-              <ChevronRight v-if="propertiesCollapsed" :size="14" class="shrink-0 opacity-70" />
-              <ChevronDown v-else :size="14" class="shrink-0 opacity-70" />
-              <span>Properties</span>
-              <span class="doc-properties-count">{{ noteProperties.length }}</span>
-            </button>
-            <div v-if="!propertiesCollapsed" id="knowledge-doc-properties-list" class="doc-properties-grid">
-              <div v-for="prop in noteProperties" :key="prop.key" class="doc-prop-row">
-                <div class="doc-prop-key">{{ prop.label }}</div>
-                <div class="doc-prop-val">
-                  <template v-if="prop.kind === 'badge'">
-                    <span v-for="val in prop.values" :key="val" class="doc-prop-badge">{{ val }}</span>
-                  </template>
-                  <template v-else-if="prop.kind === 'tags'">
-                    <span v-for="tag in prop.values" :key="tag" class="doc-prop-tag">#{{ tag }}</span>
-                  </template>
-                  <template v-else-if="prop.kind === 'code-list'">
-                    <code v-for="item in prop.values" :key="item" class="doc-prop-code">{{ item }}</code>
-                  </template>
-                  <template v-else-if="prop.kind === 'date'">
-                    <time class="doc-prop-date" :datetime="prop.raw || prop.values[0]" :title="prop.raw || prop.values[0]">{{ prop.values[0] }}</time>
-                  </template>
-                  <template v-else>
-                    <span class="doc-prop-text">{{ prop.values.join(', ') }}</span>
-                  </template>
+            <main v-if="pane.id === focusedPaneId && viewMode === 'compose'" class="a-reader-viewport knowledge-edit-viewport">
+              <form class="knowledge-note-editor" @submit.prevent="saveNote">
+                <div class="knowledge-edit-toolbar">
+                  <div class="knowledge-edit-breadcrumb">
+                    <FileText :size="15" class="shrink-0" />
+                    <span>{{ composeBaseFolder }}/</span>
+                    <strong>{{ newFileName }}</strong>
+                    <span v-if="selected?.status === 'draft'" class="knowledge-draft-pill">{{ t('knowledgeV3.draftStatus') }}</span>
+                  </div>
+                  <div class="knowledge-edit-actions">
+                    <span class="knowledge-edit-save-state">
+                      {{ editorDirty ? t('knowledgeV3.unsaved') : t('knowledgeV3.savedStatus') }}
+                    </span>
+                    <button type="button" class="knowledge-secondary-button" :aria-pressed="preview"
+                      @click="preview = !preview">{{ preview ? t('knowledgeV3.hidePreview') : t('knowledgeV3.preview') }}</button>
+                    <button type="submit" class="knowledge-save-button" :disabled="editorSaving">
+                      {{ activeSpace === 'wiki' ? t('knowledgeV3.save') : t('knowledgeV3.saveRaw') }}
+                    </button>
+                    <button type="button" class="knowledge-close-editor" :aria-label="t('knowledgeV3.closeEditor')"
+                      @click="closeEditor">×</button>
+                  </div>
+                </div>
+                <div class="knowledge-edit-content">
+                  <div class="knowledge-edit-note">
+                    <h1>{{ title }}</h1>
+                    <textarea id="knowledge-note-body" v-model="body" :disabled="busy"
+                      :placeholder="t('knowledgeV3.startWriting')" spellcheck="true"
+                      aria-label="Markdown editor"
+                      @keydown.ctrl.s.prevent="saveNote" @keydown.meta.s.prevent="saveNote"></textarea>
+                  </div>
+                  <div v-if="preview" ref="composePreviewViewport" class="knowledge-edit-preview markdown-body"
+                    v-html="renderMarkdown(body)" @click="onMarkdownClick"></div>
+                </div>
+                <p v-if="activeSpace === 'wiki'" class="knowledge-edit-footnote">
+                  {{ t('knowledgeV3.draftNotice') }}
+                </p>
+              </form>
+            </main>
+            <KnowledgeNoteView v-else-if="!paneShowsGraph(pane)" :key="workspace.activeTab(pane).id"
+              :tab="workspace.activeTab(pane)" :doc="workspace.activeTab(pane).doc"
+              :loading="isTabLoading(pane, workspace.activeTab(pane))"
+              :properties-collapsed="propertiesCollapsed"
+              @toggle-properties="toggleProperties" @markdown-click="onMarkdownClick" />
+            <div v-if="graphMounted && pane.id === graphPaneId" v-show="paneShowsGraph(pane)" class="graph-host">
+              <div class="graph-content">
+                <div class="graph-stage">
+                  <KnowledgeGraph :ref="setGraphControls" :center-id="selected?.id ?? null" :reload-token="graphReloadToken"
+                    :answer-graph="activeAnswerGraph" :inactive="!paneShowsGraph(pane)"
+                    @open="openGraphWiki" @open-side="openGraphWikiSide" @rebuild="rebuild" @node-hover="onKnowledgeGraphNodeHover" />
                 </div>
               </div>
             </div>
-          </section>
-          <div v-if="leadHtml" class="lead" v-html="leadHtml"></div>
-          <div class="doc-divider"></div>
-          <div class="markdown-body" v-html="renderedBody" @click="onMarkdownClick"></div>
-        </article>
-        <article v-else class="doc"><h1>{{ t('knowledgeV3.selectFile') }}</h1></article>
-      </main>
-      <div v-else-if="viewMode === 'graph'" class="graph-host">
-        <KnowledgeGraph v-if="activeSpace === 'wiki'"
-          :center-id="selected?.id ?? null" :reload-token="graphReloadToken"
-          @open="openGraphWiki" @rebuild="rebuild" />
+          </div>
+        </template>
       </div>
     </section>
 
-    <aside id="knowledge-outline-panel" class="a-outline"
-      :class="{ 'is-collapsed': outlineCollapsed }" :aria-hidden="outlineCollapsed">
-      <div class="a-outline-top">Outline &amp; links</div>
+    <div v-if="!rightPanelCollapsed" class="a-panel-resizer a-panel-resizer-right" role="separator" tabindex="0"
+      aria-orientation="vertical" :aria-label="t('knowledgeV3.resizeRightPanel')"
+      @pointerdown="startPanelResize($event, 'right')"
+      @keydown.left.prevent="nudgePanel('right', -16)" @keydown.right.prevent="nudgePanel('right', 16)"></div>
+    <WikiChatPanel v-if="chatMounted" v-show="rightPanel === 'chat'" :messages="wikiChatMessages" :busy="wikiChatBusy"
+      :class="{ 'is-collapsed': rightPanelCollapsed }"
+      :drawer-open="chatDrawerOpen" :suggestions="chatSuggestions"
+      :pinned-files="wikiChatPinnedFiles" :open-file="openChatFile"
+      @pin-file="pinWikiChatFile" @unpin-file="unpinWikiChatFile"
+      :highlighted-node="highlightedChatNode" @send="sendWikiChat" @stop="stopWikiChat"
+      @reset="resetWikiChat" @retry="retryWikiChat" @show-graph="showAnswerOnGraph"
+      @focus-citation="openCitation" @highlight-citation="highlightChatCitation">
+      <template v-if="viewMode !== 'graph'" #title>
+        <div class="a-right-tabs" role="tablist" :aria-label="t('knowledgeV3.rightPanel')">
+          <button type="button" role="tab" class="a-right-tab" aria-selected="false" @click="selectRightTab('outline')"><ListTree :size="13" aria-hidden="true" /> {{ t('knowledgeV3.rightOutline') }}</button>
+          <button type="button" role="tab" class="a-right-tab active" aria-selected="true"><Sparkles :size="13" aria-hidden="true" /> {{ t('knowledgeV3.chatTitle') }}</button>
+        </div>
+      </template>
+    </WikiChatPanel>
+    <button type="button" class="wiki-chat-drawer-toggle"
+      :aria-label="chatDrawerOpen ? t('knowledgeV3.chatCloseDrawer') : t('knowledgeV3.chatOpenDrawer')"
+      :aria-expanded="chatDrawerOpen" aria-controls="wiki-chat-panel" @click="toggleChatDrawer">
+      {{ chatDrawerOpen ? t('knowledgeV3.chatCloseDrawer') : t('knowledgeV3.chatOpenDrawer') }}
+    </button>
+    <aside v-if="rightPanel === 'outline'" id="knowledge-outline-panel" class="a-outline"
+      :class="{ 'is-collapsed': rightPanelCollapsed }" :aria-hidden="rightPanelCollapsed">
+      <div class="a-outline-top">
+        <div class="a-right-tabs" role="tablist" :aria-label="t('knowledgeV3.rightPanel')">
+          <button type="button" role="tab" class="a-right-tab active" aria-selected="true"><ListTree :size="13" aria-hidden="true" /> {{ t('knowledgeV3.rightOutline') }}</button>
+          <button type="button" role="tab" class="a-right-tab" aria-selected="false" @click="selectRightTab('chat')"><Sparkles :size="13" aria-hidden="true" /> {{ t('knowledgeV3.chatTitle') }}</button>
+        </div>
+      </div>
       <div class="aside-scroll">
         <div class="a-aside-label">On this page</div>
         <div v-if="noteLoading || (treeLoading && !selected && !rawFile && !readOnlySource)" class="space-y-2 py-1" aria-hidden="true">
@@ -1516,7 +2054,8 @@ onMounted(() => {
           <div v-for="slot in 2" :key="slot" class="card-shimmer h-3.5 w-32 rounded bg-muted/50" />
         </div>
         <template v-else>
-          <button v-for="note in linkedNotes" :key="note.id" type="button" class="a-backlink" @click="openGraphWiki(note.id)">
+          <button v-for="note in linkedNotes" :key="note.id" type="button" class="a-backlink"
+            @click="openWikiPage(note.id, linkOpenMode($event))" @auxclick.prevent="$event.button === 1 && openWikiPage(note.id, 'tab')">
             <ArrowUpRight /><span>{{ note.title }}</span>
           </button>
         </template>

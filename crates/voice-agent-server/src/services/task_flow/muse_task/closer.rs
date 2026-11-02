@@ -56,8 +56,13 @@ use orchestrator_agent_rs::{
     CallerContext, Orchestrator, OrchestratorError, PageRequest, ToolOperationSummary,
 };
 use std::collections::{BTreeMap, HashSet};
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock, Mutex};
 use std::time::Duration;
+
+/// Finished keys whose remote session is kept. They stay undeleted in the journal, so this
+/// stops each pass from re-reading them. An archived child cannot add a delete request later.
+static RETAINED_KEYS: LazyLock<Mutex<HashSet<String>>> =
+    LazyLock::new(|| Mutex::new(HashSet::new()));
 
 /// A journal is trusted host scope, never model arguments. Fail closed on incomplete scope.
 #[derive(serde::Deserialize, PartialEq, Eq)]
@@ -66,6 +71,24 @@ struct JournalScope {
     workspace_id: String,
     session_id: String,
     root_session_id: String,
+}
+
+/// Read apart from `JournalScope`: turns of one child may differ here but must agree on scope.
+#[derive(serde::Deserialize)]
+struct JournalRetention {
+    #[serde(default)]
+    delete_session_on_finish: bool,
+}
+
+fn delete_requested(ops: &[&ToolOperationSummary]) -> bool {
+    ops.iter().any(|summary| {
+        summary
+            .operation
+            .request_json
+            .as_deref()
+            .and_then(|json| serde_json::from_str::<JournalRetention>(json).ok())
+            .is_some_and(|retention| retention.delete_session_on_finish)
+    })
 }
 
 pub(crate) struct SubagentMuseCloser;
@@ -106,6 +129,13 @@ impl SubagentMuseCloser {
             }
         }
         for (key, ops) in groups {
+            if RETAINED_KEYS
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .contains(key)
+            {
+                continue;
+            }
             if let Err(error) = Self::close_key(orchestrator, key, &ops, &conflicts).await {
                 tracing::warn!(continuation_key = key, %error, "Muse task closure deferred");
             }
@@ -186,6 +216,14 @@ impl SubagentMuseCloser {
                 RunStatus::Running | RunStatus::WaitingRetry | RunStatus::WaitingUser
             )
         }) {
+            return Ok(());
+        }
+        if !delete_requested(ops) {
+            pool::forget_job_session(key).await;
+            RETAINED_KEYS
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .insert(key.to_owned());
             return Ok(());
         }
         let mut released = HashSet::new();
