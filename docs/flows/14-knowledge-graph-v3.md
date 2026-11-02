@@ -1,8 +1,8 @@
-# Knowledge V3 — Graph View and Obsidian link flow (implementation committed)
+# Knowledge V3 — Graph View, Wiki Chat, and Obsidian link flow
 
-- Date: 2026-10-19
-- Status: code implemented in branch; this document describes current flow, while exact HEAD CI and interactive Obsidian acceptance must still be verified.
-- Contract: [Knowledge Graph implementation](../knowledge/wiki-graph-view-implementation-v3.md) and [ADR 0124](../adr/0124-wiki-wikilinks-graph-projection.md).
+- Date: 2026-11-02
+- Status: implementation available locally; live-provider Wiki Chat acceptance is separate and must not be inferred from source tests.
+- Contract: [Knowledge Graph implementation](../knowledge/wiki-graph-view-implementation-v3.md), [Wiki Chat implementation](../knowledge/wiki-chat-graph-implementation.md), [ADR 0124](../adr/0124-wiki-wikilinks-graph-projection.md), and [ADR 0138](../adr/0138-admin-read-only-wiki-chat-and-answer-graph.md).
 - Existing Knowledge + Memory V3 flows remain [in flow 13](13-knowledge-v3.md).
 
 ## Author a link through the Knowledge Web editor
@@ -29,6 +29,39 @@ flowchart TD
 ```
 
 Staged drafts/ never contribute unaccepted replacement relationships. Knowledge Graph is Admin-only; Job tools continue source-verified Wiki search/read and are not extended to graph traversal.
+
+## Query graph and read-only Wiki Chat
+
+The graph tab keeps Global and Local behavior and adds two paths. Query graph searches Wiki and Source without an LLM. Wiki Chat streams a bounded read-only turn; the server derives the answer graph from tool evidence and canonical Wikilinks. The browser holds the temporary conversation and cancels the request on Stop or disconnect.
+
+```mermaid
+flowchart TD
+  A[Admin opens Graph tab] --> B{Graph mode}
+  B -->|Query| C[GET knowledge/graph scope=query and q]
+  C --> D[Search Wiki and Sources]
+  D --> E[Server builds bounded query graph]
+  B -->|Ask Wiki| F[POST knowledge/ask with user and assistant history]
+  F --> G[Validate history, auth, selected provider and admission]
+  G --> H[Stream LLM tool calls and text]
+  H --> I{Tool is in wiki read allowlist?}
+  I -->|No| J[Return tool_not_allowed; do not execute]
+  I -->|Yes| K[Read via WikiEngine]
+  K --> L[Record evidence from full metadata]
+  L --> M[Bound untrusted tool text for LLM]
+  L --> N[Build answer graph from canonical graph]
+  N --> O[SSE graph snapshot with revision]
+  M --> H
+  H --> P[Resolve answer Wikilinks against evidence]
+  P --> Q[Final graph snapshot and done]
+  F --> R[Client disconnect / Stop]
+  R --> S[Cancel request and provider stream]
+```
+
+The read allowlist is `wiki_query`, `wiki_get`, and `wiki_multi_get`; Knowledge MCP enablement does not gate this Admin feature. Tool-result text is marked untrusted, and paths are captured before text truncation. A model-generated Wikilink outside the evidence remains plain text. The query and answer graphs use only resolved Wikilinks already present in the server graph projection, consistent with ADR 0124.
+
+The chat provider is selected separately in Background settings (`wiki_chat_llm_provider`); saving requires the Chat tag and tool support. The setting is persisted with existing Background settings and does not add a database migration. Missing configuration returns `wiki_chat_not_configured` instead of silently selecting a provider.
+
+See the [Knowledge Wiki Chat API contract](../api/knowledge-wiki-chat.md) for request limits, SSE events, errors, and settings fields.
 
 ## Graph query and move protection
 

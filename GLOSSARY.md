@@ -280,6 +280,10 @@ _Avoid_: generated relationship, provenance citation
 Biểu diễn có thể tái tạo về các tài liệu (`nodes`), liên kết hợp lệ (`edges`) và liên kết chưa phân giải (`unresolved`), phục vụ duyệt toàn bộ hoặc theo vùng lân cận mà không thay đổi nội dung Wiki.
 _Avoid_: canonical Wiki body, second knowledge store, Memory graph
 
+**Answer Graph**:
+Đồ thị con gắn với một câu trả lời Wiki, gồm các trang đã được truy vấn, đọc hoặc trích dẫn cùng những láng giềng nối với chúng bằng Wiki Link có thật.
+_Avoid_: AI-inferred graph, canonical graph, second knowledge store
+
 **Unresolved Wiki Link**:
 Liên kết có đích chưa tồn tại hoặc không phân giải được sang tài liệu hợp lệ trong kho tri thức; được ghi nhận riêng trên đồ thị và trong báo cáo `wiki_lint`, không tự động tạo trang mới.
 _Avoid_: verified edge, automatically created page

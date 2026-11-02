@@ -320,3 +320,27 @@ Ghi số đo và quyết định phát sinh khi triển khai.
 | `zzzzzzzzqqqqqqqq` | Không có kết quả | 0 |
 
 Chốt `QUERY_GRAPH_MIN_SCORE = 0.12` để giữ các trang chủ đề thấp hơn ~0.13–0.16, đồng thời bỏ `wiki/log.md` và `wiki/index.md` vốn có điểm khoảng 0.07–0.09. Kết quả truy vấn mặc định tạo hai nhánh Lex và Vec; nhánh Vec gọi `search_vector` với embedder của engine. Đây là xác nhận theo đường chạy trong `llm-wiki-rs`, không phải phép đo số lần gọi embedder bằng instrumentation.
+
+### P6: nghiệm thu provider thật
+
+Ngày 2026-11-02, các kịch bản dưới đây đều `NOT_RUN`: worktree nghiệm thu không được cung cấp vault và cấu hình provider thật có thể xác minh an toàn. Không gửi yêu cầu tới provider, không đọc hoặc sửa vault. Vì vậy không có số liệu độ trễ lượt thật; các giới hạn hiện tại chưa được điều chỉnh theo đo đạc live.
+
+| Kiểm tra | Trạng thái | Lý do |
+| --- | --- | --- |
+| `Trading trong wiki có gì?` trên vault thật | `NOT_RUN` | Không có vault/provider live được cấu hình an toàn trong worktree này. |
+| FVG liên hệ với Sharp Turn Entry, kiểm tra cụm và trích dẫn | `NOT_RUN` | Không có vault/provider live được cấu hình an toàn trong worktree này. |
+| Hỏi tiếng Việt về giao dịch theo FVG | `NOT_RUN` | Không có vault/provider live được cấu hình an toàn trong worktree này. |
+| Hỏi ngoài phạm vi về công thức nấu phở và xác nhận graph không đổi | `NOT_RUN` | Không có vault/provider live được cấu hình an toàn trong worktree này. |
+| Source có chỉ dẫn xóa Wiki; xác nhận agent không làm theo và Wiki không đổi | `NOT_RUN` | Không có vault/provider live được cấu hình an toàn trong worktree này. |
+| Độ trễ của lượt hỏi đáp thật | `NOT_RUN` | Chưa chạy lượt live nên không có phép đo để báo cáo. |
+| Giao diện sáng, tối và viewport 700px | `PASS` (kiểm tra UI cục bộ) | Parent xác nhận giao diện ở hai chế độ và viewport responsive 700px, hội thoại được giữ nguyên. Ảnh minh chứng không có artifact lưu trong worktree. |
+
+### Gate kiểm tra P6
+
+Chạy qua `scripts/agent-test.sh` trên nhánh P6:
+
+| Gate | Kết quả | Ghi chú |
+| --- | --- | --- |
+| `package voice-agent-server` | `FAIL` (exit 101) | Lần chạy ban đầu linker hết dung lượng (`ENOSPC`) khi tạo các test binary. Sau khi wrapper prune artifact cũ và chạy tuần tự với `CARGO_BUILD_JOBS=1`, lần chạy lại cũng `ENOSPC` ở test `speechoutput_tracer`; không tính là đạt. |
+| `run -- cargo clippy --workspace --all-targets -- -D warnings` | `FAIL` (exit 101) | 11 cảnh báo bị nâng thành lỗi ở các tệp Muse/task-flow hiện có: 9 `collapsible_if`, một hàm có 9 đối số, và dùng `.err().expect()` trên `Result`. |
+| `web build` | `PASS` | Hoàn tất trong 9 giây sau khi tạm dùng liên kết tới dependencies `node_modules` đã cài ở checkout chính; liên kết tạm đã được gỡ bỏ. |
