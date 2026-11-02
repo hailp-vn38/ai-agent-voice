@@ -9,7 +9,7 @@ const MAX_CONVERSATIONS: i64 = 200;
 const MAX_MESSAGES_PER_CONVERSATION: i64 = 100;
 pub(crate) const MAX_STORED_ANSWER_BYTES: usize = 64 * 1024;
 const MAX_STORED_TOOLS_BYTES: usize = 64 * 1024;
-const MAX_STORED_GRAPH_BYTES: usize = 256 * 1024;
+pub(crate) const MAX_STORED_GRAPH_BYTES: usize = 256 * 1024;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub(crate) struct ToolStep {

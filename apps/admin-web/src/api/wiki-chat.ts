@@ -83,7 +83,13 @@ export interface WikiChatHandlers {
   onTool: (tool: WikiChatTool) => void
   onGraph: (graph: AnswerGraph) => void
   onDelta: (text: string) => void
-  onDone: (result: { citations: string[]; stop_reason: string; saved: boolean }) => void
+  onDone: (result: {
+    citations: string[]
+    stop_reason: string
+    saved: boolean
+    content_truncated: boolean
+    graph_saved: boolean
+  }) => void
   onError: (code: string) => void
 }
 
@@ -199,6 +205,8 @@ export async function askWiki(
             citations,
             stop_reason: typeof payload.stop_reason === 'string' ? payload.stop_reason : 'finished',
             saved: payload.saved === true,
+            content_truncated: payload.content_truncated === true,
+            graph_saved: payload.graph_saved !== false,
           })
           completed = true
         } else if (frame.event === 'error') {
