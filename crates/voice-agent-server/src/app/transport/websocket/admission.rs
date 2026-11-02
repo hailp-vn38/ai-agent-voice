@@ -360,6 +360,13 @@ pub(super) async fn admit(
         system_mcp,
         reminder_tools,
         session_memory,
+        // Follows `[wiki].enabled`, not the `/mcp/knowledge` switch: that one governs outside clients.
+        session_wiki: state
+            .config
+            .wiki
+            .enabled
+            .then(|| state.knowledge_mcp.get().cloned())
+            .flatten(),
         active_device_sessions: state.active_device_sessions.clone(),
         database: state.database.clone(),
     })))

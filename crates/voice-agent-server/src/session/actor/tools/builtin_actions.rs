@@ -47,6 +47,7 @@ impl SessionActor {
             BuiltinTool::TaskSuite => self.execute_task_suite(call),
             BuiltinTool::Reminder => self.execute_reminder_tool(call),
             BuiltinTool::Memory => self.execute_memory_tool(call),
+            BuiltinTool::Wiki => self.execute_wiki_tool(call),
         }
     }
 

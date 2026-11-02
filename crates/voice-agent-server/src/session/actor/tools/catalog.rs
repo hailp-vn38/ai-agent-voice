@@ -9,8 +9,8 @@ use crate::{
         builtin::{
             BuiltinTool, EXIT_TOOL_NAME, SWITCH_TEMPLATE_TOOL_NAME, exit_tool_definition,
             is_legacy_reminder_tool_name, is_memory_tool_name, is_reminder_tool_name,
-            is_task_suite_tool_name, memory_tool_definitions, reminder_tool_definitions,
-            switch_template_tool_definition,
+            is_task_suite_tool_name, is_wiki_tool_name, memory_tool_definitions,
+            reminder_tool_definitions, switch_template_tool_definition, wiki_tool_definitions,
         },
         device_mcp::LlmVisibleTool,
         external_mcp::{ResolvedExternalMcp, ResolvedExternalTool},
@@ -25,6 +25,7 @@ pub(super) fn is_builtin_tool_name(name: &str) -> bool {
         || is_task_suite_tool_name(name)
         || is_reminder_tool_name(name)
         || is_memory_tool_name(name)
+        || is_wiki_tool_name(name)
 }
 
 /// Where one ToolCall goes, decided from the name the model used and nothing else.
@@ -58,6 +59,9 @@ impl SessionActor {
         }
         if let Some(memory) = &self.session_memory {
             tools.extend(memory_tool_definitions(memory.mode));
+        }
+        if self.session_wiki.is_some() {
+            tools.extend(wiki_tool_definitions());
         }
         if !self.switch_catalog.is_empty() {
             tools.push(switch_template_tool_definition(
@@ -103,6 +107,7 @@ impl SessionActor {
         (self.job_submit.is_some() && self.llm_runtime.supports_tools())
             || self.reminder_tools.is_some()
             || self.session_memory.is_some()
+            || self.session_wiki.is_some()
             || !self.mcp.visible.is_empty()
             || !self.external_mcp.is_empty()
             || self
@@ -119,6 +124,9 @@ impl SessionActor {
         // tool that happens to share the name.
         if is_memory_tool_name(name) {
             return Some(ToolTarget::Builtin(BuiltinTool::Memory));
+        }
+        if is_wiki_tool_name(name) {
+            return Some(ToolTarget::Builtin(BuiltinTool::Wiki));
         }
         if is_task_suite_tool_name(name) {
             return self
@@ -159,6 +167,7 @@ impl SessionActor {
                 if is_task_suite_tool_name(&call.name)
                     || is_reminder_tool_name(&call.name)
                     || is_memory_tool_name(&call.name)
+                    || is_wiki_tool_name(&call.name)
                 {
                     return McpResultDelivery::LlmThenTts;
                 }

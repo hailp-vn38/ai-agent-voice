@@ -161,6 +161,7 @@ struct SocketRuntimes {
     system_mcp: Option<crate::tools::system_mcp::SessionSystemMcp>,
     reminder_tools: Option<crate::services::notifications::SessionReminderTools>,
     session_memory: Option<crate::session::SessionMemory>,
+    session_wiki: Option<Arc<crate::tools::knowledge_mcp::KnowledgeMcp>>,
     assistant_connection: Option<super::super::assistant::Connection>,
     connect_started: Instant,
     metrics: Option<Arc<RuntimeMetrics>>,

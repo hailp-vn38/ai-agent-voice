@@ -8,6 +8,7 @@ Cập nhật: 2026-11-01. Quyết định nền tảng: [ADR 0127](../adr/0127-o
 
 - `daily_root` nhận công việc người dùng và điều phối Sub-Agent theo catalog/cấu hình đang có.
 - `wiki_root` xử lý Wiki Auto-Flow khi có Markdown mới trong `sources/`.
+- Voice tra Wiki ngay trong lượt bằng hai builtin chỉ đọc `server_wiki_search` và `server_wiki_read` (`session/actor/tools/wiki.rs`); ghi Wiki vẫn đi qua Task.
 - Voice dùng TaskToolSuite qua `services/task_flow/voice.rs`; Admin tạo và quản lý Task qua `app/admin/background/jobs.rs`.
 - `/api/admin/jobs*` là API tương thích cho Background Task, không phải JobEngine cũ.
 

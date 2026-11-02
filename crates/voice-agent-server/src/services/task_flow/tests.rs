@@ -168,6 +168,7 @@ fn dual_flow_agent_specs_assign_collectors_to_daily_flow_and_keep_wiki_flow_pure
             "media_creator",
             "media_processor",
             "reminder_planner",
+            "cloud_worker",
         ]
     );
 
