@@ -8,7 +8,11 @@ use crate::{
         tool_security::SpeakerDeps,
     },
 };
-use sqlx::Row;
+use sqlx::{
+    Row,
+    sqlite::{SqliteConnectOptions, SqlitePoolOptions},
+};
+use std::str::FromStr;
 
 async fn open_temp_db(label: &str) -> (Database, std::path::PathBuf) {
     let path = std::env::temp_dir().join(format!(
@@ -31,6 +35,31 @@ fn cleanup_db_file(path: &std::path::Path) {
     let _ = std::fs::remove_file(path);
     let _ = std::fs::remove_file(path.with_extension("db-wal"));
     let _ = std::fs::remove_file(path.with_extension("db-shm"));
+}
+
+async fn conversation_rows_in_snapshot(bytes: &[u8]) -> (i64, i64) {
+    let path = std::env::temp_dir().join(format!("wiki-chat-snapshot-{}.db", uuid::Uuid::new_v4()));
+    tokio::fs::write(&path, bytes).await.unwrap();
+    let options = SqliteConnectOptions::from_str(&format!("sqlite://{}", path.display()))
+        .unwrap()
+        .read_only(true)
+        .create_if_missing(false);
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect_with(options)
+        .await
+        .unwrap();
+    let conversations = sqlx::query_scalar("SELECT COUNT(*) FROM wiki_conversations")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    let messages = sqlx::query_scalar("SELECT COUNT(*) FROM wiki_conversation_messages")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    pool.close().await;
+    let _ = tokio::fs::remove_file(path).await;
+    (conversations, messages)
 }
 
 const MEMORY_MODE_SEED: &str = "INSERT INTO agents (key, name, enabled, created_at, updated_at)
@@ -280,6 +309,48 @@ async fn memory_mode_unknown_value_in_sqlite_snapshot_is_rejected() {
         cleanup_db_file(&src_path);
         cleanup_db_file(&dst_path);
     }
+}
+
+#[tokio::test]
+async fn config_only_sqlite_snapshot_excludes_wiki_conversations_but_full_keeps_them() {
+    let (db, path) = open_temp_db("wiki-conversations").await;
+    sqlx::query(
+        "INSERT INTO wiki_conversations (id, title, created_at_ms, updated_at_ms) VALUES ('conv-private', 'Private question', 1, 2)",
+    )
+    .execute(db.pool())
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO wiki_conversation_messages (id, conversation_id, seq, role, content, status, created_at_ms, updated_at_ms) VALUES ('message-private', 'conv-private', 1, 'user', 'A private question', 'done', 1, 1)",
+    )
+    .execute(db.pool())
+    .await
+    .unwrap();
+
+    let config_only = db
+        .export_backup(ExportBackupRequest {
+            format: BackupFormat::Sqlite,
+            scope: BackupScope::ConfigOnly,
+            companion_settings: BackupCompanionSettings::default(),
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        conversation_rows_in_snapshot(&config_only.bytes).await,
+        (0, 0)
+    );
+
+    let full = db
+        .export_backup(ExportBackupRequest {
+            format: BackupFormat::Sqlite,
+            scope: BackupScope::Full,
+            companion_settings: BackupCompanionSettings::default(),
+        })
+        .await
+        .unwrap();
+    assert_eq!(conversation_rows_in_snapshot(&full.bytes).await, (1, 1));
+    drop(db);
+    cleanup_db_file(&path);
 }
 
 #[tokio::test]

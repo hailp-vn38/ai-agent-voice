@@ -1,9 +1,11 @@
 import { computed, onBeforeUnmount, ref } from 'vue'
 import {
   askWiki,
+  getWikiConversation,
   WikiChatRequestError,
   type AnswerGraph,
-  type WikiChatInputMessage,
+  type WikiChatAskInput,
+  type WikiConversationDetail,
   type WikiChatTool,
 } from '@/api/wiki-chat'
 
@@ -17,43 +19,34 @@ export interface WikiChatMessage {
   id: string
   role: 'user' | 'assistant'
   text: string
-  status: 'streaming' | 'done' | 'stopped' | 'failed'
+  status: 'streaming' | 'done' | 'stopped' | 'failed' | 'interrupted'
   tools: WikiChatTool[]
   graph: AnswerGraph | null
   citations: string[]
   errorCode: string | null
+  saved?: boolean
   files?: WikiChatFile[]
 }
 
-function newId(): string {
-  return typeof crypto !== 'undefined' && 'randomUUID' in crypto
-    ? crypto.randomUUID()
-    : `${Date.now()}-${Math.random().toString(36).slice(2)}`
-}
-
-const MAX_HISTORY_MESSAGES = 12
-const MAX_HISTORY_BYTES = 16 * 1024
 export const MAX_PINNED_FILES = 4
 
-function historyFor(messages: WikiChatMessage[]): WikiChatInputMessage[] {
-  return messages
-    .filter(message => message.status === 'done' && message.text.trim())
-    .map(message => ({ role: message.role, content: message.text }))
-}
-
-// Mirrors the server limits, keeping the newest messages. The question itself
-// is always sent, so one that is too long still gets the server's invalid_input.
-function boundHistory(history: WikiChatInputMessage[]): WikiChatInputMessage[] {
-  const encoder = new TextEncoder()
-  let start = history.length - 1
-  let bytes = encoder.encode(history[start]?.content ?? '').length
-  while (start > 0 && history.length - start < MAX_HISTORY_MESSAGES) {
-    bytes += encoder.encode(history[start - 1]!.content).length
-    if (bytes > MAX_HISTORY_BYTES) break
-    start -= 1
+function messageFromSaved(message: WikiConversationDetail['messages'][number]): WikiChatMessage {
+  const files = message.pinned_paths.map(path => ({ path, title: path }))
+  return {
+    id: message.id,
+    role: message.role,
+    text: message.content,
+    status: message.status === 'done' ? 'done'
+      : message.status === 'stopped' ? 'stopped'
+        : message.status === 'interrupted' ? 'interrupted'
+          : message.status === 'failed' ? 'failed' : 'streaming',
+    tools: message.tools,
+    graph: message.graph,
+    citations: message.citations,
+    errorCode: message.error_code,
+    saved: true,
+    ...(files.length ? { files } : {}),
   }
-  while (start < history.length - 1 && history[start]!.role === 'assistant') start += 1
-  return history.slice(start)
 }
 
 export function useWikiChat() {
@@ -63,6 +56,8 @@ export function useWikiChat() {
   const busy = ref(false)
   const chatDrawerOpen = ref(false)
   const pinnedFiles = ref<WikiChatFile[]>([])
+  const conversationId = ref<string | null>(null)
+  const loadingConversation = ref(false)
   let controller: AbortController | null = null
   let currentAssistantId: string | null = null
 
@@ -82,7 +77,28 @@ export function useWikiChat() {
     pinnedFiles.value = pinnedFiles.value.filter(file => file.path !== path)
   }
 
-  async function runRequest(history: WikiChatInputMessage[], assistantId: string, files: WikiChatFile[]) {
+  async function loadConversation(id: string): Promise<boolean> {
+    loadingConversation.value = true
+    try {
+      const conversation = await getWikiConversation(id)
+      conversationId.value = conversation.id
+      messages.value = conversation.messages.map(messageFromSaved)
+      const latestUser = [...conversation.messages].reverse().find(message => message.role === 'user')
+      pinnedFiles.value = latestUser?.pinned_paths.map(path => ({ path, title: path })) ?? []
+      const graphMessage = [...messages.value].reverse().find(message => message.role === 'assistant' && message.graph)
+      activeGraph.value = graphMessage?.graph ?? null
+      activeGraphMessageId.value = graphMessage?.id ?? null
+      chatDrawerOpen.value = true
+      return true
+    } catch {
+      reset()
+      return false
+    } finally {
+      loadingConversation.value = false
+    }
+  }
+
+  async function runRequest(input: WikiChatAskInput, assistantId: string) {
     const assistant = findMessage(assistantId)
     if (!assistant) return
     const requestController = new AbortController()
@@ -93,7 +109,17 @@ export function useWikiChat() {
     assistant.errorCode = null
     let lastGraphRevision: number | null = null
     try {
-      await askWiki(history, {
+      await askWiki(input, {
+        onTurn: turn => {
+          conversationId.value = turn.conversation_id
+          const turnIndex = messages.value.findIndex(message => message.id === assistantId)
+          if (turnIndex > 0 && messages.value[turnIndex - 1]?.role === 'user') {
+            messages.value[turnIndex - 1]!.id = turn.user_message_id
+          }
+          assistant.id = turn.assistant_message_id
+          assistantId = turn.assistant_message_id
+          currentAssistantId = turn.assistant_message_id
+        },
         onTool: tool => {
           const current = findMessage(assistantId)
           if (!current) return
@@ -122,8 +148,10 @@ export function useWikiChat() {
           const current = findMessage(assistantId)
           if (!current) return
           current.citations = result.citations
+          current.saved = result.saved
           if (current.status === 'streaming') {
             if (result.stop_reason === 'finished') current.status = 'done'
+            else if (result.stop_reason === 'stopped') current.status = 'stopped'
             else {
               current.status = 'failed'
               current.errorCode = result.stop_reason
@@ -137,7 +165,7 @@ export function useWikiChat() {
             current.errorCode = code
           }
         },
-      }, requestController.signal, files.map(file => file.path))
+      }, requestController.signal)
       const current = findMessage(assistantId)
       if (current?.status === 'streaming') current.status = 'done'
     } catch (error) {
@@ -160,19 +188,22 @@ export function useWikiChat() {
     const content = text.trim()
     if (!content || busy.value) return
     chatDrawerOpen.value = true
-    const history = historyFor(messages.value)
     const files = [...pinnedFiles.value]
     const user: WikiChatMessage = {
-      id: newId(), role: 'user', text: content, status: 'done', tools: [], graph: null,
+      id: `local:${Date.now()}:user`, role: 'user', text: content, status: 'done', tools: [], graph: null,
       citations: [], errorCode: null, files,
     }
     const assistant: WikiChatMessage = {
-      id: newId(), role: 'assistant', text: '', status: 'streaming', tools: [], graph: null,
+      id: `local:${Date.now()}:assistant`, role: 'assistant', text: '', status: 'streaming', tools: [], graph: null,
       citations: [], errorCode: null,
     }
     messages.value.push(user, assistant)
-    history.push({ role: 'user', content })
-    await runRequest(boundHistory(history), assistant.id, files)
+    const input: WikiChatAskInput = {
+      ...(conversationId.value ? { conversation_id: conversationId.value } : {}),
+      question: content,
+      pinned_paths: files.map(file => file.path),
+    }
+    await runRequest(input, assistant.id)
   }
 
   function stop() {
@@ -188,13 +219,12 @@ export function useWikiChat() {
     const assistant = messages.value[assistantIndex]
     const previousUser = assistantIndex > 0 ? messages.value[assistantIndex - 1] : undefined
     if (!assistant || assistant.role !== 'assistant' || !previousUser || previousUser.role !== 'user') return
-    const history = historyFor(messages.value.slice(0, assistantIndex - 1))
-    history.push({ role: 'user', content: previousUser.text })
+    if (!conversationId.value) return
     assistant.text = ''
     assistant.tools = []
     assistant.citations = []
     assistant.errorCode = null
-    void runRequest(boundHistory(history), assistantId, previousUser.files ?? [])
+    void runRequest({ conversation_id: conversationId.value, retry_message_id: assistantId }, assistantId)
   }
 
   function showGraphOf(id: string) {
@@ -207,6 +237,7 @@ export function useWikiChat() {
   function reset() {
     stop()
     messages.value = []
+    conversationId.value = null
     pinnedFiles.value = []
     activeGraph.value = null
     activeGraphMessageId.value = null
@@ -217,6 +248,8 @@ export function useWikiChat() {
 
   return {
     messages,
+    conversationId,
+    loadingConversation,
     activeGraph,
     activeGraphMessageId,
     busy,
@@ -226,6 +259,7 @@ export function useWikiChat() {
     pinFile,
     unpinFile,
     send,
+    loadConversation,
     stop,
     retry,
     reset,

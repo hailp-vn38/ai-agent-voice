@@ -1,10 +1,49 @@
-import { apiUrl } from './client'
+import { apiUrl, requestJson } from './client'
 import { consumeSse, createSseParserState } from './sse'
 import { readAdminToken } from '@/stores/auth'
 
 export interface WikiChatInputMessage {
   role: 'user' | 'assistant'
   content: string
+}
+
+export interface WikiConversationMessage {
+  id: string
+  seq: number
+  role: 'user' | 'assistant'
+  content: string
+  content_truncated: boolean
+  status: 'running' | 'done' | 'stopped' | 'failed' | 'interrupted'
+  error_code: string | null
+  pinned_paths: string[]
+  tools: WikiChatTool[]
+  citations: string[]
+  graph: AnswerGraph | null
+  created_at_ms: number
+  updated_at_ms: number
+}
+
+export interface WikiConversationDetail {
+  id: string
+  title: string
+  created_at_ms: number
+  updated_at_ms: number
+  messages: WikiConversationMessage[]
+}
+
+export type WikiChatAskInput = {
+  conversation_id?: string
+  question: string
+  pinned_paths: string[]
+} | {
+  conversation_id: string
+  retry_message_id: string
+}
+
+export interface WikiChatTurn {
+  conversation_id: string
+  user_message_id: string
+  assistant_message_id: string
 }
 
 export interface WikiChatTool {
@@ -40,10 +79,11 @@ export interface AnswerGraph {
 }
 
 export interface WikiChatHandlers {
+  onTurn: (turn: WikiChatTurn) => void
   onTool: (tool: WikiChatTool) => void
   onGraph: (graph: AnswerGraph) => void
   onDelta: (text: string) => void
-  onDone: (result: { citations: string[]; stop_reason: string }) => void
+  onDone: (result: { citations: string[]; stop_reason: string; saved: boolean }) => void
   onError: (code: string) => void
 }
 
@@ -52,6 +92,14 @@ export class WikiChatRequestError extends Error {
     super(code)
     this.name = 'WikiChatRequestError'
   }
+}
+
+export async function getWikiConversation(id: string, signal?: AbortSignal): Promise<WikiConversationDetail> {
+  return await requestJson<WikiConversationDetail>(
+    `/api/admin/knowledge/conversations/${encodeURIComponent(id)}`,
+    { cache: 'no-store' },
+    { signal },
+  )
 }
 
 function eventObject(data: string): Record<string, unknown> {
@@ -78,10 +126,9 @@ function apiErrorCode(body: unknown, fallback: string): string {
 
 /** POST one chat turn and consume its event stream. A failed POST is never retried automatically. */
 export async function askWiki(
-  messages: WikiChatInputMessage[],
+  input: WikiChatAskInput,
   handlers: WikiChatHandlers,
   signal: AbortSignal,
-  pinnedPaths: string[] = [],
 ): Promise<void> {
   const token = readAdminToken()
   const response = await fetch(apiUrl('/api/admin/knowledge/ask'), {
@@ -93,7 +140,7 @@ export async function askWiki(
     },
     cache: 'no-store',
     signal,
-    body: JSON.stringify({ messages, ...(pinnedPaths.length ? { pinned_paths: pinnedPaths } : {}) }),
+    body: JSON.stringify(input),
   })
   if (!response.ok) {
     let body: unknown
@@ -116,7 +163,14 @@ export async function askWiki(
       for (const frame of frames) {
         if (signal.aborted) return
         const payload = eventObject(frame.data)
-        if (frame.event === 'tool' && typeof payload.call_id === 'string' && typeof payload.name === 'string') {
+        if (frame.event === 'turn' && typeof payload.conversation_id === 'string' &&
+          typeof payload.user_message_id === 'string' && typeof payload.assistant_message_id === 'string') {
+          handlers.onTurn({
+            conversation_id: payload.conversation_id,
+            user_message_id: payload.user_message_id,
+            assistant_message_id: payload.assistant_message_id,
+          })
+        } else if (frame.event === 'tool' && typeof payload.call_id === 'string' && typeof payload.name === 'string') {
           if (payload.state === 'running' || payload.state === 'completed' || payload.state === 'failed') {
             const pages = Array.isArray(payload.pages)
               ? [...new Set(payload.pages.filter((path): path is string =>
@@ -144,6 +198,7 @@ export async function askWiki(
           handlers.onDone({
             citations,
             stop_reason: typeof payload.stop_reason === 'string' ? payload.stop_reason : 'finished',
+            saved: payload.saved === true,
           })
           completed = true
         } else if (frame.event === 'error') {

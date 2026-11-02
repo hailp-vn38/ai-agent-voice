@@ -121,6 +121,8 @@ pub(super) async fn export_sqlite_snapshot(
             "speaker_enrollment_samples",
             "speaker_enrollment_drafts",
             "speaker_quick_captures",
+            "wiki_conversation_messages",
+            "wiki_conversations",
             "admin_audit_events",
             "system_mcp_token_revocations",
         ] {

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { Network, Link2, Copy, Download, FileText, Folder, FolderOpen, FolderPlus, FilePlus2, Pencil, ChevronsUp, BookOpen, ArrowUpRight, ChevronDown, ChevronRight, Search, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, Columns2, ListTree, Sparkles, SquarePlus, X } from '@lucide/vue'
 import { renderMarkdown, markdownOutline } from '@/lib/markdown'
 import { renderMermaidBlocks } from './mermaidRenderer'
@@ -42,8 +42,11 @@ type Source = { id: string; version: number; name: string; provenance: string; s
 const { t } = useI18n()
 const { dark } = useTheme()
 const route = useRoute()
+const router = useRouter()
 const {
   messages: wikiChatMessages,
+  conversationId: wikiChatConversationId,
+  loadingConversation: wikiChatLoadingConversation,
   activeGraph: activeAnswerGraph,
   busy: wikiChatBusy,
   chatDrawerOpen,
@@ -54,8 +57,30 @@ const {
   stop: stopWikiChat,
   retry: retryWikiChat,
   reset: resetWikiChat,
+  loadConversation: loadWikiConversation,
   showGraphOf: showChatGraph,
 } = useWikiChat()
+function replaceConversationQuery(id: string | null) {
+  const query = { ...route.query }
+  if (id) query.conversation = id
+  else delete query.conversation
+  void router.replace({ query })
+}
+watch(wikiChatConversationId, id => {
+  if ((typeof route.query.conversation === 'string' ? route.query.conversation : null) !== id) {
+    replaceConversationQuery(id)
+  }
+})
+watch(() => route.query.conversation, async rawId => {
+  const id = typeof rawId === 'string' ? rawId : null
+  if (!id) {
+    if (wikiChatConversationId.value) resetWikiChat()
+    return
+  }
+  if (wikiChatConversationId.value === id || wikiChatLoadingConversation.value) return
+  const loaded = await loadWikiConversation(id)
+  if (!loaded) replaceConversationQuery(null)
+}, { immediate: true })
 const graphControls = ref<{ focusNode: (id: string, showInspector?: boolean) => void; highlightNode: (id: string | null) => void } | null>(null)
 const highlightedChatNode = ref<string | null>(null)
 const MIN_WIDTH_TO_SPLIT_FOR_CITATION = 600
