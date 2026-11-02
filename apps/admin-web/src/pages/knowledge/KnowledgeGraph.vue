@@ -27,6 +27,8 @@ type GraphNode = {
   revision: number
   category?: string
   tags?: string[]
+  tier?: 'cited' | 'read' | 'retrieved' | 'context'
+  score?: number | null
 }
 type GraphReference = { line: number; raw_target: string; alias?: string; anchor?: string }
 type GraphEdge = { source_id: string; target_id: string; kind: string; lines: number[]; references: GraphReference[] }
@@ -67,7 +69,8 @@ const isFocusMode = computed({
   },
 })
 
-const scope = ref<'global' | 'local'>('global')
+const scope = ref<'global' | 'local' | 'query'>('global')
+const queryText = ref('')
 const depth = ref(1)
 const graph = ref<GraphSnapshot | null>(null)
 const selectedId = ref<string | null>(null)
@@ -259,6 +262,7 @@ function name(id: string): string { return names.value.get(id) ?? id }
 const graphHeadingText = computed(() => {
   if (activeId.value || selectedEdgeId.value) return 'Node connections'
   if (scope.value === 'local') return 'Current note'
+  if (scope.value === 'query') return 'Query graph'
   return 'All connections'
 })
 
@@ -639,13 +643,23 @@ function relayout() {
   requestAnimationFrame(placePanel)
 }
 
-function selectScope(nextScope: 'global' | 'local') {
+function selectScope(nextScope: 'global' | 'local' | 'query') {
   if (nextScope === 'local' && !props.centerId) return
   scope.value = nextScope
   if (nextScope === 'local' && props.centerId) {
     selectedId.value = props.centerId
     activeId.value = props.centerId
   }
+  if (nextScope === 'query') {
+    graph.value = null
+    error.value = ''
+    return
+  }
+}
+
+function submitQuery() {
+  if (scope.value !== 'query' || !queryText.value.trim()) return
+  void loadGraph()
 }
 
 function clearSelection() {
@@ -759,7 +773,8 @@ function draw() {
     ...nodes.map(n => {
       const deg = degreeById.get(n.id) ?? 0
       const baseSize = Math.min(26, (isLocal ? 13 : 11) + Math.round(Math.sqrt(deg) * 3.2))
-      const size = Math.max(8, Math.round(baseSize * scale))
+      const tierMultiplier = n.tier === 'cited' ? 1.75 : n.tier === 'read' ? 1.5 : n.tier === 'retrieved' ? 1.25 : 1
+      const size = Math.max(8, Math.round(baseSize * tierMultiplier * scale))
       const group = classifyNodeGroup(n)
       const isMinor = !isLocal && nodes.length > 14 && deg <= 1 ? 'yes' : 'no'
       return {
@@ -769,6 +784,7 @@ function draw() {
           shortLabel: compactNodeLabel(n.title, isLocal ? 26 : 22),
           selectedLabel: compactNodeLabel(n.title, 38),
           status: n.status,
+          tier: n.tier ?? 'context',
           group,
           size,
           minor: isMinor,
@@ -832,6 +848,10 @@ function draw() {
       { selector: 'node[group = "source"]', style: { 'background-color': palette.source } },
       { selector: 'node[group = "system"]', style: { 'background-color': palette.system } },
       { selector: 'node[status = "draft"]', style: { 'background-color': palette.draft } },
+      { selector: 'node[tier = "cited"]', style: { 'border-width': 4, 'border-opacity': 1 } },
+      { selector: 'node[tier = "read"]', style: { 'border-width': 3.4, 'border-opacity': 0.95 } },
+      { selector: 'node[tier = "retrieved"]', style: { 'border-width': 2.8, 'border-opacity': 0.9 } },
+      { selector: 'node[tier = "context"]', style: { 'border-width': 1.6, 'border-opacity': 0.62 } },
       {
         selector: 'node:selected',
         style: {
@@ -966,6 +986,11 @@ function draw() {
 }
 
 async function loadGraph() {
+  if (scope.value === 'query' && !queryText.value.trim()) {
+    graph.value = null
+    loading.value = false
+    return
+  }
   const version = ++requestVersion
   if (scope.value === 'local' && !props.centerId) {
     graph.value = null
@@ -986,6 +1011,7 @@ async function loadGraph() {
       scope: scope.value,
       limit: 500,
       ...(scope.value === 'local' ? { center_id: props.centerId ?? '', depth: depth.value } : {}),
+      ...(scope.value === 'query' ? { q: queryText.value.trim() } : {}),
     }))
     if (version !== requestVersion) return
     graph.value = result
@@ -1097,6 +1123,19 @@ onBeforeUnmount(() => {
           <button
             type="button"
             class="kg-tool-btn"
+            :class="{ on: scope === 'query' }"
+            @click="selectScope('query')"
+          >
+            <Search :size="13" />
+            <span>{{ t('knowledgeV3.graphQuery') }}</span>
+          </button>
+          <form v-if="scope === 'query'" class="kg-query-form" @submit.prevent="submitQuery">
+            <input v-model="queryText" :aria-label="t('knowledgeV3.graphQueryInput')" :placeholder="t('knowledgeV3.graphQueryPlaceholder')">
+            <button type="submit">{{ t('knowledgeV3.graphQueryRun') }}</button>
+          </form>
+          <button
+            type="button"
+            class="kg-tool-btn"
             :class="{ on: scope === 'local' }"
             :disabled="!centerId"
             @click="selectScope('local')"
@@ -1171,6 +1210,7 @@ onBeforeUnmount(() => {
           {{ visibleNodes.length }} nodes · {{ visibleEdges.length }} links
         </span>
         <span v-if="graph?.truncated" class="kg-truncated">{{ t('knowledgeV3.graphTruncated') }}</span>
+        <span v-if="scope === 'query' && graph && !visibleNodes.length" class="kg-truncated">{{ t('knowledgeV3.graphQueryNoResults') }}</span>
 
         <button
           type="button"
@@ -1362,6 +1402,7 @@ onBeforeUnmount(() => {
         <span><i :style="{ background: groupColor('entity') }"></i>Entity</span>
         <span><i :style="{ background: groupColor('synthesis') }"></i>Synthesis</span>
         <span><i :style="{ background: groupColor('source') }"></i>Source</span>
+        <span v-if="scope === 'query'" class="kg-tier-legend">{{ t('knowledgeV3.graphTierLegend') }}</span>
       </div>
 
       <!-- Bottom-Right Smooth Zoom Controls (Prototype .zoom) -->
