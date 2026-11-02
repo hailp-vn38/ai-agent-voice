@@ -1,6 +1,13 @@
+use super::answer_graph::{
+    AnswerGraphLimits, Evidence, EvidenceTier, aggregate_graph_edges, answer_graph,
+};
 use super::{wiki, wiki_error, *};
-use llm_wiki::CollectionScope;
+use llm_wiki::{CollectionScope, HybridQueryRequest};
 use serde::Deserialize;
+use std::collections::HashSet;
+
+const QUERY_GRAPH_MIN_SCORE: f32 = 0.12;
+const QUERY_GRAPH_MAX_NODES: usize = 60;
 
 #[derive(Deserialize)]
 pub(in crate::app::admin) struct GraphQuery {
@@ -12,14 +19,8 @@ pub(in crate::app::admin) struct GraphQuery {
     depth: Option<usize>,
     #[serde(default)]
     limit: Option<usize>,
-}
-
-struct AggregatedGraphEdge {
-    source_id: String,
-    target_id: String,
-    kind: String,
-    lines: Vec<usize>,
-    references: Vec<Value>,
+    #[serde(default)]
+    q: Option<String>,
 }
 
 pub(in crate::app::admin) async fn knowledge_graph(
@@ -27,10 +28,78 @@ pub(in crate::app::admin) async fn knowledge_graph(
     Query(q): Query<GraphQuery>,
     req: Request,
 ) -> Response {
+    let query = if q.scope.as_deref() == Some("query") {
+        match q
+            .q
+            .as_deref()
+            .map(str::trim)
+            .filter(|query| !query.is_empty())
+        {
+            Some(query) => Some(query.to_owned()),
+            None => return error(&req, StatusCode::BAD_REQUEST, "invalid_input"),
+        }
+    } else {
+        None
+    };
     let engine = match wiki(&state, &req) {
         Ok(engine) => engine,
         Err(resp) => return resp,
     };
+    if q.scope.as_deref() == Some("query") {
+        let engine_for_query = engine.clone();
+        let query_for_search = query.expect("query is validated for query scope");
+        let results = match tokio::task::spawn_blocking(move || {
+            engine_for_query.query(HybridQueryRequest {
+                query: Some(query_for_search),
+                collections: vec![CollectionScope::Wiki, CollectionScope::Sources],
+                limit: 12,
+                min_score: QUERY_GRAPH_MIN_SCORE,
+                rerank: false,
+                ..Default::default()
+            })
+        })
+        .await
+        {
+            Ok(Ok(results)) => results,
+            Ok(Err(err)) => return wiki_error(&req, err),
+            Err(_) => {
+                return error(
+                    &req,
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "knowledge_unavailable",
+                );
+            }
+        };
+        let engine_for_graph = engine.clone();
+        let data = match tokio::task::spawn_blocking(move || engine_for_graph.get_graph(None)).await
+        {
+            Ok(Ok(data)) => data,
+            Ok(Err(err)) => return wiki_error(&req, err),
+            Err(_) => {
+                return error(
+                    &req,
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "knowledge_unavailable",
+                );
+            }
+        };
+        let mut evidence = Evidence::default();
+        for result in results {
+            evidence.record(
+                &result.rel_path,
+                EvidenceTier::Retrieved,
+                Some(result.score),
+            );
+        }
+        return Json(answer_graph(
+            data,
+            &evidence,
+            AnswerGraphLimits {
+                max_nodes: QUERY_GRAPH_MAX_NODES,
+            },
+        ))
+        .into_response();
+    }
     let filter_scope = match q.scope.as_deref() {
         Some("sources" | "source" | "raw") => Some(CollectionScope::Sources),
         Some("wiki" | "local") => Some(CollectionScope::Wiki),
@@ -97,50 +166,12 @@ pub(in crate::app::admin) async fn knowledge_graph(
             let max_nodes = q.limit.unwrap_or(500).clamp(1, 5_000);
             let truncated = candidate_nodes.len() > max_nodes;
             let kept_nodes: Vec<_> = candidate_nodes.into_iter().take(max_nodes).collect();
-            let kept_node_ids: std::collections::HashSet<&str> =
-                kept_nodes.iter().map(|n| n.rel_path.as_str()).collect();
-
-            let mut aggregated: Vec<AggregatedGraphEdge> = Vec::new();
-            let mut edge_index: std::collections::HashMap<(String, String, String), usize> =
-                std::collections::HashMap::new();
+            let kept_node_ids: HashSet<String> =
+                kept_nodes.iter().map(|n| n.rel_path.clone()).collect();
             let mut unresolved = Vec::new();
 
-            for e in graph.edges {
-                if let Some(target_id) = e.resolved_rel_path {
-                    if e.source_rel_path == target_id
-                        || !kept_node_ids.contains(e.source_rel_path.as_str())
-                        || !kept_node_ids.contains(target_id.as_str())
-                    {
-                        continue;
-                    }
-                    let reference = serde_json::json!({
-                        "line": e.line_number,
-                        "raw_target": e.raw_target,
-                        "alias": e.display_alias,
-                        "anchor": e.target_heading,
-                    });
-                    let key = (
-                        e.source_rel_path.clone(),
-                        target_id.clone(),
-                        e.link_type.clone(),
-                    );
-                    if let Some(&idx) = edge_index.get(&key) {
-                        let entry = &mut aggregated[idx];
-                        if !entry.lines.contains(&e.line_number) {
-                            entry.lines.push(e.line_number);
-                        }
-                        entry.references.push(reference);
-                    } else {
-                        edge_index.insert(key, aggregated.len());
-                        aggregated.push(AggregatedGraphEdge {
-                            source_id: e.source_rel_path,
-                            target_id,
-                            kind: e.link_type,
-                            lines: vec![e.line_number],
-                            references: vec![reference],
-                        });
-                    }
-                } else if kept_node_ids.contains(e.source_rel_path.as_str()) {
+            for e in &graph.edges {
+                if e.resolved_rel_path.is_none() && kept_node_ids.contains(&e.source_rel_path) {
                     unresolved.push(serde_json::json!({
                         "source_id": e.source_rel_path,
                         "source_line": e.line_number,
@@ -165,18 +196,7 @@ pub(in crate::app::admin) async fn knowledge_graph(
                     })
                 })
                 .collect();
-            let edges: Vec<Value> = aggregated
-                .into_iter()
-                .map(|e| {
-                    serde_json::json!({
-                        "source_id": e.source_id,
-                        "target_id": e.target_id,
-                        "kind": e.kind,
-                        "lines": e.lines,
-                        "references": e.references,
-                    })
-                })
-                .collect();
+            let edges = aggregate_graph_edges(&graph.edges, &kept_node_ids);
 
             Json(serde_json::json!({
                 "nodes": nodes,

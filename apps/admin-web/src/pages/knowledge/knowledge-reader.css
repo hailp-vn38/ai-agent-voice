@@ -583,6 +583,35 @@
   border-radius: 11px;
 }
 
+.kg-query-form {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 4px;
+}
+
+.kg-query-form input {
+  width: 170px;
+  height: 30px;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--background);
+  color: var(--foreground);
+  font-size: 12px;
+}
+
+.kg-query-form button {
+  height: 30px;
+  padding: 0 9px;
+  border: 0;
+  border-radius: 6px;
+  background: var(--sidebar-accent);
+  color: var(--foreground);
+  font-size: 12px;
+  font-weight: 600;
+}
+
 .kg-tool-btn {
   display: inline-flex;
   align-items: center;
@@ -656,6 +685,13 @@
   font-size: 11px;
   color: var(--warning);
   white-space: nowrap;
+}
+
+.kg-tier-legend {
+  padding-top: 5px;
+  border-top: 1px solid var(--border);
+  color: var(--muted-foreground);
+  font-size: 10px;
 }
 
 .kg-iconbtn {

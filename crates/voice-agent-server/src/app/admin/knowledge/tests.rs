@@ -65,6 +65,72 @@ admin_token = "knowledge-test-token"
     (format!("http://{addr}/api/admin"), temp_root, handle)
 }
 
+async fn graph_cap_fixture_server() -> (String, std::path::PathBuf, tokio::task::JoinHandle<()>) {
+    let temp_root =
+        std::env::temp_dir().join(format!("knowledge-graph-cap-test-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&temp_root).unwrap();
+    let config: AppConfig = toml::from_str(
+        r#"
+[server]
+bind = "127.0.0.1:0"
+public_ws_url = "ws://127.0.0.1:0/voice/v1/"
+[provider_defaults]
+vad = "test"
+asr = "test"
+llm = "test"
+tts = "test"
+[api]
+enabled = true
+admin_token = "knowledge-test-token"
+"#,
+    )
+    .unwrap();
+    let engine = Arc::new(WikiEngine::open(temp_root.join("vault")).unwrap());
+    engine
+        .write_wiki_file(
+            "concepts/seed-a.md",
+            "---\ntitle: Needle Seed A\n---\nneedlepoint matching topic [[concepts/shared-context]].\n",
+        )
+        .unwrap();
+    engine
+        .write_wiki_file(
+            "concepts/seed-b.md",
+            "---\ntitle: Needle Seed B\n---\nneedlepoint matching topic [[concepts/shared-context]].\n",
+        )
+        .unwrap();
+    engine
+        .write_wiki_file(
+            "concepts/shared-context.md",
+            "---\ntitle: Shared Context\n---\nrelated context.\n",
+        )
+        .unwrap();
+    for index in 0..65 {
+        engine
+            .write_wiki_file(
+                &format!("concepts/a-context-{index:02}.md"),
+                "---\ntitle: Nearby Context\n---\n[[concepts/seed-a]].\n",
+            )
+            .unwrap();
+    }
+    engine.sync_index().unwrap();
+    let _ = engine.embed_pending(true);
+
+    let mut state = AppState::from_provider_set_with_database(
+        config,
+        Arc::new(ProviderSet::unavailable()),
+        None,
+    );
+    state.wiki_engine = Some(engine);
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let router = router_with_state(state);
+    let handle = tokio::spawn(async move {
+        axum::serve(listener, router).await.unwrap();
+    });
+    (format!("http://{addr}/api/admin"), temp_root, handle)
+}
+
 #[tokio::test]
 async fn knowledge_search_scopes_by_browser_space_and_returns_normalized_paths_and_match_lines() {
     let (base, temp_root, handle) = fixture_server().await;
@@ -454,6 +520,119 @@ async fn knowledge_graph_filters_dangling_edges_aggregates_lines_and_bounds_loca
         agent_to_hybrid[0]["references"].as_array().unwrap().len(),
         2
     );
+
+    handle.abort();
+    let _ = std::fs::remove_dir_all(temp_root);
+}
+
+#[tokio::test]
+async fn knowledge_graph_query_scope_requires_q_and_returns_evidence_scoped_nodes() {
+    let (base, temp_root, handle) = fixture_server().await;
+    let client = reqwest::Client::new();
+
+    let missing_query = client
+        .get(format!("{base}/knowledge/graph?scope=query"))
+        .bearer_auth("knowledge-test-token")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(missing_query.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(
+        missing_query.json::<Value>().await.unwrap()["error"]["code"],
+        "invalid_input"
+    );
+
+    let empty_query = client
+        .get(format!("{base}/knowledge/graph?scope=query&q=%20%20"))
+        .bearer_auth("knowledge-test-token")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(empty_query.status(), StatusCode::BAD_REQUEST);
+
+    let unauthorized = client
+        .get(format!("{base}/knowledge/graph?scope=query&q=reciprocal"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(unauthorized.status(), StatusCode::UNAUTHORIZED);
+
+    let query = client
+        .get(format!(
+            "{base}/knowledge/graph?scope=query&q=Reciprocal%20rank%20fusion"
+        ))
+        .bearer_auth("knowledge-test-token")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(query.status(), StatusCode::OK);
+    let body: Value = query.json().await.unwrap();
+    let nodes = body["nodes"].as_array().unwrap();
+    assert!(nodes.iter().any(|node| {
+        node["id"] == "wiki/concepts/hybrid-search.md"
+            && node["tier"] == "retrieved"
+            && node["score"].as_f64().is_some()
+    }));
+    assert!(
+        nodes
+            .iter()
+            .all(|node| { node["id"] != "wiki/index.md" && node["id"] != "wiki/log.md" })
+    );
+    let ids: std::collections::HashSet<&str> = nodes
+        .iter()
+        .filter_map(|node| node["id"].as_str())
+        .collect();
+    for edge in body["edges"].as_array().unwrap() {
+        assert!(ids.contains(edge["source_id"].as_str().unwrap()));
+        assert!(ids.contains(edge["target_id"].as_str().unwrap()));
+    }
+
+    let source_query = client
+        .get(format!(
+            "{base}/knowledge/graph?scope=query&q=42%20milliseconds"
+        ))
+        .bearer_auth("knowledge-test-token")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(source_query.status(), StatusCode::OK);
+    let source_body: Value = source_query.json().await.unwrap();
+    assert!(source_body["nodes"].as_array().unwrap().iter().any(|node| {
+        node["id"] == "sources/notes/field-observation.md" && node["tier"] == "retrieved"
+    }));
+
+    handle.abort();
+    let _ = std::fs::remove_dir_all(temp_root);
+}
+
+#[tokio::test]
+async fn knowledge_graph_query_scope_caps_context_and_prioritizes_shared_neighbors() {
+    let (base, temp_root, handle) = graph_cap_fixture_server().await;
+    let response = reqwest::Client::new()
+        .get(format!("{base}/knowledge/graph?scope=query&q=needlepoint"))
+        .bearer_auth("knowledge-test-token")
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body: Value = response.json().await.unwrap();
+    let nodes = body["nodes"].as_array().unwrap();
+    assert!(nodes.len() <= 60);
+    assert_eq!(body["truncated"], true);
+    let ids: std::collections::HashSet<&str> = nodes
+        .iter()
+        .filter_map(|node| node["id"].as_str())
+        .collect();
+    assert!(ids.contains("wiki/concepts/seed-a.md"));
+    assert!(ids.contains("wiki/concepts/seed-b.md"));
+    assert!(ids.contains("wiki/concepts/shared-context.md"));
+    assert!(!ids.contains("wiki/index.md"));
+    assert!(!ids.contains("wiki/log.md"));
+    for edge in body["edges"].as_array().unwrap() {
+        assert!(ids.contains(edge["source_id"].as_str().unwrap()));
+        assert!(ids.contains(edge["target_id"].as_str().unwrap()));
+    }
 
     handle.abort();
     let _ = std::fs::remove_dir_all(temp_root);

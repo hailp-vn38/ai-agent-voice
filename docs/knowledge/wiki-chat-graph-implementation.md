@@ -307,3 +307,16 @@ Kiểm tra tay trên vault thật:
 ## Nhật ký
 
 Ghi số đo và quyết định phát sinh khi triển khai.
+
+### P1: ngưỡng truy vấn
+
+Đo ngày 2026-11-02 trên bản sao tạm của `data/wiki-vault` (31 trang Wiki, 6 Source; dữ liệu gốc không bị sửa), truy vấn hybrid với `limit=12`, `rerank=false`, `min_score=0`:
+
+| Truy vấn | Một số điểm cao nhất (`score`, đường dẫn) | Số kết quả |
+| --- | --- | ---: |
+| `trading` | 0.3654 `wiki/syntheses/trading/fvg-synthesis.md`; 0.2307 `wiki/syntheses/trading/sharp-turn-entry-synthesis.md`; 0.2284 `wiki/concepts/trading/sharp-turn-entry-model.md`; 0.1358 `wiki/concepts/trading/fair-value-gap.md` | 12 |
+| `giao dịch` | 0.6052 `sources/trading/fvg/the-secret-fvg-breakaway-gap.md`; 0.3820 `wiki/concepts/trading/breakaway-gap.md`; 0.3783 `wiki/syntheses/trading/fvg-synthesis.md` | 7 |
+| `robot` | 0.4187 `wiki/entities/robotics/pollen-robotics.md`; 0.2643 `wiki/concepts/robotics/robotics-reinforcement-learning.md`; 0.2617 `wiki/concepts/robotics/sim-to-real-robotics.md`; các kết quả chủ đề thấp hơn khoảng 0.15 | 9 |
+| `zzzzzzzzqqqqqqqq` | Không có kết quả | 0 |
+
+Chốt `QUERY_GRAPH_MIN_SCORE = 0.12` để giữ các trang chủ đề thấp hơn ~0.13–0.16, đồng thời bỏ `wiki/log.md` và `wiki/index.md` vốn có điểm khoảng 0.07–0.09. Kết quả truy vấn mặc định tạo hai nhánh Lex và Vec; nhánh Vec gọi `search_vector` với embedder của engine. Đây là xác nhận theo đường chạy trong `llm-wiki-rs`, không phải phép đo số lần gọi embedder bằng instrumentation.
