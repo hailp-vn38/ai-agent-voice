@@ -19,6 +19,8 @@ mod security;
 pub(crate) mod speakers;
 pub(crate) mod templates;
 pub(crate) mod wiki_conversations;
+#[cfg(test)]
+mod wiki_conversations_tests;
 
 pub use identity::{admission, device_enrollments};
 pub(crate) use identity::{agents, devices};

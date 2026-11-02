@@ -28,7 +28,12 @@ function mountChat(): Chat {
 }
 
 let nextTurn = 0
-function answerWith(text: string, graphs: AnswerGraph[] = []) {
+function answerWith(
+  text: string,
+  graphs: AnswerGraph[] = [],
+  contentTruncated = false,
+  graphSaved = true,
+) {
   askWikiMock.mockImplementationOnce(async (input: WikiChatAskInput, handlers) => {
     nextTurn += 1
     handlers.onTurn({
@@ -38,7 +43,10 @@ function answerWith(text: string, graphs: AnswerGraph[] = []) {
     })
     graphs.forEach(graph => handlers.onGraph(graph))
     handlers.onDelta(text)
-    handlers.onDone({ citations: [], stop_reason: 'finished', saved: true })
+    handlers.onDone({
+      citations: [], stop_reason: 'finished', saved: true, content_truncated: contentTruncated,
+      graph_saved: graphSaved,
+    })
   })
 }
 
@@ -102,7 +110,7 @@ it('restores saved messages, citations, graph and the latest question pinned fil
         graph: null, created_at_ms: 1, updated_at_ms: 1,
       },
       {
-        id: 'assistant-9', seq: 2, role: 'assistant', content: 'Saved answer', content_truncated: false,
+        id: 'assistant-9', seq: 2, role: 'assistant', content: 'Saved answer', content_truncated: true,
         status: 'done', error_code: null, pinned_paths: [], tools: [], citations: ['wiki/a.md'],
         graph, created_at_ms: 1, updated_at_ms: 2,
       },
@@ -113,6 +121,7 @@ it('restores saved messages, citations, graph and the latest question pinned fil
   expect(await chat.loadConversation('conversation-9')).toBe(true)
   expect(chat.conversationId.value).toBe('conversation-9')
   expect(chat.messages.value[1]?.text).toBe('Saved answer')
+  expect(chat.messages.value[1]?.contentTruncated).toBe(true)
   expect(chat.messages.value[1]?.citations).toEqual(['wiki/a.md'])
   expect(chat.activeGraph.value?.revision).toBe(3)
   expect(chat.pinnedFiles.value).toEqual([{ path: 'wiki/a.md', title: 'wiki/a.md' }])
@@ -164,6 +173,22 @@ it('does not auto-resend a busy question and retries it only after the user asks
     conversation_id: 'conversation-1', question: 'follow-up', pinned_paths: [],
   })
   expect(chat.messages.value.at(-1)?.text).toBe('follow-up answer')
+})
+
+it('keeps the live storage truncation result on the assistant message', async () => {
+  const chat = mountChat()
+  answerWith('shortened answer', [], true)
+  await chat.send('question')
+  expect(chat.messages.value[1]?.contentTruncated).toBe(true)
+})
+
+it('hides a live graph that exceeded the server storage limit', async () => {
+  const chat = mountChat()
+  answerWith('answer', [graphWith(1, 'large graph')], false, false)
+  await chat.send('question')
+  expect(chat.messages.value[1]?.graph).toBeNull()
+  expect(chat.activeGraph.value).toBeNull()
+  expect(chat.activeGraphMessageId.value).toBeNull()
 })
 
 it('sends the pinned paths and retains the question files after server ids arrive', async () => {

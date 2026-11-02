@@ -188,6 +188,7 @@ function errorText(code: string | null): string {
   if (code === 'wiki_chat_not_configured') return t('knowledgeV3.chatNotConfigured')
   if (code === 'wiki_chat_busy') return t('knowledgeV3.chatBusy')
   if (code === 'wiki_conversation_busy') return t('knowledgeV3.chatConversationBusy')
+  if (code === 'wiki_conversation_full') return t('knowledgeV3.chatConversationFull')
   if (code === 'wiki_chat_connection_lost') return t('knowledgeV3.chatConnectionLost')
   return t('knowledgeV3.chatFailed')
 }
@@ -270,6 +271,14 @@ function errorText(code: string | null): string {
             @click="onAnswerClick" @mouseover="onAnswerMouseOver" @mouseout="onAnswerMouseOut"
             v-html="renderedAnswer(message)"></div>
 
+          <p v-if="message.contentTruncated" class="wiki-chat-status">
+            <AlertCircle :size="12" aria-hidden="true" /> {{ t('knowledgeV3.chatAnswerTruncated') }}
+          </p>
+          <p v-if="message.saved === false" class="wiki-chat-error" role="alert">
+            <AlertCircle :size="14" class="shrink-0" aria-hidden="true" />
+            <span>{{ t('knowledgeV3.chatSaveFailed') }}</span>
+          </p>
+
           <ol v-if="message.citations.length" class="wiki-chat-sources" :aria-label="t('knowledgeV3.chatSources')">
             <li v-for="(path, index) in message.citations" :key="path"
               :class="{ 'is-highlighted': highlightedNode === path }"
@@ -290,7 +299,7 @@ function errorText(code: string | null): string {
             <a v-if="message.status === 'failed' && message.errorCode === 'wiki_chat_not_configured'" href="/jobs/settings/providers">
               {{ t('knowledgeV3.chatOpenSettings') }}
             </a>
-            <button v-else-if="!readOnly && message.id === latestMessageId" type="button" @click="emit('retry', message.id)">{{ t('knowledgeV3.chatRetry') }}</button>
+            <button v-else-if="!readOnly && message.id === latestMessageId && message.errorCode !== 'wiki_conversation_full'" type="button" @click="emit('retry', message.id)">{{ t('knowledgeV3.chatRetry') }}</button>
           </div>
           <button v-if="message.graph?.nodes.length" type="button" class="wiki-chat-show-graph"
             @click="emit('showGraph', message.id)">

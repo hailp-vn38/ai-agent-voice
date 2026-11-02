@@ -142,7 +142,7 @@ it('shows read-only status and a reload action for a conversation answering in a
     props: { messages: [assistant('streaming')], busy: false, readOnly: true },
   })
   try {
-    expect(wrapper.get('[role="status"]').text()).toContain('answering in another tab')
+    expect(wrapper.get('.wiki-chat-status').text()).toContain('answering in another tab')
     expect(wrapper.get('#wiki-chat-question').attributes('disabled')).toBeDefined()
     await wrapper.get('[role="status"] button').trigger('click')
     expect(wrapper.emitted('refreshConversation')).toEqual([[]])
@@ -160,5 +160,22 @@ it('only offers retry on the latest failed or interrupted answer', () => {
     expect(retries).toHaveLength(1)
     expect(retries[0]!.element.closest('[data-message-id]')?.getAttribute('data-message-id'))
       .toBe('latest-answer')
+  } finally { wrapper.unmount() }
+})
+
+it('explains storage limits and a failed save without offering an invalid retry', () => {
+  const full: WikiChatMessage = {
+    ...assistant('failed'), errorCode: 'wiki_conversation_full',
+  }
+  const truncated: WikiChatMessage = {
+    ...assistant('done'), contentTruncated: true, saved: false,
+  }
+  const wrapper = mount(WikiChatPanel, { props: { messages: [truncated, full], busy: false } })
+  try {
+    const text = wrapper.get('.wiki-chat-messages').text()
+    expect(text).toContain('This conversation has reached its message limit.')
+    expect(text).toContain('This answer was shortened to fit the storage limit.')
+    expect(text).toContain('This answer could not be saved.')
+    expect(wrapper.findAll('.wiki-chat-error button')).toHaveLength(0)
   } finally { wrapper.unmount() }
 })

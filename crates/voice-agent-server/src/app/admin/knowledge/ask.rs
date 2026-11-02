@@ -299,6 +299,9 @@ pub(in crate::app::admin) async fn knowledge_ask(
                     "wiki_conversation_not_found",
                 );
             }
+            Err(crate::database::wiki_conversations::StartTurnError::Full) => {
+                return error(&request, StatusCode::CONFLICT, "wiki_conversation_full");
+            }
             Err(crate::database::wiki_conversations::StartTurnError::Sql(db_error)) => {
                 if matches!(db_error, sqlx::Error::Database(ref cause) if cause.code().as_deref() == Some("2067"))
                 {
@@ -447,8 +450,7 @@ pub(in crate::app::admin) async fn knowledge_ask(
         let graph_saved = graph.as_ref().is_none_or(|graph| {
             serde_json::to_vec(graph)
                 .map(|serialized| {
-                    serialized.len()
-                        <= crate::database::wiki_conversations::MAX_STORED_GRAPH_BYTES
+                    serialized.len() <= crate::database::wiki_conversations::MAX_STORED_GRAPH_BYTES
                 })
                 .unwrap_or(false)
         });
@@ -2053,6 +2055,82 @@ model = "fake"
             message,
             ChatMessage::User { content } if content == "Explain this page"
         )));
+
+        let retry_done = client
+            .post(format!("{base}/knowledge/ask"))
+            .bearer_auth("wiki-chat-test-token")
+            .json(&serde_json::json!({
+                "conversation_id": conversation_id,
+                "retry_message_id": assistant_message_id
+            }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(retry_done.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(
+            retry_done.json::<Value>().await.unwrap()["error"]["code"],
+            "invalid_input"
+        );
+        assert_eq!(provider.calls.load(Ordering::SeqCst), 2);
+        server.abort();
+        let _ = std::fs::remove_dir_all(temp_root);
+    }
+
+    #[tokio::test]
+    async fn ask_rejects_a_conversation_at_the_message_limit_without_writing_rows() {
+        let (base, temp_root, server) = wiki_fixture(Vec::new(), "Evidence.").await;
+        let database = test_database(&temp_root).await;
+        sqlx::query(
+            "INSERT INTO wiki_conversations (id, title, created_at_ms, updated_at_ms) VALUES ('full-conversation', 'Full', 1, 1)",
+        )
+        .execute(database.pool())
+        .await
+        .unwrap();
+        for seq in 0..50_i64 {
+            let user_seq = seq * 2 + 1;
+            let assistant_seq = user_seq + 1;
+            sqlx::query(
+                "INSERT INTO wiki_conversation_messages (id, conversation_id, seq, role, content, status, created_at_ms, updated_at_ms) VALUES (?, 'full-conversation', ?, 'user', 'question', 'done', 1, 1)",
+            )
+            .bind(format!("user-{seq}"))
+            .bind(user_seq)
+            .execute(database.pool())
+            .await
+            .unwrap();
+            sqlx::query(
+                "INSERT INTO wiki_conversation_messages (id, conversation_id, seq, role, content, status, created_at_ms, updated_at_ms) VALUES (?, 'full-conversation', ?, 'assistant', 'answer', 'done', 1, 1)",
+            )
+            .bind(format!("assistant-{seq}"))
+            .bind(assistant_seq)
+            .execute(database.pool())
+            .await
+            .unwrap();
+        }
+        drop(database);
+
+        let response = reqwest::Client::new()
+            .post(format!("{base}/knowledge/ask"))
+            .bearer_auth("wiki-chat-test-token")
+            .json(&serde_json::json!({
+                "conversation_id": "full-conversation",
+                "question": "one more question"
+            }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::CONFLICT);
+        let body: Value = response.json().await.unwrap();
+        assert_eq!(body["error"]["code"], "wiki_conversation_full");
+
+        let database = test_database(&temp_root).await;
+        let message_count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM wiki_conversation_messages WHERE conversation_id = 'full-conversation'",
+        )
+        .fetch_one(database.pool())
+        .await
+        .unwrap();
+        assert_eq!(message_count, 100);
+        drop(database);
         server.abort();
         let _ = std::fs::remove_dir_all(temp_root);
     }
@@ -2665,12 +2743,22 @@ model = "fake"
             .unwrap()
             .unwrap()
             .unwrap();
-        let first_turn = sse_payloads(
-            std::str::from_utf8(&first_turn_chunk).unwrap(),
-            "turn",
-        )
-        .remove(0);
+        let first_turn =
+            sse_payloads(std::str::from_utf8(&first_turn_chunk).unwrap(), "turn").remove(0);
         let conversation_id = first_turn["conversation_id"].as_str().unwrap();
+        let retry_busy = client
+            .post(format!("{base}/knowledge/ask"))
+            .bearer_auth("wiki-chat-test-token")
+            .json(&serde_json::json!({
+                "conversation_id": conversation_id,
+                "retry_message_id": first_turn["assistant_message_id"]
+            }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(retry_busy.status(), StatusCode::CONFLICT);
+        let retry_busy_body: Value = retry_busy.json().await.unwrap();
+        assert_eq!(retry_busy_body["error"]["code"], "wiki_conversation_busy");
 
         let busy = client
             .post(format!("{base}/knowledge/ask"))
@@ -2699,11 +2787,8 @@ model = "fake"
             .unwrap()
             .unwrap()
             .unwrap();
-        let second_turn = sse_payloads(
-            std::str::from_utf8(&second_turn_chunk).unwrap(),
-            "turn",
-        )
-        .remove(0);
+        let second_turn =
+            sse_payloads(std::str::from_utf8(&second_turn_chunk).unwrap(), "turn").remove(0);
         assert_ne!(second_turn["conversation_id"], conversation_id);
         assert!(started.load(Ordering::SeqCst));
         drop(first);
