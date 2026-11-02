@@ -195,6 +195,32 @@ it('prevents switching to another conversation or starting a new one while an an
   } finally { wrapper.unmount() }
 })
 
+it('shows read-only status and a reload action for a conversation answering in another tab', async () => {
+  const wrapper = mount(WikiChatPanel, {
+    props: { messages: [assistant('streaming')], busy: false, readOnly: true },
+  })
+  try {
+    expect(wrapper.get('.wiki-chat-status').text()).toContain('answering in another tab')
+    expect(wrapper.get('#wiki-chat-question').attributes('disabled')).toBeDefined()
+    await wrapper.get('[role="status"] button').trigger('click')
+    expect(wrapper.emitted('refreshConversation')).toEqual([[]])
+  } finally { wrapper.unmount() }
+})
+
+it('only offers retry on the latest failed or interrupted answer', () => {
+  const first = { ...assistant('failed'), id: 'old-answer', errorCode: 'provider_failed' }
+  const latest = { ...assistant('interrupted'), id: 'latest-answer', errorCode: null }
+  const wrapper = mount(WikiChatPanel, {
+    props: { messages: [first, latest], busy: false },
+  })
+  try {
+    const retries = wrapper.findAll('button').filter(button => button.text() === 'Try again')
+    expect(retries).toHaveLength(1)
+    expect(retries[0]!.element.closest('[data-message-id]')?.getAttribute('data-message-id'))
+      .toBe('latest-answer')
+  } finally { wrapper.unmount() }
+})
+
 it('explains storage limits and a failed save without offering an invalid retry', () => {
   const full: WikiChatMessage = {
     ...assistant('failed'), errorCode: 'wiki_conversation_full',
@@ -202,7 +228,7 @@ it('explains storage limits and a failed save without offering an invalid retry'
   const truncated: WikiChatMessage = {
     ...assistant('done'), contentTruncated: true, saved: false,
   }
-  const wrapper = mount(WikiChatPanel, { props: { messages: [full, truncated], busy: false } })
+  const wrapper = mount(WikiChatPanel, { props: { messages: [truncated, full], busy: false } })
   try {
     const text = wrapper.get('.wiki-chat-messages').text()
     expect(text).toContain('This conversation has reached its message limit.')

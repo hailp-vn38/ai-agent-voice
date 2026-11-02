@@ -67,7 +67,13 @@ pub(in crate::app::admin) async fn rename_knowledge_conversation(
             ));
         }
     };
-    match crate::database::wiki_conversations::rename_conversation(database, &conversation_id, title).await {
+    match crate::database::wiki_conversations::rename_conversation(
+        database,
+        &conversation_id,
+        title,
+    )
+    .await
+    {
         Ok(true) => no_store(StatusCode::NO_CONTENT.into_response()),
         Ok(false) => no_store(error(
             &request,
@@ -98,8 +104,12 @@ pub(in crate::app::admin) async fn delete_knowledge_conversation(
             ));
         }
     };
-    match crate::database::wiki_conversations::delete_conversation(database, &conversation_id, &request_id)
-        .await
+    match crate::database::wiki_conversations::delete_conversation(
+        database,
+        &conversation_id,
+        &request_id,
+    )
+    .await
     {
         Ok(()) => no_store(StatusCode::NO_CONTENT.into_response()),
         Err(crate::database::wiki_conversations::DeleteConversationError::NotFound) => {
@@ -162,7 +172,12 @@ mod tests {
     use serde_json::{Value, json};
     use std::sync::Arc;
 
-    async fn fixture() -> (String, Database, std::path::PathBuf, tokio::task::JoinHandle<()>) {
+    async fn fixture() -> (
+        String,
+        Database,
+        std::path::PathBuf,
+        tokio::task::JoinHandle<()>,
+    ) {
         let root = std::env::temp_dir().join(format!(
             "wiki-conversations-routes-{}",
             uuid::Uuid::new_v4()
@@ -198,14 +213,11 @@ admin_token = "wiki-conversations-test-token"
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
         let task = tokio::spawn(async move {
-            axum::serve(listener, router_with_state(state)).await.unwrap();
+            axum::serve(listener, router_with_state(state))
+                .await
+                .unwrap();
         });
-        (
-            format!("http://{address}/api/admin"),
-            database,
-            root,
-            task,
-        )
+        (format!("http://{address}/api/admin"), database, root, task)
     }
 
     async fn seed_conversation(database: &Database, id: &str, title: &str, updated_at: i64) {

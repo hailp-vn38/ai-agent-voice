@@ -65,6 +65,8 @@ enum AskEvent {
         citations: Vec<String>,
         stop_reason: &'static str,
         saved: bool,
+        content_truncated: bool,
+        graph_saved: bool,
     },
     Error(&'static str),
 }
@@ -162,16 +164,22 @@ pub(in crate::app::admin) async fn knowledge_ask(
         Ok(input) => input,
         Err(_) => return error(&request, StatusCode::BAD_REQUEST, "invalid_input"),
     };
-    let (Some(question), None) = (input.question.as_deref(), input.retry_message_id.as_deref())
-    else {
-        return error(&request, StatusCode::BAD_REQUEST, "invalid_input");
+    let question = match (input.question.as_deref(), input.retry_message_id.as_deref()) {
+        (Some(question), None)
+            if !question.trim().is_empty() && question.len() <= MAX_HISTORY_BYTES =>
+        {
+            Some(question)
+        }
+        (None, Some(_)) if input.conversation_id.is_some() && input.pinned_paths.is_empty() => None,
+        _ => return error(&request, StatusCode::BAD_REQUEST, "invalid_input"),
     };
-    if question.trim().is_empty() || question.len() > MAX_HISTORY_BYTES {
-        return error(&request, StatusCode::BAD_REQUEST, "invalid_input");
-    }
-    let pinned_reads = match pinned_read_calls(input.pinned_paths.clone()) {
-        Ok(calls) => calls,
-        Err(code) => return error(&request, StatusCode::BAD_REQUEST, code),
+    let mut pinned_reads = if question.is_some() {
+        match pinned_read_calls(input.pinned_paths.clone()) {
+            Ok(calls) => calls,
+            Err(code) => return error(&request, StatusCode::BAD_REQUEST, code),
+        }
+    } else {
+        Vec::new()
     };
     let database = match database(&state) {
         Ok(database) => database.clone(),
@@ -260,48 +268,98 @@ pub(in crate::app::admin) async fn knowledge_ask(
         (provider, None)
     };
 
-    let pinned_paths = input
-        .pinned_paths
-        .iter()
-        .filter(|path| path.starts_with("wiki/") || path.starts_with("sources/"))
-        .cloned()
-        .collect::<Vec<_>>();
-    let user_message_id = uuid::Uuid::new_v4().to_string();
-    let assistant_message_id = uuid::Uuid::new_v4().to_string();
-    let new_conversation_id = uuid::Uuid::new_v4().to_string();
-    let started = match crate::database::wiki_conversations::start_question(
-        &database,
-        input.conversation_id.as_deref(),
-        &new_conversation_id,
-        &user_message_id,
-        &assistant_message_id,
-        question,
-        &pinned_paths,
-        now().saturating_mul(1000),
-    )
-    .await
-    {
-        Ok(started) => started,
-        Err(crate::database::wiki_conversations::StartTurnError::NotFound) => {
-            return error(
-                &request,
-                StatusCode::NOT_FOUND,
-                "wiki_conversation_not_found",
-            );
+    let now_ms = now().saturating_mul(1000);
+    let started = if let Some(question) = question {
+        let pinned_paths = input
+            .pinned_paths
+            .iter()
+            .filter(|path| path.starts_with("wiki/") || path.starts_with("sources/"))
+            .cloned()
+            .collect::<Vec<_>>();
+        let user_message_id = uuid::Uuid::new_v4().to_string();
+        let assistant_message_id = uuid::Uuid::new_v4().to_string();
+        let new_conversation_id = uuid::Uuid::new_v4().to_string();
+        match crate::database::wiki_conversations::start_question(
+            &database,
+            input.conversation_id.as_deref(),
+            &new_conversation_id,
+            &user_message_id,
+            &assistant_message_id,
+            question,
+            &pinned_paths,
+            now_ms,
+        )
+        .await
+        {
+            Ok(started) => started,
+            Err(crate::database::wiki_conversations::StartTurnError::NotFound) => {
+                return error(
+                    &request,
+                    StatusCode::NOT_FOUND,
+                    "wiki_conversation_not_found",
+                );
+            }
+            Err(crate::database::wiki_conversations::StartTurnError::Full) => {
+                return error(&request, StatusCode::CONFLICT, "wiki_conversation_full");
+            }
+            Err(crate::database::wiki_conversations::StartTurnError::Sql(db_error)) => {
+                if matches!(db_error, sqlx::Error::Database(ref cause) if cause.code().as_deref() == Some("2067"))
+                {
+                    return error(&request, StatusCode::CONFLICT, "wiki_conversation_busy");
+                }
+                return error(
+                    &request,
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "database_unavailable",
+                );
+            }
         }
-        Err(crate::database::wiki_conversations::StartTurnError::Full) => {
-            return error(&request, StatusCode::CONFLICT, "wiki_conversation_full");
-        }
-        Err(crate::database::wiki_conversations::StartTurnError::Sql(db_error)) => {
-            if matches!(db_error, sqlx::Error::Database(ref cause) if cause.code().as_deref() == Some("2067"))
-            {
+    } else {
+        let Some(conversation_id) = input.conversation_id.as_deref() else {
+            return error(&request, StatusCode::BAD_REQUEST, "invalid_input");
+        };
+        let Some(retry_message_id) = input.retry_message_id.as_deref() else {
+            return error(&request, StatusCode::BAD_REQUEST, "invalid_input");
+        };
+        let retried = match crate::database::wiki_conversations::begin_retry(
+            &database,
+            conversation_id,
+            retry_message_id,
+            now_ms,
+        )
+        .await
+        {
+            Ok(retried) => retried,
+            Err(crate::database::wiki_conversations::RetryTurnError::NotFound) => {
+                return error(
+                    &request,
+                    StatusCode::NOT_FOUND,
+                    "wiki_conversation_not_found",
+                );
+            }
+            Err(crate::database::wiki_conversations::RetryTurnError::InvalidInput) => {
+                return error(&request, StatusCode::BAD_REQUEST, "invalid_input");
+            }
+            Err(crate::database::wiki_conversations::RetryTurnError::Busy) => {
                 return error(&request, StatusCode::CONFLICT, "wiki_conversation_busy");
             }
-            return error(
-                &request,
-                StatusCode::SERVICE_UNAVAILABLE,
-                "database_unavailable",
-            );
+            Err(crate::database::wiki_conversations::RetryTurnError::Sql) => {
+                return error(
+                    &request,
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "database_unavailable",
+                );
+            }
+        };
+        pinned_reads = match pinned_read_calls(retried.pinned_paths) {
+            Ok(calls) => calls,
+            Err(code) => return error(&request, StatusCode::BAD_REQUEST, code),
+        };
+        crate::database::wiki_conversations::StartedTurn {
+            conversation_id: retried.conversation_id,
+            user_message_id: retried.user_message_id,
+            assistant_message_id: retried.assistant_message_id,
+            user_seq: retried.user_seq,
         }
     };
     let history = match crate::database::wiki_conversations::history_before_question(
@@ -387,20 +445,36 @@ pub(in crate::app::admin) async fn knowledge_ask(
                 pages: tool.pages.clone(),
             })
             .collect::<Vec<_>>();
-        let saved = crate::database::wiki_conversations::finish_answer(
-            &database_for_task,
-            &conversation_id,
-            &assistant_id,
-            &answer,
-            message_status,
-            error_code,
-            &stored_tools,
-            &citations,
-            graph.as_ref(),
-            now().saturating_mul(1000),
-        )
-        .await
-        .is_ok();
+        let content_truncated =
+            answer.len() > crate::database::wiki_conversations::MAX_STORED_ANSWER_BYTES;
+        let graph_saved = graph.as_ref().is_none_or(|graph| {
+            serde_json::to_vec(graph)
+                .map(|serialized| {
+                    serialized.len() <= crate::database::wiki_conversations::MAX_STORED_GRAPH_BYTES
+                })
+                .unwrap_or(false)
+        });
+        let mut saved = false;
+        for attempt in 0..3 {
+            saved = crate::database::wiki_conversations::finish_answer(
+                &database_for_task,
+                &conversation_id,
+                &assistant_id,
+                &answer,
+                message_status,
+                error_code,
+                &stored_tools,
+                &citations,
+                graph.as_ref(),
+                now().saturating_mul(1000),
+            )
+            .await
+            .is_ok();
+            if saved || attempt == 2 {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
         if !saved {
             tracing::warn!(
                 event = "wiki_conversation_save_failed",
@@ -417,10 +491,25 @@ pub(in crate::app::admin) async fn knowledge_ask(
                         citations,
                         stop_reason,
                         saved,
+                        content_truncated,
+                        graph_saved,
                     })
                     .await;
             }
-            AskTurnStatus::Stopped => {}
+            AskTurnStatus::Stopped => {
+                if let Some(graph) = graph {
+                    let _ = ask_events.send(AskEvent::Graph(graph)).await;
+                }
+                let _ = ask_events
+                    .send(AskEvent::Done {
+                        citations,
+                        stop_reason,
+                        saved,
+                        content_truncated,
+                        graph_saved,
+                    })
+                    .await;
+            }
             AskTurnStatus::Failed(code) => {
                 let _ = ask_events.send(AskEvent::Error(code)).await;
                 let _ = ask_events
@@ -428,6 +517,8 @@ pub(in crate::app::admin) async fn knowledge_ask(
                         citations: Vec::new(),
                         stop_reason,
                         saved,
+                        content_truncated,
+                        graph_saved,
                     })
                     .await;
             }
@@ -837,8 +928,10 @@ fn ask_event_to_sse(event: AskEvent) -> Event {
             citations,
             stop_reason,
             saved,
+            content_truncated,
+            graph_saved,
         } => Event::default().event("done").data(
-            json!({"citations":citations,"stop_reason":stop_reason,"saved":saved}).to_string(),
+            json!({"citations":citations,"stop_reason":stop_reason,"saved":saved,"content_truncated":content_truncated,"graph_saved":graph_saved}).to_string(),
         ),
         AskEvent::Error(code) => Event::default()
             .event("error")
@@ -1232,6 +1325,7 @@ mod tests {
         pin::Pin,
         sync::{
             Arc, Mutex,
+            atomic::AtomicUsize,
             atomic::{AtomicBool, Ordering},
         },
         task::{Context, Poll},
@@ -1271,6 +1365,11 @@ mod tests {
     struct PendingLlm {
         started: Arc<AtomicBool>,
         dropped: Arc<AtomicBool>,
+    }
+
+    struct RetryLlm {
+        calls: AtomicUsize,
+        requests: Mutex<Vec<Vec<ChatMessage>>>,
     }
 
     struct PendingLlmStream {
@@ -1316,6 +1415,31 @@ mod tests {
                 dropped: Arc::clone(&self.dropped),
                 sent_delta: false,
             }))
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl LlmProvider for RetryLlm {
+        fn supports_tools(&self) -> bool {
+            true
+        }
+
+        fn adapter(&self) -> &'static str {
+            "retry-test"
+        }
+
+        async fn stream(&self, request: LlmRequest) -> Result<LlmEventStream, LlmError> {
+            self.requests.lock().unwrap().push(request.messages);
+            if self.calls.fetch_add(1, Ordering::SeqCst) == 0 {
+                return Err(LlmError::Failed);
+            }
+            Ok(Box::pin(stream::iter(
+                vec![
+                    Ok(LlmEvent::TextDelta("Recovered answer".into())),
+                    Ok(LlmEvent::Finished),
+                ]
+                .into_iter(),
+            )))
         }
     }
 
@@ -1814,6 +1938,140 @@ model = "fake"
             .await
             .unwrap();
         assert_eq!(unauthorized.status(), StatusCode::UNAUTHORIZED);
+        server.abort();
+        let _ = std::fs::remove_dir_all(temp_root);
+    }
+
+    #[tokio::test]
+    async fn a_running_answer_older_than_two_minutes_is_interrupted_before_a_new_turn() {
+        let (base, temp_root, server) = wiki_fixture(Vec::new(), "Known evidence.").await;
+        let database = test_database(&temp_root).await;
+        sqlx::query(
+            "INSERT INTO wiki_conversations (id, title, created_at_ms, updated_at_ms) VALUES ('stale-conversation', 'Stale', 1, 1)",
+        )
+        .execute(database.pool())
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO wiki_conversation_messages (id, conversation_id, seq, role, content, status, created_at_ms, updated_at_ms) VALUES ('stale-user', 'stale-conversation', 1, 'user', 'Prior question', 'done', 1, 1), ('stale-assistant', 'stale-conversation', 2, 'assistant', 'Partial', 'running', 1, 1)",
+        )
+        .execute(database.pool())
+        .await
+        .unwrap();
+        drop(database);
+
+        let response = reqwest::Client::new()
+            .post(format!("{base}/knowledge/ask"))
+            .bearer_auth("wiki-chat-test-token")
+            .json(&serde_json::json!({
+                "conversation_id": "stale-conversation",
+                "question": "Continue after a stale answer"
+            }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert!(response.text().await.unwrap().contains("event: done"));
+        let detail: Value = reqwest::Client::new()
+            .get(format!("{base}/knowledge/conversations/stale-conversation"))
+            .bearer_auth("wiki-chat-test-token")
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        assert_eq!(detail["messages"][1]["status"], "interrupted");
+        assert_eq!(detail["messages"][3]["status"], "done");
+        server.abort();
+        let _ = std::fs::remove_dir_all(temp_root);
+    }
+
+    #[tokio::test]
+    async fn retry_reuses_the_latest_failed_message_and_its_pinned_files() {
+        let provider = Arc::new(RetryLlm {
+            calls: AtomicUsize::new(0),
+            requests: Mutex::new(Vec::new()),
+        });
+        let (base, temp_root, server) =
+            wiki_fixture_with_provider(provider.clone(), "Pinned evidence.").await;
+        let client = reqwest::Client::new();
+        let first = client
+            .post(format!("{base}/knowledge/ask"))
+            .bearer_auth("wiki-chat-test-token")
+            .json(&serde_json::json!({
+                "question": "Explain this page",
+                "pinned_paths": ["wiki/concepts/known.md"]
+            }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(first.status(), StatusCode::OK);
+        let first_body = first.text().await.unwrap();
+        assert!(first_body.contains("\"code\":\"provider_failed\""));
+        let turn = sse_payloads(&first_body, "turn").remove(0);
+        let conversation_id = turn["conversation_id"].as_str().unwrap();
+        let assistant_message_id = turn["assistant_message_id"].as_str().unwrap();
+
+        let retried = client
+            .post(format!("{base}/knowledge/ask"))
+            .bearer_auth("wiki-chat-test-token")
+            .json(&serde_json::json!({
+                "conversation_id": conversation_id,
+                "retry_message_id": assistant_message_id
+            }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(retried.status(), StatusCode::OK);
+        let retried_body = retried.text().await.unwrap();
+        assert!(retried_body.contains("event: delta"));
+        assert!(retried_body.contains("Recovered answer"));
+        let retry_turn = sse_payloads(&retried_body, "turn").remove(0);
+        assert_eq!(retry_turn["conversation_id"], conversation_id);
+        assert_eq!(retry_turn["user_message_id"], turn["user_message_id"]);
+        assert_eq!(retry_turn["assistant_message_id"], assistant_message_id);
+
+        let detail: Value = client
+            .get(format!("{base}/knowledge/conversations/{conversation_id}"))
+            .bearer_auth("wiki-chat-test-token")
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        assert_eq!(detail["messages"].as_array().unwrap().len(), 2);
+        assert_eq!(
+            detail["messages"][0]["pinned_paths"],
+            serde_json::json!(["wiki/concepts/known.md"])
+        );
+        assert_eq!(detail["messages"][1]["id"], assistant_message_id);
+        assert_eq!(detail["messages"][1]["status"], "done");
+        assert_eq!(detail["messages"][1]["content"], "Recovered answer");
+        assert_eq!(provider.calls.load(Ordering::SeqCst), 2);
+        let retry_request = provider.requests.lock().unwrap().last().unwrap().clone();
+        assert!(retry_request.iter().any(|message| matches!(
+            message,
+            ChatMessage::User { content } if content == "Explain this page"
+        )));
+
+        let retry_done = client
+            .post(format!("{base}/knowledge/ask"))
+            .bearer_auth("wiki-chat-test-token")
+            .json(&serde_json::json!({
+                "conversation_id": conversation_id,
+                "retry_message_id": assistant_message_id
+            }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(retry_done.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(
+            retry_done.json::<Value>().await.unwrap()["error"]["code"],
+            "invalid_input"
+        );
+        assert_eq!(provider.calls.load(Ordering::SeqCst), 2);
         server.abort();
         let _ = std::fs::remove_dir_all(temp_root);
     }
@@ -2457,6 +2715,91 @@ model = "fake"
         .expect("stopped answer should be saved");
         assert_eq!(detail["messages"][1]["status"], "stopped");
         assert_eq!(detail["messages"][1]["content"], "partial answer");
+        server.abort();
+        let _ = std::fs::remove_dir_all(temp_root);
+    }
+
+    #[tokio::test]
+    async fn only_one_turn_runs_per_conversation_while_other_conversations_can_run() {
+        let started = Arc::new(AtomicBool::new(false));
+        let dropped = Arc::new(AtomicBool::new(false));
+        let provider: Arc<dyn LlmProvider> = Arc::new(PendingLlm {
+            started: Arc::clone(&started),
+            dropped: Arc::clone(&dropped),
+        });
+        let (base, temp_root, server) =
+            wiki_fixture_with_provider(provider, "Known evidence.").await;
+        let client = reqwest::Client::new();
+        let mut first = client
+            .post(format!("{base}/knowledge/ask"))
+            .bearer_auth("wiki-chat-test-token")
+            .json(&serde_json::json!({ "question": "first running question" }))
+            .send()
+            .await
+            .unwrap()
+            .bytes_stream();
+        let first_turn_chunk = tokio::time::timeout(Duration::from_secs(2), first.next())
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        let first_turn =
+            sse_payloads(std::str::from_utf8(&first_turn_chunk).unwrap(), "turn").remove(0);
+        let conversation_id = first_turn["conversation_id"].as_str().unwrap();
+        let retry_busy = client
+            .post(format!("{base}/knowledge/ask"))
+            .bearer_auth("wiki-chat-test-token")
+            .json(&serde_json::json!({
+                "conversation_id": conversation_id,
+                "retry_message_id": first_turn["assistant_message_id"]
+            }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(retry_busy.status(), StatusCode::CONFLICT);
+        let retry_busy_body: Value = retry_busy.json().await.unwrap();
+        assert_eq!(retry_busy_body["error"]["code"], "wiki_conversation_busy");
+
+        let busy = client
+            .post(format!("{base}/knowledge/ask"))
+            .bearer_auth("wiki-chat-test-token")
+            .json(&serde_json::json!({
+                "conversation_id": conversation_id,
+                "question": "must not interleave"
+            }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(busy.status(), StatusCode::CONFLICT);
+        let busy_body: Value = busy.json().await.unwrap();
+        assert_eq!(busy_body["error"]["code"], "wiki_conversation_busy");
+
+        let mut second = client
+            .post(format!("{base}/knowledge/ask"))
+            .bearer_auth("wiki-chat-test-token")
+            .json(&serde_json::json!({ "question": "another conversation can run" }))
+            .send()
+            .await
+            .unwrap()
+            .bytes_stream();
+        let second_turn_chunk = tokio::time::timeout(Duration::from_secs(2), second.next())
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        let second_turn =
+            sse_payloads(std::str::from_utf8(&second_turn_chunk).unwrap(), "turn").remove(0);
+        assert_ne!(second_turn["conversation_id"], conversation_id);
+        assert!(started.load(Ordering::SeqCst));
+        drop(first);
+        drop(second);
+        tokio::time::timeout(Duration::from_secs(2), async {
+            while !dropped.load(Ordering::SeqCst) {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("closing both streams cancels both providers");
         server.abort();
         let _ = std::fs::remove_dir_all(temp_root);
     }

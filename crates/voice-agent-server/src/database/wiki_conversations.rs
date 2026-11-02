@@ -1,7 +1,7 @@
 //! Persistent Wiki Chat conversations.
 
 use serde::{Deserialize, Serialize};
-use sqlx::FromRow;
+use sqlx::{FromRow, Sqlite, Transaction};
 
 use super::Database;
 
@@ -68,6 +68,23 @@ pub(crate) struct StartedTurn {
     pub user_message_id: String,
     pub assistant_message_id: String,
     pub user_seq: i64,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct RetriedTurn {
+    pub conversation_id: String,
+    pub user_message_id: String,
+    pub assistant_message_id: String,
+    pub user_seq: i64,
+    pub pinned_paths: Vec<String>,
+}
+
+#[derive(Debug)]
+pub(crate) enum RetryTurnError {
+    NotFound,
+    InvalidInput,
+    Busy,
+    Sql,
 }
 
 #[derive(Debug)]
@@ -179,10 +196,11 @@ pub(crate) async fn delete_conversation(
     request_id: &str,
 ) -> Result<(), DeleteConversationError> {
     let mut transaction = database.pool().begin_with("BEGIN IMMEDIATE").await?;
-    let exists: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM wiki_conversations WHERE id = ?)")
-        .bind(id)
-        .fetch_one(&mut *transaction)
-        .await?;
+    let exists: bool =
+        sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM wiki_conversations WHERE id = ?)")
+            .bind(id)
+            .fetch_one(&mut *transaction)
+            .await?;
     if !exists {
         transaction.rollback().await?;
         return Err(DeleteConversationError::NotFound);
@@ -221,6 +239,160 @@ pub(crate) async fn delete_conversation(
     Ok(())
 }
 
+/// A process restart cannot resume a stream, so every row left running is interrupted before
+/// the HTTP router is exposed.
+pub(crate) async fn mark_all_running_interrupted(
+    database: &Database,
+    now_ms: i64,
+) -> Result<(), sqlx::Error> {
+    let mut transaction = database.pool().begin_with("BEGIN IMMEDIATE").await?;
+    sqlx::query(
+        "UPDATE wiki_conversations SET updated_at_ms = ? WHERE id IN (SELECT conversation_id FROM wiki_conversation_messages WHERE status = 'running')",
+    )
+    .bind(now_ms)
+    .execute(&mut *transaction)
+    .await?;
+    sqlx::query(
+        "UPDATE wiki_conversation_messages SET status = 'interrupted', updated_at_ms = ? WHERE status = 'running'",
+    )
+    .bind(now_ms)
+    .execute(&mut *transaction)
+    .await?;
+    transaction.commit().await
+}
+
+/// Mark only expired turns in the conversation currently being started. Kept separate so the
+/// normal start transaction and the 100-message storage limit can call the same recovery step.
+pub(crate) async fn mark_stale_running_in_transaction(
+    transaction: &mut Transaction<'_, Sqlite>,
+    conversation_id: &str,
+    now_ms: i64,
+) -> Result<(), sqlx::Error> {
+    let cutoff_ms = now_ms.saturating_sub(120_000);
+    let result = sqlx::query(
+        "UPDATE wiki_conversation_messages SET status = 'interrupted', updated_at_ms = ? WHERE conversation_id = ? AND status = 'running' AND updated_at_ms < ?",
+    )
+    .bind(now_ms)
+    .bind(conversation_id)
+    .bind(cutoff_ms)
+    .execute(&mut **transaction)
+    .await?;
+    if result.rows_affected() > 0 {
+        sqlx::query("UPDATE wiki_conversations SET updated_at_ms = ? WHERE id = ?")
+            .bind(now_ms)
+            .bind(conversation_id)
+            .execute(&mut **transaction)
+            .await?;
+    }
+    Ok(())
+}
+
+pub(crate) async fn begin_retry(
+    database: &Database,
+    conversation_id: &str,
+    assistant_message_id: &str,
+    now_ms: i64,
+) -> Result<RetriedTurn, RetryTurnError> {
+    let mut transaction = database
+        .pool()
+        .begin_with("BEGIN IMMEDIATE")
+        .await
+        .map_err(|_| RetryTurnError::Sql)?;
+    let conversation_exists: bool =
+        sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM wiki_conversations WHERE id = ?)")
+            .bind(conversation_id)
+            .fetch_one(&mut *transaction)
+            .await
+            .map_err(|_| RetryTurnError::Sql)?;
+    if !conversation_exists {
+        return Err(RetryTurnError::NotFound);
+    }
+    mark_stale_running_in_transaction(&mut transaction, conversation_id, now_ms)
+        .await
+        .map_err(|_| RetryTurnError::Sql)?;
+    let has_running_message: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM wiki_conversation_messages WHERE conversation_id = ? AND status = 'running')",
+    )
+    .bind(conversation_id)
+    .fetch_one(&mut *transaction)
+    .await
+    .map_err(|_| RetryTurnError::Sql)?;
+    if has_running_message {
+        return Err(RetryTurnError::Busy);
+    }
+
+    let latest: Option<(String, String, String, i64)> = sqlx::query_as(
+        "SELECT id, role, status, seq FROM wiki_conversation_messages WHERE conversation_id = ? ORDER BY seq DESC LIMIT 1",
+    )
+    .bind(conversation_id)
+    .fetch_optional(&mut *transaction)
+    .await
+    .map_err(|_| RetryTurnError::Sql)?;
+    let Some((latest_id, role, status, assistant_seq)) = latest else {
+        return Err(RetryTurnError::InvalidInput);
+    };
+    if latest_id != assistant_message_id
+        || role != "assistant"
+        || !matches!(status.as_str(), "failed" | "interrupted")
+    {
+        return Err(RetryTurnError::InvalidInput);
+    }
+
+    let previous: Option<(String, Option<String>)> = sqlx::query_as(
+        "SELECT id, pinned_paths_json FROM wiki_conversation_messages WHERE conversation_id = ? AND seq = ? AND role = 'user'",
+    )
+    .bind(conversation_id)
+    .bind(assistant_seq - 1)
+    .fetch_optional(&mut *transaction)
+    .await
+    .map_err(|_| RetryTurnError::Sql)?;
+    let Some((user_message_id, pinned_paths_json)) = previous else {
+        return Err(RetryTurnError::InvalidInput);
+    };
+
+    let updated = sqlx::query(
+        "UPDATE wiki_conversation_messages SET content = '', content_truncated = 0, status = 'running', error_code = NULL, tools_json = NULL, citations_json = NULL, graph_json = NULL, updated_at_ms = ? WHERE conversation_id = ? AND id = ? AND role = 'assistant' AND status IN ('failed', 'interrupted')",
+    )
+    .bind(now_ms)
+    .bind(conversation_id)
+    .bind(assistant_message_id)
+    .execute(&mut *transaction)
+    .await
+    .map_err(map_retry_update_error)?;
+    if updated.rows_affected() != 1 {
+        return Err(RetryTurnError::InvalidInput);
+    }
+    sqlx::query("UPDATE wiki_conversations SET updated_at_ms = ? WHERE id = ?")
+        .bind(now_ms)
+        .bind(conversation_id)
+        .execute(&mut *transaction)
+        .await
+        .map_err(|_| RetryTurnError::Sql)?;
+    transaction
+        .commit()
+        .await
+        .map_err(|_| RetryTurnError::Sql)?;
+
+    Ok(RetriedTurn {
+        conversation_id: conversation_id.to_owned(),
+        user_message_id,
+        assistant_message_id: assistant_message_id.to_owned(),
+        user_seq: assistant_seq - 1,
+        pinned_paths: decode_json(pinned_paths_json.as_deref()),
+    })
+}
+
+fn map_retry_update_error(error: sqlx::Error) -> RetryTurnError {
+    if matches!(
+        &error,
+        sqlx::Error::Database(cause) if cause.code().as_deref() == Some("2067")
+    ) {
+        RetryTurnError::Busy
+    } else {
+        RetryTurnError::Sql
+    }
+}
+
 pub(crate) async fn start_question(
     database: &Database,
     conversation_id: Option<&str>,
@@ -241,6 +413,7 @@ pub(crate) async fn start_question(
         if !exists {
             return Err(StartTurnError::NotFound);
         }
+        mark_stale_running_in_transaction(&mut transaction, id, now_ms).await?;
         let message_count: i64 = sqlx::query_scalar(
             "SELECT COUNT(*) FROM wiki_conversation_messages WHERE conversation_id = ?",
         )
@@ -394,8 +567,8 @@ pub(crate) async fn finish_answer(
         .map_err(serialize_error)?
         .filter(|serialized| serialized.len() <= MAX_STORED_GRAPH_BYTES);
     let mut transaction = database.pool().begin().await?;
-    sqlx::query(
-        "UPDATE wiki_conversation_messages SET content = ?, content_truncated = ?, status = ?, error_code = ?, tools_json = ?, citations_json = ?, graph_json = ?, updated_at_ms = ? WHERE id = ? AND conversation_id = ? AND role = 'assistant'",
+    let updated = sqlx::query(
+        "UPDATE wiki_conversation_messages SET content = ?, content_truncated = ?, status = ?, error_code = ?, tools_json = ?, citations_json = ?, graph_json = ?, updated_at_ms = ? WHERE id = ? AND conversation_id = ? AND role = 'assistant' AND status = 'running'",
     )
     .bind(stored_content)
     .bind(content_truncated as i64)
@@ -409,6 +582,11 @@ pub(crate) async fn finish_answer(
     .bind(conversation_id)
     .execute(&mut *transaction)
     .await?;
+    if updated.rows_affected() != 1 {
+        return Err(sqlx::Error::Protocol(
+            "Wiki Conversation turn is no longer running".into(),
+        ));
+    }
     sqlx::query("UPDATE wiki_conversations SET updated_at_ms = ? WHERE id = ?")
         .bind(now_ms)
         .bind(conversation_id)

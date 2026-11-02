@@ -50,6 +50,7 @@ const {
   conversations: wikiChatConversations,
   loadingConversations: wikiChatLoadingConversations,
   conversationListError: wikiChatConversationListError,
+  readOnlyConversation: wikiChatReadOnlyConversation,
   activeGraph: activeAnswerGraph,
   busy: wikiChatBusy,
   chatDrawerOpen,
@@ -64,6 +65,7 @@ const {
   refreshConversations: refreshWikiConversations,
   renameConversation: renameWikiConversation,
   deleteConversation: deleteWikiConversation,
+  refreshConversation: refreshWikiConversation,
   showGraphOf: showChatGraph,
 } = useWikiChat()
 function replaceConversationQuery(id: string | null) {
@@ -2073,6 +2075,7 @@ onMounted(() => {
       :loading-conversation="wikiChatLoadingConversation"
       :conversations="wikiChatConversations" :conversation-id="wikiChatConversationId"
       :loading-conversations="wikiChatLoadingConversations" :conversation-list-error="wikiChatConversationListError"
+      :read-only="wikiChatReadOnlyConversation"
       :class="{ 'is-collapsed': rightPanelCollapsed }"
       :drawer-open="chatDrawerOpen" :suggestions="chatSuggestions"
       :pinned-files="wikiChatPinnedFiles" :open-file="openChatFile"
@@ -2082,6 +2085,7 @@ onMounted(() => {
       @load-conversations="openConversationList" @select-conversation="selectConversation"
       @new-conversation="startNewConversation" @rename-conversation="renameWikiConversation"
       @delete-conversation="removeConversation"
+      @reset="resetWikiChat" @refresh-conversation="refreshWikiConversation"
       @focus-citation="openCitation" @highlight-citation="highlightChatCitation">
       <template v-if="viewMode !== 'graph'" #title>
         <div class="a-right-tabs" role="tablist" :aria-label="t('knowledgeV3.rightPanel')">
