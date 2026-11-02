@@ -586,6 +586,66 @@ fn canonical_prompts_enforce_summarize_analyze_visualize_pipeline_and_flexible_d
 }
 
 #[test]
+fn daily_root_default_prompt_routes_long_tasks_away_from_voice_budget_and_preserves_custom_prompt()
+{
+    let temp_dir = std::env::temp_dir().join(format!("daily-root-prompt-{}", uuid::Uuid::new_v4()));
+    let prompts_dir = temp_dir.join("prompts");
+    ensure_prompts_and_skills(&prompts_dir, None).unwrap();
+    let seeded = std::fs::read_to_string(prompts_dir.join("daily_root.md")).unwrap();
+    assert!(seeded.contains("Do not delegate long research or report tasks"));
+    assert!(seeded.contains("five-minute Job Budget"));
+    assert!(seeded.contains("Chat/API Tasks"));
+
+    let mut settings = PersistedBackgroundSettings::default();
+    write_agent_prompts(&prompts_dir, &settings).unwrap();
+    let default = std::fs::read_to_string(prompts_dir.join("daily_root.md")).unwrap();
+    assert!(default.contains("Do not delegate long research or report tasks"));
+
+    settings.agents.insert(
+        "daily_root".to_owned(),
+        AgentConfigOverride {
+            system_prompt: Some("Admin's custom root instructions.".to_owned()),
+            ..Default::default()
+        },
+    );
+    write_agent_prompts(&prompts_dir, &settings).unwrap();
+    let custom = std::fs::read_to_string(prompts_dir.join("daily_root.md")).unwrap();
+    assert!(custom.starts_with("Admin's custom root instructions."));
+    assert!(!custom.contains("Do not delegate long research or report tasks"));
+
+    let cfg = OrchestratorSectionConfig::default();
+    let catalog = vec![default_orchestrator_provider(&cfg)];
+    let default_projection =
+        project_agents_json(&cfg, &PersistedBackgroundSettings::default(), &catalog);
+    let projected_root = default_projection
+        .iter()
+        .find(|agent| agent["id"] == "daily_root")
+        .unwrap();
+    assert!(
+        projected_root["system_prompt"]
+            .as_str()
+            .unwrap()
+            .contains("Do not delegate long research or report tasks")
+    );
+    assert!(
+        projected_root["default_system_prompt"]
+            .as_str()
+            .unwrap()
+            .contains("five-minute Job Budget")
+    );
+    let custom_projection = project_agents_json(&cfg, &settings, &catalog);
+    let projected_root = custom_projection
+        .iter()
+        .find(|agent| agent["id"] == "daily_root")
+        .unwrap();
+    assert_eq!(
+        projected_root["system_prompt"],
+        "Admin's custom root instructions."
+    );
+    std::fs::remove_dir_all(temp_dir).unwrap();
+}
+
+#[test]
 fn custom_subagents_enforce_flow_tool_boundaries_and_sync_active_subagents_prompts() {
     let temp_dir =
         std::env::temp_dir().join(format!("custom-subagent-unit-{}", uuid::Uuid::new_v4()));

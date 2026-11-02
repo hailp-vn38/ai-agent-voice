@@ -27,6 +27,17 @@ files, partial results, timeout or session loss truthfully. Never claim a pendin
 This long-running workflow is for Chat/API tasks only, never Voice tasks with a five-minute Job Budget.
 "#;
 
+/// Server-owned routing rule for the Voice Task's five-minute Job Budget.
+pub const DAILY_ROOT_TASK_ROUTING_GUIDANCE: &str = "## Long-running task routing\nDo not delegate long research or report tasks to Voice-sourced Tasks, which have a five-minute Job Budget. Delegate those tasks to `cloud_worker` only for Chat/API Tasks.";
+
+pub(crate) fn daily_root_prompt_with_routing_guidance(base: &str) -> String {
+    if base.contains("Do not delegate long research or report tasks") {
+        base.to_owned()
+    } else {
+        format!("{base}\n\n{DAILY_ROOT_TASK_ROUTING_GUIDANCE}")
+    }
+}
+
 pub const WIKI_TAXONOMY_SKILL: &str =
     include_str!("../../../builtin-skills/wiki-taxonomy/SKILL.md");
 pub const WIKI_INGEST_SKILL: &str = include_str!("../../../builtin-skills/wiki-ingest/SKILL.md");
@@ -89,6 +100,11 @@ pub(crate) fn ensure_prompts_and_skills(
     ] {
         let target = prompts_dir.join(filename);
         if !target.exists() {
+            let content = if filename == "daily_root.md" {
+                daily_root_prompt_with_routing_guidance(content)
+            } else {
+                content.to_owned()
+            };
             std::fs::write(target, content)?;
         }
     }

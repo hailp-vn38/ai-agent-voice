@@ -6,6 +6,7 @@ use orchestrator_agent_rs::{AgentDefinition, AgentMode, LlmProviderConfig, Reaso
 use serde_json::{Value, json};
 
 use crate::config::OrchestratorSectionConfig;
+use crate::services::task_flow::workspace_seed::daily_root_prompt_with_routing_guidance;
 
 use super::media_backend::resolve_media_tool_provider;
 use super::persistence::PersistedBackgroundSettings;
@@ -195,12 +196,22 @@ fn resolve_effective_agents(
                 .filter(|s| !s.is_empty())
                 .unwrap_or(spec.default_description)
                 .to_owned();
-            let system_prompt = ovr
+            let configured_prompt = ovr
                 .and_then(|o| o.system_prompt.as_deref())
                 .map(str::trim)
-                .filter(|s| !s.is_empty())
-                .unwrap_or(spec.default_prompt)
-                .to_owned();
+                .filter(|s| !s.is_empty());
+            let is_default_prompt = configured_prompt.is_none();
+            let base_prompt = configured_prompt.unwrap_or(spec.default_prompt);
+            let system_prompt = if spec.id == "daily_root" && is_default_prompt {
+                daily_root_prompt_with_routing_guidance(base_prompt)
+            } else {
+                base_prompt.to_owned()
+            };
+            let default_system_prompt = if spec.id == "daily_root" {
+                daily_root_prompt_with_routing_guidance(spec.default_prompt)
+            } else {
+                spec.default_prompt.to_owned()
+            };
 
             ResolvedAgentSettings {
                 id: spec.id.to_owned(),
@@ -226,7 +237,7 @@ fn resolve_effective_agents(
                 description,
                 default_description: spec.default_description.to_owned(),
                 system_prompt,
-                default_system_prompt: spec.default_prompt.to_owned(),
+                default_system_prompt,
             }
         })
         .collect();

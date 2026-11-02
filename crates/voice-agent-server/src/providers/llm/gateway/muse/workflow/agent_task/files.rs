@@ -1,3 +1,4 @@
+use crate::providers::llm::supported_agent_task_file;
 use serde_json::Value;
 
 pub(super) fn collect_file_paths(
@@ -10,13 +11,7 @@ pub(super) fn collect_file_paths(
             .trim()
             .trim_start_matches("sandbox://")
             .trim_end_matches(['.', ',', ';', ')', ']', '\'', '"']);
-        let extension = clean.rsplit('.').next().unwrap_or("").to_ascii_lowercase();
-        if [
-            "md", "txt", "pdf", "csv", "json", "html", "docx", "xlsx", "png", "jpg", "webp", "mp4",
-        ]
-        .contains(&extension.as_str())
-            && !paths.iter().any(|path| path == clean)
-        {
+        if supported_agent_task_file(clean) && !paths.iter().any(|path| path == clean) {
             paths.push(clean.to_owned());
         }
     }

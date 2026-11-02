@@ -6,12 +6,14 @@ use futures_util::Stream;
 use serde_json::Value;
 use thiserror::Error;
 
+mod agent_task_files;
 pub(crate) mod gateway;
 pub(crate) mod openai;
 pub(crate) mod opencode_free;
 #[cfg(feature = "qualification-providers")]
 pub mod qualification;
 
+pub(crate) use agent_task_files::supported_agent_task_file;
 pub use gateway::{LlmGatewayConfig, LlmGatewayProvider};
 
 pub(crate) const REASONING_EFFORTS: &[&str] = &["low", "medium", "high"];

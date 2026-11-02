@@ -11,6 +11,7 @@ use super::DEFAULT_ORCHESTRATOR_PROVIDER_REF;
 use super::specs::{
     AGENT_SPECS, custom_subagent_flow_policy, find_agent_spec, valid_custom_subagent_id,
 };
+use crate::services::task_flow::workspace_seed::daily_root_prompt_with_routing_guidance;
 
 const AGENT_SETTINGS_FILE: &str = "agent_settings.json";
 
@@ -301,19 +302,24 @@ pub fn write_agent_prompts(
     let mut expected_files = BTreeSet::new();
 
     for spec in AGENT_SPECS {
-        let base_prompt = settings
+        let configured_prompt = settings
             .agents
             .get(spec.id)
             .and_then(|o| o.system_prompt.as_deref())
             .map(str::trim)
-            .filter(|s| !s.is_empty())
-            .unwrap_or(spec.default_prompt);
+            .filter(|s| !s.is_empty());
+        let is_default_prompt = configured_prompt.is_none();
+        let base_prompt = configured_prompt.unwrap_or(spec.default_prompt);
         let filename = format!("{}.md", spec.id);
         expected_files.insert(filename.clone());
         if spec.mode == AgentMode::Primary {
             // The discovery block is server-owned. Old saved prompts may contain a snapshot;
             // replace that block while preserving the Admin's surrounding custom instructions.
-            let mut prompt = base_prompt.to_owned();
+            let mut prompt = if spec.id == "daily_root" && is_default_prompt {
+                daily_root_prompt_with_routing_guidance(base_prompt)
+            } else {
+                base_prompt.to_owned()
+            };
             while let Some(start) = prompt.find("<active_subagents>") {
                 let Some(relative_end) = prompt[start..].find("</active_subagents>") else {
                     break;
