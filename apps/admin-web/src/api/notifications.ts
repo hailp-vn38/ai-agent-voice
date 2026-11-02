@@ -16,6 +16,7 @@ import type {
   TestChannelOutput,
 } from '@/api/types/notifications'
 import { readAdminToken } from '@/stores/auth'
+import { consumeSse, createSseParserState } from './sse'
 
 export interface NotificationStreamHandlers {
   onCreated?: (item: NotificationItem) => void
@@ -774,43 +775,30 @@ export async function listenNotificationStream(
     }
     const reader = response.body.getReader()
     const decoder = new TextDecoder()
-    let buffer = ''
-    let eventName = ''
-    let dataLines: string[] = []
+    const parserState = createSseParserState()
     try {
       while (!signal.aborted) {
         const { done, value } = await reader.read()
         if (done) break
-        buffer += decoder.decode(value, { stream: true }).replace(/\r\n?/g, '\n')
-        let newline: number
-        while ((newline = buffer.indexOf('\n')) !== -1) {
-          const line = buffer.slice(0, newline)
-          buffer = buffer.slice(newline + 1)
-          if (line === '') {
-            if (eventName === 'notification_created') {
-              try {
-                const parsed = JSON.parse(dataLines.join('\n')) as NotificationItem
-                if (parsed && typeof parsed.id === 'string') {
-                  notifyCreated(parsed)
-                } else {
-                  notifyChanged()
-                }
-              } catch {
+        const frames = consumeSse(decoder.decode(value, { stream: true }), parserState, Number.MAX_SAFE_INTEGER)
+        for (const frame of frames) {
+          if (frame.event === 'notification_created') {
+            try {
+              const parsed = JSON.parse(frame.data) as NotificationItem
+              if (parsed && typeof parsed.id === 'string') {
+                notifyCreated(parsed)
+              } else {
                 notifyChanged()
               }
-            } else if (
-              eventName === 'unread_count_changed' ||
-              eventName === 'resync_required' ||
-              eventName === 'ready'
-            ) {
+            } catch {
               notifyChanged()
             }
-            eventName = ''
-            dataLines = []
-          } else if (line.startsWith('event:')) {
-            eventName = line.slice(6).trimStart()
-          } else if (line.startsWith('data:')) {
-            dataLines.push(line.slice(5).trimStart())
+          } else if (
+            frame.event === 'unread_count_changed' ||
+            frame.event === 'resync_required' ||
+            frame.event === 'ready'
+          ) {
+            notifyChanged()
           }
         }
       }

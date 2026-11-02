@@ -13,6 +13,8 @@ import { formatApiError, isApiError } from '@/api/errors'
 import PageHeader from '@/components/admin/PageHeader.vue'
 import { Button } from '@/components/ui/button'
 import { useI18n } from '@/composables/useI18n'
+import { useWikiChat } from './useWikiChat'
+import WikiChatPanel from './WikiChatPanel.vue'
 
 type SearchMode = 'hybrid' | 'lex' | 'vec'
 type Hit = {
@@ -38,6 +40,18 @@ type Source = { id: string; version: number; name: string; provenance: string; s
 const { t } = useI18n()
 const { dark } = useTheme()
 const route = useRoute()
+const chatCollapsed = ref(false)
+const {
+  messages: wikiChatMessages,
+  activeGraph: activeAnswerGraph,
+  busy: wikiChatBusy,
+  chatDrawerOpen,
+  send: sendWikiChat,
+  stop: stopWikiChat,
+  retry: retryWikiChat,
+  reset: resetWikiChat,
+  showGraphOf: showChatGraph,
+} = useWikiChat()
 
 const VAULT_SPACE_KEY = 'voice-agent-knowledge-vault-space'
 const EXPLORER_STATE_KEY = 'voice-agent-knowledge-explorer-state-v1'
@@ -133,6 +147,13 @@ function toggleOutline() {
   try {
     window.localStorage.setItem(OUTLINE_COLLAPSED_KEY, String(outlineCollapsed.value))
   } catch { /* Storage can be disabled; keep the default. */ }
+}
+function toggleChatDrawer() {
+  chatDrawerOpen.value = !chatDrawerOpen.value
+}
+function toggleRightPanel() {
+  if (viewMode.value === 'graph') chatCollapsed.value = !chatCollapsed.value
+  else toggleOutline()
 }
 function toggleProperties() {
   propertiesCollapsed.value = !propertiesCollapsed.value
@@ -1362,14 +1383,14 @@ onMounted(() => {
             <PanelLeftOpen v-if="explorerCollapsed" :size="16" />
             <PanelLeftClose v-else :size="16" />
           </button>
-          <button class="icon-button" :class="{ active: !outlineCollapsed }" type="button"
-            :title="outlineCollapsed ? 'Expand outline & links' : 'Collapse outline & links'"
-            :aria-label="outlineCollapsed ? 'Expand outline & links' : 'Collapse outline & links'"
-            :aria-expanded="!outlineCollapsed"
-            :aria-pressed="!outlineCollapsed"
-            aria-controls="knowledge-outline-panel"
-            @click="toggleOutline">
-            <PanelRightOpen v-if="outlineCollapsed" :size="16" />
+          <button class="icon-button" :class="{ active: !(viewMode === 'graph' ? chatCollapsed : outlineCollapsed) }" type="button"
+            :title="viewMode === 'graph' ? (chatCollapsed ? t('knowledgeV3.chatExpand') : t('knowledgeV3.chatCollapse')) : (outlineCollapsed ? 'Expand outline & links' : 'Collapse outline & links')"
+            :aria-label="viewMode === 'graph' ? (chatCollapsed ? t('knowledgeV3.chatExpand') : t('knowledgeV3.chatCollapse')) : (outlineCollapsed ? 'Expand outline & links' : 'Collapse outline & links')"
+            :aria-expanded="!(viewMode === 'graph' ? chatCollapsed : outlineCollapsed)"
+            :aria-pressed="!(viewMode === 'graph' ? chatCollapsed : outlineCollapsed)"
+            :aria-controls="viewMode === 'graph' ? 'wiki-chat-panel' : 'knowledge-outline-panel'"
+            @click="toggleRightPanel">
+            <PanelRightOpen v-if="viewMode === 'graph' ? chatCollapsed : outlineCollapsed" :size="16" />
             <PanelRightClose v-else :size="16" />
           </button>
         </div>
@@ -1492,13 +1513,25 @@ onMounted(() => {
         <article v-else class="doc"><h1>{{ t('knowledgeV3.selectFile') }}</h1></article>
       </main>
       <div v-else-if="viewMode === 'graph'" class="graph-host">
-        <KnowledgeGraph v-if="activeSpace === 'wiki'"
-          :center-id="selected?.id ?? null" :reload-token="graphReloadToken"
-          @open="openGraphWiki" @rebuild="rebuild" />
+        <div v-if="activeSpace === 'wiki'" class="graph-content" :class="{ 'is-chat-collapsed': chatCollapsed }">
+          <div class="graph-stage">
+            <button type="button" class="wiki-chat-drawer-toggle"
+              :aria-label="chatDrawerOpen ? t('knowledgeV3.chatCloseDrawer') : t('knowledgeV3.chatOpenDrawer')"
+              :aria-expanded="chatDrawerOpen" aria-controls="wiki-chat-panel" @click="toggleChatDrawer">
+              {{ chatDrawerOpen ? t('knowledgeV3.chatCloseDrawer') : t('knowledgeV3.chatOpenDrawer') }}
+            </button>
+            <KnowledgeGraph :center-id="selected?.id ?? null" :reload-token="graphReloadToken"
+              :answer-graph="activeAnswerGraph"
+              @open="openGraphWiki" @rebuild="rebuild" />
+          </div>
+          <WikiChatPanel :messages="wikiChatMessages" :busy="wikiChatBusy"
+            :drawer-open="chatDrawerOpen" @send="sendWikiChat" @stop="stopWikiChat"
+            @reset="resetWikiChat" @retry="retryWikiChat" @show-graph="showChatGraph" />
+        </div>
       </div>
     </section>
 
-    <aside id="knowledge-outline-panel" class="a-outline"
+    <aside v-if="viewMode !== 'graph'" id="knowledge-outline-panel" class="a-outline"
       :class="{ 'is-collapsed': outlineCollapsed }" :aria-hidden="outlineCollapsed">
       <div class="a-outline-top">Outline &amp; links</div>
       <div class="aside-scroll">

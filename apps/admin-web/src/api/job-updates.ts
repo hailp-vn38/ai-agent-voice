@@ -1,55 +1,11 @@
 import { apiUrl } from './client'
+import { consumeSse, createSseParserState } from './sse'
 import { readAdminToken } from '@/stores/auth'
 
 export interface JobChangeCallbacks {
   onReady: () => void
   onChanged: (jobId: string) => void
   onResync: () => void
-}
-
-function consumeSse(
-  chunk: string,
-  state: { buffer: string; event: string; data: string[]; lastCr: boolean },
-  callbacks: JobChangeCallbacks,
-  connected: { value: boolean },
-) {
-  let text = chunk
-  if (state.lastCr && text.startsWith('\n')) text = text.slice(1)
-  state.lastCr = text.endsWith('\r')
-  state.buffer += text.replace(/\r\n?/g, '\n')
-  let newline: number
-  while ((newline = state.buffer.indexOf('\n')) !== -1) {
-    const line = state.buffer.slice(0, newline)
-    state.buffer = state.buffer.slice(newline + 1)
-    if (line === '') {
-      if (state.event === 'ready') {
-        if (connected.value) callbacks.onResync()
-        else callbacks.onReady()
-        connected.value = true
-      } else if (state.event === 'resync_required') {
-        callbacks.onResync()
-      } else if (state.event === 'job_changed') {
-        try {
-          const payload: unknown = JSON.parse(state.data.join('\n'))
-          if (payload && typeof payload === 'object' && 'job_id' in payload &&
-            typeof payload.job_id === 'string') callbacks.onChanged(payload.job_id)
-          else callbacks.onResync()
-        } catch {
-          callbacks.onResync()
-        }
-      }
-      state.event = ''
-      state.data = []
-    } else if (line.startsWith('event:')) {
-      state.event = line.slice(6).trimStart()
-    } else if (line.startsWith('data:')) {
-      state.data.push(line.slice(5).trimStart())
-      if (state.data.reduce((sum, part) => sum + part.length, 0) > 8192) {
-        throw new Error('job_sse_frame_too_large')
-      }
-    }
-  }
-  if (state.buffer.length > 8192) throw new Error('job_sse_frame_too_large')
 }
 
 function pause(ms: number, signal: AbortSignal): Promise<void> {
@@ -86,12 +42,30 @@ export async function listenJobChanges(callbacks: JobChangeCallbacks, signal: Ab
       }
       const reader = response.body.getReader()
       const decoder = new TextDecoder()
-      const state = { buffer: '', event: '', data: [] as string[], lastCr: false }
+      const state = createSseParserState()
       try {
         while (!signal.aborted) {
           const { done, value } = await reader.read()
           if (done) break
-          consumeSse(decoder.decode(value, { stream: true }), state, callbacks, connected)
+          const frames = consumeSse(decoder.decode(value, { stream: true }), state, 8192)
+          for (const frame of frames) {
+            if (frame.event === 'ready') {
+              if (connected.value) callbacks.onResync()
+              else callbacks.onReady()
+              connected.value = true
+            } else if (frame.event === 'resync_required') {
+              callbacks.onResync()
+            } else if (frame.event === 'job_changed') {
+              try {
+                const payload: unknown = JSON.parse(frame.data)
+                if (payload && typeof payload === 'object' && 'job_id' in payload &&
+                  typeof payload.job_id === 'string') callbacks.onChanged(payload.job_id)
+                else callbacks.onResync()
+              } catch {
+                callbacks.onResync()
+              }
+            }
+          }
           if (connected.value) delay = 1000
         }
       } finally {
