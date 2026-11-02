@@ -5,14 +5,15 @@ use super::*;
 
 use crate::{
     services::memory::{
-        ExplicitIntent, FactId, MemoryActor, MemoryChange, RecallQuery, classify_intent,
+        ExplicitIntent, FactId, MemoryActor, MemoryChange, MemoryContext, RecallQuery,
+        classify_intent,
     },
     session::SessionMemory,
     tools::builtin::{
         BuiltinToolError, MAX_MEMORY_RECALL_LIMIT, MEMORY_CORRECT_TOOL_NAME,
         MEMORY_FORGET_TOOL_NAME, MEMORY_RECALL_TOOL_NAME, MEMORY_REMEMBER_TOOL_NAME,
-        is_memory_write_tool_name, parse_memory_correct_args, parse_memory_forget_args,
-        parse_memory_recall_args, parse_memory_remember_args,
+        is_memory_write_tool_name, memory_tool_definitions, parse_memory_correct_args,
+        parse_memory_forget_args, parse_memory_recall_args, parse_memory_remember_args,
     },
 };
 use unicode_normalization::UnicodeNormalization;
@@ -42,38 +43,71 @@ impl SessionActor {
             self.reject_memory_tool(call, "memory_unavailable");
             return;
         };
+        self.memory_call_turn = Some(turn_id);
         tracing::info!(
+            subsystem = "voice.llm",
             event = "voice_memory_tool_called",
             session_id = %self.session_id,
             turn_id = turn_id.get(),
             tool = %call.name,
             call_id = %call.id,
+            "Memory tool called"
         );
         let intent = self.turn_intent();
         let completions = self.async_calls_tx.clone();
         let session_id = self.session_id.clone();
         let dispatched = call.clone();
         runtime.spawn(async move {
+            let started = std::time::Instant::now();
             // A barge-in drops this future, not the write: `apply` runs in a task of its own.
             let outcome = tokio::select! {
                 biased;
-                () = cancellation.cancelled() => return,
+                () = cancellation.cancelled() => {
+                    tracing::info!(
+                        subsystem = "voice.llm",
+                        event = "voice_memory_tool_cancelled",
+                        session_id = %session_id,
+                        turn_id = turn_id.get(),
+                        tool = %dispatched.name,
+                        call_id = %dispatched.id,
+                        "Memory tool cancelled with its turn"
+                    );
+                    return;
+                }
                 outcome = run_memory_tool(&memory, intent, &dispatched) => outcome,
             };
+            let (recalled_items, recalled_hidden) = recall_counts(&outcome);
             tracing::info!(
+                subsystem = "voice.llm",
                 event = "voice_memory_tool_completed",
                 session_id = %session_id,
+                turn_id = turn_id.get(),
                 tool = %dispatched.name,
                 call_id = %dispatched.id,
                 code = outcome.as_ref().err().copied().unwrap_or("ok"),
+                recalled_items,
+                recalled_hidden,
+                duration_ms = started.elapsed().as_millis() as u64,
+                "Memory tool completed"
             );
-            let _ = completions.try_send(AsyncCallCompletion {
+            let delivered = completions.try_send(AsyncCallCompletion {
                 turn_id,
                 generation,
-                call_id: dispatched.id,
+                call_id: dispatched.id.clone(),
                 server_key: String::new(),
                 outcome: AsyncToolOutcome::Server(outcome),
             });
+            if delivered.is_err() {
+                tracing::warn!(
+                    subsystem = "voice.llm",
+                    event = "voice_memory_tool_result_undelivered",
+                    session_id = %session_id,
+                    turn_id = turn_id.get(),
+                    tool = %dispatched.name,
+                    call_id = %dispatched.id,
+                    "Memory tool result did not reach the session"
+                );
+            }
         });
         if let Some(batch) = self.tool_batch.as_mut() {
             batch.in_flight = Some(InFlightAsyncCall {
@@ -86,11 +120,13 @@ impl SessionActor {
 
     fn reject_memory_tool(&mut self, call: ToolCall, code: &'static str) {
         tracing::warn!(
+            subsystem = "voice.llm",
             event = "voice_memory_tool_rejected",
             session_id = %self.session_id,
             tool = %call.name,
             call_id = %call.id,
             code,
+            "Memory tool rejected"
         );
         self.complete_tool_call(call, Err(code));
     }
@@ -115,22 +151,76 @@ impl SessionActor {
         }
     }
 
-    /// Measures promises the model did not keep. It adds nothing to what the user hears.
+    /// What this turn's model request holds of Memory: row counts only, never the rows.
+    pub(in super::super) fn observe_memory_context(
+        &self,
+        turn_id: TurnId,
+        context: &MemoryContext,
+        system: &str,
+    ) {
+        let Some(memory) = &self.session_memory else {
+            return;
+        };
+        tracing::info!(
+            subsystem = "voice.llm",
+            event = "voice_memory_context_composed",
+            session_id = %self.session_id,
+            turn_id = turn_id.get(),
+            device_db_id = memory.device_db_id,
+            mode = ?memory.mode,
+            summary_rows = context.rows.len(),
+            summary_hidden = context.hidden,
+            in_prompt = system.contains("<memory_info>"),
+            tools_offered = memory_tool_definitions(memory.mode).len(),
+            llm_supports_tools = self.llm_runtime.supports_tools(),
+            "Memory context composed for the turn"
+        );
+    }
+
+    /// Whether the model used Memory for its final answer, and promises it did not keep. It adds
+    /// nothing to what the user hears.
     pub(in super::super) fn observe_memory_claim(&self) {
         let Some(turn_id) = self.current_turn_id() else {
             return;
         };
-        if self.session_memory.is_some()
-            && self.memory_receipt_turn != Some(turn_id)
-            && claims_a_memory_write(&self.generated_response)
-        {
+        if self.session_memory.is_none() {
+            return;
+        }
+        let has_receipt = self.memory_receipt_turn == Some(turn_id);
+        tracing::info!(
+            subsystem = "voice.llm",
+            event = "voice_memory_turn_answered",
+            session_id = %self.session_id,
+            turn_id = turn_id.get(),
+            memory_tool_called = self.memory_call_turn == Some(turn_id),
+            has_receipt,
+            "Turn answered with Memory available"
+        );
+        if !has_receipt && claims_a_memory_write(&self.generated_response) {
             tracing::warn!(
+                subsystem = "voice.llm",
                 event = "memory_claim_without_receipt",
                 session_id = %self.session_id,
                 turn_id = turn_id.get(),
+                "Answer claims a Memory write without a receipt"
             );
         }
     }
+}
+
+/// A recall's item counts, for its log line. A write or a failure has none.
+fn recall_counts(outcome: &Result<serde_json::Value, &'static str>) -> (Option<u64>, Option<u64>) {
+    let Ok(result) = outcome else {
+        return (None, None);
+    };
+    let items = result
+        .get("items")
+        .and_then(serde_json::Value::as_array)
+        .map(|items| items.len() as u64);
+    (
+        items,
+        result.get("hidden").and_then(serde_json::Value::as_u64),
+    )
 }
 
 fn claims_a_memory_write(answer: &str) -> bool {

@@ -163,6 +163,8 @@ pub struct SessionActor {
     session_wiki: Option<std::sync::Arc<crate::tools::knowledge_mcp::KnowledgeMcp>>,
     /// The latest turn a Memory write returned a receipt in. Comparing turns needs no reset.
     memory_receipt_turn: Option<TurnId>,
+    /// The latest turn the model called a Memory tool in, whatever the call's result.
+    memory_call_turn: Option<TurnId>,
     /// The Device tool review this Voice Session was admitted under, if any.  A session admitted
     /// without one keeps the legacy Device allowlist behavior; one admitted with a participating
     /// Agent only calls what that Agent approved for this Device incarnation.
