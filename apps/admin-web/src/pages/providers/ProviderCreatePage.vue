@@ -98,8 +98,8 @@ const ADAPTER_CATALOG_META: Record<string, AdapterPresentation> = {
     },
   },
   llm_gateway: {
-    name: 'LLM Gateway (OAuth / Browser CDP Pool)',
-    detail: 'OAuth 2.0 & Browser CDP · Claude, Codex, Gemini, Copilot, Muse AI',
+    name: 'LLM Gateway (OAuth / Cookie Pool)',
+    detail: 'OAuth 2.0 & Cookie · Claude, Codex, Gemini, Copilot, Muse AI',
     mode: 'Cloud',
     cap: ['Streaming', 'Tool calling', 'Vision', 'Image / Video (Muse)'],
     defaults: {

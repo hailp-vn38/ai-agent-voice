@@ -37,6 +37,7 @@ const selectedVendor = ref<GatewayVendor>('openai_codex')
 const label = ref('')
 const challenge = ref<OAuthLoginChallenge | null>(null)
 const callbackInput = ref('')
+const cookieInput = ref('')
 const completedAccount = ref<GatewayAccountView | null>(null)
 const starting = ref(false)
 const completing = ref(false)
@@ -51,6 +52,8 @@ let authPopup: Window | null = null
 const activeVendorInfo = computed(() =>
   props.vendors.find((item) => item.vendor === selectedVendor.value),
 )
+
+const isCookieVendor = computed(() => activeVendorInfo.value?.login_mode === 'cookie_paste')
 
 function closeAuthPopup() {
   if (authPopup && !authPopup.closed) {
@@ -79,6 +82,7 @@ function resetState() {
   label.value = ''
   challenge.value = null
   callbackInput.value = ''
+  cookieInput.value = ''
   completedAccount.value = null
   starting.value = false
   completing.value = false
@@ -187,10 +191,38 @@ function buildRedirectUri(vendor: GatewayVendor): string {
   return `http://localhost:${appPort}/api/admin/llm-gateway/oauth/callback`
 }
 
+async function handleImportCookies(trimmedLabel: string) {
+  const cookies = cookieInput.value.trim()
+  if (!cookies) {
+    errorMessage.value = t('llmGateway.oauthModal.cookieRequired')
+    return
+  }
+  starting.value = true
+  errorMessage.value = ''
+  try {
+    const res = await llmGatewayApi.importCookieAccount({
+      vendor: selectedVendor.value,
+      label: trimmedLabel,
+      cookies,
+    })
+    cookieInput.value = ''
+    completedAccount.value = res.account
+    emit('completed', res.account)
+  } catch (cause) {
+    errorMessage.value = formatApiError(cause)
+  } finally {
+    starting.value = false
+  }
+}
+
 async function handleStartOAuth() {
   const trimmedLabel = label.value.trim()
   if (!trimmedLabel) {
     errorMessage.value = t('llmGateway.editModal.labelRequired')
+    return
+  }
+  if (isCookieVendor.value) {
+    await handleImportCookies(trimmedLabel)
     return
   }
   starting.value = true
@@ -202,18 +234,9 @@ async function handleStartOAuth() {
       label: trimmedLabel,
       redirect_uri: redirectUri,
     })
-    const directCookie = selectedVendor.value === 'muse' ? callbackInput.value.trim() : ''
-    if (directCookie) {
-      const res = await llmGatewayApi.completeOAuthSession(result.session_id, {
-        callback_url_or_code: directCookie,
-      })
-      completedAccount.value = res.account
-      emit('completed', res.account)
-      return
-    }
     challenge.value = result
     startPolling(result.session_id, result.poll_interval_secs)
-    if (result.mode === 'pkce' && result.authorize_url && selectedVendor.value !== 'muse') {
+    if (result.mode === 'pkce' && result.authorize_url) {
       authPopup = window.open(result.authorize_url, 'oauth_popup', 'width=640,height=720')
     }
   } catch (cause) {
@@ -360,7 +383,7 @@ onBeforeUnmount(() => {
               <div class="flex w-full items-center justify-between gap-2">
                 <span class="font-semibold text-sm">{{ v.display_name }}</span>
                 <Badge variant="outline" class="font-mono text-[10px]">
-                  {{ v.vendor === 'muse' ? 'CDP / Cookie' : v.login_mode === 'device_code' ? 'Device Code' : 'PKCE' }}
+                  {{ v.login_mode === 'cookie_paste' ? 'Cookie' : v.login_mode === 'device_code' ? 'Device Code' : 'PKCE' }}
                 </Badge>
               </div>
               <span class="mt-1 font-mono text-xs text-muted-foreground">{{ v.pool_binding }}</span>
@@ -382,16 +405,19 @@ onBeforeUnmount(() => {
           </small>
         </label>
 
-        <label v-if="selectedVendor === 'muse'" class="block space-y-1.5">
-          <span class="text-sm font-medium">{{ t('llmGateway.oauthModal.step2MuseManual') }}</span>
+        <label v-if="isCookieVendor" class="block space-y-1.5">
+          <span class="text-sm font-medium">{{ t('llmGateway.oauthModal.cookieLabel') }} <span class="text-danger">*</span></span>
           <textarea
-            v-model="callbackInput"
+            v-model="cookieInput"
+            data-input="oauth-cookies"
             rows="5"
-            class="admin-input font-mono text-xs"
-            placeholder='{"url":"https://muse.ai","cookies":[{"domain":".muse.ai","name":"hatch_sess","value":"..."}, ...]}'
+            class="admin-input min-h-28 font-mono text-xs"
+            autocomplete="off"
+            spellcheck="false"
+            placeholder="hatch_sess=...; hatch_gw=...; hatch_vml=...; hatch_native_auth_device=..."
           />
           <small class="block text-xs text-muted-foreground">
-            {{ t('llmGateway.oauthModal.museHint') }}
+            {{ t('llmGateway.oauthModal.cookieHint') }}
           </small>
         </label>
 
@@ -407,7 +433,13 @@ onBeforeUnmount(() => {
           <Button type="button" variant="outline" @click="open = false">{{ t('common.cancel') }}</Button>
           <Button type="submit" :disabled="starting">
             <KeyRound class="size-4" aria-hidden="true" />
-            {{ starting ? t('llmGateway.oauthModal.starting') : t('llmGateway.oauthModal.startBtn') }}
+            {{
+              starting
+                ? t('llmGateway.oauthModal.starting')
+                : isCookieVendor
+                  ? t('llmGateway.oauthModal.cookieSubmit')
+                  : t('llmGateway.oauthModal.startBtn')
+            }}
           </Button>
         </div>
       </form>
@@ -486,24 +518,16 @@ onBeforeUnmount(() => {
               </div>
             </div>
             <p class="text-xs text-muted-foreground">
-              {{ challenge.vendor === 'muse' ? t('llmGateway.oauthModal.museHint') : t('llmGateway.oauthModal.pkceHint') }}
+              {{ t('llmGateway.oauthModal.pkceHint') }}
             </p>
           </div>
 
           <form class="space-y-3" @submit.prevent="handleManualComplete">
             <label class="block space-y-1.5">
               <span class="text-sm font-medium">
-                {{ challenge.vendor === 'muse' ? t('llmGateway.oauthModal.step2MuseManual') : t('llmGateway.oauthModal.step2Manual') }}
+                {{ t('llmGateway.oauthModal.step2Manual') }}
               </span>
-              <textarea
-                v-if="challenge.vendor === 'muse'"
-                v-model="callbackInput"
-                rows="5"
-                class="admin-input font-mono text-xs"
-                placeholder='{"url":"https://muse.ai","cookies":[{"domain":".muse.ai","name":"hatch_sess","value":"..."}, ...]}'
-              />
               <input
-                v-else
                 v-model="callbackInput"
                 class="admin-input font-mono text-xs"
                 placeholder="http://localhost:.../callback?code=...&state=..."

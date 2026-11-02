@@ -132,11 +132,14 @@ pub trait OAuthVendorDriver: Send + Sync {
         ))
     }
 
-    async fn poll_pkce_session(
+    /// Builds an account from pasted session cookies for `OAuthLoginMode::CookiePaste` vendors.
+    async fn import_cookie_session(
         &self,
-        _state: &str,
-    ) -> Result<Option<ExchangedOAuthAccount>, GatewayError> {
-        Ok(None)
+        _raw_cookies: &str,
+    ) -> Result<ExchangedOAuthAccount, GatewayError> {
+        Err(GatewayError::OAuthExchangeFailed(
+            "cookie_import_not_supported_for_vendor".to_owned(),
+        ))
     }
 
     async fn start_device_flow(&self) -> Result<DeviceCodeGrant, GatewayError> {
@@ -285,6 +288,14 @@ impl OAuthVendorDriver for FakeOAuthVendorDriver {
             .append_pair("code_challenge_method", "S256")
             .append_pair("redirect_uri", redirect_uri);
         Ok(url.to_string())
+    }
+
+    async fn import_cookie_session(
+        &self,
+        raw_cookies: &str,
+    ) -> Result<ExchangedOAuthAccount, GatewayError> {
+        self.exchange_pkce_code(raw_cookies, "", "fake_verifier", "")
+            .await
     }
 
     async fn exchange_pkce_code(

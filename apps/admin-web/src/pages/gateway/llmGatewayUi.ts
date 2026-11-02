@@ -4,6 +4,7 @@ import type {
   GatewayAccountView,
   GatewayQuotaWindow,
   GatewayVendor,
+  OAuthLoginMode,
 } from '@/api/types/llm-gateway'
 
 export const ALL_CAPABILITY_TAGS = [
@@ -48,8 +49,14 @@ const VENDOR_META: Record<GatewayVendor, VendorMeta> = {
   muse: {
     short: 'MU',
     logoClass: 'border-pink-500/30 bg-pink-500/12 text-pink-600 dark:text-pink-400',
-    description: 'Browser cookie / multimodal generation',
+    description: 'Pasted cookie / multimodal generation',
   },
+}
+
+export function loginModeLabel(mode: OAuthLoginMode | null | undefined): string {
+  if (mode === 'device_code') return 'Device code'
+  if (mode === 'cookie_paste') return 'Cookie'
+  return 'OAuth PKCE'
 }
 
 export function vendorMeta(vendor: GatewayVendor | string): VendorMeta {

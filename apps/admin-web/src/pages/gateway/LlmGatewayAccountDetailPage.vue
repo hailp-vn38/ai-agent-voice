@@ -28,6 +28,7 @@ import {
   formatResetCountdown,
   formatTimestamp,
   formatWindowUsage,
+  loginModeLabel,
   maskedCredentialSummary,
   quotaBarColorClass,
   statusBadgeClass,
@@ -329,7 +330,7 @@ onMounted(() => {
                   </h2>
                   <p class="text-xs text-muted-foreground">
                     {{ vendorInfo?.display_name || account.vendor }} ·
-                    {{ vendorInfo?.login_mode === 'device_code' ? 'Device code' : 'OAuth PKCE' }}
+                    {{ loginModeLabel(vendorInfo?.login_mode) }}
                   </p>
                 </div>
               </div>
