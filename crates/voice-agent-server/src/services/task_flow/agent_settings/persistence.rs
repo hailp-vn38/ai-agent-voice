@@ -289,8 +289,13 @@ fn format_active_subagents_block(
     } else {
         ""
     };
+    let cloud_worker_rules = if lines.iter().any(|line| line.starts_with("- `cloud_worker`")) {
+        "When delegating to `cloud_worker`:\n- List every requested goal and its order before the first delegation. For example, \"A sau khi hoàn thành tiếp với B\" means A first, then B.\n- Use one new `cloud_worker` per goal, and wait for each to finish before starting the next.\n- Do not add constraints the user did not ask for, such as forbidding artifacts.\n- Say a goal or earlier work is done only if a Sub-Agent result in this session shows it.\n- In the final answer, report each goal's outcome, include the returned artifact IDs and source URLs, keep reported data limitations, and say the content comes from an external service.\n"
+    } else {
+        ""
+    };
     format!(
-        "\n\n<active_subagents>\nCurrently enabled subagents you may delegate to via the `subagent` tool (`agent` parameter):\n{body}\nDo NOT delegate to any subagent not listed in <active_subagents>.\n{cloud_guard}</active_subagents>\n"
+        "\n\n<active_subagents>\nCurrently enabled subagents you may delegate to via the `subagent` tool (`agent` parameter):\n{body}\nDo NOT delegate to any subagent not listed in <active_subagents>.\n{cloud_guard}{cloud_worker_rules}</active_subagents>\n"
     )
 }
 

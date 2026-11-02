@@ -831,3 +831,56 @@ fn muse_task_settings_upgrade_preserves_custom_prompts_and_refreshes_discovery()
     );
     std::fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn cloud_worker_prompts_keep_every_goal_and_the_muse_report_intact() {
+    let root = std::env::temp_dir().join(format!("muse-prompts-{}", uuid::Uuid::new_v4()));
+    let root_rules = [
+        "List every requested goal",
+        "one new `cloud_worker` per goal",
+        "only if a Sub-Agent result in this session shows it",
+        "Do not add constraints the user did not ask for",
+        "artifact IDs",
+        "limitations",
+    ];
+
+    let mut disabled = PersistedBackgroundSettings::default();
+    disabled.agents.remove("cloud_worker");
+    write_agent_prompts(&root, &disabled).unwrap();
+    let root_prompt = std::fs::read_to_string(root.join("daily_root.md")).unwrap();
+    for rule in root_rules {
+        assert!(!root_prompt.contains(rule), "disabled agent leaked {rule}");
+    }
+
+    let mut enabled = disabled.clone();
+    enabled.agents.insert(
+        "daily_root".into(),
+        AgentConfigOverride {
+            system_prompt: Some("Keep my custom policy.".into()),
+            ..Default::default()
+        },
+    );
+    enabled
+        .agents
+        .insert("cloud_worker".into(), AgentConfigOverride::default());
+    write_agent_prompts(&root, &enabled).unwrap();
+    let root_prompt = std::fs::read_to_string(root.join("daily_root.md")).unwrap();
+    assert!(root_prompt.contains("Keep my custom policy."));
+    for rule in root_rules {
+        assert!(root_prompt.contains(rule), "missing {rule}");
+    }
+
+    let cloud_prompt = std::fs::read_to_string(root.join("cloud_worker.md")).unwrap();
+    for rule in [
+        "output=markdown",
+        "same output",
+        "Do not rewrite, expand or restructure",
+        "at most 10 bullets",
+        "source URLs",
+        "limitations unchanged",
+    ] {
+        assert!(cloud_prompt.contains(rule), "missing {rule}");
+    }
+    assert!(!cloud_prompt.contains("Return useful messages"));
+    std::fs::remove_dir_all(root).unwrap();
+}
