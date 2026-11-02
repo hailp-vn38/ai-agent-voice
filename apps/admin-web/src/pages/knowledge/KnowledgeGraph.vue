@@ -708,12 +708,12 @@ function chooseNodeFromSearch(id: string) {
   chooseNode(id)
 }
 
-function focusNode(id: string) {
+function focusNode(id: string, showInspector = true) {
   if (!visibleNodes.value.some(node => node.id === id)) return
   selectedEdgeId.value = null
   selectedId.value = id
   activeId.value = id
-  nodeInspectorOpen.value = scope.value === 'answer'
+  nodeInspectorOpen.value = showInspector && scope.value === 'answer'
   const node = cy?.getElementById(id)
   node?.select()
   if (node && cy && typeof cy.center === 'function') cy.center(node)

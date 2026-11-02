@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onUpdated, ref, watch } from 'vue'
-import { RotateCcw, Send, Square } from '@lucide/vue'
+import { AlertCircle, ArrowUp, ArrowUpRight, BookOpenText, ChevronRight, CircleStop, Files, LoaderCircle, Network, RotateCcw, Search, Sparkles, Square, Wrench } from '@lucide/vue'
 import { renderMarkdown } from '@/lib/markdown'
 import { useI18n } from '@/composables/useI18n'
 import type { WikiChatMessage } from './useWikiChat'
@@ -26,6 +26,28 @@ const emit = defineEmits<{
 const { t } = useI18n()
 const draft = ref('')
 const panelElement = ref<HTMLElement | null>(null)
+const messagesElement = ref<HTMLElement | null>(null)
+const questionInput = ref<HTMLTextAreaElement | null>(null)
+// How close to the end still counts as following the answer as it streams.
+const FOLLOW_DISTANCE = 72
+let followingAnswer = true
+
+function onMessagesScroll() {
+  const element = messagesElement.value
+  if (element) followingAnswer = element.scrollHeight - element.scrollTop - element.clientHeight < FOLLOW_DISTANCE
+}
+watch(() => props.messages.map(message => message.text.length + message.tools.length).join(), () => {
+  const element = messagesElement.value
+  if (element && followingAnswer) element.scrollTop = element.scrollHeight
+}, { flush: 'post' })
+watch(() => props.messages.length, () => { followingAnswer = true }, { flush: 'pre' })
+
+watch(draft, () => {
+  const input = questionInput.value
+  if (!input) return
+  input.style.height = 'auto'
+  input.style.height = input.scrollHeight + 'px'
+}, { flush: 'post' })
 
 function submit() {
   const text = draft.value.trim()
@@ -49,7 +71,7 @@ function citationPath(target: string, citations: string[]): string | null {
 
 function renderedAnswer(message: WikiChatMessage): string {
   const template = document.createElement('template')
-  template.innerHTML = renderMarkdown(message.text || (message.status === 'streaming' ? t('knowledgeV3.chatThinking') : ''))
+  template.innerHTML = renderMarkdown(message.text)
   template.content.querySelectorAll<HTMLAnchorElement>('a.knowledge-wikilink').forEach(anchor => {
     const path = citationPath(anchor.dataset.wikilink ?? '', message.citations)
     if (!path) {
@@ -60,7 +82,9 @@ function renderedAnswer(message: WikiChatMessage): string {
     anchor.className = 'wiki-chat-citation'
     anchor.href = '#'
     anchor.dataset.citationPath = path
-    anchor.textContent = `[${index + 1}]`
+    anchor.textContent = String(index + 1)
+    anchor.title = sourceTitle(message, path)
+    anchor.setAttribute('aria-label', t('knowledgeV3.chatSources') + ' ' + (index + 1) + ': ' + anchor.title)
   })
   return template.innerHTML
 }
@@ -107,6 +131,28 @@ function sourceTitle(message: WikiChatMessage, path: string): string {
   return message.graph?.nodes.find(node => node.path === path || node.id === path)?.title ?? path
 }
 
+function toolIcon(name: string) {
+  if (name === 'wiki_query') return Search
+  if (name === 'wiki_get') return BookOpenText
+  if (name === 'wiki_multi_get') return Files
+  return Wrench
+}
+
+function toolLabel(name: string): string {
+  if (name === 'wiki_query') return t('knowledgeV3.chatToolSearch')
+  if (name === 'wiki_get') return t('knowledgeV3.chatToolRead')
+  if (name === 'wiki_multi_get') return t('knowledgeV3.chatToolReadMany')
+  return name
+}
+
+function completedTools(message: WikiChatMessage) {
+  return message.tools.filter(tool => tool.state === 'completed')
+}
+
+function activeTools(message: WikiChatMessage) {
+  return message.tools.filter(tool => tool.state !== 'completed')
+}
+
 function errorText(code: string | null): string {
   if (code === 'wiki_chat_not_configured') return t('knowledgeV3.chatNotConfigured')
   if (code === 'wiki_chat_busy') return t('knowledgeV3.chatBusy')
@@ -118,81 +164,113 @@ function errorText(code: string | null): string {
 <template>
   <aside id="wiki-chat-panel" ref="panelElement" class="wiki-chat-panel" :class="{ 'is-drawer-open': drawerOpen }" :aria-label="t('knowledgeV3.chatTitle')">
     <header class="wiki-chat-header">
-      <div>
+      <slot name="title">
+        <span class="wiki-chat-orb wiki-chat-orb-small" aria-hidden="true"><Sparkles :size="11" /></span>
         <h2>{{ t('knowledgeV3.chatTitle') }}</h2>
-        <p>{{ t('knowledgeV3.chatDescription') }}</p>
-      </div>
-      <button type="button" class="wiki-chat-icon-button" :aria-label="t('knowledgeV3.chatClear')"
-        :title="t('knowledgeV3.chatClear')" :disabled="busy && messages.length === 0" @click="emit('reset')">
-        <RotateCcw :size="15" aria-hidden="true" />
+      </slot>
+      <button v-if="messages.length" type="button" class="wiki-chat-icon-button" :aria-label="t('knowledgeV3.chatClear')"
+        :title="t('knowledgeV3.chatClear')" @click="emit('reset')">
+        <RotateCcw :size="14" aria-hidden="true" />
       </button>
     </header>
 
     <div class="wiki-chat-announcement sr-only" role="status" aria-live="polite" aria-atomic="true">{{ completedAnnouncement }}</div>
-    <div class="wiki-chat-messages" :aria-label="t('knowledgeV3.chatConversation')">
-      <template v-if="messages.length === 0">
+    <div ref="messagesElement" class="wiki-chat-messages" :aria-label="t('knowledgeV3.chatConversation')" @scroll.passive="onMessagesScroll">
+      <div v-if="messages.length === 0" class="wiki-chat-welcome">
+        <span class="wiki-chat-orb" aria-hidden="true"><Sparkles :size="22" /></span>
         <p class="wiki-chat-empty">{{ t('knowledgeV3.chatEmpty') }}</p>
+        <p class="wiki-chat-empty-note">{{ t('knowledgeV3.chatDescription') }}</p>
         <div v-if="suggestions?.length" class="wiki-chat-suggestions" :aria-label="t('knowledgeV3.chatSuggestions')">
           <button v-for="suggestion in suggestions" :key="suggestion.label" type="button" class="wiki-chat-suggestion"
-            @click="emit('send', suggestion.prompt)">{{ suggestion.label }}</button>
+            :title="suggestion.prompt" @click="emit('send', suggestion.prompt)">
+            <span>{{ suggestion.label }}</span><ArrowUpRight :size="13" aria-hidden="true" />
+          </button>
         </div>
-      </template>
+      </div>
       <article v-for="message in messages" :key="message.id" class="wiki-chat-message"
-        :class="['is-' + message.role, 'is-' + message.status]" :data-message-id="message.id">
-        <div class="wiki-chat-message-label">{{ message.role === 'user' ? t('knowledgeV3.chatYou') : t('knowledgeV3.chatAssistant') }}</div>
+        :class="['is-' + message.role, 'is-' + message.status]" :data-message-id="message.id"
+        :aria-label="message.role === 'user' ? t('knowledgeV3.chatYou') : t('knowledgeV3.chatAssistant')">
         <div v-if="message.role === 'user'" class="wiki-chat-user-text">{{ message.text }}</div>
-        <div v-else class="wiki-chat-answer"
-          @click="onAnswerClick" @mouseover="onAnswerMouseOver" @mouseout="onAnswerMouseOut"
-          v-html="renderedAnswer(message)"></div>
+        <template v-else>
+          <details v-if="completedTools(message).length" class="wiki-chat-trail">
+            <summary>
+              <ChevronRight :size="12" class="wiki-chat-trail-chevron" aria-hidden="true" />
+              <span>{{ t('knowledgeV3.chatTrail', { count: completedTools(message).length }) }}</span>
+            </summary>
+            <div class="wiki-chat-trail-steps">
+              <details v-for="tool in completedTools(message)" :key="tool.call_id" class="wiki-chat-tool-summary">
+                <summary>
+                  <component :is="toolIcon(tool.name)" :size="12" aria-hidden="true" />
+                  <span class="wiki-chat-tool-name">{{ toolLabel(tool.name) }}</span>
+                  <span v-if="tool.query" class="wiki-chat-tool-query">{{ tool.query }}</span>
+                </summary>
+                <p v-if="tool.query" class="wiki-chat-tool-detail-query">{{ tool.query }}</p>
+                <ul v-if="tool.pages.length" class="wiki-chat-tool-pages">
+                  <li v-for="path in tool.pages" :key="path">{{ path }}</li>
+                </ul>
+              </details>
+            </div>
+          </details>
 
-        <ul v-if="message.tools.some(tool => tool.state !== 'completed')" class="wiki-chat-tools" :aria-label="t('knowledgeV3.chatToolActivity')">
-          <li v-for="tool in message.tools.filter(item => item.state !== 'completed')" :key="tool.call_id" :class="'is-' + tool.state">
-            <span class="wiki-chat-tool-state" aria-hidden="true">{{ tool.state === 'completed' ? '✓' : tool.state === 'failed' ? '!' : '…' }}</span>
-            <span>{{ tool.name }}</span>
-            <span v-if="tool.query" class="wiki-chat-tool-query">{{ tool.query }}</span>
-          </li>
-        </ul>
-        <details v-for="tool in message.tools.filter(item => item.state === 'completed')" :key="tool.call_id" class="wiki-chat-tool-summary">
-          <summary><span>{{ tool.name }}</span><span v-if="tool.query" class="wiki-chat-tool-query">{{ tool.query }}</span></summary>
-          <p v-if="tool.query" class="wiki-chat-tool-detail-query">{{ tool.query }}</p>
-          <ul v-if="tool.pages.length" class="wiki-chat-tool-pages">
-            <li v-for="path in tool.pages" :key="path">{{ path }}</li>
+          <ul v-if="activeTools(message).length" class="wiki-chat-tools" :aria-label="t('knowledgeV3.chatToolActivity')">
+            <li v-for="tool in activeTools(message)" :key="tool.call_id" :class="'is-' + tool.state">
+              <AlertCircle v-if="tool.state === 'failed'" :size="12" aria-hidden="true" />
+              <LoaderCircle v-else :size="12" class="wiki-chat-spinner" aria-hidden="true" />
+              <span class="wiki-chat-tool-name">{{ toolLabel(tool.name) }}</span>
+              <span v-if="tool.query" class="wiki-chat-tool-query">{{ tool.query }}</span>
+            </li>
           </ul>
-        </details>
 
-        <ol v-if="message.citations.length" class="wiki-chat-sources" :aria-label="t('knowledgeV3.chatSources')">
-          <li v-for="(path, index) in message.citations" :key="path"
-            :class="{ 'is-highlighted': highlightedNode === path }"
-            @mouseenter="emit('highlightCitation', path)" @mouseleave="emit('highlightCitation', null)">
-            <button type="button" class="wiki-chat-source-link" @click="emit('focusCitation', path)">
-              <span>[{{ index + 1 }}]</span> {{ sourceTitle(message, path) }}
-            </button>
-          </li>
-        </ol>
+          <div v-if="message.status === 'streaming' && !message.text && !activeTools(message).length" class="wiki-chat-thinking">
+            <span class="wiki-chat-thinking-dots" aria-hidden="true"><i></i><i></i><i></i></span>
+            <span>{{ t('knowledgeV3.chatThinking') }}</span>
+          </div>
+          <div v-if="message.text" class="wiki-chat-answer"
+            @click="onAnswerClick" @mouseover="onAnswerMouseOver" @mouseout="onAnswerMouseOut"
+            v-html="renderedAnswer(message)"></div>
 
-        <p v-if="message.status === 'stopped'" class="wiki-chat-status">{{ t('knowledgeV3.chatStopped') }}</p>
-        <div v-if="message.status === 'failed'" class="wiki-chat-error" role="alert">
-          <span>{{ errorText(message.errorCode) }}</span>
-          <a v-if="message.errorCode === 'wiki_chat_not_configured'" href="/jobs/settings/providers">
-            {{ t('knowledgeV3.chatOpenSettings') }}
-          </a>
-          <button v-else type="button" @click="emit('retry', message.id)">{{ t('knowledgeV3.chatRetry') }}</button>
-        </div>
-        <button v-if="message.graph?.nodes.length" type="button" class="wiki-chat-show-graph"
-          @click="emit('showGraph', message.id)">{{ t('knowledgeV3.chatShowGraph') }}</button>
+          <ol v-if="message.citations.length" class="wiki-chat-sources" :aria-label="t('knowledgeV3.chatSources')">
+            <li v-for="(path, index) in message.citations" :key="path"
+              :class="{ 'is-highlighted': highlightedNode === path }"
+              @mouseenter="emit('highlightCitation', path)" @mouseleave="emit('highlightCitation', null)">
+              <button type="button" class="wiki-chat-source-link" :title="path" @click="emit('focusCitation', path)">
+                <span class="wiki-chat-source-number">{{ index + 1 }}</span>
+                <span class="wiki-chat-source-title">{{ sourceTitle(message, path) }}</span>
+              </button>
+            </li>
+          </ol>
+
+          <p v-if="message.status === 'stopped'" class="wiki-chat-status">
+            <CircleStop :size="12" aria-hidden="true" /> {{ t('knowledgeV3.chatStopped') }}
+          </p>
+          <div v-if="message.status === 'failed'" class="wiki-chat-error" role="alert">
+            <AlertCircle :size="14" class="shrink-0" aria-hidden="true" />
+            <span>{{ errorText(message.errorCode) }}</span>
+            <a v-if="message.errorCode === 'wiki_chat_not_configured'" href="/jobs/settings/providers">
+              {{ t('knowledgeV3.chatOpenSettings') }}
+            </a>
+            <button v-else type="button" @click="emit('retry', message.id)">{{ t('knowledgeV3.chatRetry') }}</button>
+          </div>
+          <button v-if="message.graph?.nodes.length" type="button" class="wiki-chat-show-graph"
+            @click="emit('showGraph', message.id)">
+            <Network :size="12" aria-hidden="true" /> {{ t('knowledgeV3.chatShowGraph') }}
+          </button>
+        </template>
       </article>
     </div>
 
     <form class="wiki-chat-compose" @submit.prevent="submit">
       <label class="sr-only" for="wiki-chat-question">{{ t('knowledgeV3.chatInputLabel') }}</label>
-      <textarea id="wiki-chat-question" v-model="draft" rows="3" :placeholder="t('knowledgeV3.chatPlaceholder')"
-        :disabled="busy" @keydown.enter.exact.prevent="submit"></textarea>
-      <div class="wiki-chat-compose-actions">
-        <button v-if="busy" type="button" class="wiki-chat-stop" @click="emit('stop')">
-          <Square :size="13" aria-hidden="true" /> {{ t('knowledgeV3.chatStop') }}
+      <div class="wiki-chat-compose-box">
+        <textarea id="wiki-chat-question" ref="questionInput" v-model="draft" rows="1" :placeholder="t('knowledgeV3.chatPlaceholder')"
+          :disabled="busy" @keydown.enter.exact.prevent="submit"></textarea>
+        <button v-if="busy" type="button" class="wiki-chat-stop" :aria-label="t('knowledgeV3.chatStop')"
+          :title="t('knowledgeV3.chatStop')" @click="emit('stop')">
+          <Square :size="12" fill="currentColor" aria-hidden="true" />
         </button>
-        <button v-else type="submit" class="wiki-chat-send" :disabled="!draft.trim()">
-          <Send :size="13" aria-hidden="true" /> {{ t('knowledgeV3.chatSend') }}
+        <button v-else type="submit" class="wiki-chat-send" :aria-label="t('knowledgeV3.chatSend')"
+          :title="t('knowledgeV3.chatSend')" :disabled="!draft.trim()">
+          <ArrowUp :size="15" aria-hidden="true" />
         </button>
       </div>
     </form>

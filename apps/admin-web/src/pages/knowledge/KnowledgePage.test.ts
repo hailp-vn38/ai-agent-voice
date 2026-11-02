@@ -233,6 +233,9 @@ it('links only evidenced citations, highlights graph sources, restores an old an
       { type: 'folder', space: 'wiki', path: 'wiki/entities', name: 'entities', editable: true },
       { type: 'folder', space: 'wiki', path: 'wiki/syntheses', name: 'syntheses', editable: true },
     ] }
+    if (url === '/api/admin/knowledge/pages/wiki%2Fconcepts%2Fknown.md') return {
+      id: 'wiki/concepts/known.md', title: 'Known', body: 'Known body', status: 'verified', revision: 1, source_ref: null,
+    }
     return original(url, options)
   })
   const graph = (revision: number) => ({ revision, nodes: [
@@ -258,7 +261,7 @@ it('links only evidenced citations, highlights graph sources, restores an old an
     expect(suggestions.map(button => button.text())).toEqual(expect.arrayContaining(['concepts', 'entities', 'syntheses']))
     await suggestions[0]!.trigger('click')
     await flushPromises()
-    expect(wrapper.findAll('.wiki-chat-citation').map(link => link.text())).toEqual(['[1]', '[2]'])
+    expect(wrapper.findAll('.wiki-chat-citation').map(link => link.text())).toEqual(['1', '2'])
     expect(wrapper.get('.wiki-chat-answer').text()).toContain('Made up')
     expect(wrapper.find('.wiki-chat-answer a[data-wikilink*="invented"]').exists()).toBe(false)
     expect(wrapper.findAll('.wiki-chat-sources li')).toHaveLength(2)
@@ -271,7 +274,11 @@ it('links only evidenced citations, highlights graph sources, restores an old an
     await citation.trigger('mouseover')
     expect(highlightNodeMock).toHaveBeenCalledWith('wiki/concepts/known.md')
     await citation.trigger('click')
-    expect(focusNodeMock).toHaveBeenCalledWith('wiki/concepts/known.md')
+    expect(focusNodeMock).toHaveBeenCalledWith('wiki/concepts/known.md', false)
+    await flushPromises()
+    expect(wrapper.get('.doc h1').text()).toBe('Known')
+    expect((wrapper.get('.wiki-chat-panel').element as HTMLElement).style.display).not.toBe('none')
+    expect(wrapper.get('.wiki-chat-answer').text()).toContain('Made up')
     await wrapper.get('.mock-node-hover').trigger('mouseenter')
     expect(wrapper.find('.wiki-chat-sources li.is-highlighted').exists()).toBe(true)
 
@@ -822,7 +829,7 @@ it('shares a single pair of left and right panel toggle actions across Knowledge
     const outline = first.get('aside.a-outline')
     expect(explorer.classes()).not.toContain('is-collapsed')
     expect(outline.classes()).not.toContain('is-collapsed')
-    expect(first.find('.a-outline-top button').exists()).toBe(false)
+    expect(first.findAll('.a-outline-top button').map(button => button.attributes('role'))).toEqual(['tab', 'tab'])
     expect(first.find('button[aria-label="Immersive view"]').exists()).toBe(false)
     expect(first.find('button[aria-label="Split view unavailable"]').exists()).toBe(false)
 
@@ -842,7 +849,7 @@ it('shares a single pair of left and right panel toggle actions across Knowledge
     expect(first.find('aside.a-outline').exists()).toBe(false)
     expect(first.find('button[aria-label="Immersive view"]').exists()).toBe(false)
     expect(first.find('.a-tab-actions button[aria-label="Expand explorer"]').exists()).toBe(true)
-    expect(first.find('.a-tab-actions button[aria-label="Collapse chat"]').exists()).toBe(true)
+    expect(first.find('.a-tab-actions button[aria-label="Expand chat"]').exists()).toBe(true)
   } finally {
     first.unmount()
   }
@@ -1245,3 +1252,199 @@ it('restores open tabs and panes after a reload', async () => {
     expect(second.findAll('.doc h1').map(heading => heading.text())).toEqual(['Alpha', 'Beta'])
   } finally { second.unmount() }
 })
+
+function mockPanelRects(wrapper: ReturnType<typeof mount>, widths: Record<string, number>) {
+  for (const [selector, width] of Object.entries(widths)) {
+    vi.spyOn(wrapper.get(selector).element, 'getBoundingClientRect').mockReturnValue({ width } as DOMRect)
+  }
+}
+
+it('places the explorer toggle at the left of the tab bar and the right panel toggle at the right', async () => {
+  const wrapper = mount(KnowledgePage)
+  try {
+    await flushPromises()
+    const bar = wrapper.get('.a-tabs').element
+    const labels = (group: Element | null) => Array.from(group?.querySelectorAll('button') ?? [])
+      .map(button => button.getAttribute('aria-label'))
+    expect(labels(bar.firstElementChild)).toEqual(['Collapse explorer'])
+    expect(labels(bar.lastElementChild)).toEqual(['Collapse outline & links'])
+  } finally { wrapper.unmount() }
+})
+
+it('resizes the explorer and outline by dragging, clamps them, and remembers the widths', async () => {
+  const first = mount(KnowledgePage)
+  try {
+    await flushPromises()
+    mockPanelRects(first, { '.a-explorer': 258, '.a-outline': 320, '.a-workspace': 900 })
+
+    first.get('.a-panel-resizer-explorer').element.dispatchEvent(new MouseEvent('pointerdown', { clientX: 258, bubbles: true }))
+    window.dispatchEvent(new MouseEvent('pointermove', { clientX: 358 }))
+    window.dispatchEvent(new MouseEvent('pointerup'))
+    await flushPromises()
+    expect((first.get('.a-explorer').element as HTMLElement).style.width).toBe('358px')
+
+    // Short of the hide threshold, the panel snaps back to its minimum width.
+    first.get('.a-panel-resizer-right').element.dispatchEvent(new MouseEvent('pointerdown', { clientX: 1000, bubbles: true }))
+    window.dispatchEvent(new MouseEvent('pointermove', { clientX: 1100 }))
+    window.dispatchEvent(new MouseEvent('pointerup'))
+    await flushPromises()
+    expect((first.get('.knowledge-a').element as HTMLElement).style.getPropertyValue('--knowledge-right-width')).toBe('240px')
+  } finally { first.unmount() }
+
+  const second = mount(KnowledgePage)
+  try {
+    await flushPromises()
+    expect((second.get('.a-explorer').element as HTMLElement).style.width).toBe('358px')
+    await second.get('[aria-label="Collapse explorer"]').trigger('click')
+    expect((second.get('.a-explorer').element as HTMLElement).style.width).toBe('')
+    expect(second.find('.a-panel-resizer-explorer').exists()).toBe(false)
+  } finally { second.unmount() }
+})
+
+it('hides a panel dragged past its minimum width and restores its earlier width when reopened', async () => {
+  const wrapper = mount(KnowledgePage)
+  try {
+    await flushPromises()
+    mockPanelRects(wrapper, { '.a-explorer': 300, '.a-workspace': 900 })
+    wrapper.get('.a-panel-resizer-explorer').element.dispatchEvent(new MouseEvent('pointerdown', { clientX: 300, bubbles: true }))
+    window.dispatchEvent(new MouseEvent('pointermove', { clientX: 100 }))
+    await flushPromises()
+    expect(wrapper.get('.knowledge-a').attributes('data-hiding-panel')).toBe('explorer')
+    window.dispatchEvent(new MouseEvent('pointerup'))
+    await flushPromises()
+    expect(wrapper.get('.knowledge-a').classes()).toContain('is-explorer-collapsed')
+    expect(wrapper.get('.knowledge-a').attributes('data-hiding-panel')).toBeUndefined()
+    expect(window.localStorage.getItem('voice-agent-knowledge-explorer-collapsed')).toBe('true')
+
+    await wrapper.get('[aria-label="Expand explorer"]').trigger('click')
+    expect((wrapper.get('.a-explorer').element as HTMLElement).style.width).toBe('300px')
+  } finally { wrapper.unmount() }
+})
+
+it('shows only Graph when no file is open and returns to reading when a file opens', async () => {
+  mockTwoWikiNotes()
+  const wrapper = mount(KnowledgePage)
+  try {
+    await flushPromises()
+    await wrapper.get('.a-tab-close').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('button.a-tab').exists()).toBe(false)
+    expect(wrapper.find('.doc').exists()).toBe(false)
+    expect(wrapper.find('.a-pathbar').exists()).toBe(false)
+    expect(wrapper.text()).not.toContain('Select a Markdown file')
+    expect(wrapper.get('.knowledge-a').classes()).toContain('is-graph-view')
+    expect(wrapper.find('.mock-knowledge-graph').exists()).toBe(true)
+
+    await wrapper.findAll('.tree-leaf').find(leaf => leaf.text() === 'beta')!.trigger('click')
+    await flushPromises()
+    expect(wrapper.get('.doc h1').text()).toBe('Beta')
+    expect(wrapper.findAll('button.a-tab')).toHaveLength(1)
+    expect(wrapper.get('.knowledge-a').classes()).not.toContain('is-graph-view')
+  } finally { wrapper.unmount() }
+})
+
+it('opens an Explorer file in a new tab while Graph is showing instead of replacing the hidden note', async () => {
+  mockTwoWikiNotes()
+  const wrapper = mount(KnowledgePage)
+  try {
+    await flushPromises()
+    await wrapper.get('button.other-tab').trigger('click')
+    await flushPromises()
+    await wrapper.findAll('.tree-leaf').find(leaf => leaf.text() === 'beta')!.trigger('click')
+    await flushPromises()
+    expect(wrapper.findAll('button.a-tab .tab-name').map(tab => tab.text())).toEqual(['Alpha', 'Beta'])
+    expect(wrapper.get('.doc h1').text()).toBe('Beta')
+  } finally { wrapper.unmount() }
+})
+
+it('closes a pane left without a file, keeping the pane that hosts Graph', async () => {
+  mockTwoWikiNotes()
+  const wrapper = mount(KnowledgePage)
+  try {
+    await flushPromises()
+    await openInTabButton(wrapper, 'Open to the side', 'beta').trigger('click')
+    await flushPromises()
+    await wrapper.findAll('.a-pane')[1]!.get('.a-tab-close').trigger('click')
+    await flushPromises()
+    expect(wrapper.findAll('.a-pane')).toHaveLength(1)
+    expect(wrapper.get('.doc h1').text()).toBe('Alpha')
+  } finally { wrapper.unmount() }
+})
+
+it('stays on Graph after a reload when every file was closed', async () => {
+  mockTwoWikiNotes()
+  const first = mount(KnowledgePage)
+  try {
+    await flushPromises()
+    await first.get('.a-tab-close').trigger('click')
+    await flushPromises()
+  } finally { first.unmount() }
+
+  const second = mount(KnowledgePage)
+  try {
+    await flushPromises()
+    expect(second.find('.doc').exists()).toBe(false)
+    expect(second.get('.knowledge-a').classes()).toContain('is-graph-view')
+  } finally { second.unmount() }
+})
+
+it('offers the Wiki chat beside a note and switches the right panel between outline and chat', async () => {
+  const wrapper = mount(KnowledgePage)
+  try {
+    await flushPromises()
+    expect(wrapper.find('.wiki-chat-panel').exists()).toBe(false)
+    const tabs = wrapper.findAll('.a-outline .a-right-tab')
+    expect(tabs.map(tab => tab.attributes('aria-selected'))).toEqual(['true', 'false'])
+    await tabs[1]!.trigger('click')
+    expect(wrapper.find('.a-outline').exists()).toBe(false)
+    expect(wrapper.find('.wiki-chat-panel textarea').exists()).toBe(true)
+    expect(wrapper.find('.doc h1').exists()).toBe(true)
+
+    await wrapper.get('.wiki-chat-panel textarea').setValue('Kept draft')
+    await wrapper.findAll('.wiki-chat-panel .a-right-tab')[0]!.trigger('click')
+    expect(wrapper.find('.a-outline').exists()).toBe(true)
+    expect((wrapper.get('.wiki-chat-panel').element as HTMLElement).style.display).toBe('none')
+    await wrapper.findAll('.a-outline .a-right-tab')[1]!.trigger('click')
+    expect((wrapper.get('.wiki-chat-panel textarea').element as HTMLTextAreaElement).value).toBe('Kept draft')
+  } finally { wrapper.unmount() }
+})
+
+it('keeps the chat beside a note opened from Graph', async () => {
+  mockTwoWikiNotes()
+  const wrapper = mount(KnowledgePage)
+  try {
+    await flushPromises()
+    await wrapper.get('button.other-tab').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('.wiki-chat-panel .a-right-tab').exists()).toBe(false)
+    wrapper.findComponent(KnowledgeGraph).vm.$emit('open', 'beta')
+    await flushPromises()
+    expect(wrapper.get('.doc h1').text()).toBe('Beta')
+    expect(wrapper.find('.a-outline').exists()).toBe(true)
+  } finally { wrapper.unmount() }
+})
+
+it('gives outline and chat one right panel width and one collapsed state', async () => {
+  window.localStorage.setItem('voice-agent-knowledge-panel-widths-v1', JSON.stringify({ outline: 300, chat: 450 }))
+  const wrapper = mount(KnowledgePage)
+  try {
+    await flushPromises()
+    const root = wrapper.get('.knowledge-a')
+    const width = () => (root.element as HTMLElement).style.getPropertyValue('--knowledge-right-width')
+    expect(width()).toBe('450px')
+
+    mockPanelRects(wrapper, { '.a-outline': 450, '.a-workspace': 900 })
+    await wrapper.get('.a-panel-resizer-right').trigger('keydown', { key: 'ArrowRight' })
+    expect(width()).toBe('434px')
+
+    await wrapper.findAll('.a-outline .a-right-tab')[1]!.trigger('click')
+    expect(width()).toBe('434px')
+    expect(wrapper.findAll('.a-panel-resizer-right')).toHaveLength(1)
+
+    await wrapper.get('[aria-label="Collapse chat"]').trigger('click')
+    expect(wrapper.get('.wiki-chat-panel').classes()).toContain('is-collapsed')
+    expect(wrapper.find('.a-panel-resizer-right').exists()).toBe(false)
+    expect(window.localStorage.getItem('voice-agent-knowledge-outline-collapsed')).toBe('true')
+  } finally { wrapper.unmount() }
+})
+

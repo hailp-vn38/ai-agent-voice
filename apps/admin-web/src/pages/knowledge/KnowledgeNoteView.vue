@@ -105,7 +105,7 @@ onMounted(() => {
     </article>
     <article v-else-if="doc" class="doc">
       <div class="doc-overline"><span>{{ doc.space }} / Markdown note</span><span>·</span><span>Knowledge vault</span></div>
-      <h1>{{ doc.title || t('knowledgeV3.selectFile') }}</h1>
+      <h1>{{ doc.title }}</h1>
       <section v-if="properties.length" class="doc-properties" aria-label="Note properties">
         <button type="button" class="doc-properties-toggle"
           :aria-expanded="!propertiesCollapsed"
@@ -144,6 +144,5 @@ onMounted(() => {
       <div class="markdown-body" v-html="renderedBody" @click="emit('markdown-click', $event)"
         @auxclick="emit('markdown-click', $event)"></div>
     </article>
-    <article v-else class="doc"><h1>{{ t('knowledgeV3.selectFile') }}</h1></article>
   </main>
 </template>

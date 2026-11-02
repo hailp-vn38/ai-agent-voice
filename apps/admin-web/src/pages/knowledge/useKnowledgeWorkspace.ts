@@ -14,7 +14,7 @@ export type NoteDoc = {
   sourceRef: string
 }
 export type TabRef = { space: TreeSpace; path: string; title: string; id?: string }
-export type WorkspaceTab = { id: string; ref: TabRef | null; doc: NoteDoc | null; loading: boolean; scrollTop: number }
+export type WorkspaceTab = { id: string; ref: TabRef | null; doc: NoteDoc | null; loading: boolean; pending: boolean; scrollTop: number }
 export type WorkspacePane = { id: string; tabs: WorkspaceTab[]; activeTabId: string; graphActive: boolean; size: number }
 
 export const MAX_PANES = 4
@@ -27,7 +27,7 @@ function uid(prefix: string): string {
   return prefix + '-' + nextId
 }
 function emptyTab(ref: TabRef | null = null): WorkspaceTab {
-  return { id: uid('tab'), ref, doc: null, loading: false, scrollTop: 0 }
+  return { id: uid('tab'), ref, doc: null, loading: false, pending: false, scrollTop: 0 }
 }
 function emptyPane(): WorkspacePane {
   const tab = emptyTab()
