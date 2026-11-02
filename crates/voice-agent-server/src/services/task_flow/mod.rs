@@ -31,7 +31,8 @@ pub use agent_settings::{
     find_agent_spec, find_tool_owner_spec, is_user_routable_root_agent, load_persisted_settings,
     normalize_user_target_agent, project_agents_json, resolve_llm_provider_catalog,
     save_persisted_settings, sync_orchestrator_from_state, valid_custom_subagent_id,
-    validate_agent_overrides, validate_agent_overrides_with_skills, write_agent_prompts,
+    validate_agent_overrides, validate_agent_overrides_with_skills, validate_settings_change,
+    write_agent_prompts,
 };
 pub use charts::{ChartDocument, ChartError, chart_host_tools, read_chart_json_for_admin};
 pub use memory_tools::TaskMemoryAccess;

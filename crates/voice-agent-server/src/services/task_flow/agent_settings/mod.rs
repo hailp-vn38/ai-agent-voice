@@ -39,7 +39,7 @@ pub use specs::{
 pub use validation::{
     CreateCustomSubagentInput, SubagentMutationError, create_custom_subagent,
     delete_custom_subagent, sync_orchestrator_from_state, validate_agent_overrides,
-    validate_agent_overrides_with_skills,
+    validate_agent_overrides_with_skills, validate_settings_change,
 };
 
 pub const DEFAULT_ORCHESTRATOR_PROVIDER_REF: &str = "orchestrator:default";
