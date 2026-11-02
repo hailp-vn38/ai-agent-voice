@@ -3,8 +3,7 @@ use crate::services::task_flow::{
     AgentConfigOverride, CreateCustomSubagentInput, DEFAULT_ORCHESTRATOR_PROVIDER_REF,
     PersistedBackgroundSettings, SubagentMutationError, create_custom_subagent,
     delete_custom_subagent, find_agent_spec, project_agents_json, resolve_llm_provider_catalog,
-    save_persisted_settings, skills, sync_orchestrator_from_state,
-    validate_agent_overrides_with_skills,
+    save_persisted_settings, skills, sync_orchestrator_from_state, validate_settings_change,
 };
 use serde::Deserialize;
 use std::collections::BTreeMap;
@@ -34,6 +33,11 @@ async fn build_settings_json(
         .filter(|p| p.supports_tag("chat"))
         .map(|p| p.to_json_summary())
         .collect();
+    let wiki_chat_llm_provider = settings.wiki_chat_llm_provider.as_deref().filter(|pref| {
+        catalog
+            .iter()
+            .any(|p| p.provider_ref == *pref && p.supports_tag("chat"))
+    });
     let agents = project_agents_json(&state.config.orchestrator, settings, &catalog);
     let skills_list = skills::list(state).unwrap_or_default();
     let available_agents = state
@@ -46,7 +50,7 @@ async fn build_settings_json(
         "enabled": enabled,
         "orchestrator_llm_provider": orchestrator_llm_provider,
         "worker_llm_provider": worker_llm_provider,
-        "wiki_chat_llm_provider": settings.wiki_chat_llm_provider,
+        "wiki_chat_llm_provider": wiki_chat_llm_provider,
         "revision": revision,
         "llm_providers": llm_providers,
         "wiki_chat_llm_providers": chat_providers,
@@ -153,7 +157,8 @@ pub(in crate::app::admin) async fn save_settings(
         None => pruned_current_agents,
     };
 
-    if let Err(code) = validate_agent_overrides_with_skills(
+    if let Err(code) = validate_settings_change(
+        &current,
         &next_orchestrator_provider,
         &next_worker_provider,
         &next_agents,
@@ -163,7 +168,10 @@ pub(in crate::app::admin) async fn save_settings(
         return error(&request, StatusCode::BAD_REQUEST, code);
     }
 
-    if let Some(provider_ref) = next_wiki_chat_provider.as_deref() {
+    if let Some(provider_ref) = next_wiki_chat_provider
+        .as_deref()
+        .filter(|pref| current.wiki_chat_llm_provider.as_deref() != Some(*pref))
+    {
         if !catalog
             .iter()
             .any(|provider| provider.provider_ref == provider_ref && provider.supports_tag("chat"))

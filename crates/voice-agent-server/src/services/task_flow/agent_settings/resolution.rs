@@ -414,6 +414,9 @@ pub fn project_agents_json(
     settings: &PersistedBackgroundSettings,
     catalog: &[ResolvedLlmProvider],
 ) -> Vec<Value> {
+    // Refs to providers no longer in the catalog resolve to a fallback at runtime, so they are
+    // not shown as the agent's selection.
+    let in_catalog = |pref: &str| catalog.iter().any(|p| p.provider_ref == pref);
     resolve_effective_agents(cfg, settings, catalog)
         .into_iter()
         .map(|eff| {
@@ -426,7 +429,7 @@ pub fn project_agents_json(
                 .map(|m| {
                     m.iter()
                         .filter(|(t, p)| {
-                            !p.trim().is_empty()
+                            in_catalog(p.trim())
                                 && eff
                                     .tool_capability_tags
                                     .iter()
@@ -463,7 +466,7 @@ pub fn project_agents_json(
                 "is_builtin": eff.is_builtin,
                 "enabled": eff.enabled,
                 "default_enabled": super::specs::find_agent_spec(&eff.id).is_none_or(|s| s.default_enabled),
-                "provider_ref": eff.explicit_ref,
+                "provider_ref": eff.explicit_ref.as_deref().filter(|pref| in_catalog(pref)),
                 "effective_provider_ref": eff.resolved_provider.provider_ref,
                 "effective_model": eff.resolved_provider.model,
                 "tool_capability_tags": tool_capability_tags,

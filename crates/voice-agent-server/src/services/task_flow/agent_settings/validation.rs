@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::app::AppState;
 
+use super::DEFAULT_ORCHESTRATOR_PROVIDER_REF;
 use super::media_backend::{install_server_media_runtime, update_live_media_catalog};
 use super::persistence::{
     AgentConfigOverride, PersistedBackgroundSettings, default_true, save_persisted_settings,
@@ -169,6 +170,58 @@ pub fn validate_agent_overrides_with_skills(
     Ok(())
 }
 
+/// Validates a settings mutation against `current`. Provider refs carried over unchanged whose
+/// provider has left the catalog (deleted or disabled) are skipped: runtime resolution already
+/// falls back past them, so they must not block unrelated saves. New refs are checked as usual.
+pub fn validate_settings_change(
+    current: &PersistedBackgroundSettings,
+    orchestrator_provider: &str,
+    worker_provider: &str,
+    overrides: &BTreeMap<String, AgentConfigOverride>,
+    catalog: &[ResolvedLlmProvider],
+    skill_ids: &BTreeSet<String>,
+) -> Result<(), &'static str> {
+    let is_stale = |next: &str, previous: Option<&str>| {
+        previous == Some(next) && !catalog.iter().any(|p| p.provider_ref == next.trim())
+    };
+    let global_ref = |next: &str, previous: &str| {
+        if is_stale(next, Some(previous)) {
+            DEFAULT_ORCHESTRATOR_PROVIDER_REF.to_owned()
+        } else {
+            next.to_owned()
+        }
+    };
+
+    let mut checked = overrides.clone();
+    for (id, ovr) in &mut checked {
+        let previous = current.agents.get(id);
+        if ovr
+            .provider_ref
+            .as_deref()
+            .is_some_and(|r| is_stale(r, previous.and_then(|p| p.provider_ref.as_deref())))
+        {
+            ovr.provider_ref = None;
+        }
+        if let Some(tools) = ovr.tool_providers.as_mut() {
+            let previous_tools = previous.and_then(|p| p.tool_providers.as_ref());
+            tools.retain(|tool, r| {
+                !is_stale(
+                    r,
+                    previous_tools.and_then(|m| m.get(tool)).map(String::as_str),
+                )
+            });
+        }
+    }
+
+    validate_agent_overrides_with_skills(
+        &global_ref(orchestrator_provider, &current.orchestrator_llm_provider),
+        &global_ref(worker_provider, &current.worker_llm_provider),
+        &checked,
+        catalog,
+        skill_ids,
+    )
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct CreateCustomSubagentInput {
     pub id: String,
@@ -269,7 +322,8 @@ pub async fn create_custom_subagent(
         }
         let mut next_agents = control.background_settings.agents.clone();
         next_agents.insert(id.to_owned(), ovr);
-        if let Err(code) = validate_agent_overrides_with_skills(
+        if let Err(code) = validate_settings_change(
+            &control.background_settings,
             &control.background_settings.orchestrator_llm_provider,
             &control.background_settings.worker_llm_provider,
             &next_agents,
