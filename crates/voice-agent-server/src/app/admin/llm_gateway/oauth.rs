@@ -5,7 +5,8 @@ use std::sync::{
 
 use super::{gateway_error, *};
 use crate::services::llm_gateway::{
-    GatewayVendor, OAuthCallbackSubmission, OAuthPollStatus, StartOAuthLoginRequest,
+    GatewayVendor, ImportCookieAccountRequest, OAuthCallbackSubmission, OAuthPollStatus,
+    StartOAuthLoginRequest,
 };
 
 #[derive(Debug, Default, Deserialize)]
@@ -159,6 +160,24 @@ pub(in crate::app::admin) async fn complete_oauth_session(
         .complete_oauth_login(&session_id, body)
         .await
     {
+        Ok(account) => {
+            let _ = crate::services::task_flow::sync_orchestrator_from_state(&state).await;
+            Json(serde_json::json!({ "account": account })).into_response()
+        }
+        Err(err) => gateway_error(&request, err),
+    }
+}
+
+pub(in crate::app::admin) async fn import_cookie_account(
+    State(state): State<AppState>,
+    request: Request,
+) -> Response {
+    let (request, body): (_, ImportCookieAccountRequest) = match json(request).await {
+        Ok(v) => v,
+        Err(e) => return e,
+    };
+
+    match state.llm_gateway_hub.import_cookie_account(body).await {
         Ok(account) => {
             let _ = crate::services::task_flow::sync_orchestrator_from_state(&state).await;
             Json(serde_json::json!({ "account": account })).into_response()

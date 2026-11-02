@@ -46,7 +46,7 @@ impl GatewayVendor {
             Self::OpenaiCodex => "OpenAI Codex (ChatGPT)",
             Self::Gemini => "Google Gemini",
             Self::GithubCopilot => "GitHub Copilot",
-            Self::Muse => "Muse AI (Browser CDP)",
+            Self::Muse => "Muse AI (Cookie)",
         }
     }
 
@@ -62,8 +62,9 @@ impl GatewayVendor {
 
     pub const fn login_mode(self) -> OAuthLoginMode {
         match self {
-            Self::Anthropic | Self::OpenaiCodex | Self::Gemini | Self::Muse => OAuthLoginMode::Pkce,
+            Self::Anthropic | Self::OpenaiCodex | Self::Gemini => OAuthLoginMode::Pkce,
             Self::GithubCopilot => OAuthLoginMode::DeviceCode,
+            Self::Muse => OAuthLoginMode::CookiePaste,
         }
     }
 
@@ -1068,6 +1069,7 @@ pub enum GatewayCallOutcome {
 pub enum OAuthLoginMode {
     Pkce,
     DeviceCode,
+    CookiePaste,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -1227,6 +1229,14 @@ pub struct StartOAuthLoginRequest {
     pub label: String,
     #[serde(default)]
     pub redirect_uri: Option<String>,
+}
+
+/// Pasted session cookies are secret, so this type deliberately has no `Debug`.
+#[derive(Deserialize)]
+pub struct ImportCookieAccountRequest {
+    pub vendor: GatewayVendor,
+    pub label: String,
+    pub cookies: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

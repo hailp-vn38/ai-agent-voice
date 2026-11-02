@@ -7,6 +7,7 @@ import type {
   GatewayPoolModelView,
   GatewayVendor,
   GatewayVendorInfo,
+  ImportCookieAccountInput,
   OAuthCallbackSubmission,
   OAuthLoginChallenge,
   OAuthPollStatus,
@@ -89,6 +90,13 @@ export const llmGatewayApi = {
         force: force ? 'true' : undefined,
       }),
       force ? jsonRequest('POST', {}) : {},
+      { signal },
+    )
+  },
+  importCookieAccount(input: ImportCookieAccountInput, signal?: AbortSignal) {
+    return requestJson<{ account: GatewayAccountView }>(
+      `${basePath}/accounts/cookie-import`,
+      jsonRequest('POST', input),
       { signal },
     )
   },

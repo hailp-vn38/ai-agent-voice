@@ -14,9 +14,10 @@ pub use types::{
     CreatePoolModelRequest, GatewayAccountQuota, GatewayAccountStatus, GatewayAccountView,
     GatewayBinding, GatewayBoundProviderRef, GatewayCallOutcome, GatewayError, GatewayLease,
     GatewayPoolDetailView, GatewayPoolModelView, GatewayQuotaWindow, GatewayVendor,
-    GatewayVendorInfo, GatewayVendorModelPreset, OAuthCallbackSubmission, OAuthLoginChallenge,
-    OAuthLoginMode, OAuthPollStatus, OAuthTokenBundle, StartOAuthLoginRequest,
-    UpdateGatewayAccountPatch, UpdatePoolModelPatch, VendorQuotaSnapshot, valid_account_key,
+    GatewayVendorInfo, GatewayVendorModelPreset, ImportCookieAccountRequest,
+    OAuthCallbackSubmission, OAuthLoginChallenge, OAuthLoginMode, OAuthPollStatus,
+    OAuthTokenBundle, StartOAuthLoginRequest, UpdateGatewayAccountPatch, UpdatePoolModelPatch,
+    VendorQuotaSnapshot, valid_account_key,
 };
 pub use vendors::{
     DeviceCodeGrant, DevicePollOutcome, ExchangedOAuthAccount, FakeOAuthVendorDriver,

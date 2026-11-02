@@ -91,6 +91,43 @@ it('queries the selected one-hop local neighborhood and can re-layout', async ()
   } finally { wrapper.unmount() }
 })
 
+it('queries a topic and styles retrieved tiers without changing the node type colors', async () => {
+  requestJsonMock
+    .mockResolvedValueOnce(snapshot)
+    .mockResolvedValueOnce({
+      ...snapshot,
+      nodes: snapshot.nodes.map((node, index) => ({
+        ...node,
+        tier: index === 0 ? 'retrieved' : 'context',
+        score: index === 0 ? 0.82 : null,
+      })),
+      truncated: true,
+    })
+  const wrapper = mount(KnowledgeGraph, { props: { centerId: 'wiki_agent', reloadToken: 0 } })
+  try {
+    await flushPromises()
+    const query = wrapper.findAll('button').find(button =>
+      button.text() === translate('knowledgeV3.graphQuery'))!
+    await query.trigger('click')
+    const input = wrapper.get('input[aria-label="' + translate('knowledgeV3.graphQueryInput') + '"]')
+    await input.setValue('trading')
+    await wrapper.find('form.kg-query-form').trigger('submit')
+    await flushPromises()
+
+    expect(requestJsonMock).toHaveBeenLastCalledWith(expect.stringContaining('scope=query'))
+    expect(requestJsonMock).toHaveBeenLastCalledWith(expect.stringContaining('q=trading'))
+    expect(wrapper.text()).toContain(translate('knowledgeV3.graphTruncated'))
+    const options = drawMock.mock.calls.at(-1)?.[0] as {
+      elements: Array<{ data: { tier?: string } }>
+      style: Array<{ selector: string; style: Record<string, unknown> }>
+    }
+    expect(options.elements[0]?.data.tier).toBe('retrieved')
+    expect(options.style.map(rule => rule.selector)).toContain('node[tier = "retrieved"]')
+    expect(options.style.map(rule => rule.selector)).toContain('node[group = "concept"]')
+    expect(wrapper.text()).toContain(translate('knowledgeV3.graphTierLegend'))
+  } finally { wrapper.unmount() }
+})
+
 it('offers an index rebuild when Graph is stale', async () => {
   requestJsonMock.mockRejectedValue(new ApiError('index_stale', 503, 'index_stale'))
   const wrapper = mount(KnowledgeGraph, { props: { centerId: 'wiki_agent', reloadToken: 0 } })
