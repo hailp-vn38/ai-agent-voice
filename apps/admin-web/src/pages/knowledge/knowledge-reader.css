@@ -365,6 +365,82 @@
 @media (max-width: 700px) { .knowledge-a .a-explorer { display: none; } .knowledge-a .a-tab { max-width: 220px; } .knowledge-a .doc { padding: 34px 24px 120px; } }
 @media (prefers-reduced-motion: reduce) { .knowledge-a .a-reader-viewport { scroll-behavior: auto; } .knowledge-a .a-explorer, .knowledge-a .a-outline { transition: none; } }
 
+/* Wiki chat lives beside Graph; the same panel becomes a bottom drawer on narrow screens. */
+.knowledge-a .graph-host { flex-direction: row; }
+.knowledge-a .graph-content { display: flex; flex: 1; min-width: 0; min-height: 0; overflow: hidden; }
+.knowledge-a .graph-stage { position: relative; display: flex; flex: 1; min-width: 0; min-height: 0; overflow: hidden; }
+.knowledge-a .graph-stage .kg-root { min-height: 0; }
+.knowledge-a .wiki-chat-panel {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  width: 380px;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--card-foreground);
+  background: var(--card);
+  border-left: 1px solid var(--border);
+  transition: width 180ms ease, border-color 180ms ease;
+}
+.knowledge-a .graph-content.is-chat-collapsed .wiki-chat-panel { width: 0; border-left-width: 0; }
+.knowledge-a .wiki-chat-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding: 15px 14px 12px; border-bottom: 1px solid var(--border); }
+.knowledge-a .wiki-chat-header h2 { margin: 0; color: var(--foreground); font-size: 14px; font-weight: 700; }
+.knowledge-a .wiki-chat-header p { margin: 4px 0 0; color: var(--muted-foreground); font-size: 11px; line-height: 1.45; }
+.knowledge-a .wiki-chat-icon-button { display: grid; width: 28px; height: 28px; place-items: center; flex: none; border-radius: 6px; color: var(--muted-foreground); background: transparent; }
+.knowledge-a .wiki-chat-icon-button:hover:not(:disabled) { color: var(--foreground); background: var(--muted); }
+.knowledge-a .wiki-chat-icon-button:disabled { opacity: .45; cursor: not-allowed; }
+.knowledge-a .wiki-chat-messages { display: flex; flex: 1; min-height: 0; flex-direction: column; gap: 14px; overflow: auto; padding: 14px; }
+.knowledge-a .wiki-chat-empty { margin: auto; max-width: 230px; color: var(--muted-foreground); text-align: center; line-height: 1.6; }
+.knowledge-a .wiki-chat-message { min-width: 0; padding: 10px 11px; border: 1px solid var(--border); border-radius: 10px; background: var(--background); }
+.knowledge-a .wiki-chat-message.is-user { align-self: flex-end; width: fit-content; max-width: 90%; background: color-mix(in srgb, var(--studio-violet) 9%, var(--background)); }
+.knowledge-a .wiki-chat-message-label { margin-bottom: 5px; color: var(--muted-foreground); font-size: 10px; font-weight: 700; }
+.knowledge-a .wiki-chat-user-text { white-space: pre-wrap; overflow-wrap: anywhere; color: var(--foreground); font-size: 12px; line-height: 1.55; }
+.knowledge-a .wiki-chat-answer { color: var(--foreground); font-size: 12px; line-height: 1.65; overflow-wrap: anywhere; }
+.knowledge-a .wiki-chat-answer p { margin: 0 0 8px; }
+.knowledge-a .wiki-chat-answer p:last-child { margin-bottom: 0; }
+.knowledge-a .wiki-chat-answer ul, .knowledge-a .wiki-chat-answer ol { margin: 7px 0; padding-left: 20px; }
+.knowledge-a .wiki-chat-answer a { color: var(--studio-violet); text-decoration: underline; }
+.knowledge-a .wiki-chat-tools { display: flex; flex-direction: column; gap: 5px; margin: 10px 0 0; padding: 8px 0 0; border-top: 1px solid var(--border); list-style: none; }
+.knowledge-a .wiki-chat-tools li { display: flex; align-items: baseline; gap: 6px; min-width: 0; color: var(--muted-foreground); font-size: 10px; }
+.knowledge-a .wiki-chat-tool-state { flex: none; color: var(--studio-violet); font-weight: 800; }
+.knowledge-a .wiki-chat-tool-query { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; opacity: .8; }
+.knowledge-a .wiki-chat-status { margin: 8px 0 0; color: var(--muted-foreground); font-size: 10px; }
+.knowledge-a .wiki-chat-error { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; margin-top: 9px; color: var(--danger); font-size: 11px; }
+.knowledge-a .wiki-chat-error button, .knowledge-a .wiki-chat-error a, .knowledge-a .wiki-chat-show-graph { color: var(--studio-violet); font-size: 10px; text-decoration: underline; }
+.knowledge-a .wiki-chat-show-graph { margin-top: 8px; }
+.knowledge-a .wiki-chat-compose { display: flex; flex-direction: column; gap: 8px; padding: 11px 12px 13px; border-top: 1px solid var(--border); background: var(--card); }
+.knowledge-a .wiki-chat-compose textarea { width: 100%; resize: vertical; min-height: 68px; max-height: 150px; padding: 9px 10px; border: 1px solid var(--input); border-radius: 8px; color: var(--foreground); background: var(--background); font: inherit; font-size: 12px; line-height: 1.5; }
+.knowledge-a .wiki-chat-compose textarea:focus { outline: 2px solid var(--ring); outline-offset: 1px; }
+.knowledge-a .wiki-chat-compose-actions { display: flex; justify-content: flex-end; }
+.knowledge-a .wiki-chat-send, .knowledge-a .wiki-chat-stop { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 30px; padding: 0 11px; border-radius: 7px; color: var(--primary-foreground); background: var(--primary); font-size: 11px; font-weight: 650; }
+.knowledge-a .wiki-chat-stop { color: var(--danger); border: 1px solid color-mix(in srgb, var(--danger) 45%, var(--border)); background: transparent; }
+.knowledge-a .wiki-chat-send:disabled { opacity: .5; cursor: not-allowed; }
+.knowledge-a .wiki-chat-drawer-toggle { display: none; }
+@media (max-width: 950px) {
+  .knowledge-a .graph-content { position: relative; }
+  .knowledge-a .graph-stage { width: 100%; }
+  .knowledge-a .wiki-chat-panel {
+    position: absolute;
+    z-index: 15;
+    right: 0;
+    bottom: 0;
+    left: 0;
+    width: 100%;
+    height: 55%;
+    max-height: 620px;
+    border-top: 1px solid var(--border);
+    border-left: 0;
+    box-shadow: 0 -10px 30px rgb(0 0 0 / 14%);
+    transform: translateY(102%);
+    transition: transform 180ms ease;
+  }
+  .knowledge-a .wiki-chat-panel.is-drawer-open { width: 100%; transform: translateY(0); }
+  .knowledge-a .wiki-chat-drawer-toggle { position: absolute; z-index: 18; right: 14px; bottom: 14px; display: inline-flex; align-items: center; min-height: 36px; padding: 0 12px; border: 1px solid var(--border); border-radius: 999px; color: var(--primary-foreground); background: var(--primary); box-shadow: 0 4px 14px rgb(0 0 0 / 18%); font-size: 11px; font-weight: 650; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .knowledge-a .wiki-chat-panel, .knowledge-a .wiki-chat-drawer-toggle { transition: none; }
+}
+
 
 /* Obsidian-style note creation: a small action on each writable folder,
    in-place filename entry, then a distraction-free Markdown editor. */

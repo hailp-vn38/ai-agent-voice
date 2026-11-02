@@ -2,9 +2,11 @@ import { flushPromises, mount } from '@vue/test-utils'
 import { beforeEach, expect, it, vi } from 'vitest'
 import { setLocale } from '@/composables/useI18n'
 import KnowledgePage from './KnowledgePage.vue'
+import WikiChatPanel from './WikiChatPanel.vue'
 
 const { requestJsonMock, routeQuery } = vi.hoisted(() => ({ requestJsonMock: vi.fn(), routeQuery: {} as Record<string,string> }))
 vi.mock('@/api/client', () => ({
+  apiUrl: (path: string) => path,
   requestJson: requestJsonMock,
   jsonRequest: (method: string, body: unknown) => ({ method, body }),
   withQuery: (path: string, query: Record<string, string | number>) =>
@@ -13,7 +15,10 @@ vi.mock('@/api/client', () => ({
     ).toString(),
 }))
 vi.mock('vue-router', () => ({ useRoute: () => ({ query: routeQuery }) }))
-vi.mock('./KnowledgeGraph.vue', () => ({ default: { template: '<div>Knowledge graph</div>' } }))
+vi.mock('./KnowledgeGraph.vue', () => ({ default: {
+  props: ['centerId', 'reloadToken', 'focusMode', 'answerGraph'],
+  template: '<div class="mock-knowledge-graph" :data-revision="answerGraph?.revision">Knowledge graph</div>',
+} }))
 
 beforeEach(() => {
   vi.clearAllMocks()
@@ -113,9 +118,96 @@ it('supports rendered Wiki links and the existing Graph tab without editor forms
     expect(requestJsonMock).toHaveBeenCalledWith('/api/admin/knowledge/pages/wiki_demo')
     await wrapper.find('button.other-tab').trigger('click')
     expect(wrapper.text()).toContain('Knowledge graph')
-    expect(wrapper.find('textarea').exists()).toBe(false)
+    expect(wrapper.find('.wiki-chat-panel textarea').exists()).toBe(true)
     expect(wrapper.get('.knowledge-a').classes()).toContain('is-graph-view')
   } finally { wrapper.unmount() }
+})
+
+it('streams a Wiki answer, switches to its answer graph, and keeps chat when changing tabs', async () => {
+  const graph = {
+    revision: 1,
+    nodes: [{
+      id: 'wiki/concepts/known.md', path: 'wiki/concepts/known.md', title: 'Known',
+      status: 'verified', revision: 1, tier: 'retrieved', score: 0.8,
+    }],
+    edges: [], unresolved: [], truncated: false,
+  }
+  const sse = [
+    'event: tool\ndata: {"call_id":"c1","name":"wiki_query","state":"completed"}\n\n',
+    `event: graph\ndata: ${JSON.stringify(graph)}\n\n`,
+    'event: delta\ndata: {"text":"A **known** page."}\n\n',
+    'event: done\ndata: {"citations":["wiki/concepts/known.md"],"stop_reason":"finished"}\n\n',
+  ].join('')
+  const fetchMock = vi.fn().mockResolvedValue(new Response(sse, {
+    headers: { 'Content-Type': 'text/event-stream' },
+  }))
+  vi.stubGlobal('fetch', fetchMock)
+  const wrapper = mount(KnowledgePage)
+  try {
+    await flushPromises()
+    await wrapper.get('button.other-tab').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('.wiki-chat-panel').exists()).toBe(true)
+    await wrapper.get('.wiki-chat-panel textarea').setValue('What do we know?')
+    expect(wrapper.get('.wiki-chat-send').attributes('disabled')).toBeUndefined()
+    await wrapper.get('.wiki-chat-panel form').trigger('submit')
+    expect(wrapper.findComponent(WikiChatPanel).emitted('send')).toEqual([['What do we know?']])
+    await flushPromises()
+
+    expect(fetchMock).toHaveBeenCalledOnce()
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit]
+    expect(url).toContain('/api/admin/knowledge/ask')
+    expect(init.method).toBe('POST')
+    expect(JSON.parse(String(init.body))).toEqual({
+      messages: [{ role: 'user', content: 'What do we know?' }],
+    })
+    expect(wrapper.get('.wiki-chat-answer strong').text()).toBe('known')
+    expect(wrapper.get('.mock-knowledge-graph').attributes('data-revision')).toBe('1')
+
+    await wrapper.get('button.a-tab').trigger('click')
+    await flushPromises()
+    await wrapper.get('button.other-tab').trigger('click')
+    await flushPromises()
+    expect(wrapper.get('.wiki-chat-answer').text()).toContain('A known page.')
+    expect(wrapper.get('.mock-knowledge-graph').attributes('data-revision')).toBe('1')
+  } finally {
+    wrapper.unmount()
+    vi.unstubAllGlobals()
+  }
+})
+
+it('stops a stream and retains the partial assistant answer', async () => {
+  let signal: AbortSignal | undefined
+  const fetchMock = vi.fn((_url: string, init: RequestInit) => {
+    signal = init.signal as AbortSignal
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode('event: delta\ndata: {"text":"Partial"}\n\n'))
+      },
+    })
+    return Promise.resolve(new Response(stream, {
+      headers: { 'Content-Type': 'text/event-stream' },
+    }))
+  })
+  vi.stubGlobal('fetch', fetchMock)
+  const wrapper = mount(KnowledgePage)
+  try {
+    await flushPromises()
+    await wrapper.get('button.other-tab').trigger('click')
+    await flushPromises()
+    await wrapper.get('.wiki-chat-panel textarea').setValue('Ask')
+    await wrapper.get('.wiki-chat-panel form').trigger('submit')
+    await flushPromises()
+    expect(wrapper.get('.wiki-chat-answer').text()).toContain('Partial')
+    await wrapper.get('.wiki-chat-stop').trigger('click')
+    await flushPromises()
+    expect(signal?.aborted).toBe(true)
+    expect(wrapper.get('.wiki-chat-answer').text()).toContain('Partial')
+    expect(wrapper.get('.wiki-chat-message.is-assistant').text()).toContain('Stopped')
+  } finally {
+    wrapper.unmount()
+    vi.unstubAllGlobals()
+  }
 })
 
 it('hides file and folder creation actions in the Knowledge tab and shows them only in the File tab', async () => {
@@ -668,10 +760,10 @@ it('shares a single pair of left and right panel toggle actions across Knowledge
     // Switch to Graph view: the same 2 panel actions and shared right panel remain available
     await first.get('button.other-tab').trigger('click')
     await flushPromises()
-    expect(first.find('aside.a-outline').exists()).toBe(true)
+    expect(first.find('aside.a-outline').exists()).toBe(false)
     expect(first.find('button[aria-label="Immersive view"]').exists()).toBe(false)
     expect(first.find('.a-tab-actions button[aria-label="Expand explorer"]').exists()).toBe(true)
-    expect(first.find('.a-tab-actions button[aria-label="Expand outline & links"]').exists()).toBe(true)
+    expect(first.find('.a-tab-actions button[aria-label="Collapse chat"]').exists()).toBe(true)
   } finally {
     first.unmount()
   }

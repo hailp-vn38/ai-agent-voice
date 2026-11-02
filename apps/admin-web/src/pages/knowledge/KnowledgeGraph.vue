@@ -33,7 +33,7 @@ type GraphNode = {
 type GraphReference = { line: number; raw_target: string; alias?: string; anchor?: string }
 type GraphEdge = { source_id: string; target_id: string; kind: string; lines: number[]; references: GraphReference[] }
 type GraphUnresolved = { source_id: string; source_line: number; raw_target: string; reason: string }
-type GraphSnapshot = { nodes: GraphNode[]; edges: GraphEdge[]; unresolved: GraphUnresolved[]; truncated: boolean }
+type GraphSnapshot = { nodes: GraphNode[]; edges: GraphEdge[]; unresolved: GraphUnresolved[]; truncated: boolean; revision?: number }
 type NodeGroup = 'concept' | 'entity' | 'synthesis' | 'source' | 'system' | 'draft'
 
 const MIN_ZOOM = 0.28
@@ -47,6 +47,7 @@ const props = defineProps<{
   centerId?: string | null
   reloadToken: number
   focusMode?: boolean
+  answerGraph?: GraphSnapshot | null
 }>()
 const emit = defineEmits<{
   open: [id: string]
@@ -69,13 +70,14 @@ const isFocusMode = computed({
   },
 })
 
-const scope = ref<'global' | 'local' | 'query'>('global')
+const scope = ref<'global' | 'local' | 'query' | 'answer'>('global')
 const queryText = ref('')
 const depth = ref(1)
 const graph = ref<GraphSnapshot | null>(null)
 const selectedId = ref<string | null>(null)
 const activeId = ref<string | null>(null)
 const selectedEdgeId = ref<string | null>(null)
+const nodeInspectorOpen = ref(false)
 const loading = ref(false)
 const error = ref('')
 const isStale = ref(false)
@@ -235,7 +237,8 @@ const visibleEdges = computed(() => visibleGraph.value.edges)
 
 const effectiveSelectedId = computed(() => activeId.value ?? selectedId.value)
 const current = computed(() => visibleNodes.value.find(node => node.id === effectiveSelectedId.value) ?? null)
-const inspectorOpen = computed(() => Boolean(selectedEdgeId.value))
+const inspectorOpen = computed(() => Boolean(selectedEdgeId.value) ||
+  (scope.value === 'answer' && nodeInspectorOpen.value))
 
 const selectedEdge = computed(() => {
   if (!selectedEdgeId.value) return null
@@ -263,6 +266,7 @@ const graphHeadingText = computed(() => {
   if (activeId.value || selectedEdgeId.value) return 'Node connections'
   if (scope.value === 'local') return 'Current note'
   if (scope.value === 'query') return 'Query graph'
+  if (scope.value === 'answer') return t('knowledgeV3.graphAnswer')
   return 'All connections'
 })
 
@@ -643,9 +647,11 @@ function relayout() {
   requestAnimationFrame(placePanel)
 }
 
-function selectScope(nextScope: 'global' | 'local' | 'query') {
+function selectScope(nextScope: 'global' | 'local' | 'query' | 'answer') {
+  if (nextScope === 'answer' && !props.answerGraph) return
   if (nextScope === 'local' && !props.centerId) return
   scope.value = nextScope
+  nodeInspectorOpen.value = false
   if (nextScope === 'local' && props.centerId) {
     selectedId.value = props.centerId
     activeId.value = props.centerId
@@ -665,6 +671,8 @@ function submitQuery() {
 function clearSelection() {
   activeId.value = null
   selectedEdgeId.value = null
+  nodeInspectorOpen.value = false
+  if (scope.value === 'answer') selectedId.value = null
   if (cy && typeof cy.elements === 'function') {
     cy.elements().unselect()
   }
@@ -676,12 +684,37 @@ function chooseNode(id: string) {
   selectedEdgeId.value = null
   selectedId.value = id
   activeId.value = null
-  emit('open', id)
+  if (scope.value === 'answer') {
+    nodeInspectorOpen.value = true
+    cy?.getElementById(id).select()
+    applyFocusClasses(id)
+    void nextTick(() => requestAnimationFrame(placePanel))
+  } else {
+    nodeInspectorOpen.value = false
+    emit('open', id)
+  }
 }
 
 function chooseNodeFromSearch(id: string) {
   nodeSearchOpen.value = false
   chooseNode(id)
+}
+
+function focusNode(id: string) {
+  if (!visibleNodes.value.some(node => node.id === id)) return
+  selectedEdgeId.value = null
+  selectedId.value = id
+  activeId.value = id
+  nodeInspectorOpen.value = scope.value === 'answer'
+  const node = cy?.getElementById(id)
+  node?.select()
+  if (node && cy && typeof cy.center === 'function') cy.center(node)
+  applyFocusClasses(id)
+  void nextTick(() => requestAnimationFrame(placePanel))
+}
+
+function highlightNode(id: string | null) {
+  applyFocusClasses(id && visibleNodes.value.some(node => node.id === id) ? id : null)
 }
 
 function focusEdge(edge: GraphEdge) {
@@ -943,6 +976,7 @@ function draw() {
   })
   cy.on('tap', 'edge', event => {
     selectedEdgeId.value = event.target.id()
+    nodeInspectorOpen.value = false
     if (!activeId.value) {
       activeId.value = selectedId.value
     }
@@ -986,6 +1020,10 @@ function draw() {
 }
 
 async function loadGraph() {
+  if (scope.value === 'answer') {
+    if (props.answerGraph) renderAnswerGraph(props.answerGraph)
+    return
+  }
   if (scope.value === 'query' && !queryText.value.trim()) {
     graph.value = null
     loading.value = false
@@ -1036,6 +1074,23 @@ async function loadGraph() {
   }
 }
 
+function renderAnswerGraph(answerGraph: GraphSnapshot) {
+  if (scope.value === 'answer' && graph.value?.revision === answerGraph.revision) return
+  requestVersion++
+  scope.value = 'answer'
+  graph.value = answerGraph
+  error.value = ''
+  isStale.value = false
+  loading.value = false
+  selectedEdgeId.value = null
+  nodeInspectorOpen.value = false
+  selectedId.value = answerGraph.nodes.find(node => node.id === selectedId.value)?.id
+    ?? answerGraph.nodes[0]?.id
+    ?? null
+  activeId.value = null
+  void nextTick(() => draw())
+}
+
 function onKeydown(event: KeyboardEvent) {
   if (event.key === 'Escape') {
     viewMenuOpen.value = false
@@ -1052,12 +1107,21 @@ function onKeydown(event: KeyboardEvent) {
 }
 
 watch([scope, depth, () => props.centerId, () => props.reloadToken], () => { void loadGraph() })
+watch(() => props.answerGraph?.revision, revision => {
+  if (revision !== undefined && props.answerGraph) {
+    if (scope.value === 'answer') renderAnswerGraph(props.answerGraph)
+    else scope.value = 'answer'
+  } else if (scope.value === 'answer') {
+    scope.value = 'global'
+  }
+})
 watch(dark, () => { if (graph.value) draw() })
 watch([showAllLabels, focusNeighbors], () => { applyFocusClasses(null) })
 watch([nodeSizePercent, fontSizePercent], () => { if (graph.value) draw() })
 
 onMounted(() => {
-  void loadGraph()
+  if (props.answerGraph) renderAnswerGraph(props.answerGraph)
+  else void loadGraph()
   window.addEventListener('keydown', onKeydown)
   if (typeof ResizeObserver !== 'undefined' && canvasWrap.value) {
     resizeObserver = new ResizeObserver(() => {
@@ -1079,6 +1143,8 @@ onBeforeUnmount(() => {
   cy?.destroy()
   cy = null
 })
+
+defineExpose({ focusNode, highlightNode })
 </script>
 
 <template>
@@ -1119,6 +1185,11 @@ onBeforeUnmount(() => {
           >
             <Globe :size="13" />
             <span>{{ t('knowledgeV3.graphGlobal') }}</span>
+          </button>
+          <button v-if="answerGraph" type="button" class="kg-tool-btn"
+            :class="{ on: scope === 'answer' }" @click="selectScope('answer')">
+            <Crosshair :size="13" />
+            <span>{{ t('knowledgeV3.graphAnswer') }}</span>
           </button>
           <button
             type="button"
