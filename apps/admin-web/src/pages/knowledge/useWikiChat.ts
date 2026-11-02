@@ -58,6 +58,7 @@ export function useWikiChat() {
   const pinnedFiles = ref<WikiChatFile[]>([])
   const conversationId = ref<string | null>(null)
   const loadingConversation = ref(false)
+  const readOnlyConversation = ref(false)
   let controller: AbortController | null = null
   let currentAssistantId: string | null = null
 
@@ -68,12 +69,13 @@ export function useWikiChat() {
   }
 
   function pinFile(file: WikiChatFile) {
-    if (pinnedFiles.value.length >= MAX_PINNED_FILES) return
+    if (readOnlyConversation.value || pinnedFiles.value.length >= MAX_PINNED_FILES) return
     if (pinnedFiles.value.some(pinned => pinned.path === file.path)) return
     pinnedFiles.value.push(file)
   }
 
   function unpinFile(path: string) {
+    if (readOnlyConversation.value) return
     pinnedFiles.value = pinnedFiles.value.filter(file => file.path !== path)
   }
 
@@ -83,6 +85,7 @@ export function useWikiChat() {
       const conversation = await getWikiConversation(id)
       conversationId.value = conversation.id
       messages.value = conversation.messages.map(messageFromSaved)
+      readOnlyConversation.value = conversation.messages.some(message => message.status === 'running')
       const latestUser = [...conversation.messages].reverse().find(message => message.role === 'user')
       pinnedFiles.value = latestUser?.pinned_paths.map(path => ({ path, title: path })) ?? []
       const graphMessage = [...messages.value].reverse().find(message => message.role === 'assistant' && message.graph)
@@ -112,6 +115,7 @@ export function useWikiChat() {
       await askWiki(input, {
         onTurn: turn => {
           conversationId.value = turn.conversation_id
+          readOnlyConversation.value = false
           const turnIndex = messages.value.findIndex(message => message.id === assistantId)
           if (turnIndex > 0 && messages.value[turnIndex - 1]?.role === 'user') {
             messages.value[turnIndex - 1]!.id = turn.user_message_id
@@ -186,7 +190,7 @@ export function useWikiChat() {
 
   async function send(text: string) {
     const content = text.trim()
-    if (!content || busy.value) return
+    if (!content || busy.value || loadingConversation.value || readOnlyConversation.value) return
     chatDrawerOpen.value = true
     const files = [...pinnedFiles.value]
     const user: WikiChatMessage = {
@@ -214,17 +218,37 @@ export function useWikiChat() {
   }
 
   function retry(assistantId: string) {
-    if (busy.value) return
+    if (busy.value || readOnlyConversation.value) return
     const assistantIndex = messages.value.findIndex(message => message.id === assistantId)
     const assistant = messages.value[assistantIndex]
     const previousUser = assistantIndex > 0 ? messages.value[assistantIndex - 1] : undefined
     if (!assistant || assistant.role !== 'assistant' || !previousUser || previousUser.role !== 'user') return
+    if (assistantIndex !== messages.value.length - 1) return
+    if (assistant.id.startsWith('local:') && assistant.errorCode === 'wiki_conversation_busy') {
+      assistant.text = ''
+      assistant.tools = []
+      assistant.citations = []
+      assistant.errorCode = null
+      assistant.status = 'streaming'
+      void runRequest({
+        ...(conversationId.value ? { conversation_id: conversationId.value } : {}),
+        question: previousUser.text,
+        pinned_paths: (previousUser.files ?? []).map(file => file.path),
+      }, assistantId)
+      return
+    }
+    if (assistant.status !== 'failed' && assistant.status !== 'interrupted') return
     if (!conversationId.value) return
     assistant.text = ''
     assistant.tools = []
     assistant.citations = []
     assistant.errorCode = null
     void runRequest({ conversation_id: conversationId.value, retry_message_id: assistantId }, assistantId)
+  }
+
+  function refreshConversation() {
+    if (!conversationId.value || busy.value || loadingConversation.value) return
+    void loadConversation(conversationId.value)
   }
 
   function showGraphOf(id: string) {
@@ -238,6 +262,7 @@ export function useWikiChat() {
     stop()
     messages.value = []
     conversationId.value = null
+    readOnlyConversation.value = false
     pinnedFiles.value = []
     activeGraph.value = null
     activeGraphMessageId.value = null
@@ -250,6 +275,7 @@ export function useWikiChat() {
     messages,
     conversationId,
     loadingConversation,
+    readOnlyConversation,
     activeGraph,
     activeGraphMessageId,
     busy,
@@ -260,6 +286,7 @@ export function useWikiChat() {
     unpinFile,
     send,
     loadConversation,
+    refreshConversation,
     stop,
     retry,
     reset,

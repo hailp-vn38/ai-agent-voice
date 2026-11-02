@@ -72,6 +72,7 @@ pub async fn bootstrap_with_providers_and_secret_resolver(
     secret_resolver: Arc<dyn crate::database::secrets::SecretResolver>,
 ) -> Result<Router, BootstrapError> {
     let database = Database::connect(&config.database).await?;
+    recover_wiki_conversations(&database).await?;
     let (plan, rows) = read_load_plan(&config, &database).await?;
     let (config, loaded) = state::loaded_from_provider_set(config, &providers);
     let (loaded, materialization) =
@@ -104,6 +105,16 @@ pub fn new_lifecycle(config: &AppConfig) -> Arc<RuntimeLifecycle> {
 pub fn new_lifecycle_from_grace_ms(grace_ms: u64) -> Arc<RuntimeLifecycle> {
     RuntimeLifecycle::new(Duration::from_millis(grace_ms))
 }
+
+async fn recover_wiki_conversations(database: &Database) -> Result<(), BootstrapError> {
+    let now_ms = crate::database::unix_seconds()
+        .unwrap_or_default()
+        .saturating_mul(1000);
+    crate::database::wiki_conversations::mark_all_running_interrupted(database, now_ms)
+        .await
+        .map_err(|_| DatabaseError::Unavailable.into())
+}
+
 pub fn router_with_state(mut state: AppState) -> Router {
     if let Some(ref hub) = state.notification_hub {
         hub.start_workers(state.lifecycle.stopping().clone());
@@ -274,6 +285,7 @@ pub async fn startup_with_lifecycle_and_secret_resolver(
     secret_resolver: Arc<dyn crate::database::secrets::SecretResolver>,
 ) -> Result<Router, BootstrapError> {
     let database = Database::connect(&config.database).await?;
+    recover_wiki_conversations(&database).await?;
     config.validate().map_err(|_| BootstrapError::Provider)?;
     // Every local provider this deployment declares gets its model files on disk before the server
     // binds, whether or not its runtime is built yet. Files already present are reused, so this
