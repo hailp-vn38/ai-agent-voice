@@ -32,3 +32,18 @@ fn agent_task_files_extract_markdown_links() {
         vec!["tasks/a/report.md", "tasks/a/data.csv"]
     );
 }
+
+#[test]
+fn agent_task_files_keep_parentheses_in_names_and_split_adjacent_links() {
+    assert_eq!(
+        collect_file_paths(
+            &[],
+            &[],
+            &[
+                "[a](sandbox://tasks/a(1).md),[b](sandbox://tasks/b.md) sandbox://tasks/c(2).md"
+                    .into()
+            ]
+        ),
+        vec!["tasks/a(1).md", "tasks/b.md", "tasks/c(2).md"]
+    );
+}

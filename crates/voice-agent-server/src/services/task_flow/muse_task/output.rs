@@ -74,10 +74,19 @@ pub(super) async fn publish(
     filename: Option<String>,
 ) -> Result<ToolOutcome, ToolError> {
     let mut files = Vec::new();
+    let mut message = output.message;
     for file in output.files {
         let name = safe_filename(&file.filename);
         if crate::providers::llm::supported_agent_task_file(&name) {
-            files.push(put(tool, ctx, &name, &file.mime_type, file.bytes, "muse_file").await?);
+            let published = put(tool, ctx, &name, &file.mime_type, file.bytes, "muse_file").await?;
+            // A sandbox link only resolves inside the Muse VM; point it at the delivered copy.
+            if let Some(id) = published["artifact_id"].as_str() {
+                message = message.replace(
+                    &format!("sandbox://{}", file.source_path),
+                    &format!("artifact:{id}"),
+                );
+            }
+            files.push(published);
         }
     }
     if kind == AgentOutputKind::Markdown
@@ -98,13 +107,12 @@ pub(super) async fn publish(
                 ctx,
                 &name,
                 "text/markdown",
-                output.message.as_bytes().to_vec(),
+                message.as_bytes().to_vec(),
                 "message",
             )
             .await?,
         );
     }
-    let mut message = output.message;
     let mut message_artifact_id = None;
     if serde_json::to_string(&message).map_or(usize::MAX, |json| json.len()) > tool.output_cap / 2 {
         if !files.iter().any(|f| f["origin"] == "message") {
@@ -137,8 +145,8 @@ pub(super) async fn publish(
         message_artifact_id = stored;
     }
     let ids: Vec<Value> = files.iter().map(|f| f["artifact_id"].clone()).collect();
-    let missing = kind == AgentOutputKind::Files && (output.files_missing || files.is_empty());
-    let result = json!({"untrusted_data":true,"status":if missing {"partial"}else {"completed"},"turn":output.turn,"completed_at":chrono::Local::now().to_rfc3339(),"message":message,"message_truncated":message_artifact_id.is_some(),"message_artifact_id":message_artifact_id,"artifact_ids":ids,"files":files,"next_action":"none","files_missing":missing,"warning":if missing {Some("No supported Muse attachment was available; text is not a delivered file")}else {None}});
+    let missing = output.files_missing || (kind == AgentOutputKind::Files && files.is_empty());
+    let result = json!({"untrusted_data":true,"status":if missing {"partial"}else {"completed"},"turn":output.turn,"completed_at":chrono::Local::now().to_rfc3339(),"message":message,"message_truncated":message_artifact_id.is_some(),"message_artifact_id":message_artifact_id,"artifact_ids":ids,"files":files,"next_action":"none","files_missing":missing,"warning":if missing {Some("A Muse file was not available; text is not a delivered file")}else {None}});
     Ok(ToolOutcome {
         call_id: ctx.scope().tool_call_id.clone(),
         content: result.to_string(),

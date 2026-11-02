@@ -16,7 +16,6 @@ use orchestrator_flow_rs::{
 };
 use serde::Deserialize;
 
-/// Falls back to latest-attempt figures when the history cannot be read.
 async fn session_runs(state: &AppState, detail: &TaskDetailView) -> SessionRuns {
     let Some(orchestrator) = state.orchestrator.as_deref() else {
         return SessionRuns::new();
@@ -25,12 +24,7 @@ async fn session_runs(state: &AppState, detail: &TaskDetailView) -> SessionRuns 
         detail.task.owner_id.as_str(),
         detail.task.workspace_id.as_str(),
     );
-    load_session_runs(orchestrator, &caller, detail)
-        .await
-        .unwrap_or_else(|error| {
-            tracing::warn!(task_id = %detail.task.id, %error, "failed to read job run history");
-            SessionRuns::new()
-        })
+    load_session_runs(orchestrator, &caller, detail).await
 }
 
 /// Admin job JSON whose usage and agent spans cover every attempt, not just the latest.
@@ -94,7 +88,9 @@ async fn lookup_idempotent_job(
     }
     if let Ok(task) = tm.get_task_any_scope(&task_id).await {
         let detail = tm.get_task_detail_any_scope(&task.id).await.ok();
-        return Ok(Some(project_task_to_admin_job(&task, detail.as_ref())));
+        return Ok(Some(
+            project_job_with_history(state, &task, detail.as_ref()).await,
+        ));
     }
     Ok(None)
 }
@@ -617,7 +613,12 @@ pub(in crate::app::admin) async fn events(
     match tm.get_task_detail_any_scope(&id).await {
         Ok(detail) => {
             let mut items = project_task_events(&detail, after, limit);
-            apply_session_runs_to_events(&mut items, &session_runs(&state, &detail).await);
+            if items
+                .iter()
+                .any(|event| event["event_type"] == "agent_run_finished")
+            {
+                apply_session_runs_to_events(&mut items, &session_runs(&state, &detail).await);
+            }
             Json(serde_json::json!({ "items": items })).into_response()
         }
         Err(e) => task_failure(&request, e),

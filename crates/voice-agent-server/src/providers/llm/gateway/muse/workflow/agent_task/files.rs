@@ -33,11 +33,11 @@ pub(super) fn collect_file_paths(
                 }
             }
             Value::String(text) => {
-                for token in text.split(|c: char| {
-                    c.is_whitespace() || matches!(c, '"' | '\'' | '<' | '>' | '`' | '(' | ')')
-                }) {
-                    if token.starts_with("sandbox://") {
-                        add(token, paths);
+                for token in text
+                    .split(|c: char| c.is_whitespace() || matches!(c, '"' | '\'' | '<' | '>' | '`'))
+                {
+                    for (start, _) in token.match_indices("sandbox://") {
+                        add(link_target(token, start), paths);
                     }
                 }
             }
@@ -52,6 +52,29 @@ pub(super) fn collect_file_paths(
         scan(&Value::String(bubble.clone()), &mut paths);
     }
     paths
+}
+
+/// The link starting at `start`, cut at the `)` that closes a markdown link so names like
+/// `report(1).md` stay whole.
+fn link_target(token: &str, start: usize) -> &str {
+    let rest = &token[start..];
+    if !token[..start].ends_with('(') {
+        return rest;
+    }
+    let mut depth = 1;
+    for (index, c) in rest.char_indices() {
+        match c {
+            '(' => depth += 1,
+            ')' => {
+                depth -= 1;
+                if depth == 0 {
+                    return &rest[..index];
+                }
+            }
+            _ => (),
+        }
+    }
+    rest
 }
 
 pub(super) fn mime_type(path: &str) -> &'static str {

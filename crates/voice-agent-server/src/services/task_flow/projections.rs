@@ -7,32 +7,50 @@ use orchestrator_flow_rs::{TaskDetailView, TaskStatus, TaskView};
 use serde_json::{Value, json};
 use std::collections::HashMap;
 
-/// Every persisted attempt of each agent session, in creation order. [`TaskDetailView`] only
-/// carries the latest attempt, so a job resumed after a restart needs this for totals and spans.
+/// Every persisted run of each agent session in creation order, including attempts resumed after
+/// a restart and follow-up turns. [`TaskDetailView`] only carries the latest one.
 pub type SessionRuns = HashMap<String, Vec<RunSummary>>;
 
+/// A session whose history cannot be read is left out and keeps its latest-run figures.
 pub async fn load_session_runs(
     orchestrator: &Orchestrator,
     caller: &CallerContext,
     detail: &TaskDetailView,
-) -> Result<SessionRuns, OrchestratorError> {
+) -> SessionRuns {
     let mut runs = SessionRuns::new();
     for session in detail.all_agents() {
-        let mut attempts = Vec::new();
-        let mut request = PageRequest::first(100);
-        loop {
-            let page = orchestrator
-                .list_runs(caller, &session.session_id, None, request)
-                .await?;
-            attempts.extend(page.items);
-            match page.next_cursor {
-                Some(cursor) => request = PageRequest::after(cursor, 100),
-                None => break,
+        match list_session_runs(orchestrator, caller, &session.session_id).await {
+            Ok(attempts) => {
+                runs.insert(session.session_id.clone(), attempts);
             }
+            Err(error) => tracing::warn!(
+                task_id = %detail.task.id,
+                session_id = %session.session_id,
+                %error,
+                "failed to read job run history"
+            ),
         }
-        runs.insert(session.session_id.clone(), attempts);
     }
-    Ok(runs)
+    runs
+}
+
+async fn list_session_runs(
+    orchestrator: &Orchestrator,
+    caller: &CallerContext,
+    session_id: &str,
+) -> Result<Vec<RunSummary>, OrchestratorError> {
+    let mut attempts = Vec::new();
+    let mut request = PageRequest::first(100);
+    loop {
+        let page = orchestrator
+            .list_runs(caller, session_id, None, request)
+            .await?;
+        attempts.extend(page.items);
+        match page.next_cursor {
+            Some(cursor) => request = PageRequest::after(cursor, 100),
+            None => return Ok(attempts),
+        }
+    }
 }
 
 /// Summed `(steps, input_tokens, output_tokens)` across attempts.

@@ -364,6 +364,52 @@ async fn muse_task_publishes_muse_markdown_and_attachment_metadata() {
 }
 
 #[tokio::test]
+async fn muse_task_points_delivered_sandbox_links_at_their_artifact() {
+    let (out, _) = run_tool_output(
+        json!({"prompt":"Research"}),
+        true,
+        Some(Ok(AgentTurnOutput {
+            turn: 1,
+            message: "Saved [report.md](sandbox://tasks/report.md)".into(),
+            files: vec![AgentFile {
+                filename: "report.md".into(),
+                mime_type: "text/markdown".into(),
+                bytes: b"# Report".to_vec(),
+                source_path: "tasks/report.md".into(),
+            }],
+            files_missing: false,
+        })),
+    )
+    .await;
+    let result: Value = serde_json::from_str(&out).expect(&out);
+    let id = result["files"][0]["artifact_id"].as_str().unwrap();
+    assert_eq!(
+        result["message"],
+        format!("Saved [report.md](artifact:{id})")
+    );
+    assert_eq!(result["status"], "completed");
+}
+
+#[tokio::test]
+async fn muse_task_reports_a_missing_linked_file_for_a_text_turn() {
+    let (out, _) = run_tool_output(
+        json!({"prompt":"Research"}),
+        true,
+        Some(Ok(AgentTurnOutput {
+            turn: 1,
+            message: "Saved [gone.md](sandbox://tasks/gone.md)".into(),
+            files: vec![],
+            files_missing: true,
+        })),
+    )
+    .await;
+    let result: Value = serde_json::from_str(&out).expect(&out);
+    assert_eq!(result["status"], "partial");
+    assert_eq!(result["files_missing"], true);
+    assert!(result["warning"].is_string());
+}
+
+#[tokio::test]
 async fn muse_task_large_message_is_an_artifact_with_a_bounded_preview() {
     let (out, _) = run_tool_output(
         json!({"prompt":"Research"}),

@@ -83,7 +83,7 @@ const canvasStats = computed<JobCanvasStats | undefined>(() =>
   job.value
     ? {
         agentRunsCount: job.value.agent_runs ? agentRuns.value.length : null,
-        llmRunsCount: llmRuns.value.length,
+        llmRunsCount: agentRuns.value.reduce((sum, run) => sum + run.llm_rounds, 0) || llmRuns.value.length,
         activeLlmCount: activeLlm.value,
         pluginCallsCount: pluginCalls.value,
         tokenUsage: tokenUsage.value,

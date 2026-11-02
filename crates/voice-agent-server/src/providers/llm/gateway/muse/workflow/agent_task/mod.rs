@@ -461,7 +461,11 @@ pub(crate) async fn run_turn(
                             return Err(AgentTaskError::RetryLater(reason));
                         }
                     }
-                    let files_missing = downloaded.is_empty()
+                    let linked_file_missing =
+                        files::collect_file_paths(&[], &[], std::slice::from_ref(&message))
+                            .iter()
+                            .any(|path| !downloaded.iter().any(|file| file.source_path == *path));
+                    let requested_files_missing = downloaded.is_empty()
                         && matches!(
                             &request.action,
                             AgentTurnAction::Send {
@@ -472,7 +476,7 @@ pub(crate) async fn run_turn(
                                 ..
                             }
                         );
-                    if files_missing
+                    if requested_files_missing
                         && matches!(&request.action, AgentTurnAction::Send { .. })
                         && data
                             .get("attachment_reminder_used")
@@ -530,7 +534,7 @@ pub(crate) async fn run_turn(
                         turn: expected,
                         message,
                         files: downloaded,
-                        files_missing,
+                        files_missing: requested_files_missing || linked_file_missing,
                     });
                 }
             }

@@ -113,8 +113,10 @@ export function projectLlmRuns(
           : state === 'cancelled' || state === 'interrupted'
             ? state
             : 'failed'
-      run.inputTokens = int(event.payload.input_tokens) ?? run.inputTokens
-      run.outputTokens = int(event.payload.output_tokens) ?? run.outputTokens
+      // A cached event can predate a resumed run; agent_runs is reloaded on every refresh.
+      const agentRun = agentRunById.get(text(event.payload?.agent_run_id) ?? '')
+      run.inputTokens = int(agentRun?.input_tokens) ?? int(event.payload.input_tokens) ?? run.inputTokens
+      run.outputTokens = int(agentRun?.output_tokens) ?? int(event.payload.output_tokens) ?? run.outputTokens
       run.errorCode = text(event.payload.error_code) ?? run.errorCode
       run.errorMessage = text(event.payload.error_message) ?? run.errorMessage
       continue
