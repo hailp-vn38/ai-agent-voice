@@ -31,10 +31,16 @@ pub(in crate::providers::llm::gateway) struct FakeVmAccount {
     stream_requests: Mutex<Vec<Value>>,
     decided_approvals: Mutex<Vec<(String, String)>>,
     deleted_sessions: Mutex<Vec<String>>,
+    delete_failure_status: Mutex<Option<u32>>,
+    delete_attempts: Mutex<Vec<String>>,
+    delete_gate: Mutex<Option<Arc<tokio::sync::Semaphore>>>,
     active_history: Mutex<VecDeque<Vec<Value>>>,
     stream_delay: Mutex<Option<std::time::Duration>>,
     read_delay: Mutex<Option<std::time::Duration>>,
     lose_stream_ack: std::sync::atomic::AtomicBool,
+    history_disconnect_once: std::sync::atomic::AtomicBool,
+    fail_reconnect: std::sync::atomic::AtomicBool,
+    connection_count: std::sync::atomic::AtomicUsize,
     history_failure_status: Mutex<Option<u32>>,
     history_requires_turn: std::sync::atomic::AtomicBool,
 }
@@ -48,10 +54,16 @@ impl FakeVmAccount {
             stream_requests: Mutex::new(Vec::new()),
             decided_approvals: Mutex::new(Vec::new()),
             deleted_sessions: Mutex::new(Vec::new()),
+            delete_failure_status: Mutex::new(None),
+            delete_attempts: Mutex::new(Vec::new()),
+            delete_gate: Mutex::new(None),
             active_history: Mutex::new(VecDeque::new()),
             stream_delay: Mutex::new(None),
             read_delay: Mutex::new(None),
             lose_stream_ack: std::sync::atomic::AtomicBool::new(false),
+            history_disconnect_once: std::sync::atomic::AtomicBool::new(false),
+            fail_reconnect: std::sync::atomic::AtomicBool::new(false),
+            connection_count: std::sync::atomic::AtomicUsize::new(0),
             history_failure_status: Mutex::new(None),
             history_requires_turn: std::sync::atomic::AtomicBool::new(false),
         })
@@ -67,6 +79,23 @@ impl FakeVmAccount {
     /// Makes every `/chat/history` read from now on answer with this error status.
     pub fn set_history_failure_status(&self, status: u32) {
         *self.history_failure_status.lock().unwrap() = Some(status);
+    }
+
+    pub fn clear_history_failure(&self) {
+        *self.history_failure_status.lock().unwrap() = None;
+    }
+
+    pub fn with_history_disconnect(self: &Arc<Self>, fail_reconnect: bool) -> Arc<Self> {
+        self.history_disconnect_once
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+        self.fail_reconnect
+            .store(fail_reconnect, std::sync::atomic::Ordering::SeqCst);
+        Arc::clone(self)
+    }
+
+    pub fn connection_count(&self) -> usize {
+        self.connection_count
+            .load(std::sync::atomic::Ordering::SeqCst)
     }
 
     pub fn with_stream_delay(self: &Arc<Self>, delay: std::time::Duration) -> Arc<Self> {
@@ -107,6 +136,18 @@ impl FakeVmAccount {
 
     pub fn decided_approvals(&self) -> Vec<(String, String)> {
         self.decided_approvals.lock().unwrap().clone()
+    }
+
+    pub fn delete_attempts(&self) -> Vec<String> {
+        self.delete_attempts.lock().unwrap().clone()
+    }
+
+    pub fn gate_delete(&self, gate: Arc<tokio::sync::Semaphore>) {
+        *self.delete_gate.lock().unwrap() = Some(gate);
+    }
+
+    pub fn set_delete_failure_status(&self, status: Option<u32>) {
+        *self.delete_failure_status.lock().unwrap() = status;
     }
 
     pub fn deleted_sessions(&self) -> Vec<String> {
@@ -267,6 +308,28 @@ impl MuseVmSender for FakeVmSender {
                     serde_json::from_slice(&req.body).unwrap_or_else(|_| json!({}));
                 if let Some(sid) = body_json.get("session_id").and_then(Value::as_str) {
                     self.account
+                        .delete_attempts
+                        .lock()
+                        .unwrap()
+                        .push(sid.to_string());
+                }
+                let gate = self.account.delete_gate.lock().unwrap().clone();
+                if let Some(gate) = gate {
+                    let _permit = gate.acquire().await.unwrap();
+                }
+                if let Some(status) = *self.account.delete_failure_status.lock().unwrap() {
+                    send_json_response(
+                        &self.tx,
+                        stream_id,
+                        status,
+                        &json!({"error": "delete unavailable"}),
+                    );
+                    return Ok(());
+                }
+                let body_json: Value =
+                    serde_json::from_slice(&req.body).unwrap_or_else(|_| json!({}));
+                if let Some(sid) = body_json.get("session_id").and_then(Value::as_str) {
+                    self.account
                         .deleted_sessions
                         .lock()
                         .unwrap()
@@ -351,6 +414,16 @@ impl MuseVmSender for FakeVmSender {
                     }));
                 }
             } else if path.starts_with("/chat/history") {
+                if self
+                    .account
+                    .history_disconnect_once
+                    .swap(false, std::sync::atomic::Ordering::SeqCst)
+                {
+                    let _ = self.tx.send(Err(VmError::Transport(
+                        "injected history disconnect".into(),
+                    )));
+                    continue;
+                }
                 let forced_failure = *self.account.history_failure_status.lock().unwrap();
                 let no_turn_yet = self
                     .account
@@ -418,6 +491,16 @@ impl MuseVmTransport for FakeMuseVmTransport {
                 })?
             }
         };
+        let previous = account
+            .connection_count
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        if previous > 0
+            && account
+                .fail_reconnect
+                .load(std::sync::atomic::Ordering::SeqCst)
+        {
+            return Err(VmError::Transport("injected reconnect failure".into()));
+        }
         let (tx, rx) = mpsc::unbounded_channel();
         Ok((
             Box::new(FakeVmSender {
