@@ -64,6 +64,69 @@ enum AskEvent {
     Error(&'static str),
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum AskTurnStatus {
+    Completed,
+    Stopped,
+    Failed(&'static str),
+}
+
+#[derive(Clone, Debug)]
+struct AskToolStep {
+    call_id: String,
+    name: String,
+    state: &'static str,
+    query: Option<String>,
+    pages: Vec<String>,
+}
+
+impl AskToolStep {
+    fn into_event(self) -> AskEvent {
+        AskEvent::Tool {
+            call_id: self.call_id,
+            name: self.name,
+            state: self.state,
+            query: self.query,
+            pages: self.pages,
+        }
+    }
+}
+
+struct AskOutcome {
+    status: AskTurnStatus,
+    answer: String,
+    tools: Vec<AskToolStep>,
+    citations: Vec<String>,
+    graph: Option<Value>,
+}
+
+impl AskOutcome {
+    fn stopped(answer: String, tools: Vec<AskToolStep>, graph: Option<Value>) -> Self {
+        Self {
+            status: AskTurnStatus::Stopped,
+            answer,
+            tools,
+            citations: Vec::new(),
+            graph,
+        }
+    }
+
+    fn failed(
+        code: &'static str,
+        answer: String,
+        tools: Vec<AskToolStep>,
+        graph: Option<Value>,
+    ) -> Self {
+        Self {
+            status: AskTurnStatus::Failed(code),
+            answer,
+            tools,
+            citations: Vec::new(),
+            graph,
+        }
+    }
+}
+
 struct CancelOnDrop(CancellationToken);
 
 impl Drop for CancelOnDrop {
@@ -171,15 +234,50 @@ pub(in crate::app::admin) async fn knowledge_ask(
             ),
         },
     );
-    tokio::spawn(run_ask(
-        provider,
-        engine,
-        messages,
-        pinned_reads,
-        AskLimits::default(),
-        cancellation.clone(),
-        events_tx,
-    ));
+    let ask_events = events_tx.clone();
+    let ask_cancellation = cancellation.clone();
+    tokio::spawn(async move {
+        let outcome = run_ask(
+            provider,
+            engine,
+            messages,
+            pinned_reads,
+            AskLimits::default(),
+            ask_cancellation,
+            events_tx,
+        )
+        .await;
+        let AskOutcome {
+            status,
+            answer: _answer,
+            tools: _tools,
+            citations,
+            graph,
+        } = outcome;
+        match status {
+            AskTurnStatus::Completed => {
+                if let Some(graph) = graph {
+                    let _ = ask_events.send(AskEvent::Graph(graph)).await;
+                }
+                let _ = ask_events
+                    .send(AskEvent::Done {
+                        citations,
+                        stop_reason: "finished",
+                    })
+                    .await;
+            }
+            AskTurnStatus::Stopped => {}
+            AskTurnStatus::Failed(code) => {
+                let _ = ask_events.send(AskEvent::Error(code)).await;
+                let _ = ask_events
+                    .send(AskEvent::Done {
+                        citations: Vec::new(),
+                        stop_reason: code,
+                    })
+                    .await;
+            }
+        }
+    });
     let events = stream::unfold(
         (
             events_rx,
@@ -230,7 +328,7 @@ async fn run_ask(
     limits: AskLimits,
     cancellation: CancellationToken,
     events: mpsc::Sender<AskEvent>,
-) {
+) -> AskOutcome {
     use super::answer_graph::Evidence;
 
     let deadline = tokio::time::Instant::now() + limits.max_total_time;
@@ -246,8 +344,19 @@ async fn run_ask(
         .collect::<Vec<_>>();
     let mut evidence = Evidence::default();
     let mut answer = String::new();
+    let mut tool_steps = Vec::new();
     let mut graph_revision = 0u64;
     let mut last_graph: Option<Value> = None;
+    macro_rules! stopped {
+        () => {
+            return AskOutcome::stopped(answer, tool_steps, last_graph)
+        };
+    }
+    macro_rules! failed {
+        ($code:literal) => {
+            return AskOutcome::failed($code, answer, tool_steps, last_graph)
+        };
+    }
 
     // `max_steps` bounds tool rounds; the extra provider call lets the model
     // answer from the evidence gathered in the final allowed round. Reading the
@@ -256,7 +365,7 @@ async fn run_ask(
     let last_step = limits.max_steps + pinned_round;
     for step in 0..=last_step {
         if cancellation.is_cancelled() {
-            return;
+            stopped!();
         }
         let mut assistant_text = String::new();
         let mut calls = Vec::new();
@@ -269,16 +378,14 @@ async fn run_ask(
             });
             let mut provider_stream = tokio::select! {
                 biased;
-                _ = cancellation.cancelled() => return,
+                _ = cancellation.cancelled() => stopped!(),
                 _ = tokio::time::sleep_until(deadline) => {
-                    send_error_and_done(&events, "timeout", "timeout").await;
-                    return;
+                    failed!("timeout");
                 }
                 result = provider_request => match result {
                     Ok(stream) => stream,
                     Err(_) => {
-                        send_error_and_done(&events, "provider_failed", "provider_failed").await;
-                        return;
+                        failed!("provider_failed");
                     }
                 },
             };
@@ -286,10 +393,9 @@ async fn run_ask(
             loop {
                 let next = tokio::select! {
                     biased;
-                    _ = cancellation.cancelled() => return,
+                    _ = cancellation.cancelled() => stopped!(),
                     _ = tokio::time::sleep_until(deadline) => {
-                        send_error_and_done(&events, "timeout", "timeout").await;
-                        return;
+                        failed!("timeout");
                     }
                     item = provider_stream.next() => item,
                 };
@@ -298,15 +404,14 @@ async fn run_ask(
                         answer.push_str(&text);
                         assistant_text.push_str(&text);
                         if !send_event(&events, AskEvent::Delta(text), &cancellation).await {
-                            return;
+                            stopped!();
                         }
                     }
                     Some(Ok(LlmEvent::ToolCall(call))) => calls.push(call),
                     Some(Ok(LlmEvent::Activity)) => {}
                     Some(Ok(LlmEvent::Finished)) | None => break,
                     Some(Err(_)) => {
-                        send_error_and_done(&events, "provider_failed", "provider_failed").await;
-                        return;
+                        failed!("provider_failed");
                     }
                 }
             }
@@ -327,22 +432,15 @@ async fn run_ask(
             .await
             {
                 Ok(graph) => graph,
-                Err("cancelled") => return,
-                Err("timeout") => {
-                    send_error_and_done(&events, "timeout", "timeout").await;
-                    return;
-                }
-                Err(_) => {
-                    send_error_and_done(&events, "knowledge_unavailable", "knowledge_unavailable")
-                        .await;
-                    return;
-                }
+                Err("cancelled") => stopped!(),
+                Err("timeout") => failed!("timeout"),
+                Err(_) => failed!("knowledge_unavailable"),
             };
+            last_graph = Some(graph.clone());
             if !send_event(&events, AskEvent::Graph(graph), &cancellation).await {
-                return;
+                stopped!();
             }
-            send_error_and_done(&events, "step_limit", "step_limit").await;
-            return;
+            failed!("step_limit");
         }
         if !assistant_text.is_empty() {
             messages.push(ChatMessage::AssistantText {
@@ -355,20 +453,16 @@ async fn run_ask(
 
         for call in calls {
             let query = tool_query(&call);
-            if !send_event(
-                &events,
-                AskEvent::Tool {
-                    call_id: call.id.clone(),
-                    name: call.name.clone(),
-                    state: "running",
-                    query: query.clone(),
-                    pages: Vec::new(),
-                },
-                &cancellation,
-            )
-            .await
-            {
-                return;
+            let running_step = AskToolStep {
+                call_id: call.id.clone(),
+                name: call.name.clone(),
+                state: "running",
+                query: query.clone(),
+                pages: Vec::new(),
+            };
+            tool_steps.push(running_step.clone());
+            if !send_event(&events, running_step.into_event(), &cancellation).await {
+                stopped!();
             }
 
             if !ASK_TOOLS.contains(&call.name.as_str()) {
@@ -377,18 +471,15 @@ async fn run_ask(
                     tool_call_id: call.id.clone(),
                     content,
                 });
-                let _ = send_event(
-                    &events,
-                    AskEvent::Tool {
-                        call_id: call.id,
-                        name: call.name,
-                        state: "failed",
-                        query,
-                        pages: Vec::new(),
-                    },
-                    &cancellation,
-                )
-                .await;
+                let failed_step = AskToolStep {
+                    call_id: call.id,
+                    name: call.name,
+                    state: "failed",
+                    query,
+                    pages: Vec::new(),
+                };
+                tool_steps.push(failed_step.clone());
+                let _ = send_event(&events, failed_step.into_event(), &cancellation).await;
                 continue;
             }
 
@@ -413,18 +504,15 @@ async fn run_ask(
                         tool_call_id: call.id.clone(),
                         content,
                     });
-                    let _ = send_event(
-                        &events,
-                        AskEvent::Tool {
-                            call_id: call.id.clone(),
-                            name: call.name.clone(),
-                            state: "completed",
-                            query,
-                            pages,
-                        },
-                        &cancellation,
-                    )
-                    .await;
+                    let completed_step = AskToolStep {
+                        call_id: call.id.clone(),
+                        name: call.name.clone(),
+                        state: "completed",
+                        query,
+                        pages,
+                    };
+                    tool_steps.push(completed_step.clone());
+                    let _ = send_event(&events, completed_step.into_event(), &cancellation).await;
                     if changed {
                         graph_revision += 1;
                         match make_graph_snapshot(
@@ -441,42 +529,29 @@ async fn run_ask(
                                 last_graph = Some(graph.clone());
                                 if !send_event(&events, AskEvent::Graph(graph), &cancellation).await
                                 {
-                                    return;
+                                    stopped!();
                                 }
                             }
-                            Err("cancelled") => return,
-                            Err("timeout") => {
-                                send_error_and_done(&events, "timeout", "timeout").await;
-                                return;
-                            }
+                            Err("cancelled") => stopped!(),
+                            Err("timeout") => failed!("timeout"),
                             Err(_) => {
-                                send_error_and_done(
-                                    &events,
-                                    "knowledge_unavailable",
-                                    "knowledge_unavailable",
-                                )
-                                .await;
-                                return;
+                                failed!("knowledge_unavailable");
                             }
                         }
                     }
                 }
-                Err(ReadToolError::Cancelled) => return,
+                Err(ReadToolError::Cancelled) => stopped!(),
                 Err(ReadToolError::Timeout) => {
-                    let _ = send_event(
-                        &events,
-                        AskEvent::Tool {
-                            call_id: call.id,
-                            name: call.name,
-                            state: "failed",
-                            query,
-                            pages: Vec::new(),
-                        },
-                        &cancellation,
-                    )
-                    .await;
-                    send_error_and_done(&events, "timeout", "timeout").await;
-                    return;
+                    let failed_step = AskToolStep {
+                        call_id: call.id,
+                        name: call.name,
+                        state: "failed",
+                        query,
+                        pages: Vec::new(),
+                    };
+                    tool_steps.push(failed_step.clone());
+                    let _ = send_event(&events, failed_step.into_event(), &cancellation).await;
+                    failed!("timeout");
                 }
                 Err(ReadToolError::Failed { code, message }) => {
                     tracing::warn!(
@@ -489,18 +564,15 @@ async fn run_ask(
                         content: json!({"error":code,"message":message,"untrusted_data":true})
                             .to_string(),
                     });
-                    let _ = send_event(
-                        &events,
-                        AskEvent::Tool {
-                            call_id: call.id,
-                            name: call.name,
-                            state: "failed",
-                            query,
-                            pages: Vec::new(),
-                        },
-                        &cancellation,
-                    )
-                    .await;
+                    let failed_step = AskToolStep {
+                        call_id: call.id,
+                        name: call.name,
+                        state: "failed",
+                        query,
+                        pages: Vec::new(),
+                    };
+                    tool_steps.push(failed_step.clone());
+                    let _ = send_event(&events, failed_step.into_event(), &cancellation).await;
                 }
             }
         }
@@ -529,23 +601,12 @@ async fn run_ask(
                 .await
                 {
                     Ok(graph) => last_graph = Some(graph),
-                    Err("cancelled") => return,
-                    Err("timeout") => {
-                        send_error_and_done(&events, "timeout", "timeout").await;
-                        return;
-                    }
-                    Err(_) => {
-                        send_error_and_done(
-                            &events,
-                            "knowledge_unavailable",
-                            "knowledge_unavailable",
-                        )
-                        .await;
-                        return;
-                    }
+                    Err("cancelled") => stopped!(),
+                    Err("timeout") => failed!("timeout"),
+                    Err(_) => failed!("knowledge_unavailable"),
                 }
             }
-            let final_graph = match last_graph {
+            let final_graph = match last_graph.take() {
                 Some(graph) => graph,
                 None => match make_graph_snapshot(
                     engine,
@@ -558,40 +619,22 @@ async fn run_ask(
                 .await
                 {
                     Ok(graph) => graph,
-                    Err("cancelled") => return,
-                    Err("timeout") => {
-                        send_error_and_done(&events, "timeout", "timeout").await;
-                        return;
-                    }
-                    Err(_) => {
-                        send_error_and_done(
-                            &events,
-                            "knowledge_unavailable",
-                            "knowledge_unavailable",
-                        )
-                        .await;
-                        return;
-                    }
+                    Err("cancelled") => stopped!(),
+                    Err("timeout") => failed!("timeout"),
+                    Err(_) => failed!("knowledge_unavailable"),
                 },
             };
-            if !send_event(&events, AskEvent::Graph(final_graph), &cancellation).await {
-                return;
+            AskOutcome {
+                status: AskTurnStatus::Completed,
+                answer,
+                tools: tool_steps,
+                citations,
+                graph: Some(final_graph),
             }
-            let _ = send_event(
-                &events,
-                AskEvent::Done {
-                    citations,
-                    stop_reason: "finished",
-                },
-                &cancellation,
-            )
-            .await;
         }
-        Err("cancelled") => {}
-        Err("timeout") => send_error_and_done(&events, "timeout", "timeout").await,
-        Err(_) => {
-            send_error_and_done(&events, "knowledge_unavailable", "knowledge_unavailable").await
-        }
+        Err("cancelled") => AskOutcome::stopped(answer, tool_steps, last_graph),
+        Err("timeout") => AskOutcome::failed("timeout", answer, tool_steps, last_graph),
+        Err(_) => AskOutcome::failed("knowledge_unavailable", answer, tool_steps, last_graph),
     }
 }
 
@@ -605,20 +648,6 @@ async fn send_event(
         _ = cancellation.cancelled() => false,
         result = events.send(event) => result.is_ok(),
     }
-}
-
-async fn send_error_and_done(
-    events: &mpsc::Sender<AskEvent>,
-    code: &'static str,
-    stop_reason: &'static str,
-) {
-    let _ = events.send(AskEvent::Error(code)).await;
-    let _ = events
-        .send(AskEvent::Done {
-            citations: Vec::new(),
-            stop_reason,
-        })
-        .await;
 }
 
 fn ask_event_to_sse(event: AskEvent) -> Event {
