@@ -7,6 +7,12 @@ import {
   type WikiChatTool,
 } from '@/api/wiki-chat'
 
+/** A vault file the user attached to the conversation; `path` is a `wiki/` or `sources/` path. */
+export interface WikiChatFile {
+  path: string
+  title: string
+}
+
 export interface WikiChatMessage {
   id: string
   role: 'user' | 'assistant'
@@ -16,6 +22,7 @@ export interface WikiChatMessage {
   graph: AnswerGraph | null
   citations: string[]
   errorCode: string | null
+  files?: WikiChatFile[]
 }
 
 function newId(): string {
@@ -26,6 +33,7 @@ function newId(): string {
 
 const MAX_HISTORY_MESSAGES = 12
 const MAX_HISTORY_BYTES = 16 * 1024
+export const MAX_PINNED_FILES = 4
 
 function historyFor(messages: WikiChatMessage[]): WikiChatInputMessage[] {
   return messages
@@ -54,6 +62,7 @@ export function useWikiChat() {
   const activeGraphMessageId = ref<string | null>(null)
   const busy = ref(false)
   const chatDrawerOpen = ref(false)
+  const pinnedFiles = ref<WikiChatFile[]>([])
   let controller: AbortController | null = null
   let currentAssistantId: string | null = null
 
@@ -63,7 +72,17 @@ export function useWikiChat() {
     return messages.value.find(message => message.id === id)
   }
 
-  async function runRequest(history: WikiChatInputMessage[], assistantId: string) {
+  function pinFile(file: WikiChatFile) {
+    if (pinnedFiles.value.length >= MAX_PINNED_FILES) return
+    if (pinnedFiles.value.some(pinned => pinned.path === file.path)) return
+    pinnedFiles.value.push(file)
+  }
+
+  function unpinFile(path: string) {
+    pinnedFiles.value = pinnedFiles.value.filter(file => file.path !== path)
+  }
+
+  async function runRequest(history: WikiChatInputMessage[], assistantId: string, files: WikiChatFile[]) {
     const assistant = findMessage(assistantId)
     if (!assistant) return
     const requestController = new AbortController()
@@ -118,7 +137,7 @@ export function useWikiChat() {
             current.errorCode = code
           }
         },
-      }, requestController.signal)
+      }, requestController.signal, files.map(file => file.path))
       const current = findMessage(assistantId)
       if (current?.status === 'streaming') current.status = 'done'
     } catch (error) {
@@ -142,9 +161,10 @@ export function useWikiChat() {
     if (!content || busy.value) return
     chatDrawerOpen.value = true
     const history = historyFor(messages.value)
+    const files = [...pinnedFiles.value]
     const user: WikiChatMessage = {
       id: newId(), role: 'user', text: content, status: 'done', tools: [], graph: null,
-      citations: [], errorCode: null,
+      citations: [], errorCode: null, files,
     }
     const assistant: WikiChatMessage = {
       id: newId(), role: 'assistant', text: '', status: 'streaming', tools: [], graph: null,
@@ -152,7 +172,7 @@ export function useWikiChat() {
     }
     messages.value.push(user, assistant)
     history.push({ role: 'user', content })
-    await runRequest(boundHistory(history), assistant.id)
+    await runRequest(boundHistory(history), assistant.id, files)
   }
 
   function stop() {
@@ -174,7 +194,7 @@ export function useWikiChat() {
     assistant.tools = []
     assistant.citations = []
     assistant.errorCode = null
-    void runRequest(boundHistory(history), assistantId)
+    void runRequest(boundHistory(history), assistantId, previousUser.files ?? [])
   }
 
   function showGraphOf(id: string) {
@@ -187,6 +207,7 @@ export function useWikiChat() {
   function reset() {
     stop()
     messages.value = []
+    pinnedFiles.value = []
     activeGraph.value = null
     activeGraphMessageId.value = null
     chatDrawerOpen.value = false
@@ -201,6 +222,9 @@ export function useWikiChat() {
     busy,
     hasMessages,
     chatDrawerOpen,
+    pinnedFiles,
+    pinFile,
+    unpinFile,
     send,
     stop,
     retry,

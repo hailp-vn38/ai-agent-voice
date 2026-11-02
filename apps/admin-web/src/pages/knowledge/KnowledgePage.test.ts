@@ -261,6 +261,36 @@ it('streams a Wiki answer, switches to its answer graph, and keeps chat when cha
   }
 })
 
+it('attaches the open note to the chat, naming a File by its Source path', async () => {
+  const sse = 'event: done\ndata: {"citations":["sources/raw-file.md"],"stop_reason":"finished"}\n\n'
+  const fetchMock = vi.fn(() => Promise.resolve(new Response(sse, { headers: { 'Content-Type': 'text/event-stream' } })))
+  vi.stubGlobal('fetch', fetchMock)
+  const wrapper = mount(KnowledgePage)
+  try {
+    await flushPromises()
+    await wrapper.findAll('.a-right-tab')[1]!.trigger('click')
+    await flushPromises()
+    await wrapper.get('.wiki-chat-file-add').trigger('click')
+    expect(wrapper.get('.wiki-chat-files .wiki-chat-file').text()).toBe('Wiki Demo')
+
+    const spaces = wrapper.findAll('.a-pane-heading [role="tab"]')
+    await spaces[1]!.trigger('click')
+    await flushPromises()
+    await wrapper.findAll('button.tree-leaf').find(btn => btn.text().includes('raw-file'))!.trigger('click')
+    await flushPromises()
+    await wrapper.get('.wiki-chat-file-add').trigger('click')
+
+    await wrapper.get('.wiki-chat-panel textarea').setValue('Compare these')
+    await wrapper.get('.wiki-chat-panel form').trigger('submit')
+    await flushPromises()
+    const [, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit]
+    expect(JSON.parse(String(init.body)).pinned_paths).toEqual(['wiki/wiki-file.md', 'sources/raw-file.md'])
+  } finally {
+    wrapper.unmount()
+    vi.unstubAllGlobals()
+  }
+})
+
 it('stops a stream and retains the partial assistant answer', async () => {
   let signal: AbortSignal | undefined
   const fetchMock = vi.fn((_url: string, init: RequestInit) => {

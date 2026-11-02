@@ -14,7 +14,7 @@ import PageHeader from '@/components/admin/PageHeader.vue'
 import { Button } from '@/components/ui/button'
 import { ActionMenu, MenuItem } from '@/components/ui/action-menu'
 import { useI18n } from '@/composables/useI18n'
-import { useWikiChat } from './useWikiChat'
+import { useWikiChat, type WikiChatFile } from './useWikiChat'
 import WikiChatPanel from './WikiChatPanel.vue'
 import KnowledgeNoteView, { noteIntroduction } from './KnowledgeNoteView.vue'
 import { useKnowledgeWorkspace, type NoteDoc, type Page, type RawFile, type TabRef, type TreeSpace, type WorkspacePane, type WorkspaceTab } from './useKnowledgeWorkspace'
@@ -47,6 +47,9 @@ const {
   activeGraph: activeAnswerGraph,
   busy: wikiChatBusy,
   chatDrawerOpen,
+  pinnedFiles: wikiChatPinnedFiles,
+  pinFile: pinWikiChatFile,
+  unpinFile: unpinWikiChatFile,
   send: sendWikiChat,
   stop: stopWikiChat,
   retry: retryWikiChat,
@@ -217,6 +220,7 @@ function selectRightTab(tab: RightTab) {
 async function openCitation(path: string) {
   // The page itself opens next, so Graph only marks the node instead of covering itself with its card.
   graphControls.value?.focusNode(path, false)
+  if (path.startsWith('sources/')) { await openSourceCitation(path); return }
   const open = findOpenTab(tab => tabHoldsPath(tab, 'wiki', path))
   if (open) { await activateTab(open.pane, open.tab); return }
   const id = tree.value.find(node => node.space === 'wiki' && node.path === path)?.id ?? path
@@ -228,6 +232,15 @@ async function openCitation(path: string) {
   if (neighbour) { await openWikiPage(id, 'tab', neighbour); return }
   const width = panesEl.value?.querySelector('[data-pane-id="' + graphPane.id + '"]')?.getBoundingClientRect().width ?? 0
   await openWikiPage(id, width >= MIN_WIDTH_TO_SPLIT_FOR_CITATION ? 'side' : 'tab', graphPane)
+}
+/** The chat names Source files by their vault path; the workspace shows them under `raw/`. */
+async function openSourceCitation(path: string) {
+  const rawPath = 'raw/' + path.slice('sources/'.length)
+  const open = findOpenTab(tab => tabHoldsPath(tab, 'raw', rawPath))
+  if (open) { await activateTab(open.pane, open.tab); return }
+  if (!prepareOpenTarget('tab')) return
+  await switchExplorerSpace('raw')
+  await openRawNote(rawPath, rawPath.split('/').pop() ?? rawPath)
 }
 async function showAnswerOnGraph(id: string) {
   showChatGraph(id)
@@ -353,6 +366,16 @@ watch([activeSpace, openFolders, selectedPath], ([space, folders, path]) => {
 const workspace = useKnowledgeWorkspace(validExplorerPath)
 const { panes, focusedPaneId, graphPaneId, focusedPane, boundTab } = workspace
 const viewMode = ref<'read' | 'graph' | 'compose'>('read')
+// Drafts are not in the index the chat reads from, so only Wiki and Source files can be attached.
+const openChatFile = computed<WikiChatFile | null>(() => {
+  if (viewMode.value !== 'read') return null
+  const tab = boundTab.value
+  const target = tab.doc ?? tab.ref
+  if (!target) return null
+  const path = target.space === 'wiki' ? target.path
+    : target.space === 'raw' ? target.path.replace(/^raw\//, 'sources/') : ''
+  return path.startsWith('wiki/') || path.startsWith('sources/') ? { path, title: target.title } : null
+})
 const graphFocusMode = ref(false)
 const graphMounted = ref(false)
 watch(viewMode, mode => {
@@ -1991,6 +2014,8 @@ onMounted(() => {
     <WikiChatPanel v-if="chatMounted" v-show="rightPanel === 'chat'" :messages="wikiChatMessages" :busy="wikiChatBusy"
       :class="{ 'is-collapsed': rightPanelCollapsed }"
       :drawer-open="chatDrawerOpen" :suggestions="chatSuggestions"
+      :pinned-files="wikiChatPinnedFiles" :open-file="openChatFile"
+      @pin-file="pinWikiChatFile" @unpin-file="unpinWikiChatFile"
       :highlighted-node="highlightedChatNode" @send="sendWikiChat" @stop="stopWikiChat"
       @reset="resetWikiChat" @retry="retryWikiChat" @show-graph="showAnswerOnGraph"
       @focus-citation="openCitation" @highlight-citation="highlightChatCitation">

@@ -1,4 +1,4 @@
-import { mount } from '@vue/test-utils'
+import { flushPromises, mount } from '@vue/test-utils'
 import { beforeEach, expect, it, vi } from 'vitest'
 import { defineComponent } from 'vue'
 import type { AnswerGraph, WikiChatInputMessage } from '@/api/wiki-chat'
@@ -94,4 +94,38 @@ it('keeps one graph object per revision in a turn but accepts the same revision 
 
   chat.showGraphOf(chat.messages.value[1]!.id)
   expect(chat.activeGraph.value?.nodes[0]?.title).toBe('first answer')
+})
+
+it('sends the attached files with every turn until they are removed', async () => {
+  const chat = mountChat()
+  chat.pinFile({ path: 'wiki/a.md', title: 'A' })
+  chat.pinFile({ path: 'wiki/a.md', title: 'A again' })
+  chat.pinFile({ path: 'sources/b.md', title: 'B' })
+  answerWith('first')
+  await chat.send('one')
+  expect(askWikiMock.mock.lastCall![3]).toEqual(['wiki/a.md', 'sources/b.md'])
+  expect(chat.messages.value[0]?.files?.map(file => file.title)).toEqual(['A', 'B'])
+
+  chat.unpinFile('wiki/a.md')
+  answerWith('second')
+  await chat.send('two')
+  expect(askWikiMock.mock.lastCall![3]).toEqual(['sources/b.md'])
+  expect(chat.messages.value[0]?.files).toHaveLength(2)
+})
+
+it('stops at the attachment limit and retries a turn with the files it was asked with', async () => {
+  const chat = mountChat()
+  for (const name of ['a', 'b', 'c', 'd', 'e']) chat.pinFile({ path: `wiki/${name}.md`, title: name })
+  expect(chat.pinnedFiles.value.map(file => file.title)).toEqual(['a', 'b', 'c', 'd'])
+
+  askWikiMock.mockImplementationOnce(async (_history, handlers) => handlers.onError('provider_failed'))
+  await chat.send('question')
+  chat.unpinFile('wiki/a.md')
+  answerWith('recovered')
+  chat.retry(chat.messages.value[1]!.id)
+  await flushPromises()
+  expect(askWikiMock.mock.lastCall![3]).toEqual(['wiki/a.md', 'wiki/b.md', 'wiki/c.md', 'wiki/d.md'])
+
+  chat.reset()
+  expect(chat.pinnedFiles.value).toEqual([])
 })

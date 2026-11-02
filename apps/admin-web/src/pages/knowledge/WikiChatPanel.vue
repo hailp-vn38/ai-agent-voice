@@ -1,9 +1,9 @@
 <script setup lang="ts">
 import { computed, nextTick, onUpdated, ref, watch } from 'vue'
-import { AlertCircle, ArrowUp, ArrowUpRight, BookOpenText, ChevronRight, CircleStop, Files, LoaderCircle, Network, RotateCcw, Search, Sparkles, Square, Wrench } from '@lucide/vue'
+import { AlertCircle, ArrowUp, ArrowUpRight, BookOpenText, ChevronRight, CircleStop, FileText, Files, LoaderCircle, Network, Plus, RotateCcw, Search, Sparkles, Square, Wrench, X } from '@lucide/vue'
 import { renderMarkdown } from '@/lib/markdown'
 import { useI18n } from '@/composables/useI18n'
-import type { WikiChatMessage } from './useWikiChat'
+import { MAX_PINNED_FILES, type WikiChatFile, type WikiChatMessage } from './useWikiChat'
 
 const props = defineProps<{
   messages: WikiChatMessage[]
@@ -11,6 +11,8 @@ const props = defineProps<{
   drawerOpen?: boolean
   suggestions?: Array<{ label: string; prompt: string }>
   highlightedNode?: string | null
+  pinnedFiles?: WikiChatFile[]
+  openFile?: WikiChatFile | null
 }>()
 
 const emit = defineEmits<{
@@ -21,6 +23,8 @@ const emit = defineEmits<{
   showGraph: [id: string]
   focusCitation: [path: string]
   highlightCitation: [path: string | null]
+  pinFile: [file: WikiChatFile]
+  unpinFile: [path: string]
 }>()
 
 const { t } = useI18n()
@@ -28,6 +32,12 @@ const draft = ref('')
 const panelElement = ref<HTMLElement | null>(null)
 const messagesElement = ref<HTMLElement | null>(null)
 const questionInput = ref<HTMLTextAreaElement | null>(null)
+const pinnedFileList = computed(() => props.pinnedFiles ?? [])
+const pinnableFile = computed(() => {
+  const file = props.openFile
+  return file && !pinnedFileList.value.some(pinned => pinned.path === file.path) ? file : null
+})
+const pinLimitReached = computed(() => pinnedFileList.value.length >= MAX_PINNED_FILES)
 // How close to the end still counts as following the answer as it streams.
 const FOLLOW_DISTANCE = 72
 let followingAnswer = true
@@ -190,6 +200,11 @@ function errorText(code: string | null): string {
       <article v-for="message in messages" :key="message.id" class="wiki-chat-message"
         :class="['is-' + message.role, 'is-' + message.status]" :data-message-id="message.id"
         :aria-label="message.role === 'user' ? t('knowledgeV3.chatYou') : t('knowledgeV3.chatAssistant')">
+        <ul v-if="message.role === 'user' && message.files?.length" class="wiki-chat-user-files" :aria-label="t('knowledgeV3.chatPinnedFiles')">
+          <li v-for="file in message.files" :key="file.path" class="wiki-chat-file" :title="file.path">
+            <FileText :size="12" aria-hidden="true" /><span class="wiki-chat-file-name">{{ file.title }}</span>
+          </li>
+        </ul>
         <div v-if="message.role === 'user'" class="wiki-chat-user-text">{{ message.text }}</div>
         <template v-else>
           <details v-if="completedTools(message).length" class="wiki-chat-trail">
@@ -260,6 +275,20 @@ function errorText(code: string | null): string {
     </div>
 
     <form class="wiki-chat-compose" @submit.prevent="submit">
+      <div v-if="pinnedFileList.length || pinnableFile" class="wiki-chat-files" role="group" :aria-label="t('knowledgeV3.chatPinnedFiles')">
+        <span v-for="file in pinnedFileList" :key="file.path" class="wiki-chat-file" :title="file.path">
+          <FileText :size="12" aria-hidden="true" /><span class="wiki-chat-file-name">{{ file.title }}</span>
+          <button type="button" class="wiki-chat-file-remove" :aria-label="t('knowledgeV3.chatUnpinFile', { title: file.title })"
+            :title="t('knowledgeV3.chatUnpinFile', { title: file.title })" @click="emit('unpinFile', file.path)">
+            <X :size="11" aria-hidden="true" />
+          </button>
+        </span>
+        <button v-if="pinnableFile" type="button" class="wiki-chat-file-add" :disabled="pinLimitReached"
+          :title="pinLimitReached ? t('knowledgeV3.chatPinLimit', { count: MAX_PINNED_FILES }) : t('knowledgeV3.chatPinFile', { title: pinnableFile.title })"
+          :aria-label="t('knowledgeV3.chatPinFile', { title: pinnableFile.title })" @click="emit('pinFile', pinnableFile)">
+          <Plus :size="12" aria-hidden="true" /><span class="wiki-chat-file-name">{{ pinnableFile.title }}</span>
+        </button>
+      </div>
       <label class="sr-only" for="wiki-chat-question">{{ t('knowledgeV3.chatInputLabel') }}</label>
       <div class="wiki-chat-compose-box">
         <textarea id="wiki-chat-question" ref="questionInput" v-model="draft" rows="1" :placeholder="t('knowledgeV3.chatPlaceholder')"

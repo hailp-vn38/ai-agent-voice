@@ -517,6 +517,17 @@
 .knowledge-a .wiki-chat-show-graph { display: inline-flex; align-items: center; align-self: flex-start; gap: 5px; min-height: 22px; padding: 0 7px 0 5px; border-radius: 999px; color: var(--muted-foreground); font-size: 11px; font-weight: 550; transition: color 120ms ease, background-color 120ms ease; }
 .knowledge-a .wiki-chat-show-graph:hover { color: var(--studio-violet); background: color-mix(in srgb, var(--studio-violet) 10%, transparent); }
 .knowledge-a .wiki-chat-compose { flex: none; padding: 6px 10px 10px; }
+.knowledge-a .wiki-chat-files, .knowledge-a .wiki-chat-user-files { display: flex; flex-wrap: wrap; gap: 4px; min-width: 0; margin: 0; padding: 0; list-style: none; }
+.knowledge-a .wiki-chat-files { margin-bottom: 6px; }
+.knowledge-a .wiki-chat-user-files { justify-content: flex-end; }
+.knowledge-a .wiki-chat-file, .knowledge-a .wiki-chat-file-add { display: inline-flex; align-items: center; gap: 4px; max-width: 100%; min-height: 24px; padding: 0 7px; border: 1px solid var(--border); border-radius: 999px; color: var(--foreground); background: var(--background); font-size: 11.5px; }
+.knowledge-a .wiki-chat-file svg, .knowledge-a .wiki-chat-file-add svg { flex: none; color: var(--muted-foreground); }
+.knowledge-a .wiki-chat-file-name { overflow: hidden; min-width: 0; max-width: 180px; text-overflow: ellipsis; white-space: nowrap; }
+.knowledge-a .wiki-chat-file-add { border-style: dashed; color: var(--muted-foreground); transition: border-color 120ms ease, color 120ms ease, background-color 120ms ease; }
+.knowledge-a .wiki-chat-file-add:hover:not(:disabled) { border-color: color-mix(in srgb, var(--studio-violet) 60%, var(--border)); color: var(--foreground); background: color-mix(in srgb, var(--studio-violet) 10%, transparent); }
+.knowledge-a .wiki-chat-file-add:disabled { opacity: .55; cursor: not-allowed; }
+.knowledge-a .wiki-chat-file-remove { display: grid; width: 16px; height: 16px; flex: none; margin-right: -3px; place-items: center; border-radius: 50%; color: var(--muted-foreground); }
+.knowledge-a .wiki-chat-file-remove:hover { color: var(--foreground); background: var(--muted); }
 .knowledge-a .wiki-chat-compose-box { display: flex; align-items: flex-end; gap: 6px; padding: 5px 5px 5px 12px; border: 1px solid var(--border); border-radius: 18px; background: var(--background); transition: border-color 140ms ease, box-shadow 140ms ease; }
 .knowledge-a .wiki-chat-compose-box:focus-within { border-color: color-mix(in srgb, var(--studio-violet) 70%, var(--border)); box-shadow: 0 0 0 3px color-mix(in srgb, var(--studio-violet) 16%, transparent), 0 6px 24px color-mix(in srgb, var(--studio-violet) 14%, transparent); }
 .knowledge-a .wiki-chat-compose textarea { flex: 1; min-width: 0; max-height: 132px; padding: 4px 0; border: 0; outline: 0; color: var(--foreground); background: transparent; font: inherit; font-size: 13px; line-height: 1.45; resize: none; }

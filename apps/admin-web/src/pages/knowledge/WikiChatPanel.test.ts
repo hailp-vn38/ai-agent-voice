@@ -68,3 +68,40 @@ it('shows a thinking state until the first text or running tool arrives', async 
   } finally { wrapper.unmount() }
 })
 
+it('offers the open file and lets attached files be removed', async () => {
+  const file = { path: 'wiki/known.md', title: 'Known' }
+  const wrapper = mount(WikiChatPanel, { props: { messages: [], busy: false, openFile: file } })
+  try {
+    await wrapper.get('.wiki-chat-file-add').trigger('click')
+    expect(wrapper.emitted('pinFile')).toEqual([[file]])
+
+    await wrapper.setProps({ pinnedFiles: [file] })
+    expect(wrapper.find('.wiki-chat-file-add').exists()).toBe(false)
+    expect(wrapper.get('.wiki-chat-files .wiki-chat-file').text()).toBe('Known')
+    await wrapper.get('.wiki-chat-file-remove').trigger('click')
+    expect(wrapper.emitted('unpinFile')).toEqual([['wiki/known.md']])
+  } finally { wrapper.unmount() }
+})
+
+it('keeps the composer free of file chips without an open file and blocks a fifth one', async () => {
+  const wrapper = mount(WikiChatPanel, { props: { messages: [], busy: false, openFile: null } })
+  try {
+    expect(wrapper.find('.wiki-chat-files').exists()).toBe(false)
+    const pinnedFiles = ['a', 'b', 'c', 'd'].map(name => ({ path: `wiki/${name}.md`, title: name }))
+    await wrapper.setProps({ pinnedFiles, openFile: { path: 'wiki/e.md', title: 'e' } })
+    const add = wrapper.get('.wiki-chat-file-add')
+    expect(add.attributes('disabled')).toBeDefined()
+    expect(add.attributes('title')).toBe('You can attach up to 4 files')
+  } finally { wrapper.unmount() }
+})
+
+it('shows which files a question was asked about', () => {
+  const user: WikiChatMessage = {
+    ...assistant('done'), id: 'u1', role: 'user', text: 'Summarize this',
+    files: [{ path: 'wiki/known.md', title: 'Known' }],
+  }
+  const wrapper = mount(WikiChatPanel, { props: { messages: [user], busy: false } })
+  try {
+    expect(wrapper.get('.wiki-chat-user-files').text()).toBe('Known')
+  } finally { wrapper.unmount() }
+})

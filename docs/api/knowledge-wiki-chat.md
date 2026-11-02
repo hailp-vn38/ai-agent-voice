@@ -41,6 +41,8 @@ Request body:
 
 Only `user` and `assistant` roles are accepted; the browser cannot supply a `system` message. At most 12 messages and 16 KiB total message content are accepted. The route requires a configured chat provider with tool support. It admits at most two concurrent turns. A configured but unavailable provider returns a bounded provider error; an unset provider returns `503 wiki_chat_not_configured`; exhausted admission returns `429 wiki_chat_busy`.
 
+`pinned_paths` is optional: up to four vault-relative `wiki/` or `sources/` paths the user attached to the conversation, sent again with each turn. Duplicates are ignored; a path outside those folders, or more than four paths, returns `400 invalid_input`. Before the model's first call, the server reads each file through `wiki_get`, so the read appears as a `tool` event with a `pinned-<n>` call id, its result is bounded and untrusted like any other, and the file counts as evidence the answer may cite. These reads do not use up the model's six tool rounds. A missing file reaches the model as `not_found` and the turn continues.
+
 Successful requests return `text/event-stream`, use `Cache-Control: no-store`, and send keep-alives every 15 seconds. A POST turn is never automatically retried by the browser. Closing the connection or pressing Stop cancels the active turn.
 
 | Event | Data | Meaning |

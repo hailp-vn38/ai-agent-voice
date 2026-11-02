@@ -81,6 +81,7 @@ export async function askWiki(
   messages: WikiChatInputMessage[],
   handlers: WikiChatHandlers,
   signal: AbortSignal,
+  pinnedPaths: string[] = [],
 ): Promise<void> {
   const token = readAdminToken()
   const response = await fetch(apiUrl('/api/admin/knowledge/ask'), {
@@ -92,7 +93,7 @@ export async function askWiki(
     },
     cache: 'no-store',
     signal,
-    body: JSON.stringify({ messages }),
+    body: JSON.stringify({ messages, ...(pinnedPaths.length ? { pinned_paths: pinnedPaths } : {}) }),
   })
   if (!response.ok) {
     let body: unknown
