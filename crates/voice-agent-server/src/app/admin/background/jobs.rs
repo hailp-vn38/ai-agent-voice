@@ -5,12 +5,46 @@ use super::{
     },
     task_failure, task_manager, task_manager_for_submit, *,
 };
-use crate::services::task_flow::{project_task_events, project_task_to_admin_job};
+use crate::services::task_flow::{
+    SessionRuns, apply_session_runs_to_events, apply_session_runs_to_job, load_session_runs,
+    project_task_events, project_task_to_admin_job,
+};
+use orchestrator_agent_rs::CallerContext;
 use orchestrator_flow_rs::{
-    CreateTaskRequest, ResolveStuckTool, StuckToolDecision, TaskEvent, TaskFeedItem, TaskFilter,
-    TaskManager, TaskSource, TaskStatus,
+    CreateTaskRequest, ResolveStuckTool, StuckToolDecision, TaskDetailView, TaskEvent,
+    TaskFeedItem, TaskFilter, TaskManager, TaskSource, TaskStatus, TaskView,
 };
 use serde::Deserialize;
+
+/// Falls back to latest-attempt figures when the history cannot be read.
+async fn session_runs(state: &AppState, detail: &TaskDetailView) -> SessionRuns {
+    let Some(orchestrator) = state.orchestrator.as_deref() else {
+        return SessionRuns::new();
+    };
+    let caller = CallerContext::new(
+        detail.task.owner_id.as_str(),
+        detail.task.workspace_id.as_str(),
+    );
+    load_session_runs(orchestrator, &caller, detail)
+        .await
+        .unwrap_or_else(|error| {
+            tracing::warn!(task_id = %detail.task.id, %error, "failed to read job run history");
+            SessionRuns::new()
+        })
+}
+
+/// Admin job JSON whose usage and agent spans cover every attempt, not just the latest.
+async fn project_job_with_history(
+    state: &AppState,
+    task: &TaskView,
+    detail: Option<&TaskDetailView>,
+) -> Value {
+    let mut job = project_task_to_admin_job(task, detail);
+    if let Some(detail) = detail {
+        apply_session_runs_to_job(&mut job, &session_runs(state, detail).await);
+    }
+    job
+}
 
 #[derive(Deserialize)]
 pub(in crate::app::admin) struct CreateJobInput {
@@ -277,7 +311,8 @@ pub(in crate::app::admin) async fn get(
         Err(resp) => return resp,
     };
     match tm.get_task_detail_any_scope(&id).await {
-        Ok(detail) => Json(project_task_to_admin_job(&detail.task, Some(&detail))).into_response(),
+        Ok(detail) => Json(project_job_with_history(&state, &detail.task, Some(&detail)).await)
+            .into_response(),
         Err(e) => task_failure(&request, e),
     }
 }
@@ -367,7 +402,7 @@ pub(in crate::app::admin) async fn cancel(
     match tm.cancel_task_any_scope(&id).await {
         Ok(task) => {
             let detail = tm.get_task_detail_any_scope(&task.id).await.ok();
-            Json(project_task_to_admin_job(&task, detail.as_ref())).into_response()
+            Json(project_job_with_history(&state, &task, detail.as_ref()).await).into_response()
         }
         Err(e) => task_failure(&request, e),
     }
@@ -385,7 +420,7 @@ pub(in crate::app::admin) async fn resume(
     match tm.resume_waiting_task_any_scope(&id).await {
         Ok(task) => {
             let detail = tm.get_task_detail_any_scope(&task.id).await.ok();
-            Json(project_task_to_admin_job(&task, detail.as_ref())).into_response()
+            Json(project_job_with_history(&state, &task, detail.as_ref()).await).into_response()
         }
         Err(e) => task_failure(&request, e),
     }
@@ -453,7 +488,7 @@ pub(in crate::app::admin) async fn resolve_invocation(
     match resolved {
         Ok(task) => {
             let detail = tm.get_task_detail_any_scope(&task.id).await.ok();
-            Json(project_task_to_admin_job(&task, detail.as_ref())).into_response()
+            Json(project_job_with_history(&state, &task, detail.as_ref()).await).into_response()
         }
         Err(e) => task_failure(&request, e),
     }
@@ -581,7 +616,8 @@ pub(in crate::app::admin) async fn events(
     };
     match tm.get_task_detail_any_scope(&id).await {
         Ok(detail) => {
-            let items = project_task_events(&detail, after, limit);
+            let mut items = project_task_events(&detail, after, limit);
+            apply_session_runs_to_events(&mut items, &session_runs(&state, &detail).await);
             Json(serde_json::json!({ "items": items })).into_response()
         }
         Err(e) => task_failure(&request, e),

@@ -17,3 +17,18 @@ fn agent_task_files_extract_supported_unique_paths() {
         ]
     );
 }
+
+#[test]
+fn agent_task_files_extract_markdown_links() {
+    assert_eq!(
+        collect_file_paths(
+            &[],
+            &[],
+            &[
+                "Saved: [report.md](sandbox://tasks/a/report.md), [data.csv](sandbox://tasks/a/data.csv)."
+                    .into()
+            ]
+        ),
+        vec!["tasks/a/report.md", "tasks/a/data.csv"]
+    );
+}

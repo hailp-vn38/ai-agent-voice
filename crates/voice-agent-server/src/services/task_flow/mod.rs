@@ -37,6 +37,7 @@ pub use agent_settings::{
 pub use charts::{ChartDocument, ChartError, chart_host_tools, read_chart_json_for_admin};
 pub use memory_tools::TaskMemoryAccess;
 pub use projections::{
+    SessionRuns, apply_session_runs_to_events, apply_session_runs_to_job, load_session_runs,
     project_artifact_catalog_page, project_task_events, project_task_to_admin_job,
 };
 pub use voice::{TASK_SUITE_TOOL_NAMES, VoiceTaskSubmit, is_task_suite_tool_name, voice_rejection};

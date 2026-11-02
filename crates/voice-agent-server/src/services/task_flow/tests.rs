@@ -369,6 +369,117 @@ fn dual_flow_agent_specs_assign_collectors_to_daily_flow_and_keep_wiki_flow_pure
     );
 }
 
+fn resumed_job_attempt(
+    session: &str,
+    attempt: u32,
+    usage: (u32, u64, u64),
+    span: (i64, Option<i64>),
+) -> orchestrator_agent_rs::RunSummary {
+    orchestrator_agent_rs::RunSummary {
+        run_id: format!("{session}-{attempt}"),
+        session_id: session.to_string(),
+        turn_id: "turn".to_string(),
+        agent_id: "agent".to_string(),
+        attempt,
+        provider_id: "provider".to_string(),
+        model_id: "model".to_string(),
+        status: orchestrator_agent_rs::RunStatus::Completed,
+        steps: usage.0,
+        input_tokens: usage.1,
+        output_tokens: usage.2,
+        started_at: span.0,
+        finished_at: span.1,
+        final_message_id: None,
+        error: None,
+        next_attempt_at: None,
+        retry_reason: None,
+    }
+}
+
+fn resumed_job_runs() -> SessionRuns {
+    SessionRuns::from([
+        (
+            "root".to_string(),
+            vec![
+                resumed_job_attempt("root", 0, (2, 100, 10), (1_000, Some(1_500))),
+                resumed_job_attempt("root", 1, (1, 200, 20), (1_600, Some(1_700))),
+            ],
+        ),
+        (
+            "worker".to_string(),
+            vec![resumed_job_attempt(
+                "worker",
+                0,
+                (6, 300, 30),
+                (1_010, Some(1_200)),
+            )],
+        ),
+        (
+            "running".to_string(),
+            vec![resumed_job_attempt("running", 0, (1, 40, 4), (1_650, None))],
+        ),
+    ])
+}
+
+#[test]
+fn apply_session_runs_to_job_counts_every_attempt_and_uses_each_agent_span() {
+    let mut job = serde_json::json!({
+        "agent_runs": [
+            {"agent_run_id":"root","llm_rounds":1,"input_tokens":200,"output_tokens":20,"started_at":"1000","finished_at":"1700"},
+            {"agent_run_id":"worker","llm_rounds":6,"input_tokens":300,"output_tokens":30,"started_at":"1000","finished_at":"1700"},
+            {"agent_run_id":"running","llm_rounds":1,"input_tokens":40,"output_tokens":4,"started_at":"1000","finished_at":"1700"},
+            {"agent_run_id":"unknown","llm_rounds":1,"input_tokens":5,"output_tokens":5,"started_at":"1000","finished_at":"1700"},
+        ],
+        "budget_used": {"steps":9,"input_tokens":545,"output_tokens":59,"total_tokens":604},
+        "execution_summary": {"total_steps":9,"total_input_tokens":545,"total_output_tokens":59,"total_tokens":604},
+    });
+
+    apply_session_runs_to_job(&mut job, &resumed_job_runs());
+
+    let root = &job["agent_runs"][0];
+    assert_eq!(root["llm_rounds"], 3);
+    assert_eq!(root["input_tokens"], 300);
+    assert_eq!(root["output_tokens"], 30);
+    assert_eq!(root["started_at"], "1000");
+    assert_eq!(root["finished_at"], "1700");
+
+    let worker = &job["agent_runs"][1];
+    assert_eq!(worker["input_tokens"], 300);
+    assert_eq!(worker["started_at"], "1010");
+    assert_eq!(worker["finished_at"], "1200");
+
+    assert!(job["agent_runs"][2]["finished_at"].is_null());
+    assert_eq!(job["agent_runs"][3]["finished_at"], "1700");
+
+    assert_eq!(
+        job["budget_used"],
+        serde_json::json!({"steps":11,"input_tokens":645,"output_tokens":69,"total_tokens":714})
+    );
+    assert_eq!(
+        job["execution_summary"],
+        serde_json::json!({"total_steps":11,"total_input_tokens":645,"total_output_tokens":69,"total_tokens":714})
+    );
+}
+
+#[test]
+fn apply_session_runs_to_events_reports_every_attempt_on_finished_agents() {
+    let mut events = vec![
+        serde_json::json!({"event_type":"agent_run_finished","payload":{"agent_run_id":"root","steps":1,"input_tokens":200,"output_tokens":20}}),
+        serde_json::json!({"event_type":"step_finished","payload":{"agent_run_id":"root"}}),
+    ];
+
+    apply_session_runs_to_events(&mut events, &resumed_job_runs());
+
+    assert_eq!(
+        events[0]["payload"],
+        serde_json::json!({"agent_run_id":"root","steps":3,"input_tokens":300,"output_tokens":30})
+    );
+    assert_eq!(
+        events[1]["payload"],
+        serde_json::json!({"agent_run_id":"root"})
+    );
+}
+
 #[test]
 fn project_task_to_admin_job_and_events_include_agent_messages_for_tool_calls() {
     use orchestrator_flow_rs::{

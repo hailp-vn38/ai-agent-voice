@@ -33,9 +33,9 @@ pub(super) fn collect_file_paths(
                 }
             }
             Value::String(text) => {
-                for token in text
-                    .split(|c: char| c.is_whitespace() || matches!(c, '"' | '\'' | '<' | '>' | '`'))
-                {
+                for token in text.split(|c: char| {
+                    c.is_whitespace() || matches!(c, '"' | '\'' | '<' | '>' | '`' | '(' | ')')
+                }) {
                     if token.starts_with("sandbox://") {
                         add(token, paths);
                     }
