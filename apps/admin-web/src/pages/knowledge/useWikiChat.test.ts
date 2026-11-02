@@ -1,13 +1,17 @@
 import { flushPromises, mount } from '@vue/test-utils'
 import { beforeEach, expect, it, vi } from 'vitest'
 import { defineComponent } from 'vue'
-import type { AnswerGraph, WikiChatInputMessage } from '@/api/wiki-chat'
+import type { AnswerGraph, WikiChatAskInput, WikiConversationDetail } from '@/api/wiki-chat'
 import { useWikiChat } from './useWikiChat'
 
-const { askWikiMock } = vi.hoisted(() => ({ askWikiMock: vi.fn() }))
+const { askWikiMock, getWikiConversationMock } = vi.hoisted(() => ({
+  askWikiMock: vi.fn(),
+  getWikiConversationMock: vi.fn(),
+}))
 vi.mock('@/api/wiki-chat', async importOriginal => ({
   ...await importOriginal<typeof import('@/api/wiki-chat')>(),
   askWiki: askWikiMock,
+  getWikiConversation: getWikiConversationMock,
 }))
 
 type Chat = ReturnType<typeof useWikiChat>
@@ -23,11 +27,18 @@ function mountChat(): Chat {
   return chat!
 }
 
+let nextTurn = 0
 function answerWith(text: string, graphs: AnswerGraph[] = []) {
-  askWikiMock.mockImplementationOnce(async (_history, handlers) => {
+  askWikiMock.mockImplementationOnce(async (input: WikiChatAskInput, handlers) => {
+    nextTurn += 1
+    handlers.onTurn({
+      conversation_id: input.conversation_id ?? 'conversation-1',
+      user_message_id: `user-${nextTurn}`,
+      assistant_message_id: `assistant-${nextTurn}`,
+    })
     graphs.forEach(graph => handlers.onGraph(graph))
     handlers.onDelta(text)
-    handlers.onDone({ citations: [], stop_reason: 'finished' })
+    handlers.onDone({ citations: [], stop_reason: 'finished', saved: true })
   })
 }
 
@@ -41,90 +52,111 @@ function graphWith(revision: number, title: string): AnswerGraph {
   } as AnswerGraph
 }
 
-function lastHistory(): WikiChatInputMessage[] {
+function lastInput(): WikiChatAskInput {
   return askWikiMock.mock.lastCall![0]
 }
 
 beforeEach(() => {
   askWikiMock.mockReset()
+  getWikiConversationMock.mockReset()
+  nextTurn = 0
 })
 
-it('drops the oldest messages once the history would pass 16 KB', async () => {
+it('sends only the question and then uses the server conversation id for follow-ups', async () => {
   const chat = mountChat()
-  for (const turn of ['first', 'second', 'third']) {
-    answerWith(`${turn} ${'é'.repeat(3000)}`)
-    await chat.send(turn)
-  }
-  answerWith('done')
-  await chat.send('fourth')
+  answerWith('first answer')
+  await chat.send('first question')
+  expect(lastInput()).toEqual({ question: 'first question', pinned_paths: [] })
+  expect(chat.conversationId.value).toBe('conversation-1')
+  expect(chat.messages.value.map(message => message.id)).toEqual(['user-1', 'assistant-1'])
+  expect(chat.messages.value[1]?.text).toBe('first answer')
 
-  const history = lastHistory()
-  expect(new TextEncoder().encode(history.map(message => message.content).join('')).length).toBeLessThanOrEqual(16 * 1024)
-  expect(history[0]?.role).toBe('user')
-  expect(history[0]?.content).toBe('second')
-  expect(history.at(-1)?.content).toBe('fourth')
+  answerWith('second answer')
+  await chat.send('follow-up')
+  expect(lastInput()).toEqual({
+    conversation_id: 'conversation-1', question: 'follow-up', pinned_paths: [],
+  })
+  expect(JSON.stringify(lastInput())).not.toContain('messages')
 })
 
-it('sends at most 12 messages and still sends an oversized question', async () => {
+it('continues applying graph and delta events after the server turn ids replace local ids', async () => {
   const chat = mountChat()
-  for (let turn = 0; turn < 8; turn += 1) {
-    answerWith(`answer ${turn}`)
-    await chat.send(`question ${turn}`)
-  }
-  answerWith('done')
-  await chat.send('latest')
-  expect(lastHistory()).toHaveLength(11)
-  expect(lastHistory()[0]?.role).toBe('user')
-
-  const oversized = 'x'.repeat(17 * 1024)
-  answerWith('done')
-  await chat.send(oversized)
-  expect(lastHistory()).toEqual([{ role: 'user', content: oversized }])
+  answerWith('answer text', [graphWith(1, 'answer graph')])
+  await chat.send('question')
+  const assistant = chat.messages.value[1]!
+  expect(assistant.id).toBe('assistant-1')
+  expect(assistant.text).toBe('answer text')
+  expect(assistant.graph?.nodes[0]?.title).toBe('answer graph')
+  expect(chat.activeGraphMessageId.value).toBe('assistant-1')
+  expect(assistant.status).toBe('done')
 })
 
-it('keeps one graph object per revision in a turn but accepts the same revision in a new answer', async () => {
+it('restores saved messages, citations, graph and the latest question pinned files', async () => {
+  const graph = graphWith(3, 'saved graph')
+  getWikiConversationMock.mockResolvedValue({
+    id: 'conversation-9', title: 'Saved topic', created_at_ms: 1, updated_at_ms: 2,
+    messages: [
+      {
+        id: 'user-9', seq: 1, role: 'user', content: 'Saved question', content_truncated: false,
+        status: 'done', error_code: null, pinned_paths: ['wiki/a.md'], tools: [], citations: [],
+        graph: null, created_at_ms: 1, updated_at_ms: 1,
+      },
+      {
+        id: 'assistant-9', seq: 2, role: 'assistant', content: 'Saved answer', content_truncated: false,
+        status: 'done', error_code: null, pinned_paths: [], tools: [], citations: ['wiki/a.md'],
+        graph, created_at_ms: 1, updated_at_ms: 2,
+      },
+    ],
+  } satisfies WikiConversationDetail)
+
   const chat = mountChat()
-  answerWith('first', [graphWith(1, 'first answer'), graphWith(1, 'resent')])
-  await chat.send('one')
-  expect(chat.activeGraph.value?.nodes[0]?.title).toBe('first answer')
-
-  answerWith('second', [graphWith(1, 'second answer')])
-  await chat.send('two')
-  expect(chat.activeGraph.value?.nodes[0]?.title).toBe('second answer')
-
-  chat.showGraphOf(chat.messages.value[1]!.id)
-  expect(chat.activeGraph.value?.nodes[0]?.title).toBe('first answer')
+  expect(await chat.loadConversation('conversation-9')).toBe(true)
+  expect(chat.conversationId.value).toBe('conversation-9')
+  expect(chat.messages.value[1]?.text).toBe('Saved answer')
+  expect(chat.messages.value[1]?.citations).toEqual(['wiki/a.md'])
+  expect(chat.activeGraph.value?.revision).toBe(3)
+  expect(chat.pinnedFiles.value).toEqual([{ path: 'wiki/a.md', title: 'wiki/a.md' }])
 })
 
-it('sends the attached files with every turn until they are removed', async () => {
+it('sends the pinned paths and retains the question files after server ids arrive', async () => {
   const chat = mountChat()
   chat.pinFile({ path: 'wiki/a.md', title: 'A' })
   chat.pinFile({ path: 'wiki/a.md', title: 'A again' })
   chat.pinFile({ path: 'sources/b.md', title: 'B' })
   answerWith('first')
   await chat.send('one')
-  expect(askWikiMock.mock.lastCall![3]).toEqual(['wiki/a.md', 'sources/b.md'])
+  expect(lastInput()).toEqual({
+    question: 'one', pinned_paths: ['wiki/a.md', 'sources/b.md'],
+  })
   expect(chat.messages.value[0]?.files?.map(file => file.title)).toEqual(['A', 'B'])
 
   chat.unpinFile('wiki/a.md')
   answerWith('second')
   await chat.send('two')
-  expect(askWikiMock.mock.lastCall![3]).toEqual(['sources/b.md'])
+  expect(lastInput()).toEqual({
+    conversation_id: 'conversation-1', question: 'two', pinned_paths: ['sources/b.md'],
+  })
   expect(chat.messages.value[0]?.files).toHaveLength(2)
 })
 
-it('stops at the attachment limit and retries a turn with the files it was asked with', async () => {
+it('sends server retry ids and keeps retry files attached', async () => {
   const chat = mountChat()
   for (const name of ['a', 'b', 'c', 'd', 'e']) chat.pinFile({ path: `wiki/${name}.md`, title: name })
   expect(chat.pinnedFiles.value.map(file => file.title)).toEqual(['a', 'b', 'c', 'd'])
 
-  askWikiMock.mockImplementationOnce(async (_history, handlers) => handlers.onError('provider_failed'))
+  askWikiMock.mockImplementationOnce(async (input: WikiChatAskInput, handlers) => {
+    handlers.onTurn({
+      conversation_id: input.conversation_id ?? 'conversation-1',
+      user_message_id: 'user-1', assistant_message_id: 'assistant-1',
+    })
+    handlers.onError('provider_failed')
+  })
   await chat.send('question')
   chat.unpinFile('wiki/a.md')
   answerWith('recovered')
-  chat.retry(chat.messages.value[1]!.id)
+  chat.retry('assistant-1')
   await flushPromises()
-  expect(askWikiMock.mock.lastCall![3]).toEqual(['wiki/a.md', 'wiki/b.md', 'wiki/c.md', 'wiki/d.md'])
+  expect(lastInput()).toEqual({ conversation_id: 'conversation-1', retry_message_id: 'assistant-1' })
 
   chat.reset()
   expect(chat.pinnedFiles.value).toEqual([])

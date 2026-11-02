@@ -3,6 +3,7 @@
 
 mod answer_graph;
 mod ask;
+mod conversations;
 mod graph;
 mod memory;
 mod pages;
@@ -13,6 +14,7 @@ mod sources;
 mod tests;
 
 pub(in crate::app::admin) use ask::knowledge_ask;
+pub(super) use conversations::knowledge_conversation;
 pub(super) use graph::{knowledge_graph, knowledge_health, knowledge_rebuild};
 pub(super) use memory::{
     DeviceVaultPurge, memory_create, memory_discard, memory_forget, memory_health, memory_pin,

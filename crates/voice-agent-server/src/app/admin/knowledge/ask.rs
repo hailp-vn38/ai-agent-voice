@@ -12,7 +12,6 @@ use std::{convert::Infallible, sync::Arc, time::Duration};
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
-const MAX_HISTORY_MESSAGES: usize = 12;
 const MAX_HISTORY_BYTES: usize = 16 * 1024;
 const ASK_TOOLS: &[&str] = &["wiki_query", "wiki_get", "wiki_multi_get"];
 const MAX_QUERY_SNIPPET_CHARS: usize = 800;
@@ -48,6 +47,11 @@ impl Default for AskLimits {
 }
 
 enum AskEvent {
+    Turn {
+        conversation_id: String,
+        user_message_id: String,
+        assistant_message_id: String,
+    },
     Tool {
         call_id: String,
         name: String,
@@ -60,6 +64,7 @@ enum AskEvent {
     Done {
         citations: Vec<String>,
         stop_reason: &'static str,
+        saved: bool,
     },
     Error(&'static str),
 }
@@ -138,34 +143,67 @@ impl Drop for CancelOnDrop {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct AskInput {
-    messages: Vec<AskMessage>,
+    conversation_id: Option<String>,
+    question: Option<String>,
+    retry_message_id: Option<String>,
     #[serde(default)]
     pinned_paths: Vec<String>,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct AskMessage {
-    role: String,
-    content: String,
 }
 
 pub(in crate::app::admin) async fn knowledge_ask(
     State(state): State<AppState>,
     request: Request,
 ) -> Response {
-    let (request, input): (_, AskInput) = match json(request).await {
+    let (request, input_value): (_, Value) = match json(request).await {
         Ok(value) => value,
         Err(response) => return response,
     };
-    let messages = match validate_messages(input.messages) {
-        Ok(messages) => messages,
-        Err(code) => return error(&request, StatusCode::BAD_REQUEST, code),
+    let input: AskInput = match serde_json::from_value(input_value) {
+        Ok(input) => input,
+        Err(_) => return error(&request, StatusCode::BAD_REQUEST, "invalid_input"),
     };
-    let pinned_reads = match pinned_read_calls(input.pinned_paths) {
+    let (Some(question), None) = (input.question.as_deref(), input.retry_message_id.as_deref())
+    else {
+        return error(&request, StatusCode::BAD_REQUEST, "invalid_input");
+    };
+    if question.trim().is_empty() || question.len() > MAX_HISTORY_BYTES {
+        return error(&request, StatusCode::BAD_REQUEST, "invalid_input");
+    }
+    let pinned_reads = match pinned_read_calls(input.pinned_paths.clone()) {
         Ok(calls) => calls,
         Err(code) => return error(&request, StatusCode::BAD_REQUEST, code),
     };
+    let database = match database(&state) {
+        Ok(database) => database.clone(),
+        Err(_) => {
+            return error(
+                &request,
+                StatusCode::SERVICE_UNAVAILABLE,
+                "database_unavailable",
+            );
+        }
+    };
+    if let Some(conversation_id) = input.conversation_id.as_deref() {
+        match crate::database::wiki_conversations::conversation_exists(&database, conversation_id)
+            .await
+        {
+            Ok(true) => {}
+            Ok(false) => {
+                return error(
+                    &request,
+                    StatusCode::NOT_FOUND,
+                    "wiki_conversation_not_found",
+                );
+            }
+            Err(_) => {
+                return error(
+                    &request,
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "database_unavailable",
+                );
+            }
+        }
+    }
     let engine = match wiki(&state, &request) {
         Ok(engine) => engine,
         Err(response) => return response,
@@ -222,9 +260,76 @@ pub(in crate::app::admin) async fn knowledge_ask(
         (provider, None)
     };
 
+    let pinned_paths = input
+        .pinned_paths
+        .iter()
+        .filter(|path| path.starts_with("wiki/") || path.starts_with("sources/"))
+        .cloned()
+        .collect::<Vec<_>>();
+    let user_message_id = uuid::Uuid::new_v4().to_string();
+    let assistant_message_id = uuid::Uuid::new_v4().to_string();
+    let new_conversation_id = uuid::Uuid::new_v4().to_string();
+    let started = match crate::database::wiki_conversations::start_question(
+        &database,
+        input.conversation_id.as_deref(),
+        &new_conversation_id,
+        &user_message_id,
+        &assistant_message_id,
+        question,
+        &pinned_paths,
+        now().saturating_mul(1000),
+    )
+    .await
+    {
+        Ok(started) => started,
+        Err(crate::database::wiki_conversations::StartTurnError::NotFound) => {
+            return error(
+                &request,
+                StatusCode::NOT_FOUND,
+                "wiki_conversation_not_found",
+            );
+        }
+        Err(crate::database::wiki_conversations::StartTurnError::Sql(db_error)) => {
+            if matches!(db_error, sqlx::Error::Database(ref cause) if cause.code().as_deref() == Some("2067"))
+            {
+                return error(&request, StatusCode::CONFLICT, "wiki_conversation_busy");
+            }
+            return error(
+                &request,
+                StatusCode::SERVICE_UNAVAILABLE,
+                "database_unavailable",
+            );
+        }
+    };
+    let history = match crate::database::wiki_conversations::history_before_question(
+        &database,
+        &started.conversation_id,
+        started.user_seq,
+    )
+    .await
+    {
+        Ok(history) => history,
+        Err(_) => {
+            return error(
+                &request,
+                StatusCode::SERVICE_UNAVAILABLE,
+                "database_unavailable",
+            );
+        }
+    };
+    let mut messages = history
+        .into_iter()
+        .map(|message| match message.role.as_str() {
+            "assistant" => ChatMessage::AssistantText {
+                content: message.content,
+            },
+            _ => ChatMessage::User {
+                content: message.content,
+            },
+        })
+        .collect::<Vec<_>>();
     let cancellation = CancellationToken::new();
     let (events_tx, events_rx) = mpsc::channel(32);
-    let mut messages = messages;
     messages.insert(
         0,
         ChatMessage::System {
@@ -235,6 +340,16 @@ pub(in crate::app::admin) async fn knowledge_ask(
         },
     );
     let ask_events = events_tx.clone();
+    let database_for_task = database.clone();
+    let conversation_id = started.conversation_id.clone();
+    let assistant_id = started.assistant_message_id.clone();
+    let _ = events_tx
+        .send(AskEvent::Turn {
+            conversation_id: started.conversation_id,
+            user_message_id: started.user_message_id,
+            assistant_message_id: started.assistant_message_id,
+        })
+        .await;
     let ask_cancellation = cancellation.clone();
     tokio::spawn(async move {
         let outcome = run_ask(
@@ -249,11 +364,46 @@ pub(in crate::app::admin) async fn knowledge_ask(
         .await;
         let AskOutcome {
             status,
-            answer: _answer,
-            tools: _tools,
+            answer,
+            tools,
             citations,
             graph,
         } = outcome;
+        let (message_status, error_code, stop_reason) = match status {
+            AskTurnStatus::Completed => ("done", None, "finished"),
+            AskTurnStatus::Stopped => ("stopped", None, "stopped"),
+            AskTurnStatus::Failed(code) => ("failed", Some(code), code),
+        };
+        let stored_tools = tools
+            .iter()
+            .map(|tool| crate::database::wiki_conversations::ToolStep {
+                call_id: tool.call_id.clone(),
+                name: tool.name.clone(),
+                state: tool.state.to_owned(),
+                query: tool.query.clone(),
+                pages: tool.pages.clone(),
+            })
+            .collect::<Vec<_>>();
+        let saved = crate::database::wiki_conversations::finish_answer(
+            &database_for_task,
+            &conversation_id,
+            &assistant_id,
+            &answer,
+            message_status,
+            error_code,
+            &stored_tools,
+            &citations,
+            graph.as_ref(),
+            now().saturating_mul(1000),
+        )
+        .await
+        .is_ok();
+        if !saved {
+            tracing::warn!(
+                event = "wiki_conversation_save_failed",
+                "Wiki Conversation answer could not be saved"
+            );
+        }
         match status {
             AskTurnStatus::Completed => {
                 if let Some(graph) = graph {
@@ -262,7 +412,8 @@ pub(in crate::app::admin) async fn knowledge_ask(
                 let _ = ask_events
                     .send(AskEvent::Done {
                         citations,
-                        stop_reason: "finished",
+                        stop_reason,
+                        saved,
                     })
                     .await;
             }
@@ -272,7 +423,8 @@ pub(in crate::app::admin) async fn knowledge_ask(
                 let _ = ask_events
                     .send(AskEvent::Done {
                         citations: Vec::new(),
-                        stop_reason: code,
+                        stop_reason,
+                        saved,
                     })
                     .await;
             }
@@ -652,6 +804,18 @@ async fn send_event(
 
 fn ask_event_to_sse(event: AskEvent) -> Event {
     match event {
+        AskEvent::Turn {
+            conversation_id,
+            user_message_id,
+            assistant_message_id,
+        } => Event::default().event("turn").data(
+            json!({
+                "conversation_id": conversation_id,
+                "user_message_id": user_message_id,
+                "assistant_message_id": assistant_message_id,
+            })
+            .to_string(),
+        ),
         AskEvent::Tool {
             call_id,
             name,
@@ -669,9 +833,10 @@ fn ask_event_to_sse(event: AskEvent) -> Event {
         AskEvent::Done {
             citations,
             stop_reason,
-        } => Event::default()
-            .event("done")
-            .data(json!({"citations":citations,"stop_reason":stop_reason}).to_string()),
+            saved,
+        } => Event::default().event("done").data(
+            json!({"citations":citations,"stop_reason":stop_reason,"saved":saved}).to_string(),
+        ),
         AskEvent::Error(code) => Event::default()
             .event("error")
             .data(json!({"code":code}).to_string()),
@@ -1039,35 +1204,13 @@ fn wikilink_targets(answer: &str) -> Vec<String> {
     targets
 }
 
-fn validate_messages(messages: Vec<AskMessage>) -> Result<Vec<ChatMessage>, &'static str> {
-    if messages.is_empty() || messages.len() > MAX_HISTORY_MESSAGES {
-        return Err("invalid_input");
-    }
-    let total_bytes: usize = messages.iter().map(|message| message.content.len()).sum();
-    if total_bytes > MAX_HISTORY_BYTES {
-        return Err("invalid_input");
-    }
-    messages
-        .into_iter()
-        .map(|message| match message.role.as_str() {
-            "user" => Ok(ChatMessage::User {
-                content: message.content,
-            }),
-            "assistant" => Ok(ChatMessage::AssistantText {
-                content: message.content,
-            }),
-            _ => Err("invalid_input"),
-        })
-        .collect()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::{
         app::{AppState, router_with_state},
-        config::AppConfig,
-        database::DesiredProvider,
+        config::{AppConfig, DatabaseConfig},
+        database::{Database, DesiredProvider},
         lifecycle::AdmissionGate,
         providers::{
             LlmError, LlmEvent, LlmProvider, ProviderSet, RuntimeCatalog,
@@ -1097,6 +1240,7 @@ mod tests {
         rounds: Mutex<VecDeque<Vec<LlmEvent>>>,
         expect_truncated_result: bool,
         last_request: Mutex<Option<(Vec<ToolDefinition>, Vec<String>)>>,
+        last_messages: Mutex<Option<Vec<ChatMessage>>>,
     }
 
     impl ScriptedLlm {
@@ -1106,6 +1250,7 @@ mod tests {
                 rounds: Mutex::new(rounds.into()),
                 expect_truncated_result: false,
                 last_request: Mutex::new(None),
+                last_messages: Mutex::new(None),
             }
         }
 
@@ -1115,6 +1260,7 @@ mod tests {
                 rounds: Mutex::new(rounds.into()),
                 expect_truncated_result: true,
                 last_request: Mutex::new(None),
+                last_messages: Mutex::new(None),
             }
         }
     }
@@ -1127,13 +1273,19 @@ mod tests {
     struct PendingLlmStream {
         started: Arc<AtomicBool>,
         dropped: Arc<AtomicBool>,
+        sent_delta: bool,
     }
 
     impl Stream for PendingLlmStream {
         type Item = Result<LlmEvent, LlmError>;
 
         fn poll_next(self: Pin<&mut Self>, _context: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-            self.started.store(true, Ordering::SeqCst);
+            let this = self.get_mut();
+            this.started.store(true, Ordering::SeqCst);
+            if !this.sent_delta {
+                this.sent_delta = true;
+                return Poll::Ready(Some(Ok(LlmEvent::TextDelta("partial answer".into()))));
+            }
             Poll::Pending
         }
     }
@@ -1159,6 +1311,7 @@ mod tests {
             Ok(Box::pin(PendingLlmStream {
                 started: Arc::clone(&self.started),
                 dropped: Arc::clone(&self.dropped),
+                sent_delta: false,
             }))
         }
     }
@@ -1247,6 +1400,7 @@ mod tests {
                 })
                 .collect();
             *self.last_request.lock().unwrap() = Some((request.tools.clone(), tool_results));
+            *self.last_messages.lock().unwrap() = Some(request.messages.clone());
             let events = self.rounds.lock().unwrap().pop_front().unwrap_or_else(|| {
                 vec![
                     LlmEvent::TextDelta("Wiki answer".into()),
@@ -1266,6 +1420,19 @@ mod tests {
     async fn fixture_with_tool_support(
         configured: bool,
         supports_tools: bool,
+    ) -> (String, std::path::PathBuf, tokio::task::JoinHandle<()>) {
+        fixture_with_database_option(configured, supports_tools, true).await
+    }
+
+    async fn fixture_without_database() -> (String, std::path::PathBuf, tokio::task::JoinHandle<()>)
+    {
+        fixture_with_database_option(true, true, false).await
+    }
+
+    async fn fixture_with_database_option(
+        configured: bool,
+        supports_tools: bool,
+        with_database: bool,
     ) -> (String, std::path::PathBuf, tokio::task::JoinHandle<()>) {
         let config: AppConfig = toml::from_str(
             r#"
@@ -1300,7 +1467,12 @@ model = "fake"
         let temp_root =
             std::env::temp_dir().join(format!("wiki-chat-ask-empty-{}", uuid::Uuid::new_v4()));
         let engine = Arc::new(llm_wiki::WikiEngine::open(temp_root.join("vault")).unwrap());
-        let mut state = AppState::from_provider_set_with_database(config, providers, None);
+        let database = if with_database {
+            Some(test_database(&temp_root).await)
+        } else {
+            None
+        };
+        let mut state = AppState::from_provider_set_with_database(config, providers, database);
         state.wiki_engine = Some(engine);
         if configured {
             state
@@ -1385,7 +1557,9 @@ model = "fake"
             fake,
             Arc::new(crate::providers::tts::UnavailableTts),
         ));
-        let mut state = AppState::from_provider_set_with_database(config, providers, None);
+        let database = test_database(&temp_root).await;
+        let mut state =
+            AppState::from_provider_set_with_database(config, providers, Some(database));
         state.wiki_engine = Some(engine);
         state
             .admin_task_control
@@ -1400,6 +1574,16 @@ model = "fake"
             axum::serve(listener, router).await.unwrap();
         });
         (format!("http://{address}/api/admin"), temp_root, task)
+    }
+
+    async fn test_database(root: &std::path::Path) -> Database {
+        let config = DatabaseConfig {
+            url: format!("sqlite://{}", root.join("wiki-chat.db").display()),
+            ..DatabaseConfig::default()
+        };
+        Database::connect(&config)
+            .await
+            .expect("migrated test database")
     }
 
     fn sse_payloads(body: &str, event_name: &str) -> Vec<Value> {
@@ -1471,8 +1655,10 @@ model = "fake"
         let temp_root =
             std::env::temp_dir().join(format!("wiki-chat-managed-{}", uuid::Uuid::new_v4()));
         let engine = Arc::new(llm_wiki::WikiEngine::open(temp_root.join("vault")).unwrap());
-        let mut state = AppState::from_provider_set_with_database(config, providers, None)
-            .with_runtime_manager(manager);
+        let database = test_database(&temp_root).await;
+        let mut state =
+            AppState::from_provider_set_with_database(config, providers, Some(database))
+                .with_runtime_manager(manager);
         state.wiki_engine = Some(engine);
         state
             .admin_task_control
@@ -1527,7 +1713,7 @@ model = "fake"
         let response = reqwest::Client::new()
             .post(format!("{base}/knowledge/ask"))
             .bearer_auth("wiki-chat-test-token")
-            .json(&serde_json::json!({"messages":[{"role":"user","content":"question"}]}))
+            .json(&serde_json::json!({"question": "question"}))
             .send()
             .await
             .unwrap();
@@ -1543,6 +1729,257 @@ model = "fake"
         assert!(body.contains("event: delta"));
         assert!(body.contains("Wiki "));
         assert!(body.contains("event: done"));
+        server.abort();
+        let _ = std::fs::remove_dir_all(temp_root);
+    }
+
+    #[tokio::test]
+    async fn ask_creates_a_saved_conversation_and_returns_its_message_ids_first() {
+        let (base, temp_root, server) = wiki_fixture(
+            vec![
+                vec![
+                    LlmEvent::ToolCall(ToolCall {
+                        id: "persist-query".into(),
+                        name: "wiki_query".into(),
+                        arguments: serde_json::json!({"query":"Evidence"}),
+                    }),
+                    LlmEvent::Finished,
+                ],
+                vec![
+                    LlmEvent::TextDelta(
+                        "Evidence supports the answer [[concepts/known.md|Known page]].".into(),
+                    ),
+                    LlmEvent::Finished,
+                ],
+            ],
+            "Evidence.",
+        )
+        .await;
+        let question = format!("Summarize {}", "evidence ".repeat(12));
+        let response = reqwest::Client::new()
+            .post(format!("{base}/knowledge/ask"))
+            .bearer_auth("wiki-chat-test-token")
+            .json(&serde_json::json!({ "question": question }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = response.text().await.unwrap();
+        let event_names = body
+            .split("\n\n")
+            .filter_map(|frame| frame.lines().find_map(|line| line.strip_prefix("event: ")))
+            .collect::<Vec<_>>();
+        assert_eq!(event_names.first(), Some(&"turn"));
+        assert!(event_names.contains(&"done"));
+        let turn = sse_payloads(&body, "turn").remove(0);
+        let conversation_id = turn["conversation_id"].as_str().unwrap();
+        assert_eq!(turn["user_message_id"].as_str().unwrap().len(), 36);
+        assert_eq!(turn["assistant_message_id"].as_str().unwrap().len(), 36);
+        let detail = reqwest::Client::new()
+            .get(format!("{base}/knowledge/conversations/{conversation_id}"))
+            .bearer_auth("wiki-chat-test-token")
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(detail.status(), StatusCode::OK);
+        let detail: Value = detail.json().await.unwrap();
+        assert_eq!(
+            detail["title"],
+            question.chars().take(80).collect::<String>()
+        );
+        assert_eq!(detail["messages"][0]["role"], "user");
+        assert_eq!(detail["messages"][0]["content"], question);
+        assert_eq!(detail["messages"][1]["role"], "assistant");
+        assert_eq!(
+            detail["messages"][1]["content"],
+            "Evidence supports the answer [[concepts/known.md|Known page]]."
+        );
+        assert_eq!(detail["messages"][1]["status"], "done");
+        assert_eq!(
+            detail["messages"][1]["citations"],
+            serde_json::json!(["wiki/concepts/known.md"])
+        );
+        assert_eq!(
+            detail["messages"][1]["tools"][0]["call_id"],
+            "persist-query"
+        );
+        assert!(detail["messages"][1]["graph"].is_object());
+        assert_eq!(sse_payloads(&body, "done")[0]["saved"], true);
+        let unauthorized = reqwest::Client::new()
+            .get(format!("{base}/knowledge/conversations/{conversation_id}"))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(unauthorized.status(), StatusCode::UNAUTHORIZED);
+        server.abort();
+        let _ = std::fs::remove_dir_all(temp_root);
+    }
+
+    #[tokio::test]
+    async fn follow_up_history_comes_from_saved_messages() {
+        let fake = Arc::new(ScriptedLlm::new(true, Vec::new()));
+        let (base, temp_root, server) = wiki_fixture_with_provider(fake.clone(), "Evidence.").await;
+        let client = reqwest::Client::new();
+        let first = client
+            .post(format!("{base}/knowledge/ask"))
+            .bearer_auth("wiki-chat-test-token")
+            .json(&serde_json::json!({ "question": "first saved question" }))
+            .send()
+            .await
+            .unwrap()
+            .text()
+            .await
+            .unwrap();
+        let turn = sse_payloads(&first, "turn").remove(0);
+        let conversation_id = turn["conversation_id"].as_str().unwrap();
+
+        let second = client
+            .post(format!("{base}/knowledge/ask"))
+            .bearer_auth("wiki-chat-test-token")
+            .json(&serde_json::json!({
+                "conversation_id": conversation_id,
+                "question": "follow-up question"
+            }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(second.status(), StatusCode::OK);
+        let _ = second.text().await.unwrap();
+        let sent = fake.last_messages.lock().unwrap().clone().unwrap();
+        let conversational = sent
+            .iter()
+            .filter_map(|message| match message {
+                ChatMessage::User { content } => Some(("user", content.as_str())),
+                ChatMessage::AssistantText { content } => Some(("assistant", content.as_str())),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            conversational,
+            [
+                ("user", "first saved question"),
+                ("assistant", "Wiki answer"),
+                ("user", "follow-up question")
+            ]
+        );
+        server.abort();
+        let _ = std::fs::remove_dir_all(temp_root);
+    }
+
+    #[tokio::test]
+    async fn database_history_is_bounded_to_twelve_messages_and_sixteen_kibibytes() {
+        let responses = (0..7)
+            .map(|index| {
+                vec![
+                    LlmEvent::TextDelta(format!("answer-{index} {}", "é".repeat(3_000))),
+                    LlmEvent::Finished,
+                ]
+            })
+            .collect();
+        let fake = Arc::new(ScriptedLlm::new(true, responses));
+        let (base, temp_root, server) = wiki_fixture_with_provider(fake.clone(), "Evidence.").await;
+        let client = reqwest::Client::new();
+        let mut conversation_id = None;
+        for index in 0..7 {
+            let mut body = serde_json::json!({ "question": format!("question-{index}") });
+            if let Some(id) = conversation_id.as_deref() {
+                body["conversation_id"] = json!(id);
+            }
+            let response = client
+                .post(format!("{base}/knowledge/ask"))
+                .bearer_auth("wiki-chat-test-token")
+                .json(&body)
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK);
+            let events = response.text().await.unwrap();
+            if conversation_id.is_none() {
+                conversation_id = Some(
+                    sse_payloads(&events, "turn")[0]["conversation_id"]
+                        .as_str()
+                        .unwrap()
+                        .to_owned(),
+                );
+            }
+        }
+        let sent = fake.last_messages.lock().unwrap().clone().unwrap();
+        let conversational = sent
+            .iter()
+            .filter_map(|message| match message {
+                ChatMessage::User { content } => Some(("user", content.as_str())),
+                ChatMessage::AssistantText { content } => Some(("assistant", content.as_str())),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert!(conversational.len() <= 12);
+        assert_eq!(conversational.first().unwrap().0, "user");
+        assert_eq!(conversational.last().unwrap().1, "question-6");
+        let history_bytes = conversational
+            .iter()
+            .map(|(_, text)| text.len())
+            .sum::<usize>();
+        assert!(history_bytes <= 16 * 1024);
+        server.abort();
+        let _ = std::fs::remove_dir_all(temp_root);
+    }
+
+    #[tokio::test]
+    async fn ask_rejects_browser_history_and_invalid_question_retry_combinations() {
+        let (base, temp_root, server) = fixture(true).await;
+        let client = reqwest::Client::new();
+        for body in [
+            serde_json::json!({ "messages": [{"role":"user","content":"untrusted"}] }),
+            serde_json::json!({ "question": "question", "retry_message_id": "message" }),
+            serde_json::json!({ "question": "question", "extra": true }),
+            serde_json::json!({}),
+            serde_json::json!({ "question": "x".repeat(MAX_HISTORY_BYTES + 1) }),
+        ] {
+            let response = client
+                .post(format!("{base}/knowledge/ask"))
+                .bearer_auth("wiki-chat-test-token")
+                .json(&body)
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+            assert_eq!(
+                response.json::<Value>().await.unwrap()["error"]["code"],
+                "invalid_input"
+            );
+        }
+
+        let missing = client
+            .get(format!("{base}/knowledge/conversations/does-not-exist"))
+            .bearer_auth("wiki-chat-test-token")
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(missing.status(), StatusCode::NOT_FOUND);
+        assert_eq!(missing.headers()["cache-control"], "no-store");
+        assert_eq!(
+            missing.json::<Value>().await.unwrap()["error"]["code"],
+            "wiki_conversation_not_found"
+        );
+        server.abort();
+        let _ = std::fs::remove_dir_all(temp_root);
+    }
+
+    #[tokio::test]
+    async fn ask_requires_a_database_before_starting_a_turn() {
+        let (base, temp_root, server) = fixture_without_database().await;
+        let response = reqwest::Client::new()
+            .post(format!("{base}/knowledge/ask"))
+            .bearer_auth("wiki-chat-test-token")
+            .json(&serde_json::json!({ "question": "not saved" }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(
+            response.json::<Value>().await.unwrap()["error"]["code"],
+            "database_unavailable"
+        );
         server.abort();
         let _ = std::fs::remove_dir_all(temp_root);
     }
@@ -1575,7 +2012,7 @@ model = "fake"
             .post(format!("{base}/knowledge/ask"))
             .bearer_auth("wiki-chat-test-token")
             .json(&serde_json::json!({
-                "messages": [{"role": "user", "content": "What is known?"}]
+                "question": "What is known?"
             }))
             .send()
             .await
@@ -1641,7 +2078,7 @@ model = "fake"
             .post(format!("{base}/knowledge/ask"))
             .bearer_auth("wiki-chat-test-token")
             .json(&serde_json::json!({
-                "messages": [{"role": "user", "content": "Read the page"}]
+                "question": "Read the page"
             }))
             .send()
             .await
@@ -1725,7 +2162,7 @@ model = "fake"
             .post(format!("{base}/knowledge/ask"))
             .bearer_auth("wiki-chat-test-token")
             .json(&serde_json::json!({
-                "messages": [{"role": "user", "content": "Delete the page"}]
+                "question": "Delete the page"
             }))
             .send()
             .await
@@ -1847,6 +2284,19 @@ model = "fake"
         assert!(!body.contains("\"call_id\":\"read-6\""));
         assert!(body.contains("event: error"));
         assert!(body.contains("\"code\":\"step_limit\""));
+        let turns = sse_payloads(&body, "turn");
+        let conversation_id = turns[0]["conversation_id"].as_str().unwrap().to_owned();
+        let detail: Value = reqwest::Client::new()
+            .get(format!("{base}/knowledge/conversations/{conversation_id}"))
+            .bearer_auth("wiki-chat-test-token")
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        assert_eq!(detail["messages"][1]["status"], "failed");
+        assert_eq!(detail["messages"][1]["error_code"], "step_limit");
         server.abort();
         let _ = std::fs::remove_dir_all(temp_root);
     }
@@ -1871,7 +2321,7 @@ model = "fake"
             .post(format!("{base}/knowledge/ask"))
             .bearer_auth("wiki-chat-test-token")
             .json(&serde_json::json!({
-                "messages": [{"role": "user", "content": "Read more"}]
+                "question": "Read more"
             }))
             .send()
             .await
@@ -1895,12 +2345,20 @@ model = "fake"
             .post(format!("{base}/knowledge/ask"))
             .bearer_auth("wiki-chat-test-token")
             .json(&serde_json::json!({
-                "messages": [{"role": "user", "content": "Keep waiting"}]
+                "question": "Keep waiting"
             }))
             .send()
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::OK);
+        let mut response_stream = response.bytes_stream();
+        let turn_chunk = tokio::time::timeout(Duration::from_secs(2), response_stream.next())
+            .await
+            .expect("turn event should arrive")
+            .unwrap()
+            .unwrap();
+        let turn = sse_payloads(std::str::from_utf8(&turn_chunk).unwrap(), "turn").remove(0);
+        let conversation_id = turn["conversation_id"].as_str().unwrap();
         tokio::time::timeout(Duration::from_secs(2), async {
             while !started.load(Ordering::SeqCst) {
                 tokio::task::yield_now().await;
@@ -1908,7 +2366,7 @@ model = "fake"
         })
         .await
         .expect("provider stream should start");
-        drop(response);
+        drop(response_stream);
         tokio::time::timeout(Duration::from_secs(2), async {
             while !dropped.load(Ordering::SeqCst) {
                 tokio::task::yield_now().await;
@@ -1916,13 +2374,33 @@ model = "fake"
         })
         .await
         .expect("disconnect should drop provider stream");
+        let detail = tokio::time::timeout(Duration::from_secs(2), async {
+            loop {
+                let detail: Value = reqwest::Client::new()
+                    .get(format!("{base}/knowledge/conversations/{conversation_id}"))
+                    .bearer_auth("wiki-chat-test-token")
+                    .send()
+                    .await
+                    .unwrap()
+                    .json()
+                    .await
+                    .unwrap();
+                if detail["messages"][1]["status"] == "stopped" {
+                    break detail;
+                }
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        })
+        .await
+        .expect("stopped answer should be saved");
+        assert_eq!(detail["messages"][1]["status"], "stopped");
+        assert_eq!(detail["messages"][1]["content"], "partial answer");
         server.abort();
         let _ = std::fs::remove_dir_all(temp_root);
     }
 
     #[tokio::test]
     async fn ask_reports_timeout_when_provider_stream_exceeds_total_deadline() {
-        tokio::time::pause();
         let started = Arc::new(AtomicBool::new(false));
         let dropped = Arc::new(AtomicBool::new(false));
         let provider: Arc<dyn LlmProvider> = Arc::new(PendingLlm {
@@ -1935,12 +2413,13 @@ model = "fake"
             .post(format!("{base}/knowledge/ask"))
             .bearer_auth("wiki-chat-test-token")
             .json(&serde_json::json!({
-                "messages": [{"role": "user", "content": "Wait for the provider"}]
+                "question": "Wait for the provider"
             }))
             .send()
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::OK);
+        tokio::time::pause();
         let body_task = tokio::spawn(response.text());
         for _ in 0..1_000 {
             if started.load(Ordering::SeqCst) {
@@ -1964,7 +2443,7 @@ model = "fake"
         let response = reqwest::Client::new()
             .post(format!("{base}/knowledge/ask"))
             .bearer_auth("wiki-chat-test-token")
-            .json(&serde_json::json!({"messages":[{"role":"user","content":"question"}]}))
+            .json(&serde_json::json!({"question": "question"}))
             .send()
             .await
             .unwrap();
@@ -1982,7 +2461,7 @@ model = "fake"
         let response = reqwest::Client::new()
             .post(format!("{base}/knowledge/ask"))
             .bearer_auth("wiki-chat-test-token")
-            .json(&serde_json::json!({"messages":[{"role":"user","content":"question"}]}))
+            .json(&serde_json::json!({"question": "question"}))
             .send()
             .await
             .unwrap();
@@ -2037,7 +2516,7 @@ model = "fake"
             .post(format!("{base}/knowledge/ask"))
             .bearer_auth("wiki-chat-test-token")
             .json(&serde_json::json!({
-                "messages": [{"role": "user", "content": "Summarize this file"}],
+                "question": "Summarize this file",
                 "pinned_paths": ["wiki/concepts/known.md"]
             }))
             .send()
@@ -2077,7 +2556,7 @@ model = "fake"
             .post(format!("{base}/knowledge/ask"))
             .bearer_auth("wiki-chat-test-token")
             .json(&serde_json::json!({
-                "messages": [{"role": "user", "content": "Summarize this file"}],
+                "question": "Summarize this file",
                 "pinned_paths": ["wiki/concepts/deleted.md"]
             }))
             .send()
@@ -2103,7 +2582,7 @@ model = "fake"
             .post(format!("{base}/knowledge/ask"))
             .bearer_auth("wiki-chat-test-token")
             .json(&serde_json::json!({
-                "messages": [{"role": "user", "content": "Read more"}],
+                "question": "Read more",
                 "pinned_paths": ["wiki/concepts/known.md"]
             }))
             .send()
@@ -2141,23 +2620,5 @@ model = "fake"
         .unwrap();
         assert_eq!(calls.len(), 2);
         assert_eq!(calls[1].arguments["file"], "sources/b.md");
-    }
-
-    #[test]
-    fn chat_history_rejects_system_messages_and_byte_overflow() {
-        assert!(
-            validate_messages(vec![AskMessage {
-                role: "system".into(),
-                content: "x".into()
-            }])
-            .is_err()
-        );
-        assert!(
-            validate_messages(vec![AskMessage {
-                role: "user".into(),
-                content: "x".repeat(MAX_HISTORY_BYTES + 1)
-            }])
-            .is_err()
-        );
     }
 }

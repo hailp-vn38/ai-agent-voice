@@ -5,9 +5,10 @@ import KnowledgePage from './KnowledgePage.vue'
 import WikiChatPanel from './WikiChatPanel.vue'
 import KnowledgeGraph from './KnowledgeGraph.vue'
 
-const { requestJsonMock, routeQuery, focusNodeMock, highlightNodeMock } = vi.hoisted(() => ({
+const { requestJsonMock, routeQuery, focusNodeMock, highlightNodeMock, routerReplaceMock } = vi.hoisted(() => ({
   requestJsonMock: vi.fn(), routeQuery: {} as Record<string,string>,
   focusNodeMock: vi.fn(), highlightNodeMock: vi.fn(),
+  routerReplaceMock: vi.fn().mockResolvedValue(undefined),
 }))
 vi.mock('@/api/client', () => ({
   apiUrl: (path: string) => path,
@@ -18,7 +19,10 @@ vi.mock('@/api/client', () => ({
       Object.entries(query).map(([key, value]) => [key, String(value)]),
     ).toString(),
 }))
-vi.mock('vue-router', () => ({ useRoute: () => ({ query: routeQuery }) }))
+vi.mock('vue-router', () => ({
+  useRoute: () => ({ query: routeQuery }),
+  useRouter: () => ({ replace: routerReplaceMock }),
+}))
 vi.mock('./KnowledgeGraph.vue', async () => {
   const { defineComponent, h } = await import('vue')
   return { default: defineComponent({
@@ -53,6 +57,18 @@ beforeEach(() => {
       health: 'ready', document_count: 1, last_complete_scan_at: null,
     }
     if (url === '/api/admin/knowledge/sources') return { items: [] }
+    if (url === '/api/admin/knowledge/conversations/stored-1') return {
+      id: 'stored-1', title: 'Saved topic', created_at_ms: 1, updated_at_ms: 2,
+      messages: [
+        { id: 'user-1', seq: 1, role: 'user', content: 'Saved question', content_truncated: false,
+          status: 'done', error_code: null, pinned_paths: ['wiki/a.md'], tools: [], citations: [],
+          graph: null, created_at_ms: 1, updated_at_ms: 1 },
+        { id: 'assistant-1', seq: 2, role: 'assistant', content: 'Saved answer [[wiki/a.md|A]].', content_truncated: false,
+          status: 'done', error_code: null, pinned_paths: [], tools: [], citations: ['wiki/a.md'],
+          graph: { revision: 4, nodes: [{ id: 'wiki/a.md', path: 'wiki/a.md', title: 'A', status: 'verified', revision: 1 }],
+            edges: [], unresolved: [], truncated: false }, created_at_ms: 1, updated_at_ms: 2 },
+      ],
+    }
     if (url === '/api/admin/knowledge/pages/wiki_demo') return {
       id: 'wiki_demo', title: 'Wiki Demo',
       body: '# Wiki Demo\n\nA linked, readable document.\n\n## Overview\n\n**Bold** [[wiki-file|Related Wiki]] and <script>alert(1)</script>',
@@ -65,6 +81,31 @@ beforeEach(() => {
     }
     throw new Error('Unexpected request ' + url)
   })
+})
+
+it('restores the conversation selected by the URL and its saved graph', async () => {
+  routeQuery.conversation = 'stored-1'
+  const wrapper = mount(KnowledgePage)
+  try {
+    await flushPromises()
+    expect(wrapper.text()).toContain('Saved question')
+    expect(wrapper.text()).toContain('Saved answer')
+    expect(wrapper.find('a.wiki-chat-citation').exists()).toBe(true)
+    await wrapper.find('button.other-tab').trigger('click')
+    await flushPromises()
+    expect(wrapper.get('.mock-knowledge-graph').attributes('data-revision')).toBe('4')
+    expect(routerReplaceMock).not.toHaveBeenCalled()
+  } finally { wrapper.unmount() }
+})
+
+it('clears a conversation id from the URL when the saved conversation no longer exists', async () => {
+  routeQuery.conversation = 'missing-conversation'
+  const wrapper = mount(KnowledgePage)
+  try {
+    await flushPromises()
+    expect(wrapper.text()).not.toContain('Saved question')
+    expect(routerReplaceMock).toHaveBeenCalledWith({ query: {} })
+  } finally { wrapper.unmount() }
 })
 
 it('matches option A with a read-only Markdown document, tabs, explorer and outline', async () => {
@@ -218,10 +259,11 @@ it('streams a Wiki answer, switches to its answer graph, and keeps chat when cha
     edges: [], unresolved: [], truncated: false,
   }
   const sse = [
+    'event: turn\ndata: {"conversation_id":"conv-from-server","user_message_id":"user-from-server","assistant_message_id":"assistant-from-server"}\n\n',
     'event: tool\ndata: {"call_id":"c1","name":"wiki_query","state":"completed"}\n\n',
     `event: graph\ndata: ${JSON.stringify(graph)}\n\n`,
     'event: delta\ndata: {"text":"A **known** page."}\n\n',
-    'event: done\ndata: {"citations":["wiki/concepts/known.md"],"stop_reason":"finished"}\n\n',
+    'event: done\ndata: {"citations":["wiki/concepts/known.md"],"stop_reason":"finished","saved":true}\n\n',
   ].join('')
   const fetchMock = vi.fn().mockResolvedValue(new Response(sse, {
     headers: { 'Content-Type': 'text/event-stream' },
@@ -244,8 +286,9 @@ it('streams a Wiki answer, switches to its answer graph, and keeps chat when cha
     expect(url).toContain('/api/admin/knowledge/ask')
     expect(init.method).toBe('POST')
     expect(JSON.parse(String(init.body))).toEqual({
-      messages: [{ role: 'user', content: 'What do we know?' }],
+      question: 'What do we know?', pinned_paths: [],
     })
+    expect(routerReplaceMock).toHaveBeenCalledWith({ query: { conversation: 'conv-from-server' } })
     expect(wrapper.get('.wiki-chat-answer strong').text()).toBe('known')
     expect(wrapper.get('.mock-knowledge-graph').attributes('data-revision')).toBe('1')
 
