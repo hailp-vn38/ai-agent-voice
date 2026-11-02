@@ -3,6 +3,7 @@ import { beforeEach, expect, it, vi } from 'vitest'
 import { setLocale } from '@/composables/useI18n'
 import KnowledgePage from './KnowledgePage.vue'
 import WikiChatPanel from './WikiChatPanel.vue'
+import KnowledgeGraph from './KnowledgeGraph.vue'
 
 const { requestJsonMock, routeQuery, focusNodeMock, highlightNodeMock } = vi.hoisted(() => ({
   requestJsonMock: vi.fn(), routeQuery: {} as Record<string,string>,
@@ -21,7 +22,7 @@ vi.mock('vue-router', () => ({ useRoute: () => ({ query: routeQuery }) }))
 vi.mock('./KnowledgeGraph.vue', async () => {
   const { defineComponent, h } = await import('vue')
   return { default: defineComponent({
-    props: ['centerId', 'reloadToken', 'focusMode', 'answerGraph'],
+    props: { centerId: String, reloadToken: Number, focusMode: Boolean, answerGraph: Object, inactive: Boolean },
     emits: ['node-hover'],
     setup(props, { expose, emit }) {
       expose({ focusNode: focusNodeMock, highlightNode: highlightNodeMock })
@@ -1086,6 +1087,161 @@ it('persists Recent items across reloads and switches space when clicking a Rece
   }
 })
 
+function mockTwoWikiNotes() {
+  const base = requestJsonMock.getMockImplementation()!
+  requestJsonMock.mockImplementation(async (url: string, init?: unknown) => {
+    if (url === '/api/admin/knowledge/tree?space=wiki') return { items: [
+      { type: 'folder', space: 'wiki', path: 'wiki', name: 'wiki', editable: true },
+      { type: 'file', space: 'wiki', path: 'wiki/alpha.md', name: 'alpha.md', editable: true, id: 'alpha', revision: 1, status: 'verified' },
+      { type: 'file', space: 'wiki', path: 'wiki/beta.md', name: 'beta.md', editable: true, id: 'beta', revision: 1, status: 'verified' },
+    ] }
+    if (url === '/api/admin/knowledge/pages/alpha') return { id: 'alpha', title: 'Alpha', body: 'Alpha body', status: 'verified', revision: 1, source_ref: null }
+    if (url === '/api/admin/knowledge/pages/beta') return { id: 'beta', title: 'Beta', body: 'Beta body', status: 'verified', revision: 1, source_ref: null }
+    return base(url, init)
+  })
+}
+function openInTabButton(wrapper: ReturnType<typeof mount>, label: string, title: string) {
+  return wrapper.get('[aria-label="' + label + ': ' + title + '"]')
+}
 
+it('opens an Explorer file in a new tab, keeps the first tab, and reuses a tab already open', async () => {
+  mockTwoWikiNotes()
+  const wrapper = mount(KnowledgePage)
+  try {
+    await flushPromises()
+    expect(wrapper.get('.doc h1').text()).toBe('Alpha')
+    await openInTabButton(wrapper, 'Open in new tab', 'beta').trigger('click')
+    await flushPromises()
+    expect(wrapper.findAll('button.a-tab .tab-name').map(tab => tab.text())).toEqual(['Alpha', 'Beta'])
+    expect(wrapper.get('.doc h1').text()).toBe('Beta')
 
+    await wrapper.findAll('button.a-tab')[0]!.trigger('click')
+    await flushPromises()
+    expect(wrapper.get('.doc h1').text()).toBe('Alpha')
 
+    await openInTabButton(wrapper, 'Open in new tab', 'beta').trigger('click')
+    await flushPromises()
+    expect(wrapper.findAll('button.a-tab')).toHaveLength(2)
+    expect(wrapper.get('.doc h1').text()).toBe('Beta')
+
+    await wrapper.findAll('.a-tab-close')[1]!.trigger('click')
+    await flushPromises()
+    expect(wrapper.findAll('button.a-tab .tab-name').map(tab => tab.text())).toEqual(['Alpha'])
+    expect(wrapper.get('.doc h1').text()).toBe('Alpha')
+  } finally { wrapper.unmount() }
+})
+
+it('opens with Ctrl+Click in a new tab and a plain click replaces the current tab', async () => {
+  mockTwoWikiNotes()
+  const wrapper = mount(KnowledgePage)
+  try {
+    await flushPromises()
+    const beta = wrapper.findAll('.tree-leaf').find(leaf => leaf.text() === 'beta')!
+    await beta.trigger('click', { ctrlKey: true })
+    await flushPromises()
+    expect(wrapper.findAll('button.a-tab')).toHaveLength(2)
+
+    await wrapper.findAll('.a-tab-close')[1]!.trigger('click')
+    await flushPromises()
+    await wrapper.findAll('.tree-leaf').find(leaf => leaf.text() === 'beta')!.trigger('click')
+    await flushPromises()
+    expect(wrapper.findAll('button.a-tab .tab-name').map(tab => tab.text())).toEqual(['Beta'])
+  } finally { wrapper.unmount() }
+})
+
+it('shows files side by side and the outline follows the focused pane', async () => {
+  mockTwoWikiNotes()
+  const wrapper = mount(KnowledgePage)
+  try {
+    await flushPromises()
+    await openInTabButton(wrapper, 'Open to the side', 'beta').trigger('click')
+    await flushPromises()
+    expect(wrapper.findAll('.a-pane')).toHaveLength(2)
+    expect(wrapper.findAll('.doc h1').map(heading => heading.text())).toEqual(['Alpha', 'Beta'])
+    expect(wrapper.findAll('.a-pane')[1]!.classes()).toContain('is-focused')
+
+    await wrapper.findAll('.a-pane')[0]!.trigger('pointerdown')
+    await flushPromises()
+    expect(wrapper.findAll('.a-pane')[0]!.classes()).toContain('is-focused')
+    expect(wrapper.findAll('.doc h1').map(heading => heading.text())).toEqual(['Alpha', 'Beta'])
+
+    await wrapper.findAll('.a-pane')[1]!.get('[aria-label="Close pane"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.findAll('.a-pane')).toHaveLength(1)
+    expect(wrapper.get('.doc h1').text()).toBe('Alpha')
+  } finally { wrapper.unmount() }
+})
+
+it('opens a Graph node in a new tab and keeps Graph mounted to return to it', async () => {
+  mockTwoWikiNotes()
+  const wrapper = mount(KnowledgePage)
+  try {
+    await flushPromises()
+    await wrapper.get('button.other-tab').trigger('click')
+    await flushPromises()
+    const graph = wrapper.findComponent(KnowledgeGraph)
+    graph.vm.$emit('open', 'beta')
+    await flushPromises()
+    expect(wrapper.findAll('button.a-tab .tab-name').map(tab => tab.text())).toEqual(['Alpha', 'Beta'])
+    expect(wrapper.get('.doc h1').text()).toBe('Beta')
+    expect(wrapper.findComponent(KnowledgeGraph).props('inactive')).toBe(true)
+    expect(wrapper.get('.knowledge-a').classes()).not.toContain('is-graph-view')
+
+    await wrapper.get('button.other-tab').trigger('click')
+    await flushPromises()
+    expect(wrapper.findComponent(KnowledgeGraph).vm).toBe(graph.vm)
+    expect(wrapper.get('.knowledge-a').classes()).toContain('is-graph-view')
+  } finally { wrapper.unmount() }
+})
+
+it('opens a Graph node to the side while Graph stays visible', async () => {
+  mockTwoWikiNotes()
+  const wrapper = mount(KnowledgePage)
+  try {
+    await flushPromises()
+    await wrapper.get('button.other-tab').trigger('click')
+    await flushPromises()
+    wrapper.findComponent(KnowledgeGraph).vm.$emit('open-side', 'beta')
+    await flushPromises()
+    expect(wrapper.findAll('.a-pane')).toHaveLength(2)
+    expect(wrapper.findComponent(KnowledgeGraph).props('inactive')).toBe(false)
+    expect(wrapper.findAll('.a-pane')[1]!.get('.doc h1').text()).toBe('Beta')
+  } finally { wrapper.unmount() }
+})
+
+it('keeps a Knowledge tab when switching the Explorer to File and returns to it', async () => {
+  const wrapper = mount(KnowledgePage)
+  try {
+    await flushPromises()
+    const sources = wrapper.findAll('.a-source-tab')
+    await sources[1]!.trigger('click')
+    await flushPromises()
+    await wrapper.findAll('.tree-leaf')[0]!.trigger('click')
+    await flushPromises()
+    expect(wrapper.findAll('button.a-tab .tab-name').map(tab => tab.text())).toEqual(['Wiki Demo', 'raw-file'])
+    expect(wrapper.get('.doc-overline').text()).toContain('raw')
+
+    await sources[0]!.trigger('click')
+    await flushPromises()
+    expect(wrapper.get('.doc h1').text()).toBe('Wiki Demo')
+    expect(wrapper.get('.doc-overline').text()).toContain('wiki')
+    expect(wrapper.findAll('button.a-tab')).toHaveLength(2)
+  } finally { wrapper.unmount() }
+})
+
+it('restores open tabs and panes after a reload', async () => {
+  mockTwoWikiNotes()
+  const first = mount(KnowledgePage)
+  try {
+    await flushPromises()
+    await openInTabButton(first, 'Open to the side', 'beta').trigger('click')
+    await flushPromises()
+  } finally { first.unmount() }
+
+  const second = mount(KnowledgePage)
+  try {
+    await flushPromises()
+    expect(second.findAll('.a-pane')).toHaveLength(2)
+    expect(second.findAll('.doc h1').map(heading => heading.text())).toEqual(['Alpha', 'Beta'])
+  } finally { second.unmount() }
+})

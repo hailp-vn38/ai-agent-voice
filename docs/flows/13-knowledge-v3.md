@@ -40,6 +40,8 @@ Background Job V3 can only search/read published Wiki pages and recall confirmed
 
 The current Knowledge Web has **Reading/Compose/Graph** modes and can create Raw and draft Wiki notes inline and edit/save them with CAS. It does **not** expose a visible Source import or publish action in the current template, despite preserving the authenticated Admin endpoints and some script functions. Use the Admin routes below for immutable Source import and verified Wiki publication. The graph may show canonical **new draft** nodes to Admin, but no draft is Agent-retrievable.
 
+The reading workspace holds tabs in up to four side-by-side panes and restores them on reload through browser storage only. A click replaces the current tab; Ctrl/Cmd+Click or middle-click opens a new tab, and Ctrl/Cmd+Alt+Click opens to the side. A Graph node click opens a new tab, and Ctrl/Cmd+Click opens beside Graph. Each tab keeps a snapshot of its note, so a change made outside this browser appears after a reload; only the focused tab can be edited.
+
 
 ## Planned AI Ingest after the Graph / Settings commits — not implemented
 

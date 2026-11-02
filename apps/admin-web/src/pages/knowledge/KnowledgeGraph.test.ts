@@ -6,7 +6,7 @@ import KnowledgeGraph from './KnowledgeGraph.vue'
 
 const { requestJsonMock, events, drawMock, fitMock, centerMock } = vi.hoisted(() => ({
   requestJsonMock: vi.fn(),
-  events: {} as Record<string, (event: { target: { id: () => string } }) => void>,
+  events: {} as Record<string, (event: { target: { id: () => string }; originalEvent?: { metaKey?: boolean } }) => void>,
   drawMock: vi.fn(),
   fitMock: vi.fn(),
   centerMock: vi.fn(),
@@ -23,7 +23,7 @@ vi.mock('cytoscape', () => ({
     drawMock(options)
     return {
       destroy: vi.fn(),
-      on: (event: string, selector: string, callback: (event: { target: { id: () => string } }) => void) => {
+      on: (event: string, selector: string, callback: (event: { target: { id: () => string }; originalEvent?: { metaKey?: boolean } }) => void) => {
         events[event + ':' + selector] = callback
       },
       fit: fitMock,
@@ -72,6 +72,18 @@ it('selects an edge and exposes the original Wikilink alias and anchor', async (
       button.text() === translate('knowledgeV3.graphOpenSource'))
     expect(open?.exists()).toBe(true)
     await open!.trigger('click')
+    expect(wrapper.emitted('open')?.[0]).toEqual(['wiki_agent'])
+  } finally { wrapper.unmount() }
+})
+
+it('opens a node beside Graph on Ctrl or Cmd click', async () => {
+  const wrapper = mount(KnowledgeGraph, { props: { reloadToken: 0 } })
+  try {
+    await flushPromises()
+    events['tap:node']({ target: { id: () => 'wiki_agent' }, originalEvent: { metaKey: true } })
+    expect(wrapper.emitted('open-side')?.[0]).toEqual(['wiki_agent'])
+    expect(wrapper.emitted('open')).toBeUndefined()
+    events['tap:node']({ target: { id: () => 'wiki_agent' }, originalEvent: {} })
     expect(wrapper.emitted('open')?.[0]).toEqual(['wiki_agent'])
   } finally { wrapper.unmount() }
 })

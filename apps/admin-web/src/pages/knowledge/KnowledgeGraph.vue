@@ -48,9 +48,11 @@ const props = defineProps<{
   reloadToken: number
   focusMode?: boolean
   answerGraph?: GraphSnapshot | null
+  inactive?: boolean
 }>()
 const emit = defineEmits<{
   open: [id: string]
+  'open-side': [id: string]
   rebuild: []
   'node-hover': [id: string | null]
   'update:focusMode': [value: boolean]
@@ -117,6 +119,7 @@ let zoomRafId: number | null = null
 let targetZoom = 1
 let zoomAnchor = { x: 0, y: 0 }
 let resizeObserver: ResizeObserver | null = null
+let lastFitWidth = 0
 
 const nodeSizeScale = computed(() => nodeSizePercent.value / 100)
 
@@ -681,7 +684,11 @@ function clearSelection() {
   placePanel()
 }
 
-function chooseNode(id: string) {
+function chooseNode(id: string, beside = false) {
+  if (beside) {
+    emit('open-side', id)
+    return
+  }
   selectedEdgeId.value = null
   selectedId.value = id
   activeId.value = null
@@ -781,6 +788,7 @@ function applyFocusClasses(hoveredId: string | null) {
 }
 
 function draw() {
+  lastFitWidth = canvas.value?.clientWidth ?? 0
   stopSmoothZoom()
   cy?.destroy()
   cy = null
@@ -973,7 +981,8 @@ function draw() {
   clampViewportZoom()
 
   cy.on('tap', 'node', event => {
-    chooseNode(event.target.id())
+    const pointer = event.originalEvent as MouseEvent | undefined
+    chooseNode(event.target.id(), Boolean(pointer?.metaKey || pointer?.ctrlKey))
   })
   cy.on('tap', 'edge', event => {
     selectedEdgeId.value = event.target.id()
@@ -1096,6 +1105,7 @@ function renderAnswerGraph(answerGraph: GraphSnapshot) {
 }
 
 function onKeydown(event: KeyboardEvent) {
+  if (props.inactive) return
   if (event.key === 'Escape') {
     viewMenuOpen.value = false
     nodeSearchOpen.value = false
@@ -1131,6 +1141,12 @@ onMounted(() => {
     resizeObserver = new ResizeObserver(() => {
       if (cy && typeof cy.resize === 'function') {
         cy.resize()
+        // Revealing a tab or splitting a pane changes the width a lot; small drags keep the user's view.
+        const width = canvas.value?.clientWidth ?? 0
+        if (width > 0 && Math.abs(width - lastFitWidth) > lastFitWidth * 0.15) {
+          lastFitWidth = width
+          fitGraph()
+        }
       }
       placePanel()
     })
@@ -1393,6 +1409,9 @@ defineExpose({ focusNode, highlightNode })
             <span>{{ t('knowledgeV3.graphOpen') }}</span>
             <span aria-hidden="true">&#8599;</span>
           </button>
+          <button type="button" class="kg-btn" @click="emit('open-side', current.id)">
+            {{ t('knowledgeV3.openToSide') }}
+          </button>
           <button type="button" class="kg-btn" @click="isolateCurrentNode">
             Focus node
           </button>
@@ -1500,7 +1519,7 @@ defineExpose({ focusNode, highlightNode })
 
       <!-- Bottom-Center Help / Hover Pill (Prototype #help) -->
       <div v-if="hoverText || !inspectorOpen" class="kg-help">
-        {{ hoverText || 'Click any node to open note · Drag to pan · Scroll to zoom' }}
+        {{ hoverText || t('knowledgeV3.graphHelp') }}
       </div>
 
       <!-- Loading & Empty states -->

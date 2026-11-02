@@ -160,19 +160,48 @@
 .knowledge-a .a-vault-footer { margin: 0 18px 24px; border-top: 1px solid var(--border); padding: 13px 0; color: var(--muted-foreground); font-size: 11px; display: flex; align-items: center; gap: 9px; }
 .knowledge-a .a-vault-footer .dot { height: 6px; width: 6px; background: var(--success); border-radius: 50%; }
 .knowledge-a .a-workspace { background: var(--background); flex: 1; display: flex; flex-direction: column; min-width: 0; }
-.knowledge-a .a-tabs { height: 44px; display: flex; align-items: flex-end; border-bottom: 1px solid var(--border); background: var(--surface); gap: 0; padding-left: 4px; flex: none; }
-.knowledge-a .a-tab { background: var(--card); display: flex; gap: 10px; align-items: center; height: 39px; padding: 0 18px; border: 1px solid var(--border); border-bottom: 0; border-radius: 8px 8px 0 0; color: var(--card-foreground); max-width: 350px; font-size: 12px; font-weight: 570; }
+.knowledge-a .a-panes { flex: 1; min-height: 0; min-width: 0; display: flex; overflow-x: auto; }
+.knowledge-a .a-pane { flex: 1 1 0; min-width: 280px; min-height: 0; display: flex; flex-direction: column; container-type: inline-size; box-shadow: inset 0 2px 0 transparent; }
+.knowledge-a .a-pane.is-focused { box-shadow: inset 0 2px 0 var(--studio-violet); }
+.knowledge-a .a-pane-resizer { flex: none; width: 5px; cursor: col-resize; touch-action: none; background: linear-gradient(var(--border), var(--border)) center / 1px 100% no-repeat; }
+.knowledge-a .a-pane-resizer:hover { background-size: 3px 100%; background-image: linear-gradient(var(--studio-violet), var(--studio-violet)); }
+.knowledge-a .a-tabs { height: 44px; display: flex; align-items: flex-end; border-bottom: 1px solid var(--border); background: var(--surface); gap: 0; padding-left: 4px; flex: none; min-width: 0; }
+.knowledge-a .a-tab-list { flex: 1; min-width: 0; height: 100%; display: flex; align-items: flex-end; gap: 1px; overflow-x: auto; scrollbar-width: none; }
+.knowledge-a .a-tab-list::-webkit-scrollbar { display: none; }
+.knowledge-a .a-tab { background: transparent; display: flex; gap: 8px; align-items: center; height: 39px; padding: 0 10px 0 14px; border: 1px solid transparent; border-bottom: 0; border-radius: 8px 8px 0 0; color: var(--muted-foreground); flex: 0 1 200px; min-width: 96px; max-width: 350px; font-size: 12px; font-weight: 570; }
+.knowledge-a .a-tab:hover { background: color-mix(in srgb, var(--card) 60%, transparent); }
+.knowledge-a .a-tab.active { background: var(--card); border-color: var(--border); color: var(--card-foreground); }
+.knowledge-a .a-tab-close { margin-left: auto; flex: none; width: 18px; height: 18px; display: grid; place-items: center; border-radius: 4px; opacity: .45; font-size: 13px; line-height: 1; }
+.knowledge-a .a-tab-close:hover { opacity: 1; background: var(--muted); }
+.knowledge-a .a-tab-add { flex: none; align-self: center; width: 26px; height: 26px; margin-left: 2px; display: grid; place-items: center; border-radius: 6px; background: none; color: var(--muted-foreground); }
+.knowledge-a .a-tab-add:hover { background: var(--muted); color: var(--studio-violet); }
+.knowledge-a .a-pane-actions { height: 39px; flex: none; display: flex; align-items: center; gap: 3px; padding-left: 6px; }
+.knowledge-a .a-pane-actions .icon-button { color: var(--muted-foreground); }
+.knowledge-a .a-pane-actions .icon-button:hover { color: var(--studio-violet); }
+.knowledge-a .a-pane-actions .icon-button:disabled { opacity: .35; cursor: not-allowed; }
+.knowledge-a .tree-leaf-row { position: relative; min-width: 0; }
+.knowledge-a .tree-leaf-actions { position: absolute; top: 50%; right: 4px; transform: translateY(-50%); display: flex; gap: 2px; padding-left: 4px; border-radius: 6px; background: var(--sidebar-accent); opacity: 0; pointer-events: none; }
+.knowledge-a .tree-leaf-row:hover .tree-leaf-actions, .knowledge-a .tree-leaf-row:focus-within .tree-leaf-actions { opacity: 1; pointer-events: auto; }
+.knowledge-a .tree-leaf-action { width: 24px; height: 24px; display: grid; place-items: center; border-radius: 5px; background: none; color: var(--muted-foreground); }
+.knowledge-a .tree-leaf-action:hover { background: var(--background); color: var(--studio-violet); }
 .knowledge-a .a-tab svg { width: 14px; height: 14px; color: var(--studio-violet); flex: none; }
 .knowledge-a .a-tab .tab-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.knowledge-a .a-tabs .other-tab { color: var(--muted-foreground); padding: 0 17px; height: 39px; background: none; font-size: 12px; }
+.knowledge-a .a-tabs .other-tab { color: var(--muted-foreground); padding: 0 14px; height: 39px; background: none; font-size: 12px; flex: none; white-space: nowrap; }
 .knowledge-a .a-tabs .other-tab.active { background: var(--card); border: 1px solid var(--border); border-bottom: 0; border-radius: 8px 8px 0 0; color: var(--studio-violet); }
-.knowledge-a .a-tabs .a-spacer { flex: 1; }
-.knowledge-a .a-tabs .a-tab-actions { height: 39px; display: flex; align-items: center; padding: 0 12px; gap: 3px; }
+.knowledge-a .a-tabs .a-tab-actions { height: 39px; display: flex; align-items: center; padding: 0 12px 0 3px; gap: 3px; flex: none; }
 .knowledge-a .a-tabs .a-tab-actions .icon-button { width: 28px; height: 28px; color: var(--muted-foreground); }
 .knowledge-a .a-tabs .a-tab-actions .icon-button:hover, .knowledge-a .a-tabs .a-tab-actions .icon-button.active { color: var(--studio-violet); }
 .knowledge-a .a-pathbar { height: 50px; padding: 0 31px; display: flex; align-items: center; gap: 7px; color: var(--muted-foreground); font-size: 11px; border-bottom: 1px solid var(--border); flex: none; white-space: nowrap; min-width: 0; }
 .knowledge-a .a-pathbar .active-path { color: var(--foreground); overflow: hidden; text-overflow: ellipsis; }
 .knowledge-a .a-pathbar .path-actions { margin-left: auto; display: flex; align-items: center; gap: 8px; flex: none; }
+.knowledge-a .a-pathbar .path-actions .icon-button:disabled { opacity: .35; cursor: not-allowed; }
+@container (max-width: 560px) {
+  .knowledge-a .a-pathbar { padding: 0 14px; }
+  .knowledge-a .a-pathbar .path-mode { display: none; }
+  .knowledge-a .doc { padding: 34px 20px 120px; }
+  .knowledge-a .doc h1 { font-size: 28px; letter-spacing: -.8px; }
+  .knowledge-a .doc-prop-row { grid-template-columns: 88px minmax(0, 1fr); }
+}
 .knowledge-a .a-reader-viewport { overflow: auto; flex: 1; min-height: 0; scroll-behavior: smooth; }
 .knowledge-a .doc { max-width: 770px; margin: 0 auto; padding: 57px 29px 140px; color: var(--foreground); }
 .knowledge-a .doc-overline { display: flex; align-items: center; gap: 9px; text-transform: uppercase; font-size: 10px; letter-spacing: 1.4px; font-weight: 750; margin: 0 0 15px; color: var(--studio-violet); }
@@ -431,7 +460,11 @@
 .knowledge-a .wiki-chat-stop { color: var(--danger); border: 1px solid color-mix(in srgb, var(--danger) 45%, var(--border)); background: transparent; }
 .knowledge-a .wiki-chat-send:disabled { opacity: .5; cursor: not-allowed; }
 .knowledge-a .wiki-chat-drawer-toggle { display: none; }
-@media (max-width: 950px) {
+/* Sized by the pane, so a Graph sharing the workspace with notes gets the drawer as well. */
+@container (max-width: 900px) {
+  .knowledge-a .wiki-chat-panel { width: min(320px, 42%); }
+}
+@container (max-width: 720px) {
   .knowledge-a .graph-content { position: relative; }
   .knowledge-a .graph-stage { width: 100%; }
   .knowledge-a .wiki-chat-panel {
@@ -1395,4 +1428,10 @@
   flex: none;
 }
 
-
+/* Graph tools stay reachable when Graph shares the workspace with notes. */
+@container (max-width: 720px) {
+  .knowledge-a .kg-heading, .knowledge-a .kg-meta, .knowledge-a .kg-help { display: none; }
+  .knowledge-a .kg-tools { min-width: 0; overflow-x: auto; scrollbar-width: none; }
+  .knowledge-a .kg-toptools .kg-iconbtn { flex: none; }
+  .knowledge-a .kg-zoom { bottom: 60px; }
+}
