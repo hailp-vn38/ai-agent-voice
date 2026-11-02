@@ -16,8 +16,8 @@ use crate::{
     database::{Database, credentials::CredentialCipher},
     providers::llm::{LlmEvent, LlmProvider, LlmRequest},
     services::llm_gateway::{
-        FakeOAuthVendorDriver, GatewayBinding, GatewayVendor, LlmGatewayHub,
-        OAuthCallbackSubmission, OAuthVendorDriver, StartOAuthLoginRequest,
+        FakeOAuthVendorDriver, GatewayBinding, GatewayVendor, ImportCookieAccountRequest,
+        LlmGatewayHub, OAuthCallbackSubmission, OAuthVendorDriver, StartOAuthLoginRequest,
     },
 };
 
@@ -680,24 +680,13 @@ async fn llm_gateway_provider_executes_muse_chat_vision_image_video_and_rotates_
 
     let hub = create_test_hub().await;
     // Register 2 Muse accounts in `pool:muse`
-    let ch1 = hub
-        .start_oauth_login(StartOAuthLoginRequest {
+    let acc1 = hub
+        .import_cookie_account(ImportCookieAccountRequest {
             vendor: GatewayVendor::Muse,
             label: "Muse #1".to_owned(),
-            redirect_uri: None,
+            cookies: "hatch_sess=s1; hatch_gw=g1; hatch_vml=v1; hatch_native_auth_device=d1"
+                .to_owned(),
         })
-        .await
-        .expect("ch1");
-    let acc1 = hub
-        .complete_oauth_login(
-            &ch1.session_id,
-            OAuthCallbackSubmission {
-                callback_url_or_code:
-                    "hatch_sess=s1; hatch_gw=g1; hatch_vml=v1; hatch_native_auth_device=d1"
-                        .to_owned(),
-                state: None,
-            },
-        )
         .await
         .expect("acc1");
     hub.update_account(
@@ -711,24 +700,13 @@ async fn llm_gateway_provider_executes_muse_chat_vision_image_video_and_rotates_
     .await
     .expect("priority 10");
 
-    let ch2 = hub
-        .start_oauth_login(StartOAuthLoginRequest {
+    let _acc2 = hub
+        .import_cookie_account(ImportCookieAccountRequest {
             vendor: GatewayVendor::Muse,
             label: "Muse #2".to_owned(),
-            redirect_uri: None,
+            cookies: "hatch_sess=s2; hatch_gw=g2; hatch_vml=v2; hatch_native_auth_device=d2"
+                .to_owned(),
         })
-        .await
-        .expect("ch2");
-    let _acc2 = hub
-        .complete_oauth_login(
-            &ch2.session_id,
-            OAuthCallbackSubmission {
-                callback_url_or_code:
-                    "hatch_sess=s2; hatch_gw=g2; hatch_vml=v2; hatch_native_auth_device=d2"
-                        .to_owned(),
-                state: None,
-            },
-        )
         .await
         .expect("acc2");
 

@@ -23,7 +23,7 @@ import type {
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { useI18n } from '@/composables/useI18n'
-import { vendorMeta } from './llmGatewayUi'
+import { loginModeLabel, vendorMeta } from './llmGatewayUi'
 
 const route = useRoute()
 const router = useRouter()
@@ -34,6 +34,7 @@ const selectedVendor = ref<GatewayVendor>('openai_codex')
 const label = ref('')
 const challenge = ref<OAuthLoginChallenge | null>(null)
 const callbackInput = ref('')
+const cookieInput = ref('')
 const completedAccount = ref<GatewayAccountView | null>(null)
 const starting = ref(false)
 const completing = ref(false)
@@ -53,6 +54,8 @@ const currentStep = computed<1 | 2 | 3>(() => {
 const activeVendorInfo = computed(
   () => vendors.value.find((item) => item.vendor === selectedVendor.value) ?? null,
 )
+
+const isCookieVendor = computed(() => activeVendorInfo.value?.login_mode === 'cookie_paste')
 
 function closeAuthPopup() {
   if (authPopup && !authPopup.closed) {
@@ -146,10 +149,37 @@ function buildRedirectUri(vendor: GatewayVendor): string {
   return `http://localhost:${appPort}/api/admin/llm-gateway/oauth/callback`
 }
 
+async function handleImportCookies(trimmedLabel: string) {
+  const cookies = cookieInput.value.trim()
+  if (!cookies) {
+    errorMessage.value = t('llmGateway.oauthModal.cookieRequired')
+    return
+  }
+  starting.value = true
+  errorMessage.value = ''
+  try {
+    const res = await llmGatewayApi.importCookieAccount({
+      vendor: selectedVendor.value,
+      label: trimmedLabel,
+      cookies,
+    })
+    cookieInput.value = ''
+    completedAccount.value = res.account
+  } catch (cause) {
+    errorMessage.value = formatApiError(cause)
+  } finally {
+    starting.value = false
+  }
+}
+
 async function handleStartOAuth() {
   const trimmedLabel = label.value.trim()
   if (!trimmedLabel) {
     errorMessage.value = t('llmGateway.editModal.labelRequired')
+    return
+  }
+  if (isCookieVendor.value) {
+    await handleImportCookies(trimmedLabel)
     return
   }
   starting.value = true
@@ -161,17 +191,9 @@ async function handleStartOAuth() {
       label: trimmedLabel,
       redirect_uri: redirectUri,
     })
-    const directCookie = selectedVendor.value === 'muse' ? callbackInput.value.trim() : ''
-    if (directCookie) {
-      const res = await llmGatewayApi.completeOAuthSession(result.session_id, {
-        callback_url_or_code: directCookie,
-      })
-      completedAccount.value = res.account
-      return
-    }
     challenge.value = result
     startPolling(result.session_id, result.poll_interval_secs)
-    if (result.mode === 'pkce' && result.authorize_url && selectedVendor.value !== 'muse') {
+    if (result.mode === 'pkce' && result.authorize_url) {
       authPopup = window.open(result.authorize_url, 'oauth_popup', 'width=640,height=720')
     }
   } catch (cause) {
@@ -415,28 +437,27 @@ onBeforeUnmount(() => {
               />
             </label>
 
-            <label v-if="selectedVendor === 'muse'" class="block space-y-1.5">
+            <label v-if="isCookieVendor" class="block space-y-1.5">
               <span class="text-xs font-semibold">
-                {{ t('llmGateway.oauthModal.step2MuseManual') }}
+                {{ t('llmGateway.oauthModal.cookieLabel') }} *
               </span>
               <textarea
-                v-model="callbackInput"
-                data-input="connect-code"
-                rows="4"
-                class="admin-input font-mono text-xs"
-                placeholder='{"url":"https://muse.ai","cookies":[...]}'
+                v-model="cookieInput"
+                data-input="connect-cookies"
+                rows="5"
+                class="admin-input min-h-28 font-mono text-xs"
+                autocomplete="off"
+                spellcheck="false"
+                placeholder="hatch_sess=...; hatch_gw=...; hatch_vml=...; hatch_native_auth_device=..."
               />
+              <small class="block text-xs text-muted-foreground">
+                {{ t('llmGateway.oauthModal.cookieHint') }}
+              </small>
             </label>
 
             <p v-if="activeVendorInfo" class="text-xs text-muted-foreground">
               OAuth Mode:
-              <strong class="text-foreground">
-                {{
-                  activeVendorInfo.login_mode === 'device_code'
-                    ? 'Device code'
-                    : 'OAuth PKCE'
-                }}
-              </strong>
+              <strong class="text-foreground">{{ loginModeLabel(activeVendorInfo.login_mode) }}</strong>
               · Identity sẽ được thêm vào
               <code class="font-mono text-foreground">{{ activeVendorInfo.pool_binding }}</code>.
             </p>
@@ -452,7 +473,9 @@ onBeforeUnmount(() => {
                 {{
                   starting
                     ? t('llmGateway.oauthModal.starting')
-                    : t('llmGateway.oauthModal.startBtn')
+                    : isCookieVendor
+                      ? t('llmGateway.oauthModal.cookieSubmit')
+                      : t('llmGateway.oauthModal.startBtn')
                 }}
                 <ArrowRight class="size-4" aria-hidden="true" />
               </Button>
@@ -539,32 +562,16 @@ onBeforeUnmount(() => {
                   </div>
                 </div>
                 <p class="text-xs text-muted-foreground">
-                  {{
-                    challenge.vendor === 'muse'
-                      ? t('llmGateway.oauthModal.museHint')
-                      : t('llmGateway.oauthModal.pkceHint')
-                  }}
+                  {{ t('llmGateway.oauthModal.pkceHint') }}
                 </p>
               </div>
 
               <form class="space-y-3" @submit.prevent="handleManualComplete">
                 <label class="block space-y-1.5">
                   <span class="text-xs font-semibold">
-                    {{
-                      challenge.vendor === 'muse'
-                        ? t('llmGateway.oauthModal.step2MuseManual')
-                        : t('llmGateway.oauthModal.step2Manual')
-                    }}
+                    {{ t('llmGateway.oauthModal.step2Manual') }}
                   </span>
-                  <textarea
-                    v-if="challenge.vendor === 'muse'"
-                    v-model="callbackInput"
-                    data-input="connect-code"
-                    rows="4"
-                    class="admin-input font-mono text-xs"
-                  />
                   <input
-                    v-else
                     v-model="callbackInput"
                     data-input="connect-code"
                     class="admin-input font-mono text-xs"
@@ -651,11 +658,7 @@ onBeforeUnmount(() => {
                 {{ activeVendorInfo?.display_name || selectedVendor }}
               </div>
               <div class="text-[11px] text-muted-foreground">
-                {{
-                  activeVendorInfo?.login_mode === 'device_code'
-                    ? 'Device code'
-                    : 'OAuth PKCE'
-                }}
+                {{ loginModeLabel(activeVendorInfo?.login_mode) }}
               </div>
             </div>
           </div>
@@ -673,9 +676,11 @@ onBeforeUnmount(() => {
               <div class="font-bold text-foreground">Step 2 · Authorize</div>
               <p class="mt-0.5 text-muted-foreground">
                 {{
-                  activeVendorInfo?.login_mode === 'device_code'
-                    ? 'Sử dụng GitHub Device Code flow.'
-                    : 'Mở link và nhập callback code qua PKCE flow.'
+                  isCookieVendor
+                    ? 'Dán cookie từ trình duyệt đã đăng nhập; Gateway kiểm tra phiên rồi lưu ngay.'
+                    : activeVendorInfo?.login_mode === 'device_code'
+                      ? 'Sử dụng GitHub Device Code flow.'
+                      : 'Mở link và nhập callback code qua PKCE flow.'
                 }}
               </p>
             </div>

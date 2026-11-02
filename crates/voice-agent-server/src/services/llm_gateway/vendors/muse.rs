@@ -1,12 +1,7 @@
-use std::{
-    collections::{HashMap, HashSet},
-    sync::Arc,
-    time::Duration,
-};
+use std::{sync::Arc, time::Duration};
 
 use async_trait::async_trait;
 use serde_json::Value;
-use tokio::sync::Mutex;
 use uuid::Uuid;
 
 #[cfg(not(test))]
@@ -14,15 +9,14 @@ use crate::providers::llm::gateway::muse::cdp::CdpBrowserEngine;
 use crate::{
     database::unix_seconds,
     providers::llm::gateway::muse::{
-        cdp::{BrowserEngine, BrowserPage, extract_wss_via_chromium},
+        cdp::{BrowserEngine, extract_wss_via_chromium},
         config::{
             MuseAccountCredential, NEW_THREAD_URL, SESSION_API_URL, SITE_URL, VM_WAKE_API_URL,
             format_cookie_header, has_required_cookies, parse_accounts, parse_cookie_header,
         },
         credentials::{
-            WSS_EXPIRY_BUFFER_SECS, build_wss_url_from_init_json, fetch_wss_from_cookie_http,
-            get_wss_expiry_unix_secs, is_wss_valid, merge_set_cookies, parse_session_json,
-            request_hatch_token_with_retry,
+            WSS_EXPIRY_BUFFER_SECS, fetch_wss_from_cookie_http, get_wss_expiry_unix_secs,
+            is_wss_valid, merge_set_cookies, parse_session_json, request_hatch_token_with_retry,
         },
         pool::UpstreamFailureKind,
     },
@@ -36,8 +30,18 @@ use super::{ExchangedOAuthAccount, OAuthVendorDriver};
 const DEFAULT_MUSE_RENEWAL_INTERVAL_SECS: i64 = 6 * 3600;
 #[cfg(not(test))]
 const HEADLESS_REFRESH_CDP_PORT: u16 = 19222;
-#[cfg(not(test))]
-const INTERACTIVE_LOGIN_CDP_PORT: u16 = 19223;
+
+/// How `verify_and_renew_session` treats an upstream that rejects or cannot renew the session.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SessionCheck {
+    /// Keep the stored credential on any failure (quota reads).
+    Lenient,
+    /// Reject cookies upstream reports as unauthorized, but tolerate an unreachable upstream so a
+    /// paste still succeeds behind Cloudflare and renews later.
+    RejectUnauthorized,
+    /// Force a fresh WSS URL and fail when none can be obtained (token refresh).
+    Strict,
+}
 
 pub struct MuseOAuthDriver {
     http: reqwest::Client,
@@ -45,9 +49,6 @@ pub struct MuseOAuthDriver {
     vm_wake_api_url: String,
     verify_online: bool,
     headless_engine: Option<Arc<dyn BrowserEngine>>,
-    login_engine: Option<Arc<dyn BrowserEngine>>,
-    login_pages: Mutex<HashMap<String, Arc<dyn BrowserPage>>>,
-    login_unavailable_states: Mutex<HashSet<String>>,
 }
 
 impl MuseOAuthDriver {
@@ -65,13 +66,6 @@ impl MuseOAuthDriver {
         ));
         #[cfg(test)]
         let headless_engine: Option<Arc<dyn BrowserEngine>> = None;
-        #[cfg(not(test))]
-        let login_engine: Option<Arc<dyn BrowserEngine>> = Some(Arc::new(CdpBrowserEngine::new(
-            INTERACTIVE_LOGIN_CDP_PORT,
-            false,
-        )));
-        #[cfg(test)]
-        let login_engine: Option<Arc<dyn BrowserEngine>> = None;
 
         Self {
             http,
@@ -79,18 +73,7 @@ impl MuseOAuthDriver {
             vm_wake_api_url: VM_WAKE_API_URL.to_owned(),
             verify_online: !cfg!(test),
             headless_engine,
-            login_engine,
-            login_pages: Mutex::new(HashMap::new()),
-            login_unavailable_states: Mutex::new(HashSet::new()),
         }
-    }
-
-    #[cfg(test)]
-    pub(crate) fn with_browser_engine(engine: Arc<dyn BrowserEngine>) -> Self {
-        let mut drv = Self::new();
-        drv.login_engine = Some(engine);
-        drv.verify_online = false;
-        drv
     }
 
     #[cfg(test)]
@@ -105,19 +88,19 @@ impl MuseOAuthDriver {
     async fn verify_and_renew_session(
         &self,
         mut cred: MuseAccountCredential,
-        strict_network: bool,
+        check: SessionCheck,
     ) -> Result<(MuseAccountCredential, Option<String>), GatewayError> {
         if !self.verify_online {
             return Ok((cred, None));
         }
         if cred.cookies.is_empty() {
-            if strict_network {
+            if check == SessionCheck::Strict {
                 return Err(GatewayError::AccountReauthRequired);
             }
             return Ok((cred, None));
         }
 
-        let wss_needs_renewal = strict_network
+        let wss_needs_renewal = check == SessionCheck::Strict
             || cred
                 .wss_url
                 .as_deref()
@@ -156,7 +139,7 @@ impl MuseOAuthDriver {
                 cred.cookies.insert(k, v);
             }
             if status == 401 {
-                if strict_network {
+                if check != SessionCheck::Lenient {
                     return Err(GatewayError::AccountReauthRequired);
                 }
                 return Ok((cred, None));
@@ -210,7 +193,7 @@ impl MuseOAuthDriver {
                     let _ = bootstrapped.apply_to(&mut cred, &mut discovered_email);
                 }
                 Err((UpstreamFailureKind::AuthInvalid, _)) if !session_verified => {
-                    if strict_network {
+                    if check != SessionCheck::Lenient {
                         return Err(GatewayError::AccountReauthRequired);
                     }
                     return Ok((cred, None));
@@ -221,7 +204,7 @@ impl MuseOAuthDriver {
 
         // Tier 3: Headless Chromium CDP fallback when HTTP/SSR is blocked by Cloudflare
         if cred.wss_url.is_none()
-            && let Some(engine) = self.headless_engine.as_ref().or(self.login_engine.as_ref())
+            && let Some(engine) = self.headless_engine.as_ref()
         {
             let ctx_key = format!("muse-refresh-{}", Uuid::new_v4());
             match extract_wss_via_chromium(&**engine, &ctx_key, &cred.cookies).await {
@@ -229,7 +212,7 @@ impl MuseOAuthDriver {
                     let _ = bootstrapped.apply_to(&mut cred, &mut discovered_email);
                 }
                 Err((UpstreamFailureKind::AuthInvalid, _)) if !session_verified => {
-                    if strict_network {
+                    if check != SessionCheck::Lenient {
                         return Err(GatewayError::AccountReauthRequired);
                     }
                 }
@@ -237,7 +220,7 @@ impl MuseOAuthDriver {
             }
         }
 
-        if strict_network && cred.wss_url.is_none() {
+        if check == SessionCheck::Strict && cred.wss_url.is_none() {
             return Err(GatewayError::OAuthExchangeFailed(
                 "muse_session_renewal_failed".to_owned(),
             ));
@@ -313,137 +296,27 @@ impl OAuthVendorDriver for MuseOAuthDriver {
         GatewayVendor::Muse
     }
 
-    fn build_pkce_authorize_url(
+    async fn import_cookie_session(
         &self,
-        state: &str,
-        _code_challenge: &str,
-        _redirect_uri: &str,
-    ) -> Result<String, GatewayError> {
-        let mut url =
-            url::Url::parse(NEW_THREAD_URL).map_err(|_| GatewayError::OAuthCallbackInvalid)?;
-        url.query_pairs_mut().append_pair("state", state);
-        Ok(url.to_string())
-    }
-
-    async fn exchange_pkce_code(
-        &self,
-        code: &str,
-        state: &str,
-        _code_verifier: &str,
-        _redirect_uri: &str,
+        raw_cookies: &str,
     ) -> Result<ExchangedOAuthAccount, GatewayError> {
-        // Clean up any open interactive CDP login tab for this session state.
-        if let Some(page) = self.login_pages.lock().await.remove(state) {
-            page.close().await;
-            if let Some(engine) = &self.login_engine {
-                engine.dispose_context(&format!("muse-login-{state}")).await;
-            }
-        }
-
-        let mut accounts = parse_accounts(code);
+        let mut accounts = parse_accounts(raw_cookies);
         if accounts.is_empty() {
             return Err(GatewayError::OAuthExchangeFailed(
                 "missing_required_muse_cookies (hatch_sess, hatch_gw, hatch_vml, hatch_native_auth_device)".to_owned(),
             ));
         }
         let cred = accounts.remove(0);
-        let (verified_cred, email) = self.verify_and_renew_session(cred, false).await?;
-        Self::build_exchanged_account(verified_cred, email)
-    }
-
-    async fn poll_pkce_session(
-        &self,
-        state: &str,
-    ) -> Result<Option<ExchangedOAuthAccount>, GatewayError> {
-        let Some(engine) = &self.login_engine else {
-            return Ok(None);
-        };
-        if self.login_unavailable_states.lock().await.contains(state) {
-            return Ok(None);
-        }
-
-        let page = {
-            let mut guard = self.login_pages.lock().await;
-            if let Some(existing) = guard.get(state) {
-                Arc::clone(existing)
-            } else {
-                let context_key = format!("muse-login-{state}");
-                match engine.open_page(&context_key, &[]).await {
-                    Ok(new_page) => {
-                        if new_page.navigate(NEW_THREAD_URL).await.is_err() {
-                            new_page.close().await;
-                            engine.dispose_context(&context_key).await;
-                            self.login_unavailable_states
-                                .lock()
-                                .await
-                                .insert(state.to_owned());
-                            return Ok(None);
-                        }
-                        guard.insert(state.to_owned(), Arc::clone(&new_page));
-                        new_page
-                    }
-                    Err(_) => {
-                        self.login_unavailable_states
-                            .lock()
-                            .await
-                            .insert(state.to_owned());
-                        return Ok(None);
-                    }
+        let (verified_cred, email) = self
+            .verify_and_renew_session(cred, SessionCheck::RejectUnauthorized)
+            .await
+            .map_err(|err| match err {
+                GatewayError::AccountReauthRequired => {
+                    GatewayError::OAuthExchangeFailed("muse_cookie_unauthorized".to_owned())
                 }
-            }
-        };
-
-        let Ok(cookies) = page
-            .get_cookies(&["https://muse.ai", "https://www.muse.ai"])
-            .await
-        else {
-            return Ok(None);
-        };
-
-        if !has_required_cookies(&cookies) {
-            return Ok(None);
-        }
-
-        let mut init_wss_url = None;
-        let mut init_vm_id = None;
-        if let Ok(val) = page
-            .evaluate_json(
-                "window.__HATCH_GATEWAY_INIT__ || null",
-                false,
-                Duration::from_secs(3),
-            )
-            .await
-            && val.is_object()
-            && let Ok(wss) = build_wss_url_from_init_json(&val)
-        {
-            init_vm_id = val
-                .get("vmName")
-                .or_else(|| val.get("vmId"))
-                .or_else(|| val.get("vm_id"))
-                .and_then(Value::as_str)
-                .map(str::trim)
-                .filter(|s| !s.is_empty())
-                .map(ToOwned::to_owned);
-            init_wss_url = Some(wss);
-        }
-
-        if let Some(closed_page) = self.login_pages.lock().await.remove(state) {
-            closed_page.close().await;
-        }
-        engine.dispose_context(&format!("muse-login-{state}")).await;
-
-        let wss_expires = init_wss_url.as_deref().and_then(get_wss_expiry_unix_secs);
-        let cred = MuseAccountCredential {
-            label: "muse-cdp".to_owned(),
-            cookies,
-            cookie_expires: None,
-            vm_id: init_vm_id,
-            wss_url: init_wss_url,
-            wss_expires,
-        };
-        let (verified_cred, email) = self.verify_and_renew_session(cred, false).await?;
-        let exchanged = Self::build_exchanged_account(verified_cred, email)?;
-        Ok(Some(exchanged))
+                other => other,
+            })?;
+        Self::build_exchanged_account(verified_cred, email)
     }
 
     async fn refresh_token(
@@ -465,7 +338,9 @@ impl OAuthVendorDriver for MuseOAuthDriver {
         {
             cred.cookie_expires = None;
         }
-        let (verified_cred, email) = self.verify_and_renew_session(cred, true).await?;
+        let (verified_cred, email) = self
+            .verify_and_renew_session(cred, SessionCheck::Strict)
+            .await?;
         Self::build_exchanged_account(verified_cred, email)
     }
 
@@ -481,7 +356,9 @@ impl OAuthVendorDriver for MuseOAuthDriver {
         if cred.vm_id.is_none() {
             cred.vm_id = bundle.account_context_id.clone();
         }
-        let (verified_cred, _) = self.verify_and_renew_session(cred, false).await?;
+        let (verified_cred, _) = self
+            .verify_and_renew_session(cred, SessionCheck::Lenient)
+            .await?;
         Ok(VendorQuotaSnapshot {
             plan: Some("Muse AI (CDP)".to_owned()),
             limit_reached: false,

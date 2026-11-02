@@ -7,7 +7,7 @@ export type GatewayVendor =
   | 'github_copilot'
   | 'muse'
 
-export type OAuthLoginMode = 'pkce' | 'device_code'
+export type OAuthLoginMode = 'pkce' | 'device_code' | 'cookie_paste'
 
 export type GatewayAccountStatus = 'active' | 'cooling_down' | 'reauth_required' | 'disabled'
 
@@ -122,6 +122,12 @@ export interface StartOAuthLoginInput {
   vendor: GatewayVendor
   label: string
   redirect_uri?: string
+}
+
+export interface ImportCookieAccountInput {
+  vendor: GatewayVendor
+  label: string
+  cookies: string
 }
 
 export interface OAuthLoginChallenge {

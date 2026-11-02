@@ -69,8 +69,8 @@ const sampleVendors: GatewayVendorInfo[] = [
   },
   {
     vendor: 'muse',
-    display_name: 'Muse AI (Browser CDP)',
-    login_mode: 'pkce',
+    display_name: 'Muse AI (Cookie)',
+    login_mode: 'cookie_paste',
     default_base_url: 'https://muse.ai',
     pool_binding: 'pool:muse',
     total_accounts: 1,
@@ -497,5 +497,43 @@ describe('LLM Gateway Hub (Variant A) & Sub-pages', () => {
     expect(connectWrapper.find('[data-testid="llm-gateway-connect-page"]').exists()).toBe(true)
     expect(connectWrapper.text()).toContain('Connection Guide')
     connectWrapper.unmount()
+  })
+
+  it('connects Muse from pasted cookies without starting a browser login', async () => {
+    const startOAuth = vi.spyOn(llmGatewayApi, 'startOAuth')
+    const importCookieAccount = vi
+      .spyOn(llmGatewayApi, 'importCookieAccount')
+      .mockResolvedValue({ account: sampleAccounts[1]! })
+    const windowOpen = vi.spyOn(window, 'open')
+
+    const router = makeRouter()
+    await router.push('/llm-gateway/connect?vendor=muse&label=Muse-lph02')
+    await router.isReady()
+    const wrapper = mount(LlmGatewayConnectPage, { global: { plugins: [router] } })
+    await flushPromises()
+
+    const cookies = wrapper.find('[data-input="connect-cookies"]')
+    expect(cookies.exists()).toBe(true)
+
+    await wrapper.find('form').trigger('submit')
+    await flushPromises()
+    expect(importCookieAccount).not.toHaveBeenCalled()
+    expect(wrapper.find('[role="alert"]').exists()).toBe(true)
+
+    await cookies.setValue('  hatch_sess=s1; hatch_gw=g1  ')
+    await wrapper.find('form').trigger('submit')
+    await flushPromises()
+
+    expect(importCookieAccount).toHaveBeenCalledWith({
+      vendor: 'muse',
+      label: 'Muse-lph02',
+      cookies: 'hatch_sess=s1; hatch_gw=g1',
+    })
+    expect(startOAuth).not.toHaveBeenCalled()
+    expect(windowOpen).not.toHaveBeenCalled()
+    expect(wrapper.find('[data-input="connect-cookies"]').exists()).toBe(false)
+    expect(wrapper.text()).toContain('Muse-lph02')
+    expect(wrapper.text()).toContain('pool:muse')
+    wrapper.unmount()
   })
 })
