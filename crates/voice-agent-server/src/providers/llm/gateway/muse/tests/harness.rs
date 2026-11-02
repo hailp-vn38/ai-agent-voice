@@ -38,6 +38,9 @@ pub(in crate::providers::llm::gateway) struct FakeVmAccount {
     stream_delay: Mutex<Option<std::time::Duration>>,
     read_delay: Mutex<Option<std::time::Duration>>,
     lose_stream_ack: std::sync::atomic::AtomicBool,
+    history_disconnect_once: std::sync::atomic::AtomicBool,
+    fail_reconnect: std::sync::atomic::AtomicBool,
+    connection_count: std::sync::atomic::AtomicUsize,
     history_failure_status: Mutex<Option<u32>>,
     history_requires_turn: std::sync::atomic::AtomicBool,
 }
@@ -58,6 +61,9 @@ impl FakeVmAccount {
             stream_delay: Mutex::new(None),
             read_delay: Mutex::new(None),
             lose_stream_ack: std::sync::atomic::AtomicBool::new(false),
+            history_disconnect_once: std::sync::atomic::AtomicBool::new(false),
+            fail_reconnect: std::sync::atomic::AtomicBool::new(false),
+            connection_count: std::sync::atomic::AtomicUsize::new(0),
             history_failure_status: Mutex::new(None),
             history_requires_turn: std::sync::atomic::AtomicBool::new(false),
         })
@@ -73,6 +79,23 @@ impl FakeVmAccount {
     /// Makes every `/chat/history` read from now on answer with this error status.
     pub fn set_history_failure_status(&self, status: u32) {
         *self.history_failure_status.lock().unwrap() = Some(status);
+    }
+
+    pub fn clear_history_failure(&self) {
+        *self.history_failure_status.lock().unwrap() = None;
+    }
+
+    pub fn with_history_disconnect(self: &Arc<Self>, fail_reconnect: bool) -> Arc<Self> {
+        self.history_disconnect_once
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+        self.fail_reconnect
+            .store(fail_reconnect, std::sync::atomic::Ordering::SeqCst);
+        Arc::clone(self)
+    }
+
+    pub fn connection_count(&self) -> usize {
+        self.connection_count
+            .load(std::sync::atomic::Ordering::SeqCst)
     }
 
     pub fn with_stream_delay(self: &Arc<Self>, delay: std::time::Duration) -> Arc<Self> {
@@ -391,6 +414,16 @@ impl MuseVmSender for FakeVmSender {
                     }));
                 }
             } else if path.starts_with("/chat/history") {
+                if self
+                    .account
+                    .history_disconnect_once
+                    .swap(false, std::sync::atomic::Ordering::SeqCst)
+                {
+                    let _ = self.tx.send(Err(VmError::Transport(
+                        "injected history disconnect".into(),
+                    )));
+                    continue;
+                }
                 let forced_failure = *self.account.history_failure_status.lock().unwrap();
                 let no_turn_yet = self
                     .account
@@ -458,6 +491,16 @@ impl MuseVmTransport for FakeMuseVmTransport {
                 })?
             }
         };
+        let previous = account
+            .connection_count
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        if previous > 0
+            && account
+                .fail_reconnect
+                .load(std::sync::atomic::Ordering::SeqCst)
+        {
+            return Err(VmError::Transport("injected reconnect failure".into()));
+        }
         let (tx, rx) = mpsc::unbounded_channel();
         Ok((
             Box::new(FakeVmSender {

@@ -27,6 +27,8 @@ pub(crate) struct VideoRequestSignature {
 
 #[derive(Clone)]
 pub(crate) struct JobSession {
+    /// Number of fully observed user turns; restored with the maximum durable batch index.
+    pub completed_turns: u32,
     /// Gateway account that owns the VM holding the session; reuse is only valid on this account.
     pub account_key: String,
     pub session_id: String,
@@ -51,6 +53,7 @@ impl JobSession {
         batch_paths: Vec<String>,
     ) -> Self {
         Self {
+            completed_turns: 0,
             account_key,
             session_id,
             last_timed_out,
@@ -130,7 +133,9 @@ pub(crate) async fn sweep_idle_job_sessions(
         let now = Instant::now();
         map.iter()
             .filter(|(key, entry)| {
-                !protected.contains(*key) && entry.idle_for(now) >= JOB_SESSION_TTL
+                !key.starts_with(crate::providers::llm::MUSE_TASK_KEY_PREFIX)
+                    && !protected.contains(*key)
+                    && entry.idle_for(now) >= JOB_SESSION_TTL
             })
             .map(|(key, _)| key.clone())
             .collect()
@@ -193,6 +198,30 @@ pub(crate) async fn restore_job_sessions_from_operations(
             .and_then(|s| serde_json::from_str::<Vec<String>>(s).ok())
             .unwrap_or_default();
         let last_timed_out = op.status == orchestrator_agent_rs::ToolOperationStatus::Expired;
+        if cont_key.starts_with(crate::providers::llm::MUSE_TASK_KEY_PREFIX) {
+            let entry = job_entry(cont_key);
+            entry.set_account_hint(Some(acc_key.clone()));
+            let mut slot = entry.lock().await;
+            let maximum = slot
+                .as_ref()
+                .map_or(0, |session| session.completed_turns)
+                .max(op.batch_index);
+            if slot
+                .as_ref()
+                .is_none_or(|session| session.completed_turns <= op.batch_index)
+            {
+                *slot = Some(JobSession::new(
+                    acc_key.clone(),
+                    sess_id.clone(),
+                    None,
+                    false,
+                    None,
+                    batch_paths,
+                ));
+            }
+            slot.as_mut().unwrap().completed_turns = maximum;
+            continue;
+        }
         restore_job_session(
             cont_key,
             acc_key.clone(),

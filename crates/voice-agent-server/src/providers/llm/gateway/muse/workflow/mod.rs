@@ -1,3 +1,4 @@
+pub(crate) mod agent_task;
 mod chat;
 mod media;
 mod png;
