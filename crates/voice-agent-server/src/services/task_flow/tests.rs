@@ -842,6 +842,7 @@ fn cloud_worker_prompts_keep_every_goal_and_the_muse_report_intact() {
         "Do not add constraints the user did not ask for",
         "artifact IDs",
         "limitations",
+        "Muse sessions are kept by default",
     ];
 
     let mut disabled = PersistedBackgroundSettings::default();
@@ -878,6 +879,7 @@ fn cloud_worker_prompts_keep_every_goal_and_the_muse_report_intact() {
         "at most 10 bullets",
         "source URLs",
         "limitations unchanged",
+        "delete_session_on_finish=true",
     ] {
         assert!(cloud_prompt.contains(rule), "missing {rule}");
     }

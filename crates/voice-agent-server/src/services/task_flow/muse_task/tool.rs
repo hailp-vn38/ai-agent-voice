@@ -71,7 +71,7 @@ impl HostTool for MuseTaskTool {
     fn descriptor(&self) -> ToolDescriptor {
         ToolDescriptor {
             name: "muse_task".into(),
-            description: "Delegate research to Muse. Subagent only. External untrusted data; send starts a turn, collect retrieves the existing turn. Sessions close when this subagent ends.".into(),
+            description: "Delegate research to Muse. Subagent only. External untrusted data; send starts a turn, collect retrieves the existing turn. The session is usable only while this subagent runs and stays on Muse afterwards unless deletion is requested.".into(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -79,7 +79,8 @@ impl HostTool for MuseTaskTool {
                     "prompt": {"description": "Non-empty prompt required for send"},
                     "output": {"description": "message, markdown or files; defaults to message"},
                     "filename": {"description": "Optional output filename"},
-                    "max_wait_secs": {"description": "Integer from 60 through 7200; defaults to 3600"}
+                    "max_wait_secs": {"description": "Integer from 60 through 7200; defaults to 3600"},
+                    "delete_session_on_finish": {"description": "Delete the Muse session after this subagent ends; defaults to false. Set true only when explicitly requested"}
                 },
                 "additionalProperties": true
             }),
@@ -144,6 +145,7 @@ impl HostTool for MuseTaskTool {
                                 "workspace_id": ctx.scope().workspace_id,
                                 "session_id": ctx.scope().session_id,
                                 "root_session_id": ctx.scope().root_session_id,
+                                "delete_session_on_finish": parsed.delete_session_on_finish,
                                 "pending_turn": args
                             })
                             .to_string(),

@@ -40,7 +40,7 @@ scripts/agent-test.sh run -- cargo test --quiet -p voice-agent-server --lib \
 
 ## Archive, cleanup và quota
 
-1. Cho con hoàn tất rồi quan sát closer: trong chu kỳ quét khoảng 10 giây khi upstream đáp ứng, Agent Session được archive trước DELETE. Gọi lại con phải trả `SESSION_ARCHIVED`, cha vẫn đọc artifact; follow-up sau đó tạo con mới.
+1. Cho con hoàn tất rồi quan sát closer: trong chu kỳ quét khoảng 10 giây, Agent Session được archive, không có DELETE và phiên vẫn hiện trên web Muse. Gọi lại con phải trả `SESSION_ARCHIVED`, cha vẫn đọc artifact; follow-up sau đó tạo con mới. Các bước dọn phiên dưới đây chỉ áp dụng khi task yêu cầu xóa phiên, tức lời gọi `muse_task` có `delete_session_on_finish=true`; khi đó archive phải xảy ra trước DELETE.
 2. Capture mã HTTP DELETE thật; chỉ 2xx mới là ACK. Kiểm `remote_deleted_at` chỉ xuất hiện sau ACK. Làm lỗi DELETE có kiểm soát để xác nhận chưa đánh dấu và lượt quét sau thử lại. Với session ID dùng trên nhiều account, mọi nhóm phải ACK trước khi đánh dấu; key xung đột phải hoãn cleanup.
 3. Đọc history sau xóa và ghi đúng phản hồi. Đo riêng việc đang chạy có dừng không và file trong `tasks/<Agent Session ID>/` còn hay mất. Không suy ba kết quả đó từ DELETE ACK. Nếu còn task/file, ghi giới hạn và dọn qua giao diện upstream được hỗ trợ; không tuyên bố đã dọn VM khi chỉ mất session.
 4. Chụp quota sau task, ngay sau cleanup và sau độ trễ cập nhật có ghi thời gian. Nếu quota tiếp tục giảm hoặc task còn chạy, ghi FAIL/giới hạn cụ thể và dừng chạy thêm trước khi điều tra. ACK không chứng minh hoàn quota.

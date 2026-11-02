@@ -20,6 +20,8 @@ pub(super) struct Args {
     pub(super) filename: Option<String>,
     #[serde(default = "default_wait")]
     pub(super) max_wait_secs: u64,
+    #[serde(default)]
+    pub(super) delete_session_on_finish: bool,
 }
 fn default_wait() -> u64 {
     3600

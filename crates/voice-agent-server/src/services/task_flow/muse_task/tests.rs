@@ -320,6 +320,7 @@ async fn muse_task_subagent_receives_markdown_and_scoped_journal() {
     assert_eq!(request["owner_id"], "owner");
     assert_eq!(request["workspace_id"], "workspace");
     assert_ne!(request["session_id"], request["root_session_id"]);
+    assert_eq!(request["delete_session_on_finish"], false);
     assert_eq!(
         calls[0].session_key,
         format!("muse_task:{}", request["session_id"].as_str().unwrap())
@@ -420,6 +421,7 @@ async fn muse_task_invalid_arguments_never_reach_provider() {
         json!({"prompt":"x","max_wait_secs":7201}),
         json!({"prompt":"x","max_wait_secs":60.5}),
         json!({"prompt":"x","output":"exe"}),
+        json!({"prompt":"x","delete_session_on_finish":"yes"}),
         json!({"prompt":"x","conversation_id":"other"}),
     ] {
         let (out, provider) = run_tool(args, true).await;
