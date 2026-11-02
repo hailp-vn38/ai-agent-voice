@@ -243,6 +243,18 @@ function selectRightTab(tab: RightTab) {
 }
 /** A citation shows its node on Graph and opens the page, leaving the answer in view. */
 async function openCitation(path: string) {
+  try {
+    if (path.startsWith('sources/')) {
+      const rawPath = 'raw/' + path.slice('sources/'.length)
+      await requestJson<RawFile>(withQuery('/api/admin/knowledge/raw/files', { path: rawPath }), { cache: 'no-store' })
+    } else if (await answerPageMissing(
+      tree.value.find(node => node.space === 'wiki' && node.path === path)?.id ?? path,
+    )) return
+  } catch (cause) {
+    if (isApiError(cause) && cause.status === 404) error.value = t('knowledgeV3.chatPageMissing')
+    else error.value = formatApiError(cause)
+    return
+  }
   // The page itself opens next, so Graph only marks the node instead of covering itself with its card.
   graphControls.value?.focusNode(path, false)
   if (path.startsWith('sources/')) { await openSourceCitation(path); return }
@@ -738,10 +750,24 @@ async function openWikiPage(id: string, mode: OpenMode, source: WorkspacePane = 
   await switchExplorerSpace('wiki')
   await openPage(id)
 }
+async function answerPageMissing(id: string): Promise<boolean> {
+  try {
+    await requestJson<Page>(`/api/admin/knowledge/pages/${encodeURIComponent(id)}`, { cache: 'no-store' })
+    return false
+  } catch (cause) {
+    if (!isApiError(cause) || cause.status !== 404) throw cause
+    error.value = t('knowledgeV3.chatPageMissing')
+    return true
+  }
+}
 async function openGraphWiki(id: string) {
+  try { if (await answerPageMissing(id)) return }
+  catch (cause) { error.value = formatApiError(cause); return }
   await openWikiPage(id, 'tab', workspace.graphPane.value)
 }
 async function openGraphWikiSide(id: string) {
+  try { if (await answerPageMissing(id)) return }
+  catch (cause) { error.value = formatApiError(cause); return }
   await openWikiPage(id, 'side', workspace.graphPane.value)
 }
 function refreshGraph() { graphReloadToken.value++ }

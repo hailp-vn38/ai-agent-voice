@@ -1,6 +1,7 @@
 import { flushPromises, mount } from '@vue/test-utils'
 import { beforeEach, expect, it, vi } from 'vitest'
 import { setLocale } from '@/composables/useI18n'
+import { ApiError } from '@/api/errors'
 import KnowledgePage from './KnowledgePage.vue'
 import WikiChatPanel from './WikiChatPanel.vue'
 import KnowledgeGraph from './KnowledgeGraph.vue'
@@ -27,12 +28,13 @@ vi.mock('./KnowledgeGraph.vue', async () => {
   const { defineComponent, h } = await import('vue')
   return { default: defineComponent({
     props: { centerId: String, reloadToken: Number, focusMode: Boolean, answerGraph: Object, inactive: Boolean },
-    emits: ['node-hover'],
+    emits: ['node-hover', 'open', 'open-side'],
     setup(props, { expose, emit }) {
       expose({ focusNode: focusNodeMock, highlightNode: highlightNodeMock })
       return () => h('div', { class: 'mock-knowledge-graph', 'data-revision': props.answerGraph?.revision }, [
         h('span', 'Knowledge graph'),
         h('button', { class: 'mock-node-hover', onMouseenter: () => emit('node-hover', 'wiki/concepts/known.md') }, 'Hover node'),
+        h('button', { class: 'mock-open-node', onClick: () => emit('open', 'wiki/a.md') }, 'Open answer node'),
       ])
     },
   }) }
@@ -69,6 +71,7 @@ beforeEach(() => {
             edges: [], unresolved: [], truncated: false }, created_at_ms: 1, updated_at_ms: 2 },
       ],
     }
+    if (url === '/api/admin/knowledge/pages/wiki%2Fa.md') return { id: 'wiki/a.md', title: 'Current A title', body: '' }
     if (url === '/api/admin/knowledge/pages/wiki_demo') return {
       id: 'wiki_demo', title: 'Wiki Demo',
       body: '# Wiki Demo\n\nA linked, readable document.\n\n## Overview\n\n**Bold** [[wiki-file|Related Wiki]] and <script>alert(1)</script>',
@@ -91,10 +94,48 @@ it('restores the conversation selected by the URL and its saved graph', async ()
     expect(wrapper.text()).toContain('Saved question')
     expect(wrapper.text()).toContain('Saved answer')
     expect(wrapper.find('a.wiki-chat-citation').exists()).toBe(true)
+    expect(wrapper.find('.wiki-chat-file-name').text()).toBe('Current A title')
     await wrapper.find('button.other-tab').trigger('click')
     await flushPromises()
     expect(wrapper.get('.mock-knowledge-graph').attributes('data-revision')).toBe('4')
     expect(routerReplaceMock).not.toHaveBeenCalled()
+  } finally { wrapper.unmount() }
+})
+
+it('explains a deleted citation target and leaves the saved answer and graph available', async () => {
+  routeQuery.conversation = 'stored-1'
+  requestJsonMock.mockImplementation(async (url: string) => {
+    if (url === '/api/admin/knowledge/pages/wiki%2Fa.md') throw new ApiError('missing', 404, 'not_found')
+    if (url.startsWith('/api/admin/knowledge/tree?')) {
+      const space = new URL(url, 'http://localhost').searchParams.get('space')
+      return { items: [{ type: 'folder', space, path: space, name: space, editable: true }] }
+    }
+    if (url === '/api/admin/knowledge/conversations/stored-1') return {
+      id: 'stored-1', title: 'Saved topic', created_at_ms: 1, updated_at_ms: 2,
+      messages: [
+        { id: 'user-1', seq: 1, role: 'user', content: 'Saved question', content_truncated: false,
+          status: 'done', error_code: null, pinned_paths: [], tools: [], citations: [], graph: null, created_at_ms: 1, updated_at_ms: 1 },
+        { id: 'assistant-1', seq: 2, role: 'assistant', content: 'Saved answer [[wiki/a.md|A]].', content_truncated: false,
+          status: 'done', error_code: null, pinned_paths: [], tools: [], citations: ['wiki/a.md'],
+          graph: { revision: 4, nodes: [{ id: 'wiki/a.md', path: 'wiki/a.md', title: 'A', status: 'verified', revision: 1 }], edges: [], unresolved: [], truncated: false }, created_at_ms: 1, updated_at_ms: 2 },
+      ],
+    }
+    if (url.startsWith('/api/admin/knowledge/pages')) return { items: [], next_cursor: null }
+    if (url.startsWith('/api/admin/knowledge/graph')) return { nodes: [], edges: [] }
+    throw new Error('Unexpected request ' + url)
+  })
+  const wrapper = mount(KnowledgePage)
+  try {
+    await flushPromises()
+    await wrapper.get('.wiki-chat-citation').trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).toContain('This Wiki page no longer exists.')
+    expect(wrapper.text()).toContain('Saved answer')
+    await wrapper.get('.mock-open-node').trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).toContain('This Wiki page no longer exists.')
+    expect(wrapper.get('.mock-knowledge-graph').attributes('data-revision')).toBe('4')
+    expect(requestJsonMock.mock.calls.filter(([url]) => url === '/api/admin/knowledge/pages/wiki%2Fa.md')).toHaveLength(2)
   } finally { wrapper.unmount() }
 })
 

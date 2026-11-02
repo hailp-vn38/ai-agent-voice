@@ -1,4 +1,4 @@
-import { apiUrl, requestJson } from './client'
+import { apiUrl, requestJson, withQuery } from './client'
 import { consumeSse, createSseParserState } from './sse'
 import { readAdminToken } from '@/stores/auth'
 
@@ -106,6 +106,26 @@ export async function getWikiConversation(id: string, signal?: AbortSignal): Pro
     { cache: 'no-store' },
     { signal },
   )
+}
+
+/** Resolve a pinned vault path against current files; callers keep the path when the file is gone. */
+export async function getWikiPageTitle(path: string): Promise<string> {
+  if (path.startsWith('wiki/')) {
+    const page = await requestJson<{ title: string }>(
+      `/api/admin/knowledge/pages/${encodeURIComponent(path)}`,
+      { cache: 'no-store' },
+    )
+    return page.title
+  }
+  if (path.startsWith('sources/')) {
+    const rawPath = `raw/${path.slice('sources/'.length)}`
+    const file = await requestJson<{ path?: string }>(
+      withQuery('/api/admin/knowledge/raw/files', { path: rawPath }),
+      { cache: 'no-store' },
+    )
+    return (file.path ?? rawPath).split('/').pop()?.replace(/\.md$/i, '') || path
+  }
+  return path
 }
 
 function eventObject(data: string): Record<string, unknown> {

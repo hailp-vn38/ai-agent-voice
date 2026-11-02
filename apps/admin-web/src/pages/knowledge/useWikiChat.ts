@@ -2,6 +2,7 @@ import { computed, onBeforeUnmount, ref } from 'vue'
 import {
   askWiki,
   getWikiConversation,
+  getWikiPageTitle,
   WikiChatRequestError,
   type AnswerGraph,
   type WikiChatAskInput,
@@ -87,6 +88,25 @@ export function useWikiChat() {
       messages.value = conversation.messages.map(messageFromSaved)
       const latestUser = [...conversation.messages].reverse().find(message => message.role === 'user')
       pinnedFiles.value = latestUser?.pinned_paths.map(path => ({ path, title: path })) ?? []
+      const pinnedPaths = [...new Set(conversation.messages.flatMap(message => message.pinned_paths))]
+      const titles = new Map<string, string>()
+      let nextPath = 0
+      await Promise.all(Array.from({ length: Math.min(8, pinnedPaths.length) }, async () => {
+        while (nextPath < pinnedPaths.length) {
+          const path = pinnedPaths[nextPath++]!
+          if (!path.startsWith('wiki/') && !path.startsWith('sources/')) continue
+          try {
+            titles.set(path, await getWikiPageTitle(path))
+          } catch {
+            // Keep the durable path visible if a page was renamed or deleted.
+          }
+        }
+      }))
+      for (const message of messages.value) {
+        if (!message.files) continue
+        message.files = message.files.map(file => ({ ...file, title: titles.get(file.path) ?? file.path }))
+      }
+      pinnedFiles.value = pinnedFiles.value.map(file => ({ ...file, title: titles.get(file.path) ?? file.path }))
       const graphMessage = [...messages.value].reverse().find(message => message.role === 'assistant' && message.graph)
       activeGraph.value = graphMessage?.graph ?? null
       activeGraphMessageId.value = graphMessage?.id ?? null

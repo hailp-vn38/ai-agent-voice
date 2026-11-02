@@ -4,14 +4,16 @@ import { defineComponent } from 'vue'
 import type { AnswerGraph, WikiChatAskInput, WikiConversationDetail } from '@/api/wiki-chat'
 import { useWikiChat } from './useWikiChat'
 
-const { askWikiMock, getWikiConversationMock } = vi.hoisted(() => ({
+const { askWikiMock, getWikiConversationMock, getWikiPageTitleMock } = vi.hoisted(() => ({
   askWikiMock: vi.fn(),
   getWikiConversationMock: vi.fn(),
+  getWikiPageTitleMock: vi.fn(),
 }))
 vi.mock('@/api/wiki-chat', async importOriginal => ({
   ...await importOriginal<typeof import('@/api/wiki-chat')>(),
   askWiki: askWikiMock,
   getWikiConversation: getWikiConversationMock,
+  getWikiPageTitle: getWikiPageTitleMock,
 }))
 
 type Chat = ReturnType<typeof useWikiChat>
@@ -67,6 +69,8 @@ function lastInput(): WikiChatAskInput {
 beforeEach(() => {
   askWikiMock.mockReset()
   getWikiConversationMock.mockReset()
+  getWikiPageTitleMock.mockReset()
+  getWikiPageTitleMock.mockImplementation(async (path: string) => path)
   nextTurn = 0
 })
 
@@ -105,26 +109,64 @@ it('restores saved messages, citations, graph and the latest question pinned fil
     id: 'conversation-9', title: 'Saved topic', created_at_ms: 1, updated_at_ms: 2,
     messages: [
       {
-        id: 'user-9', seq: 1, role: 'user', content: 'Saved question', content_truncated: false,
-        status: 'done', error_code: null, pinned_paths: ['wiki/a.md'], tools: [], citations: [],
+        id: 'user-8', seq: 1, role: 'user', content: 'Earlier question', content_truncated: false,
+        status: 'done', error_code: null, pinned_paths: ['wiki/old.md'], tools: [], citations: [],
         graph: null, created_at_ms: 1, updated_at_ms: 1,
       },
       {
-        id: 'assistant-9', seq: 2, role: 'assistant', content: 'Saved answer', content_truncated: true,
+        id: 'assistant-8', seq: 2, role: 'assistant', content: 'Earlier answer', content_truncated: false,
+        status: 'done', error_code: null, pinned_paths: [], tools: [], citations: [],
+        graph: null, created_at_ms: 1, updated_at_ms: 1,
+      },
+      {
+        id: 'user-9', seq: 3, role: 'user', content: 'Saved question', content_truncated: false,
+        status: 'done', error_code: null, pinned_paths: ['wiki/a.md', 'sources/b/original.md'], tools: [], citations: [],
+        graph: null, created_at_ms: 1, updated_at_ms: 1,
+      },
+      {
+        id: 'assistant-9', seq: 4, role: 'assistant', content: 'Saved answer', content_truncated: true,
         status: 'done', error_code: null, pinned_paths: [], tools: [], citations: ['wiki/a.md'],
         graph, created_at_ms: 1, updated_at_ms: 2,
       },
     ],
   } satisfies WikiConversationDetail)
 
+  getWikiPageTitleMock.mockResolvedValue('Current title')
   const chat = mountChat()
   expect(await chat.loadConversation('conversation-9')).toBe(true)
   expect(chat.conversationId.value).toBe('conversation-9')
-  expect(chat.messages.value[1]?.text).toBe('Saved answer')
-  expect(chat.messages.value[1]?.contentTruncated).toBe(true)
-  expect(chat.messages.value[1]?.citations).toEqual(['wiki/a.md'])
+  expect(chat.messages.value[3]?.text).toBe('Saved answer')
+  expect(chat.messages.value[3]?.contentTruncated).toBe(true)
+  expect(chat.messages.value[3]?.citations).toEqual(['wiki/a.md'])
   expect(chat.activeGraph.value?.revision).toBe(3)
-  expect(chat.pinnedFiles.value).toEqual([{ path: 'wiki/a.md', title: 'wiki/a.md' }])
+  expect(chat.pinnedFiles.value).toEqual([
+    { path: 'wiki/a.md', title: 'Current title' },
+    { path: 'sources/b/original.md', title: 'Current title' },
+  ])
+  expect(getWikiPageTitleMock).toHaveBeenCalledWith('sources/b/original.md')
+  expect(chat.messages.value[0]?.files).toEqual([{ path: 'wiki/old.md', title: 'Current title' }])
+  expect(chat.messages.value[2]?.files).toEqual([
+    { path: 'wiki/a.md', title: 'Current title' },
+    { path: 'sources/b/original.md', title: 'Current title' },
+  ])
+})
+
+it('falls back to the stored Wiki path when its current title can no longer be loaded', async () => {
+  getWikiConversationMock.mockResolvedValue({
+    id: 'conversation-10', title: 'Saved topic', created_at_ms: 1, updated_at_ms: 2,
+    messages: [{
+      id: 'user-10', seq: 1, role: 'user', content: 'Question', content_truncated: false,
+      status: 'done', error_code: null, pinned_paths: ['wiki/gone.md'], tools: [], citations: [],
+      graph: null, created_at_ms: 1, updated_at_ms: 1,
+    }],
+  } satisfies WikiConversationDetail)
+  getWikiPageTitleMock.mockRejectedValue(new Error('page deleted'))
+
+  const chat = mountChat()
+  await chat.loadConversation('conversation-10')
+
+  expect(chat.pinnedFiles.value).toEqual([{ path: 'wiki/gone.md', title: 'wiki/gone.md' }])
+  expect(chat.messages.value[0]?.files).toEqual([{ path: 'wiki/gone.md', title: 'wiki/gone.md' }])
 })
 
 it('keeps the live storage truncation result on the assistant message', async () => {
