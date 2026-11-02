@@ -32,17 +32,35 @@ pub(super) struct Evidence {
 }
 
 impl Evidence {
-    pub(super) fn record(&mut self, rel_path: &str, tier: EvidenceTier, score: Option<f32>) {
-        let entry = self
-            .entries
-            .entry(rel_path.to_owned())
-            .or_insert(EvidenceEntry { tier, score });
+    pub(super) fn record(
+        &mut self,
+        rel_path: &str,
+        tier: EvidenceTier,
+        score: Option<f32>,
+    ) -> bool {
+        let Some(entry) = self.entries.get_mut(rel_path) else {
+            self.entries
+                .insert(rel_path.to_owned(), EvidenceEntry { tier, score });
+            return true;
+        };
+        let mut changed = false;
         if tier > entry.tier {
             entry.tier = tier;
+            changed = true;
         }
-        if let Some(score) = score {
-            entry.score = Some(entry.score.map_or(score, |current| current.max(score)));
+        if let Some(score) = score
+            && entry
+                .score
+                .is_none_or(|current| score.total_cmp(&current).is_gt())
+        {
+            entry.score = Some(score);
+            changed = true;
         }
+        changed
+    }
+
+    pub(super) fn contains(&self, rel_path: &str) -> bool {
+        self.entries.contains_key(rel_path)
     }
 }
 
