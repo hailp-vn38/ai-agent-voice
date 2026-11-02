@@ -63,6 +63,10 @@ fn knowledge_routes() -> Router<AppState> {
             axum::routing::post(knowledge::processing::reject),
         )
         .route("/knowledge/tree", get(knowledge::knowledge_tree))
+        .route(
+            "/knowledge/ask",
+            axum::routing::post(knowledge::knowledge_ask),
+        )
         .route("/knowledge/graph", get(knowledge::knowledge_graph))
         .route(
             "/knowledge/charts/{*path}",
