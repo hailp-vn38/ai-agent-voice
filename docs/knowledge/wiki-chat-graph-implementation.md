@@ -333,7 +333,7 @@ Ngày 2026-11-02, các kịch bản dưới đây đều `NOT_RUN`: worktree ngh
 | Hỏi ngoài phạm vi về công thức nấu phở và xác nhận graph không đổi | `NOT_RUN` | Không có vault/provider live được cấu hình an toàn trong worktree này. |
 | Source có chỉ dẫn xóa Wiki; xác nhận agent không làm theo và Wiki không đổi | `NOT_RUN` | Không có vault/provider live được cấu hình an toàn trong worktree này. |
 | Độ trễ của lượt hỏi đáp thật | `NOT_RUN` | Chưa chạy lượt live nên không có phép đo để báo cáo. |
-| Giao diện sáng, tối và viewport 700px | `PASS` (kiểm tra UI cục bộ) | Parent xác nhận giao diện ở hai chế độ và viewport responsive 700px, hội thoại được giữ nguyên. Ảnh minh chứng không có artifact lưu trong worktree. |
+| Giao diện sáng, tối và viewport 700px | `PASS` (quan sát thủ công cục bộ) | Chrome cho thấy giao diện ở cả hai chế độ và responsive viewport 700px, hội thoại được giữ nguyên. Không lưu được ảnh minh chứng thành artifact nên tiêu chí ticket yêu cầu ảnh vẫn còn mở. |
 
 ### Gate kiểm tra P6
 
@@ -341,6 +341,10 @@ Chạy qua `scripts/agent-test.sh` trên nhánh P6:
 
 | Gate | Kết quả | Ghi chú |
 | --- | --- | --- |
-| `package voice-agent-server` | `FAIL` (exit 101) | Lần chạy ban đầu linker hết dung lượng (`ENOSPC`) khi tạo các test binary. Sau khi wrapper prune artifact cũ và chạy tuần tự với `CARGO_BUILD_JOBS=1`, lần chạy lại cũng `ENOSPC` ở test `speechoutput_tracer`; không tính là đạt. |
+| `package voice-agent-server` | `FAIL` (exit 101) | Hai lần trong worktree P6 và lần thứ ba sau khi tích hợp đều hết dung lượng (`ENOSPC`) khi linker tạo test binary (`speechoutput_tracer` và `docker_config`); lần thứ ba vẫn gặp lỗi dù chạy tuần tự với `CARGO_BUILD_JOBS=1`. Không tính là đạt. |
 | `run -- cargo clippy --workspace --all-targets -- -D warnings` | `FAIL` (exit 101) | 11 cảnh báo bị nâng thành lỗi ở các tệp Muse/task-flow hiện có: 9 `collapsible_if`, một hàm có 9 đối số, và dùng `.err().expect()` trên `Result`. |
 | `web build` | `PASS` | Hoàn tất trong 9 giây sau khi tạm dùng liên kết tới dependencies `node_modules` đã cài ở checkout chính; liên kết tạm đã được gỡ bỏ. |
+
+### Rà soát hai trục
+
+Standards không phát hiện vi phạm cứng; finding lặp cách lấy đường dẫn bằng chứng trong `ask.rs` đã được sửa tại `986b346d` và kiểm tra HTTP tập trung sau sửa đạt. Review Spec xác nhận live acceptance còn mở và phát hiện các commit Muse OAuth / Background settings nằm ngoài spec; các thay đổi người dùng đó được giữ nguyên, không gỡ khỏi nhánh.
