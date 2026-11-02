@@ -25,14 +25,21 @@ impl SessionMemory {
         database: Option<&Database>,
         device_db_id: i64,
     ) -> Option<Self> {
-        let (core, database) = (core?, database?);
+        let Some(core) = core else {
+            return not_admitted(device_db_id, "memory_core_unavailable");
+        };
+        let Some(database) = database else {
+            return not_admitted(device_db_id, "database_unavailable");
+        };
         if device_db_id <= 0 {
-            return None;
+            return not_admitted(device_db_id, "no_device_row");
         }
         let binding = match memory_binding(database, device_db_id).await {
-            Ok(binding) => binding?,
+            Ok(Some(binding)) => binding,
+            Ok(None) => return not_admitted(device_db_id, "device_not_found"),
             Err(_) => {
                 tracing::warn!(
+                    subsystem = "voice.ws",
                     event = "memory_context_degraded",
                     reason = "binding_lookup_failed"
                 );
@@ -41,10 +48,21 @@ impl SessionMemory {
         };
         let mode = binding.mode;
         if mode == MemoryMode::Off {
-            return None;
+            return not_admitted(device_db_id, "mode_off");
         }
         let scope = MemoryScope::for_stored_device(&binding.device_id, &binding.kind);
         let handle = core.context(&scope).await;
+        let context = handle.current();
+        tracing::info!(
+            subsystem = "voice.ws",
+            event = "voice_memory_session_admitted",
+            device_db_id,
+            device_kind = %binding.kind,
+            mode = ?mode,
+            summary_rows = context.rows.len(),
+            summary_hidden = context.hidden,
+            "Voice Session admitted to Memory"
+        );
         Some(Self {
             core: Arc::clone(core),
             scope,
@@ -53,4 +71,15 @@ impl SessionMemory {
             handle,
         })
     }
+}
+
+fn not_admitted(device_db_id: i64, reason: &'static str) -> Option<SessionMemory> {
+    tracing::info!(
+        subsystem = "voice.ws",
+        event = "voice_memory_session_not_admitted",
+        device_db_id,
+        reason,
+        "Voice Session runs without Memory"
+    );
+    None
 }

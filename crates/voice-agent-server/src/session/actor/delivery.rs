@@ -58,6 +58,9 @@ impl SessionActor {
                 return;
             }
         };
+        if let Some(context) = memory_ctx.as_deref() {
+            self.observe_memory_context(turn_id, context, &system);
+        }
         self.llm_messages = Vec::with_capacity(history.len() + 1);
         self.llm_messages
             .push(ChatMessage::System { content: system });

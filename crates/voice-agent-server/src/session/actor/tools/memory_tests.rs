@@ -622,9 +622,76 @@ async fn memory_calls_log_no_arguments_and_no_fact_content() {
     assert!(logged.contains("voice_memory_tool_called"), "{logged}");
     assert!(logged.contains("voice_memory_tool_completed"), "{logged}");
     assert!(logged.contains("code=\"ok\""), "{logged}");
+    assert!(logged.contains("recalled_items=1"), "{logged}");
     assert!(logged.contains(MEMORY_RECALL_TOOL_NAME), "{logged}");
     assert!(!logged.contains("riêng tư"), "{logged}");
     assert!(!logged.contains("arguments"), "{logged}");
+}
+
+#[tokio::test]
+async fn admission_logs_why_a_session_has_or_lacks_memory() {
+    let vaults = Vaults::open();
+    let db = database().await;
+    let scope = physical_scope("device-a");
+    vaults
+        .remember(&scope, "tiêu đề riêng tư", "thân fact")
+        .await;
+
+    let (log, guard) = capture_logs();
+    let on = admitted(&vaults, &db, "device-a", "physical", MemoryMode::Read).await;
+    let off = admitted(&vaults, &db, "device-b", "physical", MemoryMode::Off).await;
+    let missing = SessionMemory::admit(Some(&vaults.core), Some(&db), 9_999).await;
+    drop(guard);
+
+    assert!(on.is_some() && off.is_none() && missing.is_none());
+    let logged = logged(&log);
+    assert!(logged.contains("voice_memory_session_admitted"), "{logged}");
+    assert!(logged.contains("summary_rows=1"), "{logged}");
+    assert!(logged.contains("reason=\"mode_off\""), "{logged}");
+    assert!(logged.contains("reason=\"device_not_found\""), "{logged}");
+    assert!(!logged.contains("riêng tư"), "{logged}");
+}
+
+#[tokio::test]
+async fn a_turn_logs_its_memory_context_and_whether_the_model_called_a_tool() {
+    let vaults = Vaults::open();
+    let db = database().await;
+    let scope = physical_scope("device-a");
+    vaults
+        .remember(&scope, "tiêu đề riêng tư", "thân fact")
+        .await;
+    let memory = admitted(&vaults, &db, "device-a", "physical", MemoryMode::Read).await;
+    // A session each, because this harness never settles the LLM rounds it abandons.
+    let mut actor = actor_with(memory.clone());
+    let mut recalling = actor_with(memory);
+
+    let (log, guard) = capture_logs();
+    begin_spoken_turn(&mut actor, "tôi tên gì");
+    finish_with_answer(&mut actor, "tôi không biết");
+    let unused = logged(&log);
+    assert!(unused.contains("voice_memory_context_composed"), "{unused}");
+    assert!(unused.contains("summary_rows=1"), "{unused}");
+    assert!(unused.contains("in_prompt=true"), "{unused}");
+    assert!(unused.contains("tools_offered=1"), "{unused}");
+    assert!(unused.contains("memory_tool_called=false"), "{unused}");
+    assert!(!unused.contains("riêng tư"), "{unused}");
+
+    log.0.lock().unwrap().clear();
+    begin_spoken_turn(&mut recalling, "tôi tên gì");
+    run_batch(
+        &mut recalling,
+        vec![tool_call(
+            "recall",
+            MEMORY_RECALL_TOOL_NAME,
+            serde_json::json!({"query": "riêng tư"}),
+        )],
+    )
+    .await;
+    finish_with_answer(&mut recalling, "đây là fact");
+    drop(guard);
+    let used = logged(&log);
+    assert!(used.contains("memory_tool_called=true"), "{used}");
+    assert!(!used.contains("riêng tư"), "{used}");
 }
 
 const REFUSED: &str = "memory_requires_explicit_request";
