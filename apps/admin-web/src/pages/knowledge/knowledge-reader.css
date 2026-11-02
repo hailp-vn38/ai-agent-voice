@@ -472,6 +472,7 @@
 .knowledge-a .wiki-chat-answer code { padding: 1px 4px; border-radius: 4px; background: var(--muted); font: 11.5px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
 .knowledge-a .wiki-chat-answer pre { margin: 0 0 9px; padding: 8px 10px; overflow: auto; border: 1px solid var(--border); border-radius: 8px; background: var(--background); }
 .knowledge-a .wiki-chat-answer pre code { padding: 0; background: none; }
+.knowledge-a .wiki-chat-answer .knowledge-mermaid-diagram { margin: 0 0 9px; padding: 8px; border-radius: 8px; line-height: normal; overflow-wrap: normal; }
 .knowledge-a .wiki-chat-answer table { display: block; max-width: 100%; margin: 0 0 9px; overflow-x: auto; border-collapse: collapse; font-size: 11.5px; }
 .knowledge-a .wiki-chat-answer :is(th, td) { padding: 4px 8px; border: 1px solid var(--border); text-align: left; }
 .knowledge-a .wiki-chat-answer a { color: var(--studio-violet); text-decoration: underline; text-underline-offset: 2px; }

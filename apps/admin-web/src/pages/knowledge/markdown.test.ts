@@ -5,6 +5,7 @@ import {
   parseMarkdownProperties,
   renderMarkdown,
 } from '@/lib/markdown'
+import { canLoadRemoteContent } from './mermaidRenderer'
 
 it('renders Mermaid fences as escaped, detectable diagram source', () => {
   const body = '## Flow\n\n' +
@@ -122,4 +123,23 @@ it('renders GFM tables with WikiLinks (both escaped and unescaped pipes), inline
   expect(html).toContain('&lt;script&gt;alert(1)&lt;/script&gt;')
   expect(html).not.toContain('<script>')
   expect(html).not.toContain('|---|---|')
+})
+
+it.each([
+  'flowchart TD\n  A["<img src=https://evil.test/x>"] --> B',
+  'flowchart TD\n  A@{ img: "https://evil.test/x", h: 10 }',
+  'flowchart TD\n  A --> B\n  style A fill:url(https://evil.test/x)',
+  'flowchart TD\n  A --> B\n  style A fill:\\75rl(https://evil.test/x)',
+  '%%{init: {"themeCSS": "@import \'https://evil.test/x\'"}}%%\nflowchart TD\n  A --> B',
+  '---\nconfig:\n  theme: dark\n---\nflowchart TD\n  A --> B',
+])('flags a diagram that could load remote content: %s', source => {
+  expect(canLoadRemoteContent(source)).toBe(true)
+})
+
+it.each([
+  'flowchart TD\n  gap["Fair Value Gap<br/>xuất hiện"] -->|"Có"| B{"Giá quay lại?"}\n  A --- B',
+  'sequenceDiagram\n  participant U as "Người dùng"\n  U->>S: Gửi câu hỏi\n  S-->>U: Trả lời',
+  'classDiagram\n  class Shape {\n    <<interface>>\n  }',
+])('allows an ordinary diagram: %s', source => {
+  expect(canLoadRemoteContent(source)).toBe(false)
 })

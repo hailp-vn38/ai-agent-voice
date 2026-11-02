@@ -279,6 +279,14 @@ fn scan_skills_dir(skills_dir: Option<&Path>) -> BTreeMap<String, IndexedDiskSki
     map
 }
 
+/// Returns a skill's body: the workspace copy when it is valid, otherwise the Built-in default.
+pub fn active_body(skills_dir: Option<&Path>, id: &str) -> Option<String> {
+    skills_dir
+        .and_then(|root| read_one_skill_from_dir(root, id).ok())
+        .or_else(|| builtin_indexed(id))
+        .map(|indexed| indexed.doc.body)
+}
+
 /// Returns the sorted set of valid skill IDs currently available in `skills_dir`.
 pub fn catalog_ids_from_dir(skills_dir: Option<&Path>) -> BTreeSet<String> {
     scan_skills_dir(skills_dir).into_keys().collect()

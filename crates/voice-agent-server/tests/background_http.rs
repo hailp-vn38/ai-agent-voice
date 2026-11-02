@@ -772,12 +772,13 @@ skills_dir = "{}"
     let skills = initial["skills"]
         .as_array()
         .expect("skills array in settings");
-    assert_eq!(skills.len(), 9);
+    assert_eq!(skills.len(), 10);
     for expected_id in [
         "daily-synthesis-staging",
         "daily-task-reminder",
         "trading-chart",
         "web-fetch-policy",
+        "wiki-chat",
         "wiki-ingest",
         "wiki-lint",
         "wiki-query",
@@ -800,7 +801,7 @@ skills_dir = "{}"
         .find(|a| a["id"] == "wiki_researcher")
         .unwrap();
     let researcher_avail = researcher["available_skills"].as_array().unwrap();
-    assert_eq!(researcher_avail.len(), 9);
+    assert_eq!(researcher_avail.len(), 10);
     assert_eq!(researcher_avail[0], "wiki-query");
     assert_eq!(researcher_avail[1], "web-fetch-policy");
     assert_eq!(researcher_avail[2], "wiki-taxonomy");

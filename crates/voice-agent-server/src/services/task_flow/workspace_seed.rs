@@ -1,6 +1,6 @@
 //! Default agent system prompts and Built-in Job Skills seeded into the workspace if absent.
 //!
-//! Canonical prompt constants are shared from [`orchestrator_flow_rs::prompts`], while the 8
+//! Canonical prompt constants are shared from [`orchestrator_flow_rs::prompts`], while the
 //! Built-in Job Skills live in `crates/voice-agent-server/builtin-skills/<id>/SKILL.md` so the
 //! server can seed runtime `skills/` and restore defaults on demand.
 
@@ -52,6 +52,7 @@ pub const WIKI_TAXONOMY_SKILL: &str =
     include_str!("../../../builtin-skills/wiki-taxonomy/SKILL.md");
 pub const WIKI_INGEST_SKILL: &str = include_str!("../../../builtin-skills/wiki-ingest/SKILL.md");
 pub const WIKI_QUERY_SKILL: &str = include_str!("../../../builtin-skills/wiki-query/SKILL.md");
+pub const WIKI_CHAT_SKILL: &str = include_str!("../../../builtin-skills/wiki-chat/SKILL.md");
 pub const WIKI_LINT_SKILL: &str = include_str!("../../../builtin-skills/wiki-lint/SKILL.md");
 pub const DAILY_SYNTHESIS_STAGING_SKILL: &str =
     include_str!("../../../builtin-skills/daily-synthesis-staging/SKILL.md");
@@ -70,6 +71,7 @@ pub const BUILTIN_SKILLS: &[(&str, &str)] = &[
     ("wiki-taxonomy", WIKI_TAXONOMY_SKILL),
     ("wiki-ingest", WIKI_INGEST_SKILL),
     ("wiki-query", WIKI_QUERY_SKILL),
+    ("wiki-chat", WIKI_CHAT_SKILL),
     ("wiki-lint", WIKI_LINT_SKILL),
     ("daily-synthesis-staging", DAILY_SYNTHESIS_STAGING_SKILL),
     ("daily-task-reminder", DAILY_TASK_REMINDER_SKILL),

@@ -55,6 +55,10 @@ Successful requests return `text/event-stream`, use `Cache-Control: no-store`, a
 
 The server exposes only `wiki_query`, `wiki_get`, and `wiki_multi_get`; unknown or write tools receive `tool_not_allowed` and are not executed. The `filter` argument of `wiki_query` is not offered to the model. A rejected call returns `invalid_arguments` or `not_found` with a message to the model so it can correct the call; these codes stay between the server and the model, and the client sees only a `tool` event with state `failed`. Full tool metadata is used to record evidence before result text is bounded to 12,000 characters for the model. Answer Wikilinks become citations only when the normalized, resolved page is already in that evidence.
 
+Each turn's system prompt holds the fixed read-only rules followed by the body of the `wiki-chat` Job Skill. It is read from `skills/wiki-chat/SKILL.md` for every turn, so an edit in Admin applies to the next question. A missing or invalid file falls back to the Built-in default. The skill guides searching, citing, and drawing, but it cannot add tools: the allowlist above is enforced in code.
+
+An answer can include a fenced `mermaid` block. The browser leaves its source as text while the answer streams and draws it once the turn ends, with Mermaid's `strict` security level. Answers are untrusted because tool results can steer the model, so a diagram with images, CSS `url()`, or Mermaid config directives is not drawn: `strict` alone would still let them contact another host. In that case, or if the syntax is invalid or the pinned CDN cannot be reached, the source stays visible. The server does not parse or validate diagrams.
+
 Initial limits are six tool rounds, 90 seconds per turn, 15 seconds per tool, 12,000 forwarded tool-result characters, 12 messages / 16 KiB, 60 graph context nodes, and two concurrent turns. These limits are defaults of the current implementation, not a provider latency guarantee.
 
 ## Error codes

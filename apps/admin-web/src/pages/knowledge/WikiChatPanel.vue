@@ -1,8 +1,10 @@
 <script setup lang="ts">
-import { computed, nextTick, onUpdated, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, onUpdated, ref, watch } from 'vue'
 import { AlertCircle, ArrowUp, ArrowUpRight, BookOpenText, ChevronRight, CircleStop, FileText, Files, LoaderCircle, Network, Plus, RotateCcw, Search, Sparkles, Square, Wrench, X } from '@lucide/vue'
 import { renderMarkdown } from '@/lib/markdown'
 import { useI18n } from '@/composables/useI18n'
+import { useTheme } from '@/composables/useTheme'
+import { renderMermaidBlocks } from './mermaidRenderer'
 import { MAX_PINNED_FILES, type WikiChatFile, type WikiChatMessage } from './useWikiChat'
 
 const props = defineProps<{
@@ -28,6 +30,7 @@ const emit = defineEmits<{
 }>()
 
 const { t } = useI18n()
+const { dark } = useTheme()
 const draft = ref('')
 const panelElement = ref<HTMLElement | null>(null)
 const messagesElement = ref<HTMLElement | null>(null)
@@ -46,10 +49,11 @@ function onMessagesScroll() {
   const element = messagesElement.value
   if (element) followingAnswer = element.scrollHeight - element.scrollTop - element.clientHeight < FOLLOW_DISTANCE
 }
-watch(() => props.messages.map(message => message.text.length + message.tools.length).join(), () => {
+function followAnswer() {
   const element = messagesElement.value
   if (element && followingAnswer) element.scrollTop = element.scrollHeight
-}, { flush: 'post' })
+}
+watch(() => props.messages.map(message => message.text.length + message.tools.length).join(), followAnswer, { flush: 'post' })
 watch(() => props.messages.length, () => { followingAnswer = true }, { flush: 'pre' })
 
 watch(draft, () => {
@@ -105,6 +109,7 @@ const completedAnnouncement = computed(() => {
   if (latest?.role !== 'assistant' || latest.status !== 'done') return ''
   const template = document.createElement('template')
   template.innerHTML = renderedAnswer(latest)
+  template.content.querySelectorAll('pre.knowledge-mermaid').forEach(block => block.remove())
   return template.content.textContent?.trim() ?? ''
 })
 
@@ -115,8 +120,21 @@ function syncCitationHighlight() {
   })
 }
 
+// A streaming answer replaces its HTML on every delta, so diagrams wait for it to finish.
+function renderDiagrams() {
+  panelElement.value?.querySelectorAll<HTMLElement>('.wiki-chat-message:not(.is-streaming) .wiki-chat-answer').forEach(answer => {
+    if (answer.querySelector('pre.knowledge-mermaid[data-mermaid-source="true"]')) {
+      void renderMermaidBlocks(answer, dark.value, true).then(followAnswer)
+    }
+  })
+}
+
 watch(() => props.highlightedNode, () => { void nextTick(syncCitationHighlight) })
-onUpdated(syncCitationHighlight)
+onMounted(renderDiagrams)
+onUpdated(() => {
+  syncCitationHighlight()
+  renderDiagrams()
+})
 
 function onAnswerClick(event: MouseEvent) {
   const anchor = (event.target as HTMLElement | null)?.closest<HTMLAnchorElement>('a.wiki-chat-citation')
@@ -240,7 +258,7 @@ function errorText(code: string | null): string {
             <span class="wiki-chat-thinking-dots" aria-hidden="true"><i></i><i></i><i></i></span>
             <span>{{ t('knowledgeV3.chatThinking') }}</span>
           </div>
-          <div v-if="message.text" class="wiki-chat-answer"
+          <div v-if="message.text" :key="dark ? 'dark' : 'light'" class="wiki-chat-answer"
             @click="onAnswerClick" @mouseover="onAnswerMouseOver" @mouseout="onAnswerMouseOut"
             v-html="renderedAnswer(message)"></div>
 

@@ -1,6 +1,7 @@
 import { mount } from '@vue/test-utils'
-import { beforeEach, expect, it } from 'vitest'
+import { beforeEach, expect, it, vi } from 'vitest'
 import { setLocale } from '@/composables/useI18n'
+import { renderMermaidBlocks } from './mermaidRenderer'
 import WikiChatPanel from './WikiChatPanel.vue'
 import type { WikiChatMessage } from './useWikiChat'
 
@@ -11,7 +12,37 @@ function assistant(status: WikiChatMessage['status']): WikiChatMessage {
   }
 }
 
-beforeEach(() => setLocale('en'))
+vi.mock('./mermaidRenderer', () => ({ renderMermaidBlocks: vi.fn(() => Promise.resolve()) }))
+
+beforeEach(() => {
+  setLocale('en')
+  vi.mocked(renderMermaidBlocks).mockClear()
+})
+
+it('renders Mermaid only after the answer finishes and keeps its source out of the announcement', async () => {
+  const text = 'Before.\n\n```mermaid\nflowchart TD\n  A --> B\n```\n\nAfter.'
+  const wrapper = mount(WikiChatPanel, { props: { messages: [{ ...assistant('streaming'), text }], busy: true } })
+  try {
+    await wrapper.vm.$nextTick()
+    expect(wrapper.find('pre.knowledge-mermaid').exists()).toBe(true)
+    expect(renderMermaidBlocks).not.toHaveBeenCalled()
+
+    await wrapper.setProps({ messages: [{ ...assistant('done'), text }], busy: false })
+    expect(renderMermaidBlocks).toHaveBeenCalledTimes(1)
+    expect(vi.mocked(renderMermaidBlocks).mock.calls[0]![0]).toBe(wrapper.get('.wiki-chat-answer').element)
+    const announcement = wrapper.get('.wiki-chat-announcement').text()
+    expect(announcement).toContain('Before.')
+    expect(announcement).not.toContain('flowchart')
+  } finally { wrapper.unmount() }
+})
+
+it('does not load Mermaid for an answer without a diagram', async () => {
+  const wrapper = mount(WikiChatPanel, { props: { messages: [assistant('done')], busy: false } })
+  try {
+    await wrapper.vm.$nextTick()
+    expect(renderMermaidBlocks).not.toHaveBeenCalled()
+  } finally { wrapper.unmount() }
+})
 
 it('announces an answer once it completes, not while it streams', async () => {
   const wrapper = mount(WikiChatPanel, { props: { messages: [assistant('streaming')], busy: true } })
