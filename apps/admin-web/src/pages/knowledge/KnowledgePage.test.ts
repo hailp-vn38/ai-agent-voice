@@ -4,7 +4,10 @@ import { setLocale } from '@/composables/useI18n'
 import KnowledgePage from './KnowledgePage.vue'
 import WikiChatPanel from './WikiChatPanel.vue'
 
-const { requestJsonMock, routeQuery } = vi.hoisted(() => ({ requestJsonMock: vi.fn(), routeQuery: {} as Record<string,string> }))
+const { requestJsonMock, routeQuery, focusNodeMock, highlightNodeMock } = vi.hoisted(() => ({
+  requestJsonMock: vi.fn(), routeQuery: {} as Record<string,string>,
+  focusNodeMock: vi.fn(), highlightNodeMock: vi.fn(),
+}))
 vi.mock('@/api/client', () => ({
   apiUrl: (path: string) => path,
   requestJson: requestJsonMock,
@@ -15,10 +18,20 @@ vi.mock('@/api/client', () => ({
     ).toString(),
 }))
 vi.mock('vue-router', () => ({ useRoute: () => ({ query: routeQuery }) }))
-vi.mock('./KnowledgeGraph.vue', () => ({ default: {
-  props: ['centerId', 'reloadToken', 'focusMode', 'answerGraph'],
-  template: '<div class="mock-knowledge-graph" :data-revision="answerGraph?.revision">Knowledge graph</div>',
-} }))
+vi.mock('./KnowledgeGraph.vue', async () => {
+  const { defineComponent, h } = await import('vue')
+  return { default: defineComponent({
+    props: ['centerId', 'reloadToken', 'focusMode', 'answerGraph'],
+    emits: ['node-hover'],
+    setup(props, { expose, emit }) {
+      expose({ focusNode: focusNodeMock, highlightNode: highlightNodeMock })
+      return () => h('div', { class: 'mock-knowledge-graph', 'data-revision': props.answerGraph?.revision }, [
+        h('span', 'Knowledge graph'),
+        h('button', { class: 'mock-node-hover', onMouseenter: () => emit('node-hover', 'wiki/concepts/known.md') }, 'Hover node'),
+      ])
+    },
+  }) }
+})
 
 beforeEach(() => {
   vi.clearAllMocks()
@@ -204,6 +217,71 @@ it('stops a stream and retains the partial assistant answer', async () => {
     expect(signal?.aborted).toBe(true)
     expect(wrapper.get('.wiki-chat-answer').text()).toContain('Partial')
     expect(wrapper.get('.wiki-chat-message.is-assistant').text()).toContain('Stopped')
+  } finally {
+    wrapper.unmount()
+    vi.unstubAllGlobals()
+  }
+})
+
+it('links only evidenced citations, highlights graph sources, restores an old answer graph, and summarizes tool pages', async () => {
+  const original = requestJsonMock.getMockImplementation()!
+  requestJsonMock.mockImplementation(async (url: string, options?: {method?: string; body?: Record<string, unknown>}) => {
+    if (url === '/api/admin/knowledge/tree?space=wiki') return { items: [
+      { type: 'folder', space: 'wiki', path: 'wiki', name: 'wiki', editable: true },
+      { type: 'folder', space: 'wiki', path: 'wiki/concepts', name: 'concepts', editable: true },
+      { type: 'folder', space: 'wiki', path: 'wiki/entities', name: 'entities', editable: true },
+      { type: 'folder', space: 'wiki', path: 'wiki/syntheses', name: 'syntheses', editable: true },
+    ] }
+    return original(url, options)
+  })
+  const graph = (revision: number) => ({ revision, nodes: [
+    { id: 'wiki/concepts/known.md', path: 'wiki/concepts/known.md', title: 'Known', status: 'verified', revision: 1, tier: 'cited' },
+    { id: 'wiki/concepts/second.md', path: 'wiki/concepts/second.md', title: 'Second source', status: 'verified', revision: 1, tier: 'cited' },
+  ], edges: [], unresolved: [], truncated: false })
+  const response = (revision: number) => new Response([
+    `event: tool\ndata: ${JSON.stringify({ call_id: `c${revision}`, name: 'wiki_multi_get', state: 'completed', query: 'concepts/*.md', pages: ['wiki/concepts/known.md', 'wiki/concepts/second.md'] })}\n\n`,
+    `event: graph\ndata: ${JSON.stringify(graph(revision))}\n\n`,
+    'event: delta\ndata: {"text":"Sources: [[wiki/concepts/known.md|Known]], [[wiki/concepts/second.md|Second]], and [[wiki/concepts/invented.md|Made up]]."}\n\n',
+    'event: done\ndata: {"citations":["wiki/concepts/known.md","wiki/concepts/second.md"],"stop_reason":"finished"}\n\n',
+  ].join(''), { headers: { 'Content-Type': 'text/event-stream' } })
+  const fetchMock = vi.fn().mockResolvedValueOnce(response(1)).mockResolvedValueOnce(response(2))
+  vi.stubGlobal('fetch', fetchMock)
+  const wrapper = mount(KnowledgePage)
+  try {
+    await flushPromises()
+    await wrapper.get('button.other-tab').trigger('click')
+    await flushPromises()
+    const panel = wrapper.get('.wiki-chat-panel')
+    const suggestions = panel.findAll('.wiki-chat-suggestion')
+    expect(suggestions).toHaveLength(3)
+    expect(suggestions.map(button => button.text())).toEqual(expect.arrayContaining(['concepts', 'entities', 'syntheses']))
+    await suggestions[0]!.trigger('click')
+    await flushPromises()
+    expect(wrapper.findAll('.wiki-chat-citation').map(link => link.text())).toEqual(['[1]', '[2]'])
+    expect(wrapper.get('.wiki-chat-answer').text()).toContain('Made up')
+    expect(wrapper.find('.wiki-chat-answer a[data-wikilink*="invented"]').exists()).toBe(false)
+    expect(wrapper.findAll('.wiki-chat-sources li')).toHaveLength(2)
+    const tool = wrapper.get('.wiki-chat-tool-summary')
+    await tool.get('summary').trigger('click')
+    expect(tool.text()).toContain('wiki/concepts/known.md')
+    expect(tool.text()).toContain('concepts/*.md')
+
+    const citation = wrapper.get('.wiki-chat-citation[data-citation-path="wiki/concepts/known.md"]')
+    await citation.trigger('mouseover')
+    expect(highlightNodeMock).toHaveBeenCalledWith('wiki/concepts/known.md')
+    await citation.trigger('click')
+    expect(focusNodeMock).toHaveBeenCalledWith('wiki/concepts/known.md')
+    await wrapper.get('.mock-node-hover').trigger('mouseenter')
+    expect(wrapper.find('.wiki-chat-sources li.is-highlighted').exists()).toBe(true)
+
+    await panel.get('textarea').setValue('Second question')
+    await panel.get('form').trigger('submit')
+    await flushPromises()
+    expect(wrapper.get('.mock-knowledge-graph').attributes('data-revision')).toBe('2')
+    const oldGraph = wrapper.findAll('.wiki-chat-show-graph')[0]
+    await oldGraph!.trigger('click')
+    await flushPromises()
+    expect(wrapper.get('.mock-knowledge-graph').attributes('data-revision')).toBe('1')
   } finally {
     wrapper.unmount()
     vi.unstubAllGlobals()

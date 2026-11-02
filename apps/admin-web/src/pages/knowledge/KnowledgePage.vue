@@ -52,6 +52,8 @@ const {
   reset: resetWikiChat,
   showGraphOf: showChatGraph,
 } = useWikiChat()
+const graphControls = ref<{ focusNode: (id: string) => void; highlightNode: (id: string | null) => void } | null>(null)
+const highlightedChatNode = ref<string | null>(null)
 
 const VAULT_SPACE_KEY = 'voice-agent-knowledge-vault-space'
 const EXPLORER_STATE_KEY = 'voice-agent-knowledge-explorer-state-v1'
@@ -151,6 +153,16 @@ function toggleOutline() {
 function toggleChatDrawer() {
   chatDrawerOpen.value = !chatDrawerOpen.value
 }
+function focusChatCitation(path: string) {
+  graphControls.value?.focusNode(path)
+}
+function highlightChatCitation(path: string | null) {
+  highlightedChatNode.value = path
+  graphControls.value?.highlightNode(path)
+}
+function onKnowledgeGraphNodeHover(path: string | null) {
+  highlightedChatNode.value = path
+}
 function toggleRightPanel() {
   if (viewMode.value === 'graph') chatCollapsed.value = !chatCollapsed.value
   else toggleOutline()
@@ -245,6 +257,15 @@ watch(activeSpace, space => {
   try { window.localStorage.setItem(VAULT_SPACE_KEY, space) } catch { /* storage unavailable */ }
 })
 const tree = ref<TreeNode[]>([])
+const chatSuggestions = computed(() => tree.value
+  .filter(node => node.space === 'wiki' && node.type === 'folder' &&
+    node.path.startsWith('wiki/') && node.path.split('/').filter(Boolean).length === 2)
+  .sort((left, right) => left.name.localeCompare(right.name))
+  .slice(0, 3)
+  .map(node => ({
+    label: node.name,
+    prompt: t('knowledgeV3.chatSuggestionQuestion', { folder: node.name }),
+  })))
 const openFolders = ref<Set<string>>(foldersForSpace(activeSpace.value))
 const selectedPath = ref<string>(explorerPreferences[activeSpace.value]?.selectedPath ?? activeSpace.value)
 watch([activeSpace, openFolders, selectedPath], ([space, folders, path]) => {
@@ -1520,13 +1541,15 @@ onMounted(() => {
               :aria-expanded="chatDrawerOpen" aria-controls="wiki-chat-panel" @click="toggleChatDrawer">
               {{ chatDrawerOpen ? t('knowledgeV3.chatCloseDrawer') : t('knowledgeV3.chatOpenDrawer') }}
             </button>
-            <KnowledgeGraph :center-id="selected?.id ?? null" :reload-token="graphReloadToken"
+            <KnowledgeGraph ref="graphControls" :center-id="selected?.id ?? null" :reload-token="graphReloadToken"
               :answer-graph="activeAnswerGraph"
-              @open="openGraphWiki" @rebuild="rebuild" />
+              @open="openGraphWiki" @rebuild="rebuild" @node-hover="onKnowledgeGraphNodeHover" />
           </div>
           <WikiChatPanel :messages="wikiChatMessages" :busy="wikiChatBusy"
-            :drawer-open="chatDrawerOpen" @send="sendWikiChat" @stop="stopWikiChat"
-            @reset="resetWikiChat" @retry="retryWikiChat" @show-graph="showChatGraph" />
+            :drawer-open="chatDrawerOpen" :suggestions="chatSuggestions"
+            :highlighted-node="highlightedChatNode" @send="sendWikiChat" @stop="stopWikiChat"
+            @reset="resetWikiChat" @retry="retryWikiChat" @show-graph="showChatGraph"
+            @focus-citation="focusChatCitation" @highlight-citation="highlightChatCitation" />
         </div>
       </div>
     </section>

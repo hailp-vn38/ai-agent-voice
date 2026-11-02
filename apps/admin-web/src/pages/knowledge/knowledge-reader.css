@@ -400,6 +400,21 @@
 .knowledge-a .wiki-chat-answer p:last-child { margin-bottom: 0; }
 .knowledge-a .wiki-chat-answer ul, .knowledge-a .wiki-chat-answer ol { margin: 7px 0; padding-left: 20px; }
 .knowledge-a .wiki-chat-answer a { color: var(--studio-violet); text-decoration: underline; }
+.knowledge-a .wiki-chat-answer a.wiki-chat-citation { display: inline-flex; align-items: center; justify-content: center; min-width: 19px; height: 18px; margin: 0 1px; padding: 0 4px; border: 1px solid color-mix(in srgb, var(--studio-violet) 35%, var(--border)); border-radius: 5px; color: var(--studio-violet); background: color-mix(in srgb, var(--studio-violet) 9%, var(--background)); font-size: 10px; font-weight: 750; line-height: 1; text-decoration: none; vertical-align: 1px; }
+.knowledge-a .wiki-chat-answer a.wiki-chat-citation:hover, .knowledge-a .wiki-chat-answer a.wiki-chat-citation.is-highlighted { color: var(--primary-foreground); background: var(--studio-violet); border-color: var(--studio-violet); }
+.knowledge-a .wiki-chat-sources { display: flex; flex-direction: column; gap: 4px; margin: 10px 0 0; padding: 8px 0 0; border-top: 1px solid var(--border); list-style: none; }
+.knowledge-a .wiki-chat-sources li { min-width: 0; border-radius: 5px; }
+.knowledge-a .wiki-chat-sources li.is-highlighted { background: color-mix(in srgb, var(--studio-violet) 12%, var(--background)); }
+.knowledge-a .wiki-chat-source-link { display: inline-flex; gap: 6px; max-width: 100%; padding: 2px 4px; color: var(--muted-foreground); font-size: 10px; text-align: left; overflow-wrap: anywhere; }
+.knowledge-a .wiki-chat-source-link span { flex: none; color: var(--studio-violet); font-weight: 750; }
+.knowledge-a .wiki-chat-suggestions { display: flex; flex-direction: column; gap: 7px; width: 100%; margin: auto 0; }
+.knowledge-a .wiki-chat-suggestion { width: 100%; padding: 9px 10px; border: 1px solid var(--border); border-radius: 8px; color: var(--foreground); background: var(--background); font-size: 11px; text-align: left; }
+.knowledge-a .wiki-chat-suggestion:hover { border-color: var(--studio-violet); background: color-mix(in srgb, var(--studio-violet) 7%, var(--background)); }
+.knowledge-a .wiki-chat-tool-summary { margin-top: 8px; border-top: 1px solid var(--border); color: var(--muted-foreground); font-size: 10px; }
+.knowledge-a .wiki-chat-tool-summary summary { display: flex; gap: 7px; align-items: baseline; padding: 7px 0 2px; cursor: pointer; }
+.knowledge-a .wiki-chat-tool-summary summary > span:first-child { color: var(--foreground); font-weight: 650; }
+.knowledge-a .wiki-chat-tool-detail-query { margin: 4px 0; overflow-wrap: anywhere; }
+.knowledge-a .wiki-chat-tool-pages { margin: 4px 0 7px; padding-left: 17px; overflow-wrap: anywhere; }
 .knowledge-a .wiki-chat-tools { display: flex; flex-direction: column; gap: 5px; margin: 10px 0 0; padding: 8px 0 0; border-top: 1px solid var(--border); list-style: none; }
 .knowledge-a .wiki-chat-tools li { display: flex; align-items: baseline; gap: 6px; min-width: 0; color: var(--muted-foreground); font-size: 10px; }
 .knowledge-a .wiki-chat-tool-state { flex: none; color: var(--studio-violet); font-weight: 800; }
