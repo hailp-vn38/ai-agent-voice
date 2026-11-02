@@ -30,6 +30,7 @@ export interface WikiChatMessage {
   citations: string[]
   errorCode: string | null
   saved?: boolean
+  contentTruncated?: boolean
   files?: WikiChatFile[]
 }
 
@@ -50,6 +51,7 @@ function messageFromSaved(message: WikiConversationDetail['messages'][number]): 
     citations: message.citations,
     errorCode: message.error_code,
     saved: true,
+    contentTruncated: message.content_truncated,
     ...(files.length ? { files } : {}),
   }
 }
@@ -198,6 +200,14 @@ export function useWikiChat() {
           if (!current) return
           current.citations = result.citations
           current.saved = result.saved
+          current.contentTruncated = result.content_truncated
+          if (!result.graph_saved) {
+            current.graph = null
+            if (activeGraphMessageId.value === current.id) {
+              activeGraph.value = null
+              activeGraphMessageId.value = null
+            }
+          }
           if (current.status === 'streaming') {
             if (result.stop_reason === 'finished') current.status = 'done'
             else if (result.stop_reason === 'stopped') current.status = 'stopped'

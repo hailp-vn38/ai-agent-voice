@@ -117,6 +117,7 @@ it('loads the saved conversation list and changes only its URL query when one is
   const wrapper = mount(KnowledgePage)
   try {
     await flushPromises()
+    await wrapper.findAll('.a-outline .a-right-tab')[1]!.trigger('click')
     await wrapper.get('.wiki-chat-header-action:first-child').trigger('click')
     await flushPromises()
     expect(requestJsonMock).toHaveBeenCalledWith(

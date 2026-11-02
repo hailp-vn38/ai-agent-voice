@@ -194,3 +194,20 @@ it('prevents switching to another conversation or starting a new one while an an
     expect(wrapper.findAll('.wiki-chat-conversation-actions button').at(1)?.attributes('disabled')).toBeDefined()
   } finally { wrapper.unmount() }
 })
+
+it('explains storage limits and a failed save without offering an invalid retry', () => {
+  const full: WikiChatMessage = {
+    ...assistant('failed'), errorCode: 'wiki_conversation_full',
+  }
+  const truncated: WikiChatMessage = {
+    ...assistant('done'), contentTruncated: true, saved: false,
+  }
+  const wrapper = mount(WikiChatPanel, { props: { messages: [full, truncated], busy: false } })
+  try {
+    const text = wrapper.get('.wiki-chat-messages').text()
+    expect(text).toContain('This conversation has reached its message limit.')
+    expect(text).toContain('This answer was shortened to fit the storage limit.')
+    expect(text).toContain('This answer could not be saved.')
+    expect(wrapper.findAll('.wiki-chat-error button')).toHaveLength(0)
+  } finally { wrapper.unmount() }
+})

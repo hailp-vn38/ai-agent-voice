@@ -289,6 +289,9 @@ pub(in crate::app::admin) async fn knowledge_ask(
                 "wiki_conversation_not_found",
             );
         }
+        Err(crate::database::wiki_conversations::StartTurnError::Full) => {
+            return error(&request, StatusCode::CONFLICT, "wiki_conversation_full");
+        }
         Err(crate::database::wiki_conversations::StartTurnError::Sql(db_error)) => {
             if matches!(db_error, sqlx::Error::Database(ref cause) if cause.code().as_deref() == Some("2067"))
             {
@@ -1811,6 +1814,65 @@ model = "fake"
             .await
             .unwrap();
         assert_eq!(unauthorized.status(), StatusCode::UNAUTHORIZED);
+        server.abort();
+        let _ = std::fs::remove_dir_all(temp_root);
+    }
+
+    #[tokio::test]
+    async fn ask_rejects_a_conversation_at_the_message_limit_without_writing_rows() {
+        let (base, temp_root, server) = wiki_fixture(Vec::new(), "Evidence.").await;
+        let database = test_database(&temp_root).await;
+        sqlx::query(
+            "INSERT INTO wiki_conversations (id, title, created_at_ms, updated_at_ms) VALUES ('full-conversation', 'Full', 1, 1)",
+        )
+        .execute(database.pool())
+        .await
+        .unwrap();
+        for seq in 0..50_i64 {
+            let user_seq = seq * 2 + 1;
+            let assistant_seq = user_seq + 1;
+            sqlx::query(
+                "INSERT INTO wiki_conversation_messages (id, conversation_id, seq, role, content, status, created_at_ms, updated_at_ms) VALUES (?, 'full-conversation', ?, 'user', 'question', 'done', 1, 1)",
+            )
+            .bind(format!("user-{seq}"))
+            .bind(user_seq)
+            .execute(database.pool())
+            .await
+            .unwrap();
+            sqlx::query(
+                "INSERT INTO wiki_conversation_messages (id, conversation_id, seq, role, content, status, created_at_ms, updated_at_ms) VALUES (?, 'full-conversation', ?, 'assistant', 'answer', 'done', 1, 1)",
+            )
+            .bind(format!("assistant-{seq}"))
+            .bind(assistant_seq)
+            .execute(database.pool())
+            .await
+            .unwrap();
+        }
+        drop(database);
+
+        let response = reqwest::Client::new()
+            .post(format!("{base}/knowledge/ask"))
+            .bearer_auth("wiki-chat-test-token")
+            .json(&serde_json::json!({
+                "conversation_id": "full-conversation",
+                "question": "one more question"
+            }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::CONFLICT);
+        let body: Value = response.json().await.unwrap();
+        assert_eq!(body["error"]["code"], "wiki_conversation_full");
+
+        let database = test_database(&temp_root).await;
+        let message_count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM wiki_conversation_messages WHERE conversation_id = 'full-conversation'",
+        )
+        .fetch_one(database.pool())
+        .await
+        .unwrap();
+        assert_eq!(message_count, 100);
+        drop(database);
         server.abort();
         let _ = std::fs::remove_dir_all(temp_root);
     }
