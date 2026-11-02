@@ -16,6 +16,8 @@ Spec: [spec.md](spec.md). Base: 4315248cdb6019085bb02f509afa61e83d1efab9. Integr
 
 - [03 Catalog/Admin](issues/03-catalog.md): default OFF và live Muse provider selection; refresh discovery giữ Admin prompts; Admin HTTP, prompt upgrade, web UI/typecheck đã PASS.
 
+- [05 Docs](issues/05-docs.md) resolved: [ADR 0137](../../docs/adr/0137-subagent-owned-muse-task-sessions.md), glossary/README, [validation](../../docs/providers/muse-task-validation-2026-11-02.md) và [runbook](../../docs/providers/muse-task-runbook.md); stage0 có hai send cùng phiên và file kiểm checksum, nhưng live runtime/restart/cleanup còn NOT_RUN.
+
 ## Fog
 
-- Spike Muse thật chưa chạy; cần credential và đo upstream.
+- Stage0 Muse thật đã đo hai send cùng phiên, Markdown/file và history; không có browser-event proof. Cleanup HTTP ACK cần xác minh lại với client sửa; nghiệm thu Background Task, reconnect, kill/restart, parent đọc artifact và task/file/quota sau cleanup còn mở. Xem báo cáo validation; không suy PASS live từ test giả.
