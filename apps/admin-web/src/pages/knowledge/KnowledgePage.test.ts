@@ -87,6 +87,60 @@ it('matches option A with a read-only Markdown document, tabs, explorer and outl
   } finally { wrapper.unmount() }
 })
 
+it('offers Markdown download, link and content copying in the note menu with an icon-only reading button', async () => {
+  const writeText = vi.fn().mockResolvedValue(undefined)
+  const createObjectURL = vi.fn((_blob: Blob) => 'blob:note-download')
+  const revokeObjectURL = vi.fn()
+  vi.stubGlobal('navigator', Object.create(navigator, { clipboard: { value: { writeText } } }))
+  vi.stubGlobal('URL', class extends URL {
+    static createObjectURL = createObjectURL
+    static revokeObjectURL = revokeObjectURL
+  })
+  let filename = ''
+  const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function (this: HTMLAnchorElement) {
+    filename = this.download
+  })
+  const wrapper = mount(KnowledgePage, { attachTo: document.body })
+  try {
+    await flushPromises()
+    const reading = wrapper.get('button[aria-label="Reading view"]')
+    expect(reading.text()).toBe('')
+    expect(reading.find('svg').exists()).toBe(true)
+    const menu = wrapper.get('button[aria-label="Note actions"]')
+    await menu.trigger('click')
+    await flushPromises()
+    const items = Array.from(document.querySelectorAll<HTMLButtonElement>('[role="menuitem"]'))
+    expect(items.map(item => item.textContent?.trim())).toEqual(['Download', 'Copy note link', 'Copy Markdown content'])
+    items[0]!.click()
+    await flushPromises()
+    expect(filename).toBe('wiki-file.md')
+    const blob = createObjectURL.mock.calls[0]![0]
+    const contents = await new Promise<string>((resolve, reject) => {
+      const reader = new FileReader()
+      reader.onload = () => resolve(String(reader.result))
+      reader.onerror = () => reject(reader.error)
+      reader.readAsText(blob)
+    })
+    expect(contents).toBe((await requestJsonMock('/api/admin/knowledge/pages/wiki_demo')).body)
+    await menu.trigger('click')
+    await flushPromises()
+    document.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')[1]!.click()
+    await flushPromises()
+    expect(writeText).toHaveBeenCalledWith(window.location.origin + '/knowledge#wiki_demo')
+    await menu.trigger('click')
+    await flushPromises()
+    document.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')[2]!.click()
+    await flushPromises()
+    expect(writeText).toHaveBeenLastCalledWith(contents)
+    expect(wrapper.find('.a-notice').exists()).toBe(false)
+    expect(wrapper.text()).not.toContain('Note link copied')
+  } finally {
+    wrapper.unmount()
+    click.mockRestore()
+    vi.unstubAllGlobals()
+  }
+})
+
 it('defaults to Knowledge and switches its single displayed tree using the source tabs', async () => {
   const wrapper = mount(KnowledgePage)
   try {
@@ -1006,6 +1060,56 @@ it('renders a Recent section below the tree-folder panel and lists recently open
   } finally {
     wrapper.unmount()
   }
+})
+
+it('keeps one Recent entry per file when using Split right', async () => {
+  const wrapper = mount(KnowledgePage)
+  try {
+    await flushPromises()
+    expect(wrapper.findAll('button.a-recent-item')).toHaveLength(1)
+    await wrapper.get('button[aria-label="Split right"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.findAll('.doc h1').map(heading => heading.text())).toEqual(['Wiki Demo', 'Wiki Demo'])
+    expect(wrapper.findAll('button.a-recent-item').map(item => item.get('.a-recent-title').text())).toEqual(['Wiki Demo'])
+
+    const fileTab = wrapper.findAll('[aria-label="Knowledge source"] [role="tab"]')
+      .find(tab => tab.attributes('aria-label') === 'File')!
+    await fileTab.trigger('click')
+    await flushPromises()
+    await wrapper.findAll('button.tree-leaf').find(button => button.text().includes('raw-file'))!.trigger('click')
+    await flushPromises()
+    await wrapper.findAll('.a-pane')[1]!.get('button[aria-label="Split right"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.findAll('button.a-recent-item').map(item => item.get('.a-recent-title').text())).toEqual(['raw-file', 'Wiki Demo'])
+    expect(JSON.parse(window.localStorage.getItem('voice-agent-knowledge-recent-v1')!)).toHaveLength(2)
+  } finally { wrapper.unmount() }
+  const reloaded = mount(KnowledgePage)
+  try {
+    await flushPromises()
+    expect(reloaded.findAll('button.a-recent-item').map(item => item.get('.a-recent-title').text())).toEqual(['raw-file', 'Wiki Demo'])
+  } finally { reloaded.unmount() }
+})
+
+it('deduplicates Recent by path or stable ID on restore and reopening, while preserving distinct files', async () => {
+  mockTwoWikiNotes()
+  window.localStorage.setItem('voice-agent-knowledge-recent-v1', JSON.stringify([
+    { space: 'wiki', path: 'wiki/alpha.md', title: 'Alpha', id: 'old-alpha' },
+    { space: 'wiki', path: 'wiki/beta.md', title: 'Beta', id: 'beta' },
+    { space: 'wiki', path: 'wiki/beta.md', title: 'Beta', id: 'old-beta' },
+    { space: 'wiki', path: 'wiki/old-beta.md', title: 'Beta', id: 'beta' },
+    { space: 'raw', path: 'raw/beta.md', title: 'Beta' },
+    { space: 'wiki', path: 'wiki/concepts/beta.md', title: 'Beta', id: 'other-beta' },
+  ]))
+  const wrapper = mount(KnowledgePage)
+  try {
+    await flushPromises()
+    const paths = ['wiki/alpha.md', 'wiki/beta.md', 'raw/beta.md', 'wiki/concepts/beta.md']
+    expect(wrapper.findAll('button.a-recent-item').map(item => item.attributes('title'))).toEqual(paths)
+    const stored = JSON.parse(window.localStorage.getItem('voice-agent-knowledge-recent-v1')!)
+    expect(stored.map((item: { path: string }) => item.path)).toEqual(paths)
+    expect(stored[0].id).toBe('alpha')
+    expect(stored[1].id).toBe('beta')
+  } finally { wrapper.unmount() }
 })
 
 it('collapses and expands the Recent panel and persists its collapsed state in localStorage', async () => {

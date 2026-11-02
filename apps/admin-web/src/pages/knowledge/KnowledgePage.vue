@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
-import { Network, Link2, FileText, Folder, FolderOpen, FolderPlus, FilePlus2, Pencil, ChevronsUp, BookOpen, ArrowUpRight, ChevronDown, ChevronRight, Search, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, Columns2, ListTree, Sparkles, SquarePlus, X } from '@lucide/vue'
+import { Network, Link2, Copy, Download, FileText, Folder, FolderOpen, FolderPlus, FilePlus2, Pencil, ChevronsUp, BookOpen, ArrowUpRight, ChevronDown, ChevronRight, Search, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, Columns2, ListTree, Sparkles, SquarePlus, X } from '@lucide/vue'
 import { renderMarkdown, markdownOutline } from '@/lib/markdown'
 import { renderMermaidBlocks } from './mermaidRenderer'
 import { renderTradingChartBlocks } from './tradingChartRenderer'
@@ -12,6 +12,7 @@ import { requestJson, jsonRequest, withQuery } from '@/api/client'
 import { formatApiError, isApiError } from '@/api/errors'
 import PageHeader from '@/components/admin/PageHeader.vue'
 import { Button } from '@/components/ui/button'
+import { ActionMenu, MenuItem } from '@/components/ui/action-menu'
 import { useI18n } from '@/composables/useI18n'
 import { useWikiChat } from './useWikiChat'
 import WikiChatPanel from './WikiChatPanel.vue'
@@ -146,6 +147,9 @@ const explorerCollapsed = ref(restoredExplorerCollapsed())
 const rightPanelCollapsed = ref(restoredOutlineCollapsed())
 const propertiesCollapsed = ref(restoredPropertiesCollapsed())
 const recentCollapsed = ref(restoredRecentCollapsed())
+function sameRecentFile(left: RecentItem, right: RecentItem): boolean {
+  return left.space === right.space && (left.path === right.path || (!!left.id && left.id === right.id))
+}
 function restoredRecentItems(): RecentItem[] {
   try {
     const raw = window.localStorage.getItem(RECENT_ITEMS_KEY)
@@ -159,12 +163,13 @@ function restoredRecentItems(): RecentItem[] {
       const space = entry.space
       if (space !== 'wiki' && space !== 'raw' && space !== 'drafts') continue
       if (!validExplorerPath(entry.path, space) || typeof entry.title !== 'string' || !entry.title.trim()) continue
-      items.push({
+      const item: RecentItem = {
         space,
         path: entry.path,
         title: entry.title.trim(),
         ...(typeof entry.id === 'string' && entry.id.trim() ? { id: entry.id.trim() } : {}),
-      })
+      }
+      if (!items.some(existing => sameRecentFile(existing, item))) items.push(item)
     }
     return items
   } catch {
@@ -182,9 +187,7 @@ function recordRecentItem(item: RecentItem) {
   }
   recentItems.value = [
     normalized,
-    ...recentItems.value.filter(entry =>
-      !(entry.space === normalized.space && (normalized.id && entry.id ? entry.id === normalized.id : entry.path === normalized.path)),
-    ),
+    ...recentItems.value.filter(entry => !sameRecentFile(entry, normalized)),
   ].slice(0, 20)
   try {
     window.localStorage.setItem(RECENT_ITEMS_KEY, JSON.stringify(recentItems.value))
@@ -421,7 +424,6 @@ async function confirmInlineNote() {
   const heading = fileName.slice(0, -3)
   busy.value = true
   error.value = ''
-  notice.value = ''
   try {
     rawFile.value = await requestJson<RawFile>('/api/admin/knowledge/raw/files',
       jsonRequest('POST', { folder_path: folder, file_name: fileName, body: '' }))
@@ -520,7 +522,6 @@ async function onFileDrop(event: DragEvent, targetFolderPath?: string) {
       && !window.confirm(t('knowledgeV3.discardChanges'))) return
   busy.value = true
   error.value = ''
-  notice.value = ''
   try {
     if (activeSpace.value !== 'raw') {
       cancelInlineNote()
@@ -572,7 +573,6 @@ async function onFileDrop(event: DragEvent, targetFolderPath?: string) {
         path: selectedPath.value,
         title: title.value,
       })
-      notice.value = t('knowledgeV3.rawSaved')
       await refreshTree()
       await refreshHealth()
     }
@@ -728,7 +728,6 @@ const treeLoading = ref(false)
 const noteLoading = ref(false)
 const linkedLoading = ref(false)
 const error = ref('')
-const notice = ref('')
 let noteRequestVersion = 0
 
 // The focused pane's active tab is bound to the single-note refs above; every other tab keeps a snapshot.
@@ -883,6 +882,20 @@ function splitPane(pane: WorkspacePane) {
   void showBoundTab()
 }
 const panesEl = ref<HTMLElement | null>(null)
+
+// Keep the active tab visible when it is opened or selected while the list is scrolled away from it.
+watch(() => panes.value.map(pane => [pane.activeTabId, paneShowsGraph(pane)]).join() + viewMode.value, () => {
+  panesEl.value?.querySelectorAll<HTMLElement>('.a-tab-list').forEach(list => {
+    const active = list.querySelector('.active')
+    if (!active) return
+    const listBox = list.getBoundingClientRect()
+    const tabBox = active.getBoundingClientRect()
+    const pinnedGraph = list.querySelector('.a-graph-tab')
+    const visibleLeft = pinnedGraph && active !== pinnedGraph ? pinnedGraph.getBoundingClientRect().right : listBox.left
+    if (tabBox.left < visibleLeft) list.scrollLeft -= visibleLeft - tabBox.left
+    else if (tabBox.right > listBox.right) list.scrollLeft += tabBox.right - listBox.right
+  })
+}, { flush: 'post' })
 function trackHorizontalDrag(event: PointerEvent, onMove: (deltaX: number) => void, onEnd?: () => void) {
   event.preventDefault()
   const startX = event.clientX
@@ -979,6 +992,25 @@ function editPaneNote(pane: WorkspacePane) {
 async function copyPaneNoteLink(pane: WorkspacePane) {
   if (focusPane(pane)) await copyNoteLink()
 }
+async function copyPaneNoteContent(pane: WorkspacePane) {
+  const doc = workspace.activeTab(pane).doc
+  if (!doc) return
+  try {
+    await navigator.clipboard.writeText(doc.body)
+  } catch (cause) { error.value = formatApiError(cause) }
+}
+function downloadPaneNote(pane: WorkspacePane) {
+  const doc = workspace.activeTab(pane).doc
+  if (!doc) return
+  const url = URL.createObjectURL(new Blob([doc.body], { type: 'text/markdown;charset=utf-8' }))
+  const link = document.createElement('a')
+  link.href = url
+  link.download = doc.path.split('/').pop() || 'note.md'
+  document.body.appendChild(link)
+  link.click()
+  link.remove()
+  window.setTimeout(() => URL.revokeObjectURL(url), 0)
+}
 async function loadBackgroundTab(tab: WorkspaceTab) {
   const target = tab.ref
   if (tab.doc || !target) return
@@ -1014,7 +1046,6 @@ function newDraft() {
   body.value = ''
   sourceRef.value = ''
   error.value = ''
-  notice.value = ''
 }
 async function refreshSources() {
   try {
@@ -1026,7 +1057,6 @@ async function importSource() {
   if (!sourceName.value.trim() || !sourceContent.value.trim() || !sourceProvenance.value.trim() || busy.value) return
   busy.value = true
   error.value = ''
-  notice.value = ''
   try {
     const source = await requestJson<Source>('/api/admin/knowledge/sources',
       jsonRequest('POST', { name: sourceName.value, provenance: sourceProvenance.value,
@@ -1035,7 +1065,6 @@ async function importSource() {
     sourceName.value = ''
     sourceContent.value = ''
     sourceProvenance.value = ''
-    notice.value = t('knowledgeV3.sourceImported')
     await refreshSources()
     await refreshTree()
   } catch (cause) { error.value = formatApiError(cause) }
@@ -1045,7 +1074,6 @@ async function publish() {
   if (!selected.value || selected.value.status !== 'draft' || !sourceRef.value.trim() || busy.value) return
   busy.value = true
   error.value = ''
-  notice.value = ''
   try {
     const record = await requestJson<Page>(
       `/api/admin/knowledge/pages/${encodeURIComponent(selected.value.id)}/publish`,
@@ -1059,7 +1087,6 @@ async function publish() {
       await refreshTree()
     }
     refreshGraph()
-    notice.value = t('knowledgeV3.published')
     await refreshHealth()
     if (q.value.trim()) await search()
     else await listPages()
@@ -1201,7 +1228,6 @@ async function save() {
     try {
       rawFile.value = await requestJson<RawFile>('/api/admin/knowledge/raw/files',
         jsonRequest('PUT', { path: rawFile.value.path, body: body.value, expected_sha256: rawFile.value.sha256 }))
-      notice.value = t('knowledgeV3.rawSaved')
     } catch (cause) { error.value = formatApiError(cause) }
     finally { busy.value = false }
     return
@@ -1209,7 +1235,6 @@ async function save() {
   if (!title.value.trim()) return
   busy.value = true
   error.value = ''
-  notice.value = ''
   try {
     const isEdit = selected.value !== null
     const path = isEdit
@@ -1229,7 +1254,6 @@ async function save() {
     const physical = tree.value.find(n => n.space === 'wiki' && n.id === page.id)
     if (physical) selectedPath.value = physical.path
     refreshGraph()
-    notice.value = t('knowledgeV3.saved')
     await refreshHealth()
     if (q.value.trim()) await search()
     else await listPages()
@@ -1243,7 +1267,6 @@ async function rebuild() {
     await requestJson('/api/admin/knowledge/index/rebuild', { method: 'POST' })
     await refreshHealth()
     refreshGraph()
-    notice.value = t('knowledgeV3.rebuilt')
   } catch (cause) { error.value = formatApiError(cause) }
   finally { busy.value = false }
 }
@@ -1291,7 +1314,6 @@ function resetExplorer(space: TreeSpace, preserveSearch = false) {
   pageCatalog.value = []
   nextCursor.value = null
   error.value = ''
-  notice.value = ''
 }
 async function restoreSelectedNote(space: TreeSpace, hash = '', fallback = false) {
   const savedPath = explorerPreferences[space]?.selectedPath
@@ -1466,7 +1488,6 @@ async function importRawAsSource() {
     sourceRef.value = imported.id + ':' + imported.version
     await refreshSources()
     await refreshTree()
-    notice.value = t('knowledgeV3.sourceImported')
   } catch (cause) { error.value = formatApiError(cause) }
   finally { busy.value = false }
 }
@@ -1494,7 +1515,6 @@ async function moveSelected() {
       const next = tree.value.find(n => n.path === result.path)
       if (next) await chooseNode(next)
       refreshGraph()
-      notice.value = t('knowledgeV3.moved')
     }
   } catch (cause) {
     if (isApiError(cause) && cause.code === 'wiki_move_breaks_links') {
@@ -1581,8 +1601,7 @@ async function copyNoteLink() {
   if (!selected.value) return
   try {
     await navigator.clipboard.writeText(window.location.origin + '/knowledge#' + encodeURIComponent(selected.value.id))
-    notice.value = 'Note link copied'
-  } catch { notice.value = selectedPath.value }
+  } catch (cause) { error.value = formatApiError(cause) }
 }
 async function refreshLinkedNotes(id: string) {
   const version = ++linkedRequestVersion
@@ -1823,7 +1842,6 @@ onMounted(() => {
       @keydown.left.prevent="nudgePanel('explorer', -16)" @keydown.right.prevent="nudgePanel('explorer', 16)"></div>
     <section class="a-workspace">
       <p v-if="error" class="a-error" role="alert">{{ error }}</p>
-      <p v-if="notice" class="a-notice" role="status">{{ notice }}</p>
       <div ref="panesEl" class="a-panes">
         <template v-for="(pane, paneIndex) in panes" :key="pane.id">
           <div v-if="paneIndex > 0" class="a-pane-resizer" role="separator" aria-orientation="vertical"
@@ -1844,6 +1862,8 @@ onMounted(() => {
                 </button>
               </div>
               <div class="a-tab-list">
+                <button v-if="pane.id === graphPaneId" class="other-tab a-graph-tab" :class="{ active: paneShowsGraph(pane) }"
+                  type="button" :aria-pressed="paneShowsGraph(pane)" @click="showGraph"><Network :size="15" class="inline-block mr-1" /> Graph</button>
                 <button v-for="tab in pane.tabs.filter(item => item.doc || item.ref || item.pending)" :key="tab.id" class="a-tab" type="button"
                   :class="{ active: tab.id === pane.activeTabId && !paneShowsGraph(pane) && !(pane.id === focusedPaneId && viewMode === 'compose') }"
                   :aria-pressed="tab.id === pane.activeTabId && !paneShowsGraph(pane) && !(pane.id === focusedPaneId && viewMode === 'compose')"
@@ -1856,8 +1876,6 @@ onMounted(() => {
                   :aria-pressed="viewMode === 'compose'" @click="viewMode = 'compose'">
                   <Pencil :size="15" class="inline-block mr-1" /> {{ newFileName }}
                 </button>
-                <button v-if="pane.id === graphPaneId" class="other-tab" :class="{ active: paneShowsGraph(pane) }"
-                  type="button" :aria-pressed="paneShowsGraph(pane)" @click="showGraph"><Network :size="15" class="inline-block mr-1" /> Graph</button>
               </div>
               <div class="a-pane-actions">
                 <button class="icon-button" type="button" :title="t('knowledgeV3.splitRight')" :aria-label="t('knowledgeV3.splitRight')"
@@ -1885,9 +1903,20 @@ onMounted(() => {
                 <button v-if="workspace.activeTab(pane).doc && workspace.activeTab(pane).doc?.space !== 'drafts' && !workspace.activeTab(pane).doc?.readOnly"
                   class="icon-button" type="button" :title="t('knowledgeV3.edit')"
                   :aria-label="t('knowledgeV3.edit')" @click="editPaneNote(pane)"><Pencil :size="16" /></button>
-                <button class="icon-button" type="button" title="Copy a note link" aria-label="Copy a note link"
-                  :disabled="!workspace.activeTab(pane).doc?.page" @click="copyPaneNoteLink(pane)"><Link2 :size="16" /></button>
-                <BookOpen :size="15" /><span class="path-mode">Reading view</span>
+                <button class="icon-button" type="button" :title="t('knowledgeV3.readingView')"
+                  :aria-label="t('knowledgeV3.readingView')" aria-pressed="true"
+                  @click="activateTab(pane, workspace.activeTab(pane))"><BookOpen :size="15" /></button>
+                <ActionMenu :label="t('knowledgeV3.noteActions')">
+                  <MenuItem :disabled="!workspace.activeTab(pane).doc" @select="downloadPaneNote(pane)">
+                    <Download class="size-4 shrink-0" aria-hidden="true" /> {{ t('knowledgeV3.downloadNote') }}
+                  </MenuItem>
+                  <MenuItem :disabled="!workspace.activeTab(pane).doc?.page" @select="copyPaneNoteLink(pane)">
+                    <Link2 class="size-4 shrink-0" aria-hidden="true" /> {{ t('knowledgeV3.copyNoteLink') }}
+                  </MenuItem>
+                  <MenuItem :disabled="!workspace.activeTab(pane).doc" @select="copyPaneNoteContent(pane)">
+                    <Copy class="size-4 shrink-0" aria-hidden="true" /> {{ t('knowledgeV3.copyNoteContent') }}
+                  </MenuItem>
+                </ActionMenu>
               </div>
             </div>
             <main v-if="pane.id === focusedPaneId && viewMode === 'compose'" class="a-reader-viewport knowledge-edit-viewport">

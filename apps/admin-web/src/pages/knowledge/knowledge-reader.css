@@ -194,6 +194,7 @@
 .knowledge-a .a-tab .tab-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .knowledge-a .a-tabs .other-tab { color: var(--muted-foreground); padding: 0 14px; height: 39px; background: none; font-size: 12px; flex: none; white-space: nowrap; }
 .knowledge-a .a-tabs .other-tab.active { background: var(--card); border: 1px solid var(--border); border-bottom: 0; border-radius: 8px 8px 0 0; color: var(--studio-violet); }
+.knowledge-a .a-tabs .a-graph-tab { position: sticky; left: 0; z-index: 1; background: var(--surface); }
 .knowledge-a .a-tabs .a-tab-actions { height: 39px; display: flex; align-items: center; padding: 0 12px 0 3px; gap: 3px; flex: none; }
 .knowledge-a .a-tabs .a-tab-actions-left { padding: 0 3px 0 6px; }
 .knowledge-a .a-tabs .a-tab-actions .icon-button { width: 28px; height: 28px; color: var(--muted-foreground); }
@@ -204,7 +205,6 @@
 .knowledge-a .a-pathbar .path-actions .icon-button:disabled { opacity: .35; cursor: not-allowed; }
 @container (max-width: 560px) {
   .knowledge-a .a-pathbar { padding: 0 14px; }
-  .knowledge-a .a-pathbar .path-mode { display: none; }
   .knowledge-a .doc-overline span:not(:first-child) { display: none; }
   .knowledge-a .doc { padding: 34px 20px 120px; }
   .knowledge-a .doc h1 { font-size: 28px; letter-spacing: -.8px; }
@@ -371,7 +371,6 @@
 .knowledge-a .graph-host { flex: 1; min-height: 0; display: flex; flex-direction: column; padding: 0; overflow: hidden; position: relative; }
 .knowledge-a .graph-host > div { flex: 1; min-height: 0; }
 .knowledge-a .a-error { padding: 10px 15px; border-bottom: 1px solid color-mix(in srgb, var(--danger) 35%, transparent); color: var(--danger); font-size: 12px; white-space: pre-line; }
-.knowledge-a .a-notice { padding: 10px 15px; color: var(--success); font-size: 12px; }
 
 /* Read-only Mermaid previews and the opt-in Raw file composer reuse Studio tokens. */
 .knowledge-a .knowledge-mermaid { white-space: pre-wrap; }
