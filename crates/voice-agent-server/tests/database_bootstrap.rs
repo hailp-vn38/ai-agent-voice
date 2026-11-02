@@ -135,6 +135,46 @@ async fn fresh_database_migrates_then_boots_health_and_ready_routes() {
 }
 
 #[tokio::test]
+async fn startup_marks_running_wiki_answers_interrupted_before_serving_http() {
+    const ADMIN_TOKEN: &str = "wiki-conversation-startup-test-token";
+    let database = database_config(temp_database_url("wiki-conversation-recovery"));
+    let db = Database::connect(&database).await.unwrap();
+    sqlx::query(
+        "INSERT INTO wiki_conversations (id, title, created_at_ms, updated_at_ms) VALUES ('startup-conversation', 'Startup', 1, 2)",
+    )
+    .execute(db.pool())
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO wiki_conversation_messages (id, conversation_id, seq, role, content, status, created_at_ms, updated_at_ms) VALUES ('startup-user', 'startup-conversation', 1, 'user', 'Question', 'done', 1, 1), ('startup-assistant', 'startup-conversation', 2, 'assistant', '', 'running', 1, 2)",
+    )
+    .execute(db.pool())
+    .await
+    .unwrap();
+    drop(db);
+
+    let mut config = config_for_database(database);
+    config.api.enabled = true;
+    config.api.admin_token = ADMIN_TOKEN.to_owned();
+    let router = bootstrap_with_providers(config, Arc::new(ProviderSet::unavailable()))
+        .await
+        .unwrap();
+    let (base, task) = serve(router).await;
+    let response = reqwest::Client::new()
+        .get(format!(
+            "{base}/api/admin/knowledge/conversations/startup-conversation"
+        ))
+        .bearer_auth(ADMIN_TOKEN)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let detail: serde_json::Value = response.json().await.unwrap();
+    assert_eq!(detail["messages"][1]["status"], "interrupted");
+    task.abort();
+}
+
+#[tokio::test]
 async fn current_database_is_idempotent_when_migrations_run_again() {
     let config = database_config(temp_database_url("idempotent"));
     Database::connect(&config).await.unwrap();

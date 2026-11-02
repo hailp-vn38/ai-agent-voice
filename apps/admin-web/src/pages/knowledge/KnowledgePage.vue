@@ -47,6 +47,7 @@ const {
   messages: wikiChatMessages,
   conversationId: wikiChatConversationId,
   loadingConversation: wikiChatLoadingConversation,
+  readOnlyConversation: wikiChatReadOnlyConversation,
   activeGraph: activeAnswerGraph,
   busy: wikiChatBusy,
   chatDrawerOpen,
@@ -58,6 +59,7 @@ const {
   retry: retryWikiChat,
   reset: resetWikiChat,
   loadConversation: loadWikiConversation,
+  refreshConversation: refreshWikiConversation,
   showGraphOf: showChatGraph,
 } = useWikiChat()
 function replaceConversationQuery(id: string | null) {
@@ -2063,12 +2065,13 @@ onMounted(() => {
       @pointerdown="startPanelResize($event, 'right')"
       @keydown.left.prevent="nudgePanel('right', -16)" @keydown.right.prevent="nudgePanel('right', 16)"></div>
     <WikiChatPanel v-if="chatMounted" v-show="rightPanel === 'chat'" :messages="wikiChatMessages" :busy="wikiChatBusy"
+      :read-only="wikiChatReadOnlyConversation"
       :class="{ 'is-collapsed': rightPanelCollapsed }"
       :drawer-open="chatDrawerOpen" :suggestions="chatSuggestions"
       :pinned-files="wikiChatPinnedFiles" :open-file="openChatFile"
       @pin-file="pinWikiChatFile" @unpin-file="unpinWikiChatFile"
       :highlighted-node="highlightedChatNode" @send="sendWikiChat" @stop="stopWikiChat"
-      @reset="resetWikiChat" @retry="retryWikiChat" @show-graph="showAnswerOnGraph"
+      @reset="resetWikiChat" @retry="retryWikiChat" @refresh-conversation="refreshWikiConversation" @show-graph="showAnswerOnGraph"
       @focus-citation="openCitation" @highlight-citation="highlightChatCitation">
       <template v-if="viewMode !== 'graph'" #title>
         <div class="a-right-tabs" role="tablist" :aria-label="t('knowledgeV3.rightPanel')">

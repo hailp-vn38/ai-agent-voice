@@ -1,7 +1,7 @@
 import { flushPromises, mount } from '@vue/test-utils'
 import { beforeEach, expect, it, vi } from 'vitest'
 import { defineComponent } from 'vue'
-import type { AnswerGraph, WikiChatAskInput, WikiConversationDetail } from '@/api/wiki-chat'
+import { WikiChatRequestError, type AnswerGraph, type WikiChatAskInput, type WikiConversationDetail } from '@/api/wiki-chat'
 import { useWikiChat } from './useWikiChat'
 
 const { askWikiMock, getWikiConversationMock, getWikiPageTitleMock } = vi.hoisted(() => ({
@@ -167,6 +167,54 @@ it('falls back to the stored Wiki path when its current title can no longer be l
 
   expect(chat.pinnedFiles.value).toEqual([{ path: 'wiki/gone.md', title: 'wiki/gone.md' }])
   expect(chat.messages.value[0]?.files).toEqual([{ path: 'wiki/gone.md', title: 'wiki/gone.md' }])
+})
+
+it('keeps a conversation with a running answer read-only until the user reloads it', async () => {
+  getWikiConversationMock.mockResolvedValue({
+    id: 'conversation-running', title: 'Working', created_at_ms: 1, updated_at_ms: 2,
+    messages: [
+      {
+        id: 'user-running', seq: 1, role: 'user', content: 'Question in another tab', content_truncated: false,
+        status: 'done', error_code: null, pinned_paths: [], tools: [], citations: [], graph: null,
+        created_at_ms: 1, updated_at_ms: 1,
+      },
+      {
+        id: 'assistant-running', seq: 2, role: 'assistant', content: 'Partial answer', content_truncated: false,
+        status: 'running', error_code: null, pinned_paths: [], tools: [], citations: [], graph: null,
+        created_at_ms: 1, updated_at_ms: 2,
+      },
+    ],
+  } satisfies WikiConversationDetail)
+  const chat = mountChat()
+  expect(await chat.loadConversation('conversation-running')).toBe(true)
+  expect(chat.readOnlyConversation.value).toBe(true)
+  await chat.send('do not send')
+  expect(askWikiMock).not.toHaveBeenCalled()
+  chat.refreshConversation()
+  await flushPromises()
+  expect(getWikiConversationMock).toHaveBeenCalledTimes(2)
+  expect(askWikiMock).not.toHaveBeenCalled()
+})
+
+it('does not auto-resend a busy question and retries it only after the user asks', async () => {
+  const chat = mountChat()
+  answerWith('previous answer')
+  await chat.send('first question')
+  askWikiMock.mockRejectedValueOnce(new WikiChatRequestError('wiki_conversation_busy'))
+  await chat.send('follow-up')
+  expect(askWikiMock).toHaveBeenCalledTimes(2)
+  const localAssistant = chat.messages.value.at(-1)!
+  expect(localAssistant.status).toBe('failed')
+  expect(localAssistant.errorCode).toBe('wiki_conversation_busy')
+
+  answerWith('follow-up answer')
+  chat.retry(localAssistant.id)
+  await flushPromises()
+  expect(askWikiMock).toHaveBeenCalledTimes(3)
+  expect(lastInput()).toEqual({
+    conversation_id: 'conversation-1', question: 'follow-up', pinned_paths: [],
+  })
+  expect(chat.messages.value.at(-1)?.text).toBe('follow-up answer')
 })
 
 it('keeps the live storage truncation result on the assistant message', async () => {

@@ -10,6 +10,7 @@ import { MAX_PINNED_FILES, type WikiChatFile, type WikiChatMessage } from './use
 const props = defineProps<{
   messages: WikiChatMessage[]
   busy: boolean
+  readOnly?: boolean
   drawerOpen?: boolean
   suggestions?: Array<{ label: string; prompt: string }>
   highlightedNode?: string | null
@@ -22,6 +23,7 @@ const emit = defineEmits<{
   stop: []
   reset: []
   retry: [id: string]
+  refreshConversation: []
   showGraph: [id: string]
   focusCitation: [path: string]
   highlightCitation: [path: string | null]
@@ -41,6 +43,7 @@ const pinnableFile = computed(() => {
   return file && !pinnedFileList.value.some(pinned => pinned.path === file.path) ? file : null
 })
 const pinLimitReached = computed(() => pinnedFileList.value.length >= MAX_PINNED_FILES)
+const latestMessageId = computed(() => props.messages.at(-1)?.id ?? null)
 // How close to the end still counts as following the answer as it streams.
 const FOLLOW_DISTANCE = 72
 let followingAnswer = true
@@ -65,7 +68,7 @@ watch(draft, () => {
 
 function submit() {
   const text = draft.value.trim()
-  if (!text) return
+  if (!text || props.readOnly) return
   emit('send', text)
   draft.value = ''
 }
@@ -184,6 +187,7 @@ function activeTools(message: WikiChatMessage) {
 function errorText(code: string | null): string {
   if (code === 'wiki_chat_not_configured') return t('knowledgeV3.chatNotConfigured')
   if (code === 'wiki_chat_busy') return t('knowledgeV3.chatBusy')
+  if (code === 'wiki_conversation_busy') return t('knowledgeV3.chatConversationBusy')
   if (code === 'wiki_conversation_full') return t('knowledgeV3.chatConversationFull')
   if (code === 'wiki_chat_connection_lost') return t('knowledgeV3.chatConnectionLost')
   return t('knowledgeV3.chatFailed')
@@ -204,6 +208,10 @@ function errorText(code: string | null): string {
     </header>
 
     <div class="wiki-chat-announcement sr-only" role="status" aria-live="polite" aria-atomic="true">{{ completedAnnouncement }}</div>
+    <div v-if="readOnly" class="wiki-chat-status" role="status">
+      <span>{{ t('knowledgeV3.chatConversationRunningReadOnly') }}</span>
+      <button type="button" @click="emit('refreshConversation')">{{ t('knowledgeV3.chatReloadConversation') }}</button>
+    </div>
     <div ref="messagesElement" class="wiki-chat-messages" :aria-label="t('knowledgeV3.chatConversation')" @scroll.passive="onMessagesScroll">
       <div v-if="messages.length === 0" class="wiki-chat-welcome">
         <span class="wiki-chat-orb" aria-hidden="true"><Sparkles :size="22" /></span>
@@ -285,13 +293,13 @@ function errorText(code: string | null): string {
           <p v-if="message.status === 'stopped'" class="wiki-chat-status">
             <CircleStop :size="12" aria-hidden="true" /> {{ t('knowledgeV3.chatStopped') }}
           </p>
-          <div v-if="message.status === 'failed'" class="wiki-chat-error" role="alert">
+          <div v-if="message.status === 'failed' || message.status === 'interrupted'" class="wiki-chat-error" role="alert">
             <AlertCircle :size="14" class="shrink-0" aria-hidden="true" />
-            <span>{{ errorText(message.errorCode) }}</span>
-            <a v-if="message.errorCode === 'wiki_chat_not_configured'" href="/jobs/settings/providers">
+            <span>{{ message.status === 'interrupted' ? t('knowledgeV3.chatInterrupted') : errorText(message.errorCode) }}</span>
+            <a v-if="message.status === 'failed' && message.errorCode === 'wiki_chat_not_configured'" href="/jobs/settings/providers">
               {{ t('knowledgeV3.chatOpenSettings') }}
             </a>
-            <button v-else-if="message.errorCode !== 'wiki_conversation_full'" type="button" @click="emit('retry', message.id)">{{ t('knowledgeV3.chatRetry') }}</button>
+            <button v-else-if="!readOnly && message.id === latestMessageId && message.errorCode !== 'wiki_conversation_full'" type="button" @click="emit('retry', message.id)">{{ t('knowledgeV3.chatRetry') }}</button>
           </div>
           <button v-if="message.graph?.nodes.length" type="button" class="wiki-chat-show-graph"
             @click="emit('showGraph', message.id)">
@@ -305,12 +313,12 @@ function errorText(code: string | null): string {
       <div v-if="pinnedFileList.length || pinnableFile" class="wiki-chat-files" role="group" :aria-label="t('knowledgeV3.chatPinnedFiles')">
         <span v-for="file in pinnedFileList" :key="file.path" class="wiki-chat-file" :title="file.path">
           <FileText :size="12" aria-hidden="true" /><span class="wiki-chat-file-name">{{ file.title }}</span>
-          <button type="button" class="wiki-chat-file-remove" :aria-label="t('knowledgeV3.chatUnpinFile', { title: file.title })"
+          <button type="button" class="wiki-chat-file-remove" :disabled="readOnly" :aria-label="t('knowledgeV3.chatUnpinFile', { title: file.title })"
             :title="t('knowledgeV3.chatUnpinFile', { title: file.title })" @click="emit('unpinFile', file.path)">
             <X :size="11" aria-hidden="true" />
           </button>
         </span>
-        <button v-if="pinnableFile" type="button" class="wiki-chat-file-add" :disabled="pinLimitReached"
+        <button v-if="pinnableFile" type="button" class="wiki-chat-file-add" :disabled="pinLimitReached || readOnly"
           :title="pinLimitReached ? t('knowledgeV3.chatPinLimit', { count: MAX_PINNED_FILES }) : t('knowledgeV3.chatPinFile', { title: pinnableFile.title })"
           :aria-label="t('knowledgeV3.chatPinFile', { title: pinnableFile.title })" @click="emit('pinFile', pinnableFile)">
           <Plus :size="12" aria-hidden="true" /><span class="wiki-chat-file-name">{{ pinnableFile.title }}</span>
@@ -319,13 +327,13 @@ function errorText(code: string | null): string {
       <label class="sr-only" for="wiki-chat-question">{{ t('knowledgeV3.chatInputLabel') }}</label>
       <div class="wiki-chat-compose-box">
         <textarea id="wiki-chat-question" ref="questionInput" v-model="draft" rows="1" :placeholder="t('knowledgeV3.chatPlaceholder')"
-          :disabled="busy" @keydown.enter.exact.prevent="submit"></textarea>
+          :disabled="busy || readOnly" @keydown.enter.exact.prevent="submit"></textarea>
         <button v-if="busy" type="button" class="wiki-chat-stop" :aria-label="t('knowledgeV3.chatStop')"
           :title="t('knowledgeV3.chatStop')" @click="emit('stop')">
           <Square :size="12" fill="currentColor" aria-hidden="true" />
         </button>
         <button v-else type="submit" class="wiki-chat-send" :aria-label="t('knowledgeV3.chatSend')"
-          :title="t('knowledgeV3.chatSend')" :disabled="!draft.trim()">
+          :title="t('knowledgeV3.chatSend')" :disabled="!draft.trim() || readOnly">
           <ArrowUp :size="15" aria-hidden="true" />
         </button>
       </div>
