@@ -5,6 +5,12 @@ use sqlx::FromRow;
 
 use super::Database;
 
+const MAX_CONVERSATIONS: i64 = 200;
+const MAX_MESSAGES_PER_CONVERSATION: i64 = 100;
+pub(crate) const MAX_STORED_ANSWER_BYTES: usize = 64 * 1024;
+const MAX_STORED_TOOLS_BYTES: usize = 64 * 1024;
+const MAX_STORED_GRAPH_BYTES: usize = 256 * 1024;
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub(crate) struct ToolStep {
     pub call_id: String,
@@ -58,6 +64,7 @@ pub(crate) struct StartedTurn {
 #[derive(Debug)]
 pub(crate) enum StartTurnError {
     NotFound,
+    Full,
     Sql(sqlx::Error),
 }
 
@@ -112,7 +119,7 @@ pub(crate) async fn start_question(
     pinned_paths: &[String],
     now_ms: i64,
 ) -> Result<StartedTurn, StartTurnError> {
-    let mut transaction = database.pool().begin().await?;
+    let mut transaction = database.pool().begin_with("BEGIN IMMEDIATE").await?;
     let conversation_id = if let Some(id) = conversation_id {
         let exists: bool =
             sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM wiki_conversations WHERE id = ?)")
@@ -122,8 +129,37 @@ pub(crate) async fn start_question(
         if !exists {
             return Err(StartTurnError::NotFound);
         }
+        let message_count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM wiki_conversation_messages WHERE conversation_id = ?",
+        )
+        .bind(id)
+        .fetch_one(&mut *transaction)
+        .await?;
+        if message_count + 2 > MAX_MESSAGES_PER_CONVERSATION {
+            return Err(StartTurnError::Full);
+        }
         id
     } else {
+        let conversation_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM wiki_conversations")
+            .fetch_one(&mut *transaction)
+            .await?;
+        if conversation_count >= MAX_CONVERSATIONS {
+            let oldest_idle: Option<String> = sqlx::query_scalar(
+                "SELECT c.id FROM wiki_conversations c WHERE NOT EXISTS (SELECT 1 FROM wiki_conversation_messages m WHERE m.conversation_id = c.id AND m.status = 'running') ORDER BY c.updated_at_ms ASC, c.created_at_ms ASC, c.id ASC LIMIT 1",
+            )
+            .fetch_optional(&mut *transaction)
+            .await?;
+            let Some(oldest_idle) = oldest_idle else {
+                return Err(StartTurnError::Full);
+            };
+            let deleted = sqlx::query("DELETE FROM wiki_conversations WHERE id = ?")
+                .bind(oldest_idle)
+                .execute(&mut *transaction)
+                .await?;
+            if deleted.rows_affected() == 0 {
+                return Err(StartTurnError::Full);
+            }
+        }
         let title = question.chars().take(80).collect::<String>();
         sqlx::query(
             "INSERT INTO wiki_conversations (id, title, created_at_ms, updated_at_ms) VALUES (?, ?, ?, ?)",
@@ -229,20 +265,31 @@ pub(crate) async fn finish_answer(
     graph: Option<&serde_json::Value>,
     now_ms: i64,
 ) -> Result<(), sqlx::Error> {
-    let tools = serde_json::to_string(tools).map_err(serialize_error)?;
+    let stored_content = truncate_at_char_boundary(content, MAX_STORED_ANSWER_BYTES);
+    let content_truncated = stored_content.len() < content.len();
+    let mut bounded_tools = tools.to_vec();
+    let tools_json = loop {
+        let serialized = serde_json::to_string(&bounded_tools).map_err(serialize_error)?;
+        if serialized.len() <= MAX_STORED_TOOLS_BYTES || bounded_tools.is_empty() {
+            break serialized;
+        }
+        bounded_tools.pop();
+    };
     let citations = serde_json::to_string(citations).map_err(serialize_error)?;
     let graph = graph
         .map(serde_json::to_string)
         .transpose()
-        .map_err(serialize_error)?;
+        .map_err(serialize_error)?
+        .filter(|serialized| serialized.len() <= MAX_STORED_GRAPH_BYTES);
     let mut transaction = database.pool().begin().await?;
     sqlx::query(
-        "UPDATE wiki_conversation_messages SET content = ?, status = ?, error_code = ?, tools_json = ?, citations_json = ?, graph_json = ?, updated_at_ms = ? WHERE id = ? AND conversation_id = ? AND role = 'assistant'",
+        "UPDATE wiki_conversation_messages SET content = ?, content_truncated = ?, status = ?, error_code = ?, tools_json = ?, citations_json = ?, graph_json = ?, updated_at_ms = ? WHERE id = ? AND conversation_id = ? AND role = 'assistant'",
     )
-    .bind(content)
+    .bind(stored_content)
+    .bind(content_truncated as i64)
     .bind(status)
     .bind(error_code)
-    .bind(tools)
+    .bind(tools_json)
     .bind(citations)
     .bind(graph)
     .bind(now_ms)
@@ -256,6 +303,14 @@ pub(crate) async fn finish_answer(
         .execute(&mut *transaction)
         .await?;
     transaction.commit().await
+}
+
+fn truncate_at_char_boundary(value: &str, max_bytes: usize) -> &str {
+    let mut end = value.len().min(max_bytes);
+    while !value.is_char_boundary(end) {
+        end -= 1;
+    }
+    &value[..end]
 }
 
 pub(crate) async fn get_conversation(
