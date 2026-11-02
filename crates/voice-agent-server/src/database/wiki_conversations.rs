@@ -31,6 +31,15 @@ pub(crate) struct ConversationDetail {
 }
 
 #[derive(Clone, Debug, Serialize)]
+pub(crate) struct ConversationSummary {
+    pub id: String,
+    pub title: String,
+    pub updated_at_ms: i64,
+    pub message_count: i64,
+    pub running: bool,
+}
+
+#[derive(Clone, Debug, Serialize)]
 pub(crate) struct ConversationMessage {
     pub id: String,
     pub seq: i64,
@@ -61,6 +70,19 @@ pub(crate) enum StartTurnError {
     Sql(sqlx::Error),
 }
 
+#[derive(Debug)]
+pub(crate) enum DeleteConversationError {
+    NotFound,
+    Busy,
+    Sql(sqlx::Error),
+}
+
+impl From<sqlx::Error> for DeleteConversationError {
+    fn from(value: sqlx::Error) -> Self {
+        Self::Sql(value)
+    }
+}
+
 impl From<sqlx::Error> for StartTurnError {
     fn from(value: sqlx::Error) -> Self {
         Self::Sql(value)
@@ -73,6 +95,15 @@ struct ConversationRow {
     title: String,
     created_at_ms: i64,
     updated_at_ms: i64,
+}
+
+#[derive(FromRow)]
+struct ConversationSummaryRow {
+    id: String,
+    title: String,
+    updated_at_ms: i64,
+    message_count: i64,
+    running: i64,
 }
 
 #[derive(FromRow)]
@@ -100,6 +131,87 @@ pub(crate) async fn conversation_exists(
         .bind(id)
         .fetch_one(database.pool())
         .await
+}
+
+pub(crate) async fn list_conversations(
+    database: &Database,
+) -> Result<Vec<ConversationSummary>, sqlx::Error> {
+    let rows = sqlx::query_as::<_, ConversationSummaryRow>(
+        "SELECT c.id, c.title, c.updated_at_ms, COUNT(m.id) AS message_count, EXISTS(SELECT 1 FROM wiki_conversation_messages running WHERE running.conversation_id = c.id AND running.status = 'running') AS running FROM wiki_conversations c LEFT JOIN wiki_conversation_messages m ON m.conversation_id = c.id GROUP BY c.id ORDER BY c.updated_at_ms DESC, c.created_at_ms DESC, c.id DESC LIMIT 200",
+    )
+    .fetch_all(database.pool())
+    .await?;
+    Ok(rows
+        .into_iter()
+        .map(|row| ConversationSummary {
+            id: row.id,
+            title: row.title,
+            updated_at_ms: row.updated_at_ms,
+            message_count: row.message_count,
+            running: row.running != 0,
+        })
+        .collect())
+}
+
+pub(crate) async fn rename_conversation(
+    database: &Database,
+    id: &str,
+    title: &str,
+) -> Result<bool, sqlx::Error> {
+    let result = sqlx::query("UPDATE wiki_conversations SET title = ? WHERE id = ?")
+        .bind(title)
+        .bind(id)
+        .execute(database.pool())
+        .await?;
+    Ok(result.rows_affected() == 1)
+}
+
+pub(crate) async fn delete_conversation(
+    database: &Database,
+    id: &str,
+    request_id: &str,
+) -> Result<(), DeleteConversationError> {
+    let mut transaction = database.pool().begin_with("BEGIN IMMEDIATE").await?;
+    let exists: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM wiki_conversations WHERE id = ?)")
+        .bind(id)
+        .fetch_one(&mut *transaction)
+        .await?;
+    if !exists {
+        transaction.rollback().await?;
+        return Err(DeleteConversationError::NotFound);
+    }
+    let running: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM wiki_conversation_messages WHERE conversation_id = ? AND status = 'running')",
+    )
+    .bind(id)
+    .fetch_one(&mut *transaction)
+    .await?;
+    if running {
+        transaction.rollback().await?;
+        return Err(DeleteConversationError::Busy);
+    }
+    let deleted = sqlx::query("DELETE FROM wiki_conversations WHERE id = ?")
+        .bind(id)
+        .execute(&mut *transaction)
+        .await?;
+    if deleted.rows_affected() != 1 {
+        transaction.rollback().await?;
+        return Err(DeleteConversationError::NotFound);
+    }
+    crate::database::audit::audit(
+        &mut *transaction,
+        request_id,
+        "wiki_conversation",
+        None,
+        "delete",
+        None,
+        None,
+        crate::database::audit::AuditOutcome::Success,
+        1,
+    )
+    .await?;
+    transaction.commit().await?;
+    Ok(())
 }
 
 pub(crate) async fn start_question(

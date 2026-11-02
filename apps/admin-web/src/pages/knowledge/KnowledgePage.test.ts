@@ -57,6 +57,10 @@ beforeEach(() => {
       health: 'ready', document_count: 1, last_complete_scan_at: null,
     }
     if (url === '/api/admin/knowledge/sources') return { items: [] }
+    if (url === '/api/admin/knowledge/conversations') return { items: [
+      { id: 'stored-2', title: 'Another topic', updated_at_ms: 4, message_count: 2, running: false },
+      { id: 'stored-1', title: 'Saved topic', updated_at_ms: 2, message_count: 2, running: false },
+    ] }
     if (url === '/api/admin/knowledge/conversations/stored-1') return {
       id: 'stored-1', title: 'Saved topic', created_at_ms: 1, updated_at_ms: 2,
       messages: [
@@ -105,6 +109,23 @@ it('clears a conversation id from the URL when the saved conversation no longer 
     await flushPromises()
     expect(wrapper.text()).not.toContain('Saved question')
     expect(routerReplaceMock).toHaveBeenCalledWith({ query: {} })
+  } finally { wrapper.unmount() }
+})
+
+it('loads the saved conversation list and changes only its URL query when one is selected', async () => {
+  routeQuery.space = 'wiki'
+  const wrapper = mount(KnowledgePage)
+  try {
+    await flushPromises()
+    await wrapper.get('.wiki-chat-header-action:first-child').trigger('click')
+    await flushPromises()
+    expect(requestJsonMock).toHaveBeenCalledWith(
+      '/api/admin/knowledge/conversations', { cache: 'no-store' },
+    )
+    const row = wrapper.findAll('.wiki-chat-conversation-item').find(item => item.text().includes('Another topic'))!
+    expect(row.exists()).toBe(true)
+    await row.get('.wiki-chat-conversation-select').trigger('click')
+    expect(routerReplaceMock).toHaveBeenCalledWith({ query: { space: 'wiki', conversation: 'stored-2' } })
   } finally { wrapper.unmount() }
 })
 

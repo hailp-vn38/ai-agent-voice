@@ -47,6 +47,9 @@ const {
   messages: wikiChatMessages,
   conversationId: wikiChatConversationId,
   loadingConversation: wikiChatLoadingConversation,
+  conversations: wikiChatConversations,
+  loadingConversations: wikiChatLoadingConversations,
+  conversationListError: wikiChatConversationListError,
   activeGraph: activeAnswerGraph,
   busy: wikiChatBusy,
   chatDrawerOpen,
@@ -58,6 +61,9 @@ const {
   retry: retryWikiChat,
   reset: resetWikiChat,
   loadConversation: loadWikiConversation,
+  refreshConversations: refreshWikiConversations,
+  renameConversation: renameWikiConversation,
+  deleteConversation: deleteWikiConversation,
   showGraphOf: showChatGraph,
 } = useWikiChat()
 function replaceConversationQuery(id: string | null) {
@@ -66,6 +72,29 @@ function replaceConversationQuery(id: string | null) {
   else delete query.conversation
   void router.replace({ query })
 }
+function openConversationList() {
+  void refreshWikiConversations()
+}
+function selectConversation(id: string) {
+  if (wikiChatBusy.value || id === wikiChatConversationId.value) return
+  replaceConversationQuery(id)
+}
+function startNewConversation() {
+  if (wikiChatBusy.value) return
+  const drawerWasOpen = chatDrawerOpen.value
+  resetWikiChat()
+  chatDrawerOpen.value = drawerWasOpen
+  void nextTick(() => selectRightTab('chat'))
+  replaceConversationQuery(null)
+}
+async function removeConversation(id: string) {
+  const wasCurrent = id === wikiChatConversationId.value
+  const drawerWasOpen = chatDrawerOpen.value
+  const deleted = await deleteWikiConversation(id)
+  if (!deleted || !wasCurrent) return
+  chatDrawerOpen.value = drawerWasOpen
+  selectRightTab('chat')
+}
 watch(wikiChatConversationId, id => {
   if ((typeof route.query.conversation === 'string' ? route.query.conversation : null) !== id) {
     replaceConversationQuery(id)
@@ -73,6 +102,10 @@ watch(wikiChatConversationId, id => {
 })
 watch(() => route.query.conversation, async rawId => {
   const id = typeof rawId === 'string' ? rawId : null
+  if (wikiChatBusy.value && id !== wikiChatConversationId.value) {
+    replaceConversationQuery(wikiChatConversationId.value)
+    return
+  }
   if (!id) {
     if (wikiChatConversationId.value) resetWikiChat()
     return
@@ -2037,12 +2070,18 @@ onMounted(() => {
       @pointerdown="startPanelResize($event, 'right')"
       @keydown.left.prevent="nudgePanel('right', -16)" @keydown.right.prevent="nudgePanel('right', 16)"></div>
     <WikiChatPanel v-if="chatMounted" v-show="rightPanel === 'chat'" :messages="wikiChatMessages" :busy="wikiChatBusy"
+      :loading-conversation="wikiChatLoadingConversation"
+      :conversations="wikiChatConversations" :conversation-id="wikiChatConversationId"
+      :loading-conversations="wikiChatLoadingConversations" :conversation-list-error="wikiChatConversationListError"
       :class="{ 'is-collapsed': rightPanelCollapsed }"
       :drawer-open="chatDrawerOpen" :suggestions="chatSuggestions"
       :pinned-files="wikiChatPinnedFiles" :open-file="openChatFile"
       @pin-file="pinWikiChatFile" @unpin-file="unpinWikiChatFile"
       :highlighted-node="highlightedChatNode" @send="sendWikiChat" @stop="stopWikiChat"
-      @reset="resetWikiChat" @retry="retryWikiChat" @show-graph="showAnswerOnGraph"
+      @retry="retryWikiChat" @show-graph="showAnswerOnGraph"
+      @load-conversations="openConversationList" @select-conversation="selectConversation"
+      @new-conversation="startNewConversation" @rename-conversation="renameWikiConversation"
+      @delete-conversation="removeConversation"
       @focus-citation="openCitation" @highlight-citation="highlightChatCitation">
       <template v-if="viewMode !== 'graph'" #title>
         <div class="a-right-tabs" role="tablist" :aria-label="t('knowledgeV3.rightPanel')">
