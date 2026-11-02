@@ -217,7 +217,9 @@ async fn run_ask(
     let mut graph_revision = 0u64;
     let mut last_graph: Option<Value> = None;
 
-    for step in 0..limits.max_steps {
+    // `max_steps` bounds tool rounds; the extra provider call lets the model
+    // answer from the evidence gathered in the final allowed round.
+    for step in 0..=limits.max_steps {
         if cancellation.is_cancelled() {
             return;
         }
@@ -273,6 +275,35 @@ async fn run_ask(
 
         if calls.is_empty() {
             break;
+        }
+        if step == limits.max_steps {
+            let graph = match make_graph_snapshot(
+                Arc::clone(&engine),
+                evidence.clone(),
+                limits.max_graph_nodes,
+                graph_revision,
+                cancellation.clone(),
+                deadline,
+            )
+            .await
+            {
+                Ok(graph) => graph,
+                Err("cancelled") => return,
+                Err("timeout") => {
+                    send_error_and_done(&events, "timeout", "timeout").await;
+                    return;
+                }
+                Err(_) => {
+                    send_error_and_done(&events, "knowledge_unavailable", "knowledge_unavailable")
+                        .await;
+                    return;
+                }
+            };
+            if !send_event(&events, AskEvent::Graph(graph), &cancellation).await {
+                return;
+            }
+            send_error_and_done(&events, "step_limit", "step_limit").await;
+            return;
         }
         if !assistant_text.is_empty() {
             messages.push(ChatMessage::AssistantText {
@@ -431,36 +462,6 @@ async fn run_ask(
                     .await;
                 }
             }
-        }
-
-        if step + 1 == limits.max_steps {
-            let graph = match make_graph_snapshot(
-                Arc::clone(&engine),
-                evidence.clone(),
-                limits.max_graph_nodes,
-                graph_revision,
-                cancellation.clone(),
-                deadline,
-            )
-            .await
-            {
-                Ok(graph) => graph,
-                Err("cancelled") => return,
-                Err("timeout") => {
-                    send_error_and_done(&events, "timeout", "timeout").await;
-                    return;
-                }
-                Err(_) => {
-                    send_error_and_done(&events, "knowledge_unavailable", "knowledge_unavailable")
-                        .await;
-                    return;
-                }
-            };
-            if !send_event(&events, AskEvent::Graph(graph), &cancellation).await {
-                return;
-            }
-            send_error_and_done(&events, "step_limit", "step_limit").await;
-            return;
         }
     }
 
@@ -1501,8 +1502,33 @@ model = "fake"
     }
 
     #[tokio::test]
-    async fn ask_stops_after_six_tool_rounds_with_step_limit() {
-        let rounds = (0..6)
+    async fn ask_answers_after_the_sixth_tool_round() {
+        let (base, temp_root, server) =
+            wiki_fixture(read_rounds(6), "Known evidence from the wiki.").await;
+        let body = ask_read_more(&base).await;
+        assert!(body.contains("\"call_id\":\"read-5\""));
+        assert!(body.contains("Wiki answer"));
+        assert!(body.contains("\"stop_reason\":\"finished\""));
+        assert!(!body.contains("step_limit"));
+        server.abort();
+        let _ = std::fs::remove_dir_all(temp_root);
+    }
+
+    #[tokio::test]
+    async fn ask_ends_with_step_limit_when_the_model_exceeds_six_tool_rounds() {
+        let (base, temp_root, server) =
+            wiki_fixture(read_rounds(7), "Known evidence from the wiki.").await;
+        let body = ask_read_more(&base).await;
+        assert!(body.contains("\"call_id\":\"read-5\""));
+        assert!(!body.contains("\"call_id\":\"read-6\""));
+        assert!(body.contains("event: error"));
+        assert!(body.contains("\"code\":\"step_limit\""));
+        server.abort();
+        let _ = std::fs::remove_dir_all(temp_root);
+    }
+
+    fn read_rounds(count: usize) -> Vec<Vec<LlmEvent>> {
+        (0..count)
             .map(|step| {
                 vec![
                     LlmEvent::ToolCall(ToolCall {
@@ -1513,9 +1539,11 @@ model = "fake"
                     LlmEvent::Finished,
                 ]
             })
-            .collect();
-        let (base, temp_root, server) = wiki_fixture(rounds, "Known evidence from the wiki.").await;
-        let response = reqwest::Client::new()
+            .collect()
+    }
+
+    async fn ask_read_more(base: &str) -> String {
+        reqwest::Client::new()
             .post(format!("{base}/knowledge/ask"))
             .bearer_auth("wiki-chat-test-token")
             .json(&serde_json::json!({
@@ -1523,12 +1551,10 @@ model = "fake"
             }))
             .send()
             .await
-            .unwrap();
-        let body = response.text().await.unwrap();
-        assert!(body.contains("event: error"));
-        assert!(body.contains("\"code\":\"step_limit\""));
-        server.abort();
-        let _ = std::fs::remove_dir_all(temp_root);
+            .unwrap()
+            .text()
+            .await
+            .unwrap()
     }
 
     #[tokio::test]

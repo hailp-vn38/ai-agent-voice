@@ -6,4 +6,4 @@ Wiki questions run as authenticated Admin requests through a dedicated SSE endpo
 
 The browser owns transient conversation history and cancels an active request when stopped or disconnected. A query graph can be used without a provider; an answer graph is a bounded view of the pages consulted for one answer, not a second knowledge store or a published Wiki Page. The provider is explicit, must support chat and tools, and is never chosen implicitly.
 
-The initial operational bounds are six tool rounds, 90 seconds per answer, 15 seconds per tool, 12,000 characters forwarded per tool result, 12 history messages / 16 KiB, 60 context nodes, and two concurrent answers. Live-provider acceptance remains separate from local source checks; unrun provider/vault scenarios must stay marked `NOT_RUN`.
+The initial operational bounds are six tool rounds, 90 seconds per answer, 15 seconds per tool, 12,000 characters forwarded per tool result, 12 history messages / 16 KiB, 60 graph nodes, and two concurrent answers. Live-provider acceptance remains separate from local source checks; unrun provider/vault scenarios must stay marked `NOT_RUN`.

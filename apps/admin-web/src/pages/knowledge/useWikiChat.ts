@@ -24,11 +24,28 @@ function newId(): string {
     : `${Date.now()}-${Math.random().toString(36).slice(2)}`
 }
 
+const MAX_HISTORY_MESSAGES = 12
+const MAX_HISTORY_BYTES = 16 * 1024
+
 function historyFor(messages: WikiChatMessage[]): WikiChatInputMessage[] {
   return messages
     .filter(message => message.status === 'done' && message.text.trim())
-    .slice(-10)
     .map(message => ({ role: message.role, content: message.text }))
+}
+
+// Mirrors the server limits, keeping the newest messages. The question itself
+// is always sent, so one that is too long still gets the server's invalid_input.
+function boundHistory(history: WikiChatInputMessage[]): WikiChatInputMessage[] {
+  const encoder = new TextEncoder()
+  let start = history.length - 1
+  let bytes = encoder.encode(history[start]?.content ?? '').length
+  while (start > 0 && history.length - start < MAX_HISTORY_MESSAGES) {
+    bytes += encoder.encode(history[start - 1]!.content).length
+    if (bytes > MAX_HISTORY_BYTES) break
+    start -= 1
+  }
+  while (start < history.length - 1 && history[start]!.role === 'assistant') start += 1
+  return history.slice(start)
 }
 
 export function useWikiChat() {
@@ -55,6 +72,7 @@ export function useWikiChat() {
     busy.value = true
     assistant.status = 'streaming'
     assistant.errorCode = null
+    let lastGraphRevision: number | null = null
     try {
       await askWiki(history, {
         onTool: tool => {
@@ -66,7 +84,10 @@ export function useWikiChat() {
         },
         onGraph: graph => {
           const current = findMessage(assistantId)
-          if (!current) return
+          // The server resends the last snapshot at the end of a turn; redrawing
+          // it would reset the Graph the user may already be exploring.
+          if (!current || graph.revision === lastGraphRevision) return
+          lastGraphRevision = graph.revision
           current.graph = graph
           if (graph.nodes.length > 0) {
             activeGraph.value = graph
@@ -131,7 +152,7 @@ export function useWikiChat() {
     }
     messages.value.push(user, assistant)
     history.push({ role: 'user', content })
-    await runRequest(history.slice(-12), assistant.id)
+    await runRequest(boundHistory(history), assistant.id)
   }
 
   function stop() {
@@ -153,7 +174,7 @@ export function useWikiChat() {
     assistant.tools = []
     assistant.citations = []
     assistant.errorCode = null
-    void runRequest(history.slice(-12), assistantId)
+    void runRequest(boundHistory(history), assistantId)
   }
 
   function showGraphOf(id: string) {

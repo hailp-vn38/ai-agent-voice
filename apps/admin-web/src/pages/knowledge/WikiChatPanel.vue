@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { nextTick, onUpdated, ref, watch } from 'vue'
+import { computed, nextTick, onUpdated, ref, watch } from 'vue'
 import { RotateCcw, Send, Square } from '@lucide/vue'
 import { renderMarkdown } from '@/lib/markdown'
 import { useI18n } from '@/composables/useI18n'
@@ -65,6 +65,15 @@ function renderedAnswer(message: WikiChatMessage): string {
   return template.innerHTML
 }
 
+// Stays empty while streaming, so screen readers hear each answer once, when complete.
+const completedAnnouncement = computed(() => {
+  const latest = props.messages[props.messages.length - 1]
+  if (latest?.role !== 'assistant' || latest.status !== 'done') return ''
+  const template = document.createElement('template')
+  template.innerHTML = renderedAnswer(latest)
+  return template.content.textContent?.trim() ?? ''
+})
+
 function syncCitationHighlight() {
   const highlighted = props.highlightedNode
   panelElement.value?.querySelectorAll<HTMLAnchorElement>('a.wiki-chat-citation').forEach(anchor => {
@@ -119,6 +128,7 @@ function errorText(code: string | null): string {
       </button>
     </header>
 
+    <div class="wiki-chat-announcement sr-only" role="status" aria-live="polite" aria-atomic="true">{{ completedAnnouncement }}</div>
     <div class="wiki-chat-messages" :aria-label="t('knowledgeV3.chatConversation')">
       <template v-if="messages.length === 0">
         <p class="wiki-chat-empty">{{ t('knowledgeV3.chatEmpty') }}</p>
@@ -131,7 +141,7 @@ function errorText(code: string | null): string {
         :class="['is-' + message.role, 'is-' + message.status]" :data-message-id="message.id">
         <div class="wiki-chat-message-label">{{ message.role === 'user' ? t('knowledgeV3.chatYou') : t('knowledgeV3.chatAssistant') }}</div>
         <div v-if="message.role === 'user'" class="wiki-chat-user-text">{{ message.text }}</div>
-        <div v-else class="wiki-chat-answer" :aria-live="message.status === 'done' ? 'polite' : 'off'"
+        <div v-else class="wiki-chat-answer"
           @click="onAnswerClick" @mouseover="onAnswerMouseOver" @mouseout="onAnswerMouseOut"
           v-html="renderedAnswer(message)"></div>
 

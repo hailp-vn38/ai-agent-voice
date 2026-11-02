@@ -168,10 +168,24 @@ it('draws an answer graph from its prop, avoids API reloads, and opens node deta
     await wrapper.setProps({ answerGraph: { ...answerGraph, revision: 2 } })
     await flushPromises()
     expect(drawMock).toHaveBeenCalledTimes(2)
-    await wrapper.setProps({ answerGraph: { ...answerGraph, revision: 2, nodes: [{ ...answerGraph.nodes[0]!, title: 'Changed without revision' }] } })
+    const earlierAnswer = { ...answerGraph, revision: 2, nodes: [{ ...answerGraph.nodes[0]!, title: 'Earlier answer' }] }
+    await wrapper.setProps({ answerGraph: earlierAnswer })
     await flushPromises()
-    expect(drawMock).toHaveBeenCalledTimes(2)
+    expect(drawMock).toHaveBeenCalledTimes(3)
+    expect(drawMock.mock.calls[2]?.[0].elements[0]?.data.title).toBe('Earlier answer')
+    await wrapper.setProps({ reloadToken: 1 })
+    await flushPromises()
+    expect(drawMock).toHaveBeenCalledTimes(3)
     expect(requestJsonMock).not.toHaveBeenCalled()
+  } finally { wrapper.unmount() }
+})
+
+it('leaves Global nodes without a tier so answer styling cannot change them', async () => {
+  const wrapper = mount(KnowledgeGraph, { props: { centerId: null, reloadToken: 0 } })
+  try {
+    await flushPromises()
+    const elements = drawMock.mock.calls.at(-1)?.[0].elements as Array<{ data: { tier?: string } }>
+    expect(elements[0]?.data.tier).toBeUndefined()
   } finally { wrapper.unmount() }
 })
 

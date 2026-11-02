@@ -138,16 +138,15 @@ pub(super) fn answer_graph(
             .then_with(|| left_path.cmp(right_path))
     });
 
-    // Evidence is never dropped to make room for context; the cap applies to
-    // context nodes and reports a partial graph when evidence fills the cap.
+    // Context is dropped before evidence. Evidence only goes once it alone
+    // exceeds the cap, lowest tier first because `seeds` is sorted by tier.
     let truncated = seeds.len().saturating_add(contexts.len()) > limits.max_nodes;
+    seeds.truncate(limits.max_nodes);
     let remaining = limits.max_nodes.saturating_sub(seeds.len());
     contexts.truncate(remaining);
     let mut ordered_paths: Vec<_> = seeds.iter().map(|(path, _)| path.clone()).collect();
     ordered_paths.extend(contexts.iter().map(|(path, _)| path.clone()));
-    let selected_context: HashSet<_> = contexts.into_iter().map(|(path, _)| path).collect();
-    let mut included = seed_ids.clone();
-    included.extend(selected_context);
+    let included: HashSet<_> = ordered_paths.iter().cloned().collect();
 
     let nodes: Vec<_> = ordered_paths
         .iter()
@@ -245,4 +244,47 @@ struct AggregatedGraphEdge {
     kind: String,
     lines: Vec<usize>,
     references: Vec<Value>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn node(rel_path: String) -> llm_wiki::GraphNode {
+        llm_wiki::GraphNode {
+            label: rel_path.clone(),
+            title: rel_path.clone(),
+            docid: "#000000".into(),
+            collection: llm_wiki::CollectionScope::Wiki,
+            category: Some("concept".into()),
+            tags: Vec::new(),
+            inbound_degree: 0,
+            outbound_degree: 0,
+            is_orphan: true,
+            rel_path,
+        }
+    }
+
+    #[test]
+    fn answer_graph_caps_evidence_keeping_the_highest_tiers() {
+        let paths: Vec<_> = (0..5).map(|index| format!("wiki/p{index}.md")).collect();
+        let mut evidence = Evidence::default();
+        for path in &paths[..4] {
+            evidence.record(path, EvidenceTier::Retrieved, None);
+        }
+        evidence.record(&paths[4], EvidenceTier::Cited, None);
+        let data = GraphData {
+            nodes: paths.iter().cloned().map(node).collect(),
+            edges: Vec::new(),
+            unresolved_targets: Vec::new(),
+        };
+
+        let graph = answer_graph(data, &evidence, AnswerGraphLimits { max_nodes: 3 });
+
+        let nodes = graph["nodes"].as_array().unwrap();
+        assert_eq!(nodes.len(), 3);
+        assert_eq!(nodes[0]["id"], "wiki/p4.md");
+        assert_eq!(nodes[0]["tier"], "cited");
+        assert_eq!(graph["truncated"], true);
+    }
 }

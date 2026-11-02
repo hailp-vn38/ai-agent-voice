@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, toRaw, watch } from 'vue'
 import cytoscape, { type Core } from 'cytoscape'
 import {
   Globe,
@@ -818,7 +818,7 @@ function draw() {
           shortLabel: compactNodeLabel(n.title, isLocal ? 26 : 22),
           selectedLabel: compactNodeLabel(n.title, 38),
           status: n.status,
-          tier: n.tier ?? 'context',
+          tier: n.tier,
           group,
           size,
           minor: isMinor,
@@ -1078,7 +1078,8 @@ async function loadGraph() {
 }
 
 function renderAnswerGraph(answerGraph: GraphSnapshot) {
-  if (scope.value === 'answer' && graph.value?.revision === answerGraph.revision) return
+  // Revisions restart for every answer, so only object identity tells snapshots apart.
+  if (scope.value === 'answer' && graph.value && toRaw(graph.value) === toRaw(answerGraph)) return
   requestVersion++
   scope.value = 'answer'
   graph.value = answerGraph
@@ -1110,9 +1111,9 @@ function onKeydown(event: KeyboardEvent) {
 }
 
 watch([scope, depth, () => props.centerId, () => props.reloadToken], () => { void loadGraph() })
-watch(() => props.answerGraph?.revision, revision => {
-  if (revision !== undefined && props.answerGraph) {
-    if (scope.value === 'answer') renderAnswerGraph(props.answerGraph)
+watch(() => props.answerGraph, answerGraph => {
+  if (answerGraph) {
+    if (scope.value === 'answer') renderAnswerGraph(answerGraph)
     else scope.value = 'answer'
   } else if (scope.value === 'answer') {
     scope.value = 'global'
