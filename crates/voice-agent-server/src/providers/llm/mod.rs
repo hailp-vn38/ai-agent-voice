@@ -656,7 +656,7 @@ pub trait AgentTaskProvider: Send + Sync {
         &self,
         request: &AgentTurnRequest,
         journal: &dyn OperationJournal,
-        progress: &(dyn Fn(&str) + Send + Sync),
+        progress: &(dyn for<'a> Fn(&'a str) + Send + Sync),
     ) -> Result<AgentTurnOutput, AgentTaskError>;
 }
 

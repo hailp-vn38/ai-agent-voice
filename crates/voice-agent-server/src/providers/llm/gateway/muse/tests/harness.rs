@@ -31,6 +31,9 @@ pub(in crate::providers::llm::gateway) struct FakeVmAccount {
     stream_requests: Mutex<Vec<Value>>,
     decided_approvals: Mutex<Vec<(String, String)>>,
     deleted_sessions: Mutex<Vec<String>>,
+    delete_failure_status: Mutex<Option<u32>>,
+    delete_attempts: Mutex<Vec<String>>,
+    delete_gate: Mutex<Option<Arc<tokio::sync::Semaphore>>>,
     active_history: Mutex<VecDeque<Vec<Value>>>,
     stream_delay: Mutex<Option<std::time::Duration>>,
     read_delay: Mutex<Option<std::time::Duration>>,
@@ -48,6 +51,9 @@ impl FakeVmAccount {
             stream_requests: Mutex::new(Vec::new()),
             decided_approvals: Mutex::new(Vec::new()),
             deleted_sessions: Mutex::new(Vec::new()),
+            delete_failure_status: Mutex::new(None),
+            delete_attempts: Mutex::new(Vec::new()),
+            delete_gate: Mutex::new(None),
             active_history: Mutex::new(VecDeque::new()),
             stream_delay: Mutex::new(None),
             read_delay: Mutex::new(None),
@@ -107,6 +113,18 @@ impl FakeVmAccount {
 
     pub fn decided_approvals(&self) -> Vec<(String, String)> {
         self.decided_approvals.lock().unwrap().clone()
+    }
+
+    pub fn delete_attempts(&self) -> Vec<String> {
+        self.delete_attempts.lock().unwrap().clone()
+    }
+
+    pub fn gate_delete(&self, gate: Arc<tokio::sync::Semaphore>) {
+        *self.delete_gate.lock().unwrap() = Some(gate);
+    }
+
+    pub fn set_delete_failure_status(&self, status: Option<u32>) {
+        *self.delete_failure_status.lock().unwrap() = status;
     }
 
     pub fn deleted_sessions(&self) -> Vec<String> {
@@ -263,6 +281,28 @@ impl MuseVmSender for FakeVmSender {
                     .push((app_id, decision));
                 send_json_response(&self.tx, stream_id, 200, &json!({ "ok": true }));
             } else if path == "/session/delete" {
+                let body_json: Value =
+                    serde_json::from_slice(&req.body).unwrap_or_else(|_| json!({}));
+                if let Some(sid) = body_json.get("session_id").and_then(Value::as_str) {
+                    self.account
+                        .delete_attempts
+                        .lock()
+                        .unwrap()
+                        .push(sid.to_string());
+                }
+                let gate = self.account.delete_gate.lock().unwrap().clone();
+                if let Some(gate) = gate {
+                    let _permit = gate.acquire().await.unwrap();
+                }
+                if let Some(status) = *self.account.delete_failure_status.lock().unwrap() {
+                    send_json_response(
+                        &self.tx,
+                        stream_id,
+                        status,
+                        &json!({"error": "delete unavailable"}),
+                    );
+                    return Ok(());
+                }
                 let body_json: Value =
                     serde_json::from_slice(&req.body).unwrap_or_else(|_| json!({}));
                 if let Some(sid) = body_json.get("session_id").and_then(Value::as_str) {

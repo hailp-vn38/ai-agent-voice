@@ -133,7 +133,7 @@ impl AgentTaskProvider for FakeAgentTaskProvider {
         &self,
         request: &AgentTurnRequest,
         _journal: &dyn OperationJournal,
-        _progress: &(dyn Fn(&str) + Send + Sync),
+        _progress: &(dyn for<'a> Fn(&'a str) + Send + Sync),
     ) -> Result<AgentTurnOutput, AgentTaskError> {
         self.calls.lock().unwrap().push(request.clone());
         if self.hold.load(std::sync::atomic::Ordering::SeqCst) {

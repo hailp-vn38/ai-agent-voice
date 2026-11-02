@@ -217,7 +217,7 @@ async fn init_orchestrator_and_task_manager(
     .with_image_backend(media_backend.clone())
     .with_video_backend(media_backend.clone())
     .with_tts_backend(media_backend.clone())
-    .with_asr_backend(media_backend);
+    .with_asr_backend(media_backend.clone());
 
     // Phase 1: Prepare `TaskManager` (`tasks.db` + `tasks.owner.lock` + `HostTool` builders)
     let runtime_cfg = TaskRuntimeConfig {
@@ -250,7 +250,12 @@ async fn init_orchestrator_and_task_manager(
     orch_cfg.runtime.tool_output_cap_bytes = (read_budget.max_window_chars * 3 / 2).max(24 * 1024);
     orch_cfg.runtime.max_concurrent_root_runs = cfg.max_concurrent_root_runs;
 
-    let mut builder = Orchestrator::builder(orch_cfg);
+    let muse_tool = Arc::new(muse_task::MuseTaskTool::new(
+        media_backend,
+        orch_cfg.runtime.artifact_max_bytes,
+        orch_cfg.runtime.tool_output_cap_bytes,
+    ));
+    let mut builder = Orchestrator::builder(orch_cfg).register_tool(muse_tool);
     for tool in toolkit.all_host_tools(&task_init) {
         builder = builder.register_tool(Arc::new(NormalizedWikiHostTool { inner: tool }));
     }

@@ -1,6 +1,6 @@
 # 04: Closer, restore và đăng ký runtime
 
-Status: ready-for-agent
+Status: claimed
 Type: task
 Blocked by: none
 

@@ -75,6 +75,25 @@ impl SubagentMuseCloser {
     pub(crate) async fn sweep(orchestrator: &Orchestrator) -> Result<(), OrchestratorError> {
         let summaries = orchestrator.list_tool_operations().await?;
         let mut groups: BTreeMap<&str, Vec<&ToolOperationSummary>> = BTreeMap::new();
+        // The library ACK API marks by remote ID globally, without an account/key
+        // filter. A remote ID shared by keys is inconsistent with session isolation;
+        // preserve it for operator reconciliation rather than deleting live work.
+        let mut remote_keys: BTreeMap<&str, HashSet<Option<&str>>> = BTreeMap::new();
+        for summary in &summaries {
+            let op = &summary.operation;
+            if op.remote_deleted_at.is_none()
+                && let Some(remote) = op.remote_session_id.as_deref()
+            {
+                remote_keys
+                    .entry(remote)
+                    .or_default()
+                    .insert(op.continuation_key.as_deref());
+            }
+        }
+        let conflicts: HashSet<&str> = remote_keys
+            .into_iter()
+            .filter_map(|(remote, keys)| (keys.len() > 1).then_some(remote))
+            .collect();
         for summary in &summaries {
             let op = &summary.operation;
             if op.remote_deleted_at.is_none()
@@ -87,7 +106,7 @@ impl SubagentMuseCloser {
             }
         }
         for (key, ops) in groups {
-            if let Err(error) = Self::close_key(orchestrator, key, &ops).await {
+            if let Err(error) = Self::close_key(orchestrator, key, &ops, &conflicts).await {
                 tracing::warn!(continuation_key = key, %error, "Muse task closure deferred");
             }
         }
@@ -98,6 +117,7 @@ impl SubagentMuseCloser {
         orchestrator: &Orchestrator,
         key: &str,
         ops: &[&ToolOperationSummary],
+        conflicts: &HashSet<&str>,
     ) -> Result<(), OrchestratorError> {
         let mut scope = None;
         for summary in ops {
@@ -137,9 +157,27 @@ impl SubagentMuseCloser {
         {
             return Ok(());
         }
-        orchestrator
-            .archive_session(&caller, &scope.session_id)
-            .await?;
+        // In 0.6.0 an already-archived child can return PERMISSION_DENIED from
+        // archive_session's admission rejection helper. Confirm public metadata
+        // instead of interpreting that error as either success or permanent failure.
+        if !orchestrator
+            .get_session(&caller, &scope.session_id)
+            .await?
+            .archived
+        {
+            if let Err(error) = orchestrator
+                .archive_session(&caller, &scope.session_id)
+                .await
+            {
+                if !orchestrator
+                    .get_session(&caller, &scope.session_id)
+                    .await?
+                    .archived
+                {
+                    return Err(error);
+                }
+            }
+        }
         // Archive blocks admission, but an already-admitted attempt can still run/resume.
         let latest = latest_run(orchestrator, &caller, &scope.session_id).await?;
         if latest.as_ref().is_some_and(|run| {
@@ -151,16 +189,37 @@ impl SubagentMuseCloser {
             return Ok(());
         }
         let mut released = HashSet::new();
+        let mut acknowledged: BTreeMap<&str, bool> = BTreeMap::new();
         for summary in ops {
             let op = &summary.operation;
-            let (Some(account), Some(remote)) = (&op.account_key, &op.remote_session_id) else {
+            let Some(remote) = op.remote_session_id.as_deref() else {
+                continue;
+            };
+            if conflicts.contains(remote) {
+                tracing::warn!(
+                    continuation_key = key,
+                    "Muse remote ID shared by continuation keys; cleanup deferred"
+                );
+                continue;
+            }
+            let Some(account) = op.account_key.as_deref() else {
+                acknowledged.insert(remote, false);
                 continue;
             };
             if !released.insert((account, remote)) {
                 continue;
             }
-            if let Some(remote) = pool::release_recorded_job_session(op).await {
-                orchestrator.mark_remote_session_deleted(&remote).await?;
+            let ack = pool::release_recorded_job_session(op).await.is_some();
+            acknowledged
+                .entry(remote)
+                .and_modify(|all| *all &= ack)
+                .or_insert(ack);
+        }
+        for (remote, all_acknowledged) in acknowledged {
+            // Distinct accounts may have recorded the same remote ID. Do not mark
+            // every durable row until every pair has acknowledged deletion.
+            if all_acknowledged {
+                orchestrator.mark_remote_session_deleted(remote).await?;
             }
         }
         Ok(())
