@@ -29,6 +29,11 @@ async fn build_settings_json(
     let orchestrator_llm_provider = valid_ref(&settings.orchestrator_llm_provider);
     let worker_llm_provider = valid_ref(&settings.worker_llm_provider);
     let llm_providers: Vec<Value> = catalog.iter().map(|p| p.to_json_summary()).collect();
+    let chat_providers: Vec<Value> = catalog
+        .iter()
+        .filter(|p| p.supports_tag("chat"))
+        .map(|p| p.to_json_summary())
+        .collect();
     let agents = project_agents_json(&state.config.orchestrator, settings, &catalog);
     let skills_list = skills::list(state).unwrap_or_default();
     let available_agents = state
@@ -41,8 +46,10 @@ async fn build_settings_json(
         "enabled": enabled,
         "orchestrator_llm_provider": orchestrator_llm_provider,
         "worker_llm_provider": worker_llm_provider,
+        "wiki_chat_llm_provider": settings.wiki_chat_llm_provider,
         "revision": revision,
         "llm_providers": llm_providers,
+        "wiki_chat_llm_providers": chat_providers,
         "available_agents": available_agents,
         "agents": agents,
         "skills": skills_list,
@@ -70,6 +77,8 @@ pub(in crate::app::admin) struct SettingsUpdateInput {
     pub orchestrator_llm_provider: Option<String>,
     #[serde(default)]
     pub worker_llm_provider: Option<String>,
+    #[serde(default)]
+    pub wiki_chat_llm_provider: Option<String>,
     #[serde(default)]
     pub agents: Option<BTreeMap<String, AgentConfigOverride>>,
 }
@@ -113,6 +122,14 @@ pub(in crate::app::admin) async fn save_settings(
         .filter(|s| !s.is_empty())
         .map(str::to_owned)
         .unwrap_or_else(|| current.worker_llm_provider.clone());
+    let next_wiki_chat_provider = input
+        .wiki_chat_llm_provider
+        .as_ref()
+        .map(|value| {
+            let value = value.trim();
+            (!value.is_empty()).then(|| value.to_owned())
+        })
+        .unwrap_or_else(|| current.wiki_chat_llm_provider.clone());
     let skill_ids = skills::catalog_ids(&state);
     let mut pruned_current_agents = current.agents.clone();
     for ovr in pruned_current_agents.values_mut() {
@@ -146,11 +163,48 @@ pub(in crate::app::admin) async fn save_settings(
         return error(&request, StatusCode::BAD_REQUEST, code);
     }
 
+    if let Some(provider_ref) = next_wiki_chat_provider.as_deref() {
+        if !catalog
+            .iter()
+            .any(|provider| provider.provider_ref == provider_ref && provider.supports_tag("chat"))
+        {
+            return error(&request, StatusCode::BAD_REQUEST, "invalid_provider");
+        }
+        let provider = if state.provider_runtime_manager.is_some() {
+            match state
+                .provider_diagnostics
+                .managed_llm_provider(provider_ref)
+                .await
+            {
+                Ok((provider, _lease)) => provider,
+                Err(_) => return error(&request, StatusCode::BAD_REQUEST, "invalid_provider"),
+            }
+        } else {
+            let key = provider_ref
+                .strip_prefix("config:llm:")
+                .unwrap_or(provider_ref);
+            match state.providers.llm(key) {
+                Ok(provider) => provider,
+                Err(_) => return error(&request, StatusCode::BAD_REQUEST, "invalid_provider"),
+            }
+        };
+        if !provider.supports_tag(crate::providers::LlmCapabilityTag::Chat)
+            || !provider.supports_tools()
+        {
+            return error(
+                &request,
+                StatusCode::BAD_REQUEST,
+                "provider_capability_mismatch",
+            );
+        }
+    }
+
     let mut next_settings = PersistedBackgroundSettings {
         enabled: Some(input.enabled),
         revision: expected_rev.saturating_add(1),
         orchestrator_llm_provider: next_orchestrator_provider,
         worker_llm_provider: next_worker_provider,
+        wiki_chat_llm_provider: next_wiki_chat_provider,
         agents: next_agents,
     };
 

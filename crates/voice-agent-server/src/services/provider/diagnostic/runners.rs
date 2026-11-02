@@ -9,6 +9,29 @@ use crate::{
 };
 
 impl ProviderDiagnosticService {
+    /// Resolve a chat provider through the managed admission path and keep its runtime lease
+    /// alive for the caller's streaming operation.
+    pub async fn managed_llm_provider(
+        &self,
+        key: &str,
+    ) -> Result<
+        (std::sync::Arc<dyn crate::providers::LlmProvider>, Self),
+        ProviderDiagnosticRequestError,
+    > {
+        let service = self.managed_request(key, "llm").await?;
+        let runtime_key = service
+            .managed_target
+            .as_ref()
+            .map(|snapshot| snapshot.key.as_str())
+            .unwrap_or(key);
+        let provider = service
+            .registry
+            .llm(runtime_key)
+            .map_err(|_| ProviderDiagnosticError::RuntimeNotLoaded)?
+            .provider();
+        Ok((provider, service))
+    }
+
     /// Executes a tool-free LLM diagnostic against the exact runtime loaded at process startup.
     /// This is the service boundary for desired-row lookup, type validation, runtime lookup,
     /// admission and timeout ownership; HTTP only supplies already-validated text and maps errors.
