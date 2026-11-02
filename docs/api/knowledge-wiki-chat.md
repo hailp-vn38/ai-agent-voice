@@ -51,7 +51,7 @@ Successful requests return `text/event-stream`, use `Cache-Control: no-store`, a
 | `done` | `{citations,stop_reason}` | Turn finished, stopped by a limit, or reached a terminal outcome. |
 | `error` | `{code}` | Bounded public error code only. |
 
-The server exposes only `wiki_query`, `wiki_get`, and `wiki_multi_get`; unknown or write tools receive `tool_not_allowed` and are not executed. Full tool metadata is used to record evidence before result text is bounded to 12,000 characters for the model. Answer Wikilinks become citations only when the normalized, resolved page is already in that evidence.
+The server exposes only `wiki_query`, `wiki_get`, and `wiki_multi_get`; unknown or write tools receive `tool_not_allowed` and are not executed. The `filter` argument of `wiki_query` is not offered to the model. A rejected call returns `invalid_arguments` or `not_found` with a message to the model so it can correct the call; these codes stay between the server and the model, and the client sees only a `tool` event with state `failed`. Full tool metadata is used to record evidence before result text is bounded to 12,000 characters for the model. Answer Wikilinks become citations only when the normalized, resolved page is already in that evidence.
 
 Initial limits are six tool rounds, 90 seconds per turn, 15 seconds per tool, 12,000 forwarded tool-result characters, 12 messages / 16 KiB, 60 graph context nodes, and two concurrent turns. These limits are defaults of the current implementation, not a provider latency guarantee.
 
