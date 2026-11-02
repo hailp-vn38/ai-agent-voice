@@ -658,7 +658,28 @@ fn record_evidence(
 ) -> bool {
     use super::answer_graph::EvidenceTier;
 
+    let tier = match tool_name {
+        "wiki_query" => EvidenceTier::Retrieved,
+        "wiki_get" | "wiki_multi_get" => EvidenceTier::Read,
+        _ => return false,
+    };
     let mut changed = false;
+    for (path, score) in evidence_records(tool_name, metadata) {
+        changed |= evidence.record(path, tier, score);
+    }
+    changed
+}
+
+fn evidence_paths(tool_name: &str, metadata: &Value) -> Vec<String> {
+    let mut paths = Vec::new();
+    for (path, _) in evidence_records(tool_name, metadata) {
+        push_evidence_path(&mut paths, Some(path));
+    }
+    paths
+}
+
+fn evidence_records<'a>(tool_name: &str, metadata: &'a Value) -> Vec<(&'a str, Option<f32>)> {
+    let mut records = Vec::new();
     match tool_name {
         "wiki_query" => {
             if let Some(results) = metadata.get("results").and_then(Value::as_array) {
@@ -667,15 +688,15 @@ fn record_evidence(
                         let score = result
                             .get("score")
                             .and_then(Value::as_f64)
-                            .map(|v| v as f32);
-                        changed |= evidence.record(path, EvidenceTier::Retrieved, score);
+                            .map(|value| value as f32);
+                        records.push((path, score));
                     }
                 }
             }
         }
         "wiki_get" => {
             if let Some(path) = metadata.get("rel_path").and_then(Value::as_str) {
-                changed |= evidence.record(path, EvidenceTier::Read, None);
+                records.push((path, None));
             }
         }
         "wiki_multi_get" => {
@@ -686,44 +707,14 @@ fn record_evidence(
                         .or_else(|| doc.get("rel_path"))
                         .and_then(Value::as_str)
                     {
-                        changed |= evidence.record(path, EvidenceTier::Read, None);
+                        records.push((path, None));
                     }
                 }
             }
         }
         _ => {}
     }
-    changed
-}
-
-fn evidence_paths(tool_name: &str, metadata: &Value) -> Vec<String> {
-    let mut paths = Vec::new();
-    match tool_name {
-        "wiki_query" => {
-            if let Some(results) = metadata.get("results").and_then(Value::as_array) {
-                for result in results {
-                    push_evidence_path(&mut paths, result.get("rel_path").and_then(Value::as_str));
-                }
-            }
-        }
-        "wiki_get" => {
-            push_evidence_path(&mut paths, metadata.get("rel_path").and_then(Value::as_str))
-        }
-        "wiki_multi_get" => {
-            if let Some(docs) = metadata.get("docs").and_then(Value::as_array) {
-                for doc in docs {
-                    push_evidence_path(
-                        &mut paths,
-                        doc.pointer("/info/rel_path")
-                            .or_else(|| doc.get("rel_path"))
-                            .and_then(Value::as_str),
-                    );
-                }
-            }
-        }
-        _ => {}
-    }
-    paths
+    records
 }
 
 fn push_evidence_path(paths: &mut Vec<String>, path: Option<&str>) {

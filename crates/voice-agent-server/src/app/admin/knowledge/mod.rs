@@ -1,8 +1,8 @@
 //! Admin HTTP handlers for Knowledge and Memory routes backed by `llm_wiki::WikiEngine`
 //! and `orchestrator_flow_rs::TaskManager`.
 
-mod ask;
 mod answer_graph;
+mod ask;
 mod graph;
 mod memory;
 mod pages;
