@@ -552,7 +552,10 @@ prompts_dir = "{}"
     let cloud_worker = agents.iter().find(|a| a["id"] == "cloud_worker").unwrap();
     assert_eq!(cloud_worker["enabled"], false);
     assert_eq!(cloud_worker["default_enabled"], false);
-    assert_eq!(cloud_worker["available_tools"], json!(["muse_task"]));
+    assert_eq!(
+        cloud_worker["available_tools"],
+        json!(["muse_task", "artifact_read"])
+    );
     assert_eq!(
         cloud_worker["tool_capability_tags"]["muse_task"],
         "agent_task"

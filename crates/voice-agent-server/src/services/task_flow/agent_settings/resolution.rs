@@ -161,6 +161,7 @@ fn resolve_effective_agents(
                 if !allowed_skills.is_empty() && !tools.iter().any(|t| t == "skill") {
                     tools.insert(0, "skill".to_owned());
                 }
+                ensure_muse_output_readable(&mut tools);
                 tools
             };
             let allowed_subagents: Vec<String> = if spec.mode == AgentMode::Primary {
@@ -318,6 +319,14 @@ fn resolve_effective_agents(
     }
 
     out
+}
+
+/// `muse_task` returns only a preview of long messages, so its full output must stay readable
+/// even when a saved tool list predates `artifact_read`.
+fn ensure_muse_output_readable(tools: &mut Vec<String>) {
+    if tools.iter().any(|t| t == "muse_task") && !tools.iter().any(|t| t == "artifact_read") {
+        tools.push("artifact_read".to_owned());
+    }
 }
 
 pub fn build_agent_definitions(
@@ -489,4 +498,21 @@ pub fn project_agents_json(
             })
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ensure_muse_output_readable;
+
+    #[test]
+    fn saved_muse_tool_list_gains_artifact_read_once() {
+        let mut tools = vec!["muse_task".to_owned()];
+        ensure_muse_output_readable(&mut tools);
+        ensure_muse_output_readable(&mut tools);
+        assert_eq!(tools, ["muse_task", "artifact_read"]);
+
+        let mut tools = vec!["fetch_html".to_owned()];
+        ensure_muse_output_readable(&mut tools);
+        assert_eq!(tools, ["fetch_html"]);
+    }
 }

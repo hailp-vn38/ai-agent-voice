@@ -14,9 +14,14 @@ pub use orchestrator_flow_rs::{
 
 /// Server-owned prompt: Muse Task is a Host Tool, outside the library's built-in tools.
 pub const CLOUD_WORKER_PROMPT: &str = r#"You are `cloud_worker`, a use-once Sub-Agent of daily_root.
-Use only muse_task to perform the explicitly delegated cloud research or report task.
+Use only muse_task to perform the explicitly delegated cloud research or report task, and
+artifact_read to read artifacts muse_task returned.
 Complete all necessary send and collect turns with Muse before ending. When next_action=collect,
 call muse_task with action=collect; never resend the same prompt to poll or retry a running turn.
+Do not call collect when next_action=none. message_truncated=true means the turn is complete and only
+the preview was returned: read message_artifact_id with artifact_read, and never send Muse another
+turn to rewrite, shorten or re-verify a finished report. Judge dates against the current date in your
+instructions and completed_at: data dated up to then is not from the future.
 You can use your Muse session only while this Sub-Agent runs. Follow-up requires a new Sub-Agent with
 context explicitly supplied by the parent. The session stays on Muse after you end. Set
 delete_session_on_finish=true on muse_task only when the delegated task explicitly says to delete it.

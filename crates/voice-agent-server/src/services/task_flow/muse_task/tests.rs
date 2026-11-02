@@ -32,6 +32,8 @@ pub(crate) struct ScriptedModel {
     base_url: String,
     calls: Mutex<VecDeque<(String, String, Value)>>,
     requests: Mutex<Vec<Value>>,
+    /// Keep calling queued tools after a tool result instead of ending the turn.
+    chain_calls: std::sync::atomic::AtomicBool,
 }
 
 impl ScriptedModel {
@@ -79,7 +81,8 @@ async fn respond(
         .and_then(|input| input.last())
         .is_some_and(|item| item["type"] == "function_call_output");
     model.requests.lock().unwrap().push(request);
-    let call = if tool_result_is_back {
+    let chained = model.chain_calls.load(std::sync::atomic::Ordering::SeqCst);
+    let call = if tool_result_is_back && !chained {
         None
     } else {
         model.calls.lock().unwrap().pop_front()
@@ -381,6 +384,137 @@ async fn muse_task_large_message_is_an_artifact_with_a_bounded_preview() {
     assert_eq!(result["files"][0]["origin"], "message");
     assert_eq!(result["files"][0]["size_bytes"], 90_000);
     assert!(result["artifact_ids"][0].as_str().is_some());
+}
+
+/// Answers every turn with the same message, as Muse does when collecting a finished turn.
+struct SameTurnProvider(String);
+#[async_trait]
+impl AgentTaskProvider for SameTurnProvider {
+    async fn run_turn(
+        &self,
+        _request: &AgentTurnRequest,
+        _journal: &dyn OperationJournal,
+        _progress: &(dyn for<'a> Fn(&'a str) + Send + Sync),
+    ) -> Result<AgentTurnOutput, AgentTaskError> {
+        Ok(AgentTurnOutput {
+            turn: 1,
+            message: self.0.clone(),
+            files: vec![],
+            files_missing: false,
+        })
+    }
+}
+
+/// Runs `muse_task` twice in one subagent and returns both tool results.
+async fn run_send_then_collect(send: Value, collect: Value) -> (Value, Value) {
+    let root = temp_root("muse-collect");
+    let model = ScriptedModel::serve().await;
+    model
+        .chain_calls
+        .store(true, std::sync::atomic::Ordering::SeqCst);
+    let prompt = root.join("test.md");
+    std::fs::write(&prompt, "Test assistant").unwrap();
+    let primary = AgentDefinition::new("root", "test", "test-model")
+        .with_mode(AgentMode::Primary)
+        .with_prompt_path(&prompt)
+        .with_allowed_tools(["subagent"])
+        .with_allowed_subagents(["cloud"]);
+    let sub = AgentDefinition::new("cloud", "test", "test-model")
+        .with_mode(AgentMode::Subagent)
+        .with_description("Cloud worker")
+        .with_prompt_path(&prompt)
+        .with_allowed_tools(["muse_task"]);
+    let config = OrchestratorConfig::new(
+        LlmConfig {
+            providers: vec![scripted_provider("test", &model)],
+        },
+        vec![primary, sub],
+        root.join("orch"),
+    );
+    let orch = Orchestrator::builder(config)
+        .register_tool(Arc::new(MuseTaskTool::for_provider(
+            Arc::new(SameTurnProvider("長".repeat(30_000))),
+            128 * 1024 * 1024,
+            24 * 1024,
+        )))
+        .build()
+        .await
+        .unwrap();
+    model.queue(
+        "subagent",
+        json!({"agent":"cloud","description":"Research","prompt":"Research"}),
+    );
+    let send_call = model.queue("muse_task", send);
+    let collect_call = model.queue("muse_task", collect);
+    let caller = CallerContext::new("owner", "workspace");
+    let session = orch.create_session(&caller, "root").await.unwrap();
+    orch.submit(&caller, &session, "Research".into())
+        .await
+        .unwrap();
+    let (sent, collected) = tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            if let (Some(sent), Some(collected)) = (
+                model.tool_result(&send_call),
+                model.tool_result(&collect_call),
+            ) {
+                break (sent, collected);
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .unwrap();
+    orch.shutdown().await.unwrap();
+    let _ = std::fs::remove_dir_all(root);
+    (
+        serde_json::from_str(&sent).expect(&sent),
+        serde_json::from_str(&collected).expect(&collected),
+    )
+}
+
+#[tokio::test]
+async fn muse_task_truncated_message_tells_the_model_how_to_read_it() {
+    let (sent, _) =
+        run_send_then_collect(json!({"prompt":"Research"}), json!({"action":"collect"})).await;
+    assert_eq!(sent["message_truncated"], true);
+    assert_eq!(sent["message_artifact_id"], sent["artifact_ids"][0]);
+    let preview = sent["message"].as_str().unwrap();
+    assert!(preview.contains("artifact_read"), "{preview}");
+    assert!(
+        chrono::DateTime::parse_from_rfc3339(sent["completed_at"].as_str().unwrap()).is_ok(),
+        "{sent}"
+    );
+}
+
+#[tokio::test]
+async fn muse_task_collect_of_a_delivered_turn_reuses_its_artifacts() {
+    let (sent, collected) =
+        run_send_then_collect(json!({"prompt":"Research"}), json!({"action":"collect"})).await;
+    assert_eq!(sent["artifact_ids"], collected["artifact_ids"]);
+    assert_eq!(sent["completed_at"], collected["completed_at"]);
+}
+
+#[tokio::test]
+async fn muse_task_collect_with_another_output_publishes_that_output() {
+    let (sent, collected) = run_send_then_collect(
+        json!({"prompt":"Research"}),
+        json!({"action":"collect","output":"markdown"}),
+    )
+    .await;
+    assert_ne!(sent["artifact_ids"], collected["artifact_ids"]);
+    assert_eq!(collected["files"][0]["filename"], "report.md");
+}
+
+#[tokio::test]
+async fn muse_task_large_markdown_keeps_one_message_artifact() {
+    let (sent, _) = run_send_then_collect(
+        json!({"prompt":"Research","output":"markdown"}),
+        json!({"action":"collect","output":"markdown"}),
+    )
+    .await;
+    assert_eq!(sent["artifact_ids"].as_array().unwrap().len(), 1, "{sent}");
+    assert_eq!(sent["files"][0]["filename"], "report.md");
+    assert_eq!(sent["message_artifact_id"], sent["artifact_ids"][0]);
 }
 
 #[tokio::test]

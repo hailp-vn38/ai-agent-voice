@@ -2,6 +2,69 @@ use super::{args::error, tool::MuseTaskTool};
 use crate::providers::llm::{AgentOutputKind, AgentTurnOutput};
 use orchestrator_agent_rs::{ArtifactInput, ToolContext, ToolError, ToolOutcome};
 use serde_json::{Value, json};
+use std::{collections::VecDeque, sync::Mutex};
+
+const DELIVERED_TURNS_KEPT: usize = 32;
+
+/// The latest published turn of recent sessions, so collecting a turn that was already delivered
+/// does not publish its artifacts again. In-memory: after a restart a collect publishes once more.
+#[derive(Default)]
+pub(super) struct DeliveredTurns(Mutex<VecDeque<DeliveredTurn>>);
+
+struct DeliveredTurn {
+    session_id: String,
+    turn: u32,
+    kind: AgentOutputKind,
+    filename: Option<String>,
+    content: String,
+    metadata: Value,
+}
+
+impl DeliveredTurns {
+    pub(super) fn find(
+        &self,
+        ctx: &ToolContext,
+        turn: u32,
+        kind: AgentOutputKind,
+        filename: &Option<String>,
+    ) -> Option<ToolOutcome> {
+        let turns = self.0.lock().unwrap_or_else(|p| p.into_inner());
+        let found = turns.iter().find(|d| {
+            d.session_id == ctx.scope().session_id
+                && d.turn == turn
+                && d.kind == kind
+                && d.filename == *filename
+        })?;
+        Some(ToolOutcome {
+            call_id: ctx.scope().tool_call_id.clone(),
+            content: found.content.clone(),
+            metadata: found.metadata.clone(),
+        })
+    }
+
+    pub(super) fn remember(
+        &self,
+        ctx: &ToolContext,
+        turn: u32,
+        kind: AgentOutputKind,
+        filename: Option<String>,
+        outcome: &ToolOutcome,
+    ) {
+        let mut turns = self.0.lock().unwrap_or_else(|p| p.into_inner());
+        turns.retain(|d| d.session_id != ctx.scope().session_id);
+        if turns.len() >= DELIVERED_TURNS_KEPT {
+            turns.pop_front();
+        }
+        turns.push_back(DeliveredTurn {
+            session_id: ctx.scope().session_id.clone(),
+            turn,
+            kind,
+            filename,
+            content: outcome.content.clone(),
+            metadata: outcome.metadata.clone(),
+        });
+    }
+}
 
 pub(super) async fn publish(
     tool: &MuseTaskTool,
@@ -42,29 +105,40 @@ pub(super) async fn publish(
         );
     }
     let mut message = output.message;
+    let mut message_artifact_id = None;
     if serde_json::to_string(&message).map_or(usize::MAX, |json| json.len()) > tool.output_cap / 2 {
-        files.push(
-            put(
-                tool,
-                ctx,
-                "muse-message.txt",
-                "text/plain",
-                message.as_bytes().to_vec(),
-                "message",
-            )
-            .await?,
-        );
+        if !files.iter().any(|f| f["origin"] == "message") {
+            files.push(
+                put(
+                    tool,
+                    ctx,
+                    "muse-message.txt",
+                    "text/plain",
+                    message.as_bytes().to_vec(),
+                    "message",
+                )
+                .await?,
+            );
+        }
+        let stored = files
+            .iter()
+            .find(|f| f["origin"] == "message")
+            .map(|f| f["artifact_id"].clone());
         // Reserve space for JSON escaping, file metadata and the artifact ID.
         let mut end = (tool.output_cap / 12).min(message.len());
         while !message.is_char_boundary(end) {
             end -= 1;
         }
         message.truncate(end);
-        message.push_str("\n[Full message stored in artifact]");
+        message.push_str(&format!(
+            "\n[Preview only. Muse finished the complete message: read it with artifact_read(artifact_id={}). Do not ask Muse to rewrite or shorten it.]",
+            stored.as_ref().and_then(Value::as_str).unwrap_or_default()
+        ));
+        message_artifact_id = stored;
     }
     let ids: Vec<Value> = files.iter().map(|f| f["artifact_id"].clone()).collect();
     let missing = kind == AgentOutputKind::Files && (output.files_missing || files.is_empty());
-    let result = json!({"untrusted_data":true,"status":if missing {"partial"}else {"completed"},"turn":output.turn,"message":message,"artifact_ids":ids,"files":files,"next_action":"none","files_missing":missing,"warning":if missing {Some("No supported Muse attachment was available; text is not a delivered file")}else {None}});
+    let result = json!({"untrusted_data":true,"status":if missing {"partial"}else {"completed"},"turn":output.turn,"completed_at":chrono::Local::now().to_rfc3339(),"message":message,"message_truncated":message_artifact_id.is_some(),"message_artifact_id":message_artifact_id,"artifact_ids":ids,"files":files,"next_action":"none","files_missing":missing,"warning":if missing {Some("No supported Muse attachment was available; text is not a delivered file")}else {None}});
     Ok(ToolOutcome {
         call_id: ctx.scope().tool_call_id.clone(),
         content: result.to_string(),

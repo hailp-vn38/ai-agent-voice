@@ -103,6 +103,15 @@ impl GatewayOrchestratorExecutor {
     }
 }
 
+/// Models do not know today's date and may reject recent data as being from the future. Only the
+/// date is added, so the system prompt stays byte-stable within a day for provider prompt caching.
+fn system_with_current_date(system: &str, now: &chrono::DateTime<chrono::FixedOffset>) -> String {
+    format!(
+        "{system}\n\nCurrent date: {}",
+        now.format("%Y-%m-%d (UTC%:z)")
+    )
+}
+
 #[async_trait::async_trait]
 impl CustomModelExecutor for GatewayOrchestratorExecutor {
     fn routing_fingerprint(&self) -> String {
@@ -154,7 +163,10 @@ impl CustomModelExecutor for GatewayOrchestratorExecutor {
         let mut messages = Vec::with_capacity(request.messages.len() + 1);
         if !request.system.trim().is_empty() {
             messages.push(ChatMessage::System {
-                content: request.system.clone(),
+                content: system_with_current_date(
+                    &request.system,
+                    &chrono::Local::now().fixed_offset(),
+                ),
             });
         }
         for m in &request.messages {
@@ -368,6 +380,15 @@ pub(crate) fn map_stream_llm_error_to_gateway(err: LlmError) -> GatewayError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn system_prompt_states_the_current_date() {
+        let now = chrono::DateTime::parse_from_rfc3339("2026-11-02T16:03:54+07:00").unwrap();
+        assert_eq!(
+            system_with_current_date("Be helpful.", &now),
+            "Be helpful.\n\nCurrent date: 2026-11-02 (UTC+07:00)"
+        );
+    }
 
     #[test]
     fn executor_maps_wire_errors() {
