@@ -883,6 +883,14 @@ function splitPane(pane: WorkspacePane) {
 }
 const panesEl = ref<HTMLElement | null>(null)
 
+// A mouse wheel only reports vertical movement, so turn it into horizontal scrolling over the tabs.
+function scrollTabList(event: WheelEvent) {
+  const list = event.currentTarget as HTMLElement
+  if (list.scrollWidth <= list.clientWidth || Math.abs(event.deltaX) >= Math.abs(event.deltaY)) return
+  event.preventDefault()
+  list.scrollLeft += event.deltaY
+}
+
 // Keep the active tab visible when it is opened or selected while the list is scrolled away from it.
 watch(() => panes.value.map(pane => [pane.activeTabId, paneShowsGraph(pane)]).join() + viewMode.value, () => {
   panesEl.value?.querySelectorAll<HTMLElement>('.a-tab-list').forEach(list => {
@@ -1861,7 +1869,7 @@ onMounted(() => {
                   <PanelLeftClose v-else :size="16" />
                 </button>
               </div>
-              <div class="a-tab-list">
+              <div class="a-tab-list" @wheel="scrollTabList">
                 <button v-if="pane.id === graphPaneId" class="other-tab a-graph-tab" :class="{ active: paneShowsGraph(pane) }"
                   type="button" :aria-pressed="paneShowsGraph(pane)" @click="showGraph"><Network :size="15" class="inline-block mr-1" /> Graph</button>
                 <button v-for="tab in pane.tabs.filter(item => item.doc || item.ref || item.pending)" :key="tab.id" class="a-tab" type="button"

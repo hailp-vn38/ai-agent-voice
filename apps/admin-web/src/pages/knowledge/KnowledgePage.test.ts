@@ -175,6 +175,23 @@ it('defaults to Knowledge and switches its single displayed tree using the sourc
   } finally { wrapper.unmount() }
 })
 
+it('scrolls an overflowing tab list sideways with the mouse wheel', async () => {
+  const wrapper = mount(KnowledgePage)
+  try {
+    await flushPromises()
+    const list = wrapper.get('.a-tab-list')
+    const element = list.element as HTMLElement
+
+    await list.trigger('wheel', { deltaY: 120 })
+    expect(element.scrollLeft).toBe(0)
+
+    Object.defineProperty(element, 'scrollWidth', { configurable: true, value: 900 })
+    Object.defineProperty(element, 'clientWidth', { configurable: true, value: 300 })
+    await list.trigger('wheel', { deltaY: 120 })
+    expect(element.scrollLeft).toBe(120)
+  } finally { wrapper.unmount() }
+})
+
 it('supports rendered Wiki links and the existing Graph tab without editor forms', async () => {
   const wrapper = mount(KnowledgePage)
   try {

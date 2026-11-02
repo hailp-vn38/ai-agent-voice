@@ -174,9 +174,15 @@
 .knowledge-a .a-pane-resizer { flex: none; width: 5px; cursor: col-resize; touch-action: none; background: linear-gradient(var(--border), var(--border)) center / 1px 100% no-repeat; }
 .knowledge-a .a-pane-resizer:hover { background-size: 3px 100%; background-image: linear-gradient(var(--studio-violet), var(--studio-violet)); }
 .knowledge-a .a-tabs { height: 44px; display: flex; align-items: flex-end; border-bottom: 1px solid var(--border); background: var(--surface); gap: 0; padding-left: 4px; flex: none; min-width: 0; }
-.knowledge-a .a-tab-list { flex: 1; min-width: 0; height: 100%; display: flex; align-items: flex-end; gap: 1px; overflow-x: auto; scrollbar-width: none; }
-.knowledge-a .a-tab-list::-webkit-scrollbar { display: none; }
-.knowledge-a .a-tab { background: transparent; display: flex; gap: 8px; align-items: center; height: 39px; padding: 0 10px 0 14px; border: 1px solid transparent; border-bottom: 0; border-radius: 8px 8px 0 0; color: var(--muted-foreground); flex: 0 1 200px; min-width: 96px; max-width: 350px; font-size: 12px; font-weight: 570; }
+.knowledge-a .a-tab-list { flex: 1; min-width: 0; height: 100%; display: flex; align-items: flex-end; gap: 1px; overflow-x: auto; overflow-y: hidden; scrollbar-width: none; }
+/* The scrollbar hangs below the tab strip so the active tab still meets the border under it. */
+@supports selector(::-webkit-scrollbar) {
+  .knowledge-a .a-tab-list { position: relative; z-index: 1; height: calc(100% + 4px); margin-bottom: -4px; overflow-x: scroll; scrollbar-width: auto; }
+  .knowledge-a .a-tab-list::-webkit-scrollbar { height: 4px; }
+  .knowledge-a .a-tab-list::-webkit-scrollbar-thumb { background: transparent; border-radius: 2px; }
+  .knowledge-a .a-tab-list:hover::-webkit-scrollbar-thumb { background: var(--border); }
+}
+.knowledge-a .a-tab { background: transparent; display: flex; gap: 8px; align-items: center; height: 39px; padding: 0 10px 0 14px; border: 1px solid transparent; border-bottom: 0; border-radius: 8px 8px 0 0; color: var(--muted-foreground); flex: 0 0 200px; max-width: 350px; font-size: 12px; font-weight: 570; }
 .knowledge-a .a-tab:hover { background: color-mix(in srgb, var(--card) 60%, transparent); }
 .knowledge-a .a-tab.active { background: var(--card); border-color: var(--border); color: var(--card-foreground); }
 .knowledge-a .a-tab-close { margin-left: auto; flex: none; width: 18px; height: 18px; display: grid; place-items: center; border-radius: 4px; opacity: .45; font-size: 13px; line-height: 1; }
