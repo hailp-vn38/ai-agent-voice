@@ -482,21 +482,7 @@ pub(in crate::app::admin) async fn knowledge_ask(
             );
         }
         match status {
-            AskTurnStatus::Completed => {
-                if let Some(graph) = graph {
-                    let _ = ask_events.send(AskEvent::Graph(graph)).await;
-                }
-                let _ = ask_events
-                    .send(AskEvent::Done {
-                        citations,
-                        stop_reason,
-                        saved,
-                        content_truncated,
-                        graph_saved,
-                    })
-                    .await;
-            }
-            AskTurnStatus::Stopped => {
+            AskTurnStatus::Completed | AskTurnStatus::Stopped => {
                 if let Some(graph) = graph {
                     let _ = ask_events.send(AskEvent::Graph(graph)).await;
                 }

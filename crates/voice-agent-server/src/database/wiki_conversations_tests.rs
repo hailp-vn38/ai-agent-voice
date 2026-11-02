@@ -72,27 +72,16 @@ async fn creating_the_201st_conversation_evicts_the_oldest_idle_conversation() {
     }
 
     let overflow = start_turn(&database, 200, None).await;
-    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM wiki_conversations")
-        .fetch_one(database.pool())
+    let conversations = wiki_conversations::list_conversations(&database)
         .await
-        .unwrap();
-    let oldest_exists: bool = sqlx::query_scalar(
-        "SELECT EXISTS(SELECT 1 FROM wiki_conversations WHERE id = 'conversation-0')",
-    )
-    .fetch_one(database.pool())
-    .await
-    .unwrap();
-    let next_oldest_exists: bool = sqlx::query_scalar(
-        "SELECT EXISTS(SELECT 1 FROM wiki_conversations WHERE id = 'conversation-1')",
-    )
-    .fetch_one(database.pool())
-    .await
-    .unwrap();
-
-    assert_eq!(count, 200);
-    assert!(oldest_exists, "a running conversation must not be evicted");
+        .expect("list conversations");
+    assert_eq!(conversations.len(), 200);
     assert!(
-        !next_oldest_exists,
+        conversations.iter().any(|item| item.id == "conversation-0"),
+        "a running conversation must not be evicted"
+    );
+    assert!(
+        !conversations.iter().any(|item| item.id == "conversation-1"),
         "the oldest idle conversation is evicted"
     );
     assert_eq!(overflow.conversation_id, "conversation-200");
@@ -127,14 +116,14 @@ async fn a_conversation_stops_at_one_hundred_messages_without_writing_a_new_turn
         Err(wiki_conversations::StartTurnError::Full)
     ));
 
-    let message_count: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM wiki_conversation_messages WHERE conversation_id = ?",
+    let saved = wiki_conversations::get_conversation(
+        &database,
+        conversation_id.as_deref().unwrap(),
     )
-    .bind(conversation_id.as_deref().unwrap())
-    .fetch_one(database.pool())
     .await
-    .unwrap();
-    assert_eq!(message_count, 100);
+    .unwrap()
+    .expect("conversation remains available");
+    assert_eq!(saved.messages.len(), 100);
 
     drop(database);
     remove_database(&path);
