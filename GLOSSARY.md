@@ -91,7 +91,7 @@ Cấu hình quản trị có phiên bản quyết định việc bật/tắt th�
 _Avoid_: Agent Template, Voice Profile, Plugin Value Settings
 
 **Agent Configuration**:
-Định nghĩa chuyên môn do server sở hữu cho từng Root Orchestrator (`daily_root`, `wiki_root`) và các Sub-Agent chuyên biệt (`source_collector`, `wiki_researcher`, `report_stager`, `media_creator`, `media_processor`, `reminder_planner`, `wiki_ingestor`, `wiki_curator`), bao gồm chỉ dẫn hệ thống, giới hạn bước và tập công cụ/kỹ năng hợp lệ.
+Định nghĩa chuyên môn do server sở hữu cho từng Root Orchestrator (`daily_root`, `wiki_root`) và các Sub-Agent chuyên biệt (`source_collector`, `wiki_researcher`, `report_stager`, `media_creator`, `media_processor`, `reminder_planner`, `wiki_ingestor`, `wiki_curator`, `cloud_worker`), bao gồm chỉ dẫn hệ thống, giới hạn bước và tập công cụ/kỹ năng hợp lệ.
 _Avoid_: Agent Run, Voice Agent, requester-provided executable code
 
 **Root Orchestrator**:
@@ -105,6 +105,10 @@ _Avoid_: registered Voice Agent, Plugin Installation, Root Orchestrator
 **Built-in Sub-Agent**:
 Sub-Agent chuyên biệt chuẩn do hệ thống cung cấp sẵn kèm phạm vi công cụ, kỹ năng và chỉ dẫn mặc định; Admin có thể bật/tắt, tùy chỉnh cấu hình hoặc khôi phục về mặc định nhưng không thể xóa bỏ.
 _Avoid_: Custom Sub-Agent, Root Orchestrator, hardcoded worker
+
+**Cloud Worker**:
+Built-in Sub-Agent chuyên nhận công việc dài trên dịch vụ tác nhân cloud, giữ ngữ cảnh riêng trong nhiệm vụ và bàn giao message cùng Job Artifact cho cha trước khi kết thúc. Nhiệm vụ hỏi thêm sau khi kết thúc thuộc một Sub-Agent mới với ngữ cảnh được cha cung cấp.
+_Avoid_: Root Orchestrator, shared Muse chat, permanent assistant
 
 **Custom Sub-Agent**:
 Sub-Agent chuyên biệt do Admin tự định nghĩa thêm cho một Flow, được cấp tập công cụ và kỹ năng con trong phạm vi của Flow đó và có thể bật/tắt, chỉnh sửa hoặc xóa bỏ hoàn toàn khỏi hệ thống.
@@ -339,11 +343,11 @@ Phiên đăng nhập tạm thời được khởi tạo khi Admin bắt đầu l
 _Avoid_: Admin Session, Voice Session, Gateway Account
 
 **Job Session**:
-Phiên làm việc từ xa trên nhà cung cấp tác nhân được gắn với một Background Task xuyên suốt nhiều lần gọi công cụ để duy trì ngữ cảnh sửa lỗi, chia lô và thu hồi kết quả cho đến khi công việc kết thúc.
+Phiên làm việc từ xa trên nhà cung cấp tác nhân, giữ ngữ cảnh qua nhiều lượt công cụ trên cùng Gateway Account. Phạm vi sở hữu có thể là Background Task đối với video hoặc Agent Session của Sub-Agent đối với công việc cloud; kết thúc phạm vi đó cũng kết thúc phiên.
 _Avoid_: Agent Session, Voice Session, single-call operation session
 
 **Continuation Key**:
-Định danh ổn định theo phạm vi Background Task dùng để gắn kết các lần gọi công cụ kế tiếp vào cùng một Job Session và Gateway Account đã ghim.
+Định danh ổn định của phạm vi sở hữu công việc từ xa, gắn các lần gọi công cụ kế tiếp với cùng Job Session và Gateway Account đã ghim; mỗi loại công việc và mỗi phiên Sub-Agent có phạm vi riêng.
 _Avoid_: remote session ID, tool invocation ID, turn ID
 
 ## Database Backup & Transactional Restore
