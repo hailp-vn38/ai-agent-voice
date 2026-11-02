@@ -19,6 +19,16 @@ pub(crate) struct VmOperationLease {
 }
 
 impl VmOperationLease {
+    pub async fn reconnect(
+        &mut self,
+    ) -> Result<
+        tokio::sync::broadcast::Receiver<super::super::client::VmStreamEvent>,
+        (UpstreamFailureKind, String),
+    > {
+        self.client = self.pool.ensure_account_client(self.account_index).await?;
+        Ok(self.client.subscribe_events())
+    }
+
     pub fn client(&self) -> &Arc<MuseVmClient> {
         &self.client
     }

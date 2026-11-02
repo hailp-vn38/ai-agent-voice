@@ -256,6 +256,7 @@ impl SessionActor {
             crate::tools::builtin::is_task_suite_tool_name(&call.name)
                 || crate::tools::builtin::is_reminder_tool_name(&call.name)
                 || crate::tools::builtin::is_memory_tool_name(&call.name)
+                || crate::tools::builtin::is_wiki_tool_name(&call.name)
         });
         if !requires_job_receipt && let Some(goodbye) = batch.direct_response.take() {
             self.begin_direct_tool_speech(goodbye);

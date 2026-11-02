@@ -221,6 +221,7 @@ pub(super) async fn handle_socket(
         .with_system_mcp(runtimes.system_mcp)
         .with_reminder_tools(runtimes.reminder_tools)
         .with_session_memory(runtimes.session_memory)
+        .with_session_wiki(runtimes.session_wiki)
         .with_transcript(runtimes.transcript)
         .with_speaker_observe(
             runtimes.speaker_observe.clone(),

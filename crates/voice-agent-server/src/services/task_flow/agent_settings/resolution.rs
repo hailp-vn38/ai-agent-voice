@@ -6,6 +6,7 @@ use orchestrator_agent_rs::{AgentDefinition, AgentMode, LlmProviderConfig, Reaso
 use serde_json::{Value, json};
 
 use crate::config::OrchestratorSectionConfig;
+use crate::services::task_flow::workspace_seed::daily_root_prompt_with_routing_guidance;
 
 use super::media_backend::resolve_media_tool_provider;
 use super::persistence::PersistedBackgroundSettings;
@@ -74,7 +75,7 @@ fn resolve_effective_agents(
             let enabled = if spec.mode == AgentMode::Primary {
                 true
             } else {
-                ovr.is_none_or(|o| o.enabled)
+                ovr.map_or(spec.default_enabled, |o| o.enabled)
             };
             let explicit_ref = ovr
                 .and_then(|o| o.provider_ref.as_deref())
@@ -167,10 +168,13 @@ fn resolve_effective_agents(
                     .default_subagents
                     .iter()
                     .filter(|sub_id| {
-                        settings
-                            .agents
-                            .get(**sub_id)
-                            .is_none_or(|sub_ovr| sub_ovr.enabled)
+                        settings.agents.get(**sub_id).map_or_else(
+                            || {
+                                super::specs::find_agent_spec(sub_id)
+                                    .is_some_and(|s| s.default_enabled)
+                            },
+                            |sub_ovr| sub_ovr.enabled,
+                        )
                     })
                     .map(|s| (*s).to_owned())
                     .collect();
@@ -192,12 +196,22 @@ fn resolve_effective_agents(
                 .filter(|s| !s.is_empty())
                 .unwrap_or(spec.default_description)
                 .to_owned();
-            let system_prompt = ovr
+            let configured_prompt = ovr
                 .and_then(|o| o.system_prompt.as_deref())
                 .map(str::trim)
-                .filter(|s| !s.is_empty())
-                .unwrap_or(spec.default_prompt)
-                .to_owned();
+                .filter(|s| !s.is_empty());
+            let is_default_prompt = configured_prompt.is_none();
+            let base_prompt = configured_prompt.unwrap_or(spec.default_prompt);
+            let system_prompt = if spec.id == "daily_root" && is_default_prompt {
+                daily_root_prompt_with_routing_guidance(base_prompt)
+            } else {
+                base_prompt.to_owned()
+            };
+            let default_system_prompt = if spec.id == "daily_root" {
+                daily_root_prompt_with_routing_guidance(spec.default_prompt)
+            } else {
+                spec.default_prompt.to_owned()
+            };
 
             ResolvedAgentSettings {
                 id: spec.id.to_owned(),
@@ -223,7 +237,7 @@ fn resolve_effective_agents(
                 description,
                 default_description: spec.default_description.to_owned(),
                 system_prompt,
-                default_system_prompt: spec.default_prompt.to_owned(),
+                default_system_prompt,
             }
         })
         .collect();
@@ -448,6 +462,7 @@ pub fn project_agents_json(
                 },
                 "is_builtin": eff.is_builtin,
                 "enabled": eff.enabled,
+                "default_enabled": super::specs::find_agent_spec(&eff.id).is_none_or(|s| s.default_enabled),
                 "provider_ref": eff.explicit_ref,
                 "effective_provider_ref": eff.resolved_provider.provider_ref,
                 "effective_model": eff.resolved_provider.model,

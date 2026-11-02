@@ -265,6 +265,7 @@ impl SessionActor {
             system_mcp: None,
             reminder_tools: None,
             session_memory: None,
+            session_wiki: None,
             memory_receipt_turn: None,
             speech_output_config: crate::config::SpeechOutputConfig::default(),
             // Capture is opt-in, so an actor that is never bound archives nothing.
@@ -319,6 +320,14 @@ impl SessionActor {
         session_memory: Option<crate::session::SessionMemory>,
     ) -> Self {
         self.session_memory = session_memory;
+        self
+    }
+
+    pub(crate) fn with_session_wiki(
+        mut self,
+        session_wiki: Option<std::sync::Arc<crate::tools::knowledge_mcp::KnowledgeMcp>>,
+    ) -> Self {
+        self.session_wiki = session_wiki;
         self
     }
 

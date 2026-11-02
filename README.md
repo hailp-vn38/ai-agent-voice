@@ -176,6 +176,10 @@ Device chưa đăng ký có Enrollment Session riêng để hiển thị và ph�
 - WorkspaceToolKit cung cấp công cụ Wiki, báo cáo Markdown, HTML/PDF/YouTube, media và reminders theo quyền từng agent. Backend ảnh/video, ASR/TTS và CLI ngoài cần được chuẩn bị cho công cụ tương ứng; chẳng hạn YouTube cần `yt-dlp` trên `PATH`.
 - Runtime có trạng thái chờ retry/chờ người dùng và ngân sách mỗi lượt; tác vụ có side effect không rõ kết quả không được tự động chạy lại như một yêu cầu mới. Chi tiết: [ADR 0133](docs/adr/0133-durable-waiting-retry-and-job-budgets.md), [ADR 0134](docs/adr/0134-resumable-tool-operations-and-job-muse-sessions.md).
 
+`cloud_worker` của `daily_root` cung cấp `muse_task` cho công việc cloud dài, mặc định **tắt**. Admin chọn Muse provider cho tool rồi bật agent; xem [hướng dẫn nâng cấp settings](docs/muse-task-settings-upgrade.md). Mỗi Sub-Agent dùng một phiên Muse riêng xuyên nhiều lượt `send`/`collect`; hoàn tất thì archive con và yêu cầu đóng phiên, còn Job Artifact đã lưu vẫn dành cho cha. Follow-up sau khi con kết thúc cần con mới. Không giao công việc này cho Task nguồn Voice có ngân sách năm phút. Nội dung gửi sang Muse là dữ liệu chuyển ra dịch vụ bên thứ ba; không tự đính kèm Memory/Wiki.
+
+Hợp đồng đã được triển khai ở mã nguồn; kiểm chứng Muse thật còn các gate mở. Xem [ADR 0137](docs/adr/0137-subagent-owned-muse-task-sessions.md), [bằng chứng ngày 2026-11-02](docs/providers/muse-task-validation-2026-11-02.md) và [runbook](docs/providers/muse-task-runbook.md) trước khi đánh giá điều kiện triển khai.
+
 Runtime hiện tại thay thế Job engine và plugin runner cũ: không còn quy trình build/upload/activate plugin ZIP hay các route `/api/admin/plugins*`, `/api/admin/core-plugins*`. Các route `/api/admin/jobs*` và `/api/admin/background/settings` tiếp tục phục vụ Studio. Xem [ADR 0127](docs/adr/0127-orchestrator-flow-task-and-wiki-runtime.md), [catalog Skills](docs/adr/0128-admin-managed-job-skill-catalog.md) và [sub-agents](docs/adr/0129-admin-managed-subagent-catalog.md).
 
 ### Knowledge Wiki

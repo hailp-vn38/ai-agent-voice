@@ -4,6 +4,7 @@ mod external;
 pub(super) mod job;
 mod memory;
 mod round;
+mod wiki;
 
 use super::*;
 use catalog::ToolTarget;
@@ -31,3 +32,6 @@ mod job_tests;
 mod memory_tests;
 #[cfg(test)]
 mod system_tests;
+#[cfg(test)]
+#[path = "wiki_tests.rs"]
+mod wiki_tests;

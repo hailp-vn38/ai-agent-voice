@@ -168,6 +168,7 @@ fn dual_flow_agent_specs_assign_collectors_to_daily_flow_and_keep_wiki_flow_pure
             "media_creator",
             "media_processor",
             "reminder_planner",
+            "cloud_worker",
         ]
     );
 
@@ -586,6 +587,66 @@ fn canonical_prompts_enforce_summarize_analyze_visualize_pipeline_and_flexible_d
 }
 
 #[test]
+fn daily_root_default_prompt_routes_long_tasks_away_from_voice_budget_and_preserves_custom_prompt()
+{
+    let temp_dir = std::env::temp_dir().join(format!("daily-root-prompt-{}", uuid::Uuid::new_v4()));
+    let prompts_dir = temp_dir.join("prompts");
+    ensure_prompts_and_skills(&prompts_dir, None).unwrap();
+    let seeded = std::fs::read_to_string(prompts_dir.join("daily_root.md")).unwrap();
+    assert!(seeded.contains("Do not delegate long research or report tasks"));
+    assert!(seeded.contains("five-minute Job Budget"));
+    assert!(seeded.contains("Chat/API Tasks"));
+
+    let mut settings = PersistedBackgroundSettings::default();
+    write_agent_prompts(&prompts_dir, &settings).unwrap();
+    let default = std::fs::read_to_string(prompts_dir.join("daily_root.md")).unwrap();
+    assert!(default.contains("Do not delegate long research or report tasks"));
+
+    settings.agents.insert(
+        "daily_root".to_owned(),
+        AgentConfigOverride {
+            system_prompt: Some("Admin's custom root instructions.".to_owned()),
+            ..Default::default()
+        },
+    );
+    write_agent_prompts(&prompts_dir, &settings).unwrap();
+    let custom = std::fs::read_to_string(prompts_dir.join("daily_root.md")).unwrap();
+    assert!(custom.starts_with("Admin's custom root instructions."));
+    assert!(!custom.contains("Do not delegate long research or report tasks"));
+
+    let cfg = OrchestratorSectionConfig::default();
+    let catalog = vec![default_orchestrator_provider(&cfg)];
+    let default_projection =
+        project_agents_json(&cfg, &PersistedBackgroundSettings::default(), &catalog);
+    let projected_root = default_projection
+        .iter()
+        .find(|agent| agent["id"] == "daily_root")
+        .unwrap();
+    assert!(
+        projected_root["system_prompt"]
+            .as_str()
+            .unwrap()
+            .contains("Do not delegate long research or report tasks")
+    );
+    assert!(
+        projected_root["default_system_prompt"]
+            .as_str()
+            .unwrap()
+            .contains("five-minute Job Budget")
+    );
+    let custom_projection = project_agents_json(&cfg, &settings, &catalog);
+    let projected_root = custom_projection
+        .iter()
+        .find(|agent| agent["id"] == "daily_root")
+        .unwrap();
+    assert_eq!(
+        projected_root["system_prompt"],
+        "Admin's custom root instructions."
+    );
+    std::fs::remove_dir_all(temp_dir).unwrap();
+}
+
+#[test]
 fn custom_subagents_enforce_flow_tool_boundaries_and_sync_active_subagents_prompts() {
     let temp_dir =
         std::env::temp_dir().join(format!("custom-subagent-unit-{}", uuid::Uuid::new_v4()));
@@ -697,7 +758,7 @@ fn custom_subagents_enforce_flow_tool_boundaries_and_sync_active_subagents_promp
 
     // Project JSON and verify `is_builtin`, auto-injected `skill` tool, and `allowed_subagents`
     let projected = project_agents_json(&cfg, &loaded, &catalog);
-    assert_eq!(projected.len(), 12);
+    assert_eq!(projected.len(), 13);
     let daily_root_json = projected.iter().find(|a| a["id"] == "daily_root").unwrap();
     assert_eq!(daily_root_json["is_builtin"], true);
     assert!(
@@ -725,4 +786,101 @@ fn custom_subagents_enforce_flow_tool_boundaries_and_sync_active_subagents_promp
     assert!(!prompts_dir.join("arxiv_digest.md").exists());
 
     let _ = std::fs::remove_dir_all(&temp_dir);
+}
+
+#[test]
+fn muse_task_settings_upgrade_preserves_custom_prompts_and_refreshes_discovery() {
+    let root = std::env::temp_dir().join(format!("muse-catalog-{}", uuid::Uuid::new_v4()));
+    let store = root.join("store");
+    let prompts = root.join("prompts");
+    let mut settings = PersistedBackgroundSettings::default();
+    settings.agents.insert("daily_root".into(), AgentConfigOverride {
+        system_prompt: Some("Keep my custom policy.\n<active_subagents>\n- `cloud_worker` (built-in): stale\n</active_subagents>\nKeep my ending.".into()),
+        ..Default::default()
+    });
+    // Old installations have no override for the newly introduced built-in.
+    save_persisted_settings(&store, &settings).unwrap();
+    let loaded = load_persisted_settings(&store).unwrap();
+    write_agent_prompts(&prompts, &loaded).unwrap();
+    let root_prompt = std::fs::read_to_string(prompts.join("daily_root.md")).unwrap();
+    assert!(root_prompt.contains("Keep my custom policy."));
+    assert!(root_prompt.contains("Keep my ending."));
+    assert!(!root_prompt.contains("`cloud_worker`"));
+    assert!(root_prompt.contains("Voice"));
+    let cloud_prompt = std::fs::read_to_string(prompts.join("cloud_worker.md")).unwrap();
+    for guard in [
+        "use-once",
+        "next_action=collect",
+        "third-party",
+        "untrusted external data",
+        "Memory or Wiki",
+        "Voice",
+    ] {
+        assert!(cloud_prompt.contains(guard), "missing {guard}");
+    }
+    let mut enabled = loaded.clone();
+    enabled
+        .agents
+        .insert("cloud_worker".into(), AgentConfigOverride::default());
+    write_agent_prompts(&prompts, &enabled).unwrap();
+    let root_prompt = std::fs::read_to_string(prompts.join("daily_root.md")).unwrap();
+    assert!(root_prompt.contains("`cloud_worker` (built-in)"));
+    assert_eq!(
+        loaded.agents["daily_root"].system_prompt,
+        settings.agents["daily_root"].system_prompt
+    );
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn cloud_worker_prompts_keep_every_goal_and_the_muse_report_intact() {
+    let root = std::env::temp_dir().join(format!("muse-prompts-{}", uuid::Uuid::new_v4()));
+    let root_rules = [
+        "List every requested goal",
+        "one new `cloud_worker` per goal",
+        "only if a Sub-Agent result in this session shows it",
+        "Do not add constraints the user did not ask for",
+        "artifact IDs",
+        "limitations",
+    ];
+
+    let mut disabled = PersistedBackgroundSettings::default();
+    disabled.agents.remove("cloud_worker");
+    write_agent_prompts(&root, &disabled).unwrap();
+    let root_prompt = std::fs::read_to_string(root.join("daily_root.md")).unwrap();
+    for rule in root_rules {
+        assert!(!root_prompt.contains(rule), "disabled agent leaked {rule}");
+    }
+
+    let mut enabled = disabled.clone();
+    enabled.agents.insert(
+        "daily_root".into(),
+        AgentConfigOverride {
+            system_prompt: Some("Keep my custom policy.".into()),
+            ..Default::default()
+        },
+    );
+    enabled
+        .agents
+        .insert("cloud_worker".into(), AgentConfigOverride::default());
+    write_agent_prompts(&root, &enabled).unwrap();
+    let root_prompt = std::fs::read_to_string(root.join("daily_root.md")).unwrap();
+    assert!(root_prompt.contains("Keep my custom policy."));
+    for rule in root_rules {
+        assert!(root_prompt.contains(rule), "missing {rule}");
+    }
+
+    let cloud_prompt = std::fs::read_to_string(root.join("cloud_worker.md")).unwrap();
+    for rule in [
+        "output=markdown",
+        "same output",
+        "Do not rewrite, expand or restructure",
+        "at most 10 bullets",
+        "source URLs",
+        "limitations unchanged",
+    ] {
+        assert!(cloud_prompt.contains(rule), "missing {rule}");
+    }
+    assert!(!cloud_prompt.contains("Return useful messages"));
+    std::fs::remove_dir_all(root).unwrap();
 }

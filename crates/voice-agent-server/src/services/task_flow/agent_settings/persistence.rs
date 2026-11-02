@@ -11,6 +11,7 @@ use super::DEFAULT_ORCHESTRATOR_PROVIDER_REF;
 use super::specs::{
     AGENT_SPECS, custom_subagent_flow_policy, find_agent_spec, valid_custom_subagent_id,
 };
+use crate::services::task_flow::workspace_seed::daily_root_prompt_with_routing_guidance;
 
 const AGENT_SETTINGS_FILE: &str = "agent_settings.json";
 
@@ -253,7 +254,10 @@ fn format_active_subagents_block(
     let mut lines = Vec::new();
     for &sub_id in default_subagents {
         let ovr = settings.agents.get(sub_id);
-        if !ovr.is_none_or(|o| o.enabled) {
+        if !ovr.map_or_else(
+            || find_agent_spec(sub_id).is_some_and(|s| s.default_enabled),
+            |o| o.enabled,
+        ) {
             continue;
         }
         let desc = ovr
@@ -280,8 +284,18 @@ fn format_active_subagents_block(
     } else {
         lines.join("\n")
     };
+    let cloud_guard = if flow_id == "daily" {
+        "\nLong-running cloud research is only for Chat/API tasks. Never delegate it for Task source Voice, whose Job Budget is five minutes. Follow-up after a use-once cloud Sub-Agent ends requires a new Sub-Agent with explicit context.\n"
+    } else {
+        ""
+    };
+    let cloud_worker_rules = if lines.iter().any(|line| line.starts_with("- `cloud_worker`")) {
+        "When delegating to `cloud_worker`:\n- List every requested goal and its order before the first delegation. For example, \"A sau khi hoàn thành tiếp với B\" means A first, then B.\n- Use one new `cloud_worker` per goal, and wait for each to finish before starting the next.\n- Do not add constraints the user did not ask for, such as forbidding artifacts.\n- Say a goal or earlier work is done only if a Sub-Agent result in this session shows it.\n- In the final answer, report each goal's outcome, include the returned artifact IDs and source URLs, keep reported data limitations, and say the content comes from an external service.\n"
+    } else {
+        ""
+    };
     format!(
-        "\n\n<active_subagents>\nCurrently enabled subagents you may delegate to via the `subagent` tool (`agent` parameter):\n{body}\nDo NOT delegate to any subagent not listed in <active_subagents>.\n</active_subagents>\n"
+        "\n\n<active_subagents>\nCurrently enabled subagents you may delegate to via the `subagent` tool (`agent` parameter):\n{body}\nDo NOT delegate to any subagent not listed in <active_subagents>.\n{cloud_guard}{cloud_worker_rules}</active_subagents>\n"
     )
 }
 
@@ -293,19 +307,34 @@ pub fn write_agent_prompts(
     let mut expected_files = BTreeSet::new();
 
     for spec in AGENT_SPECS {
-        let base_prompt = settings
+        let configured_prompt = settings
             .agents
             .get(spec.id)
             .and_then(|o| o.system_prompt.as_deref())
             .map(str::trim)
-            .filter(|s| !s.is_empty())
-            .unwrap_or(spec.default_prompt);
+            .filter(|s| !s.is_empty());
+        let is_default_prompt = configured_prompt.is_none();
+        let base_prompt = configured_prompt.unwrap_or(spec.default_prompt);
         let filename = format!("{}.md", spec.id);
         expected_files.insert(filename.clone());
-        if spec.mode == AgentMode::Primary && !base_prompt.contains("<active_subagents>") {
+        if spec.mode == AgentMode::Primary {
+            // The discovery block is server-owned. Old saved prompts may contain a snapshot;
+            // replace that block while preserving the Admin's surrounding custom instructions.
+            let mut prompt = if spec.id == "daily_root" && is_default_prompt {
+                daily_root_prompt_with_routing_guidance(base_prompt)
+            } else {
+                base_prompt.to_owned()
+            };
+            while let Some(start) = prompt.find("<active_subagents>") {
+                let Some(relative_end) = prompt[start..].find("</active_subagents>") else {
+                    break;
+                };
+                let end = start + relative_end + "</active_subagents>".len();
+                prompt.replace_range(start..end, "");
+            }
             let block =
                 format_active_subagents_block(spec.flow_id, spec.default_subagents, settings);
-            std::fs::write(prompts_dir.join(&filename), format!("{base_prompt}{block}"))?;
+            std::fs::write(prompts_dir.join(&filename), format!("{prompt}{block}"))?;
         } else {
             std::fs::write(prompts_dir.join(&filename), base_prompt)?;
         }

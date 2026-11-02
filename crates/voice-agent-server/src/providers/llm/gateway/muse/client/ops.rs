@@ -257,7 +257,7 @@ impl MuseVmClient {
             "method": "/api/session/delete",
             "session_id": clean_id,
         });
-        let _ = self
+        let response = self
             .send_request(
                 "POST",
                 "/session/delete",
@@ -267,6 +267,12 @@ impl MuseVmClient {
                 false,
             )
             .await?;
+        if !(200..300).contains(&response.status) {
+            return Err(VmError::Transport(format!(
+                "/session/delete failed: HTTP {}",
+                response.status
+            )));
+        }
         Ok(())
     }
 }

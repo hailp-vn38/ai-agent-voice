@@ -483,7 +483,25 @@ prompts_dir = "{}"
     let created_tts_provider: Value = created_tts_resp.json().await.unwrap();
     let db_tts_key = created_tts_provider["key"].as_str().unwrap().to_owned();
 
-    // 2. Fetch GET /api/admin/background/settings and verify provider catalog + 10 agents
+    let created_muse = client
+        .post(format!("{base}/providers"))
+        .bearer_auth("background-test-token")
+        .json(&json!({
+            "name": "Muse Cloud",
+            "type": "llm",
+            "adapter": "llm_gateway",
+            "config_json": {"gateway_binding": "pool:muse", "model": "muse"}
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(created_muse.status(), StatusCode::CREATED);
+    let muse_key = created_muse.json::<Value>().await.unwrap()["key"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+
+    // 2. Fetch GET /api/admin/background/settings and verify provider catalog + 11 agents
     let initial: Value = client
         .get(format!("{base}/background/settings"))
         .bearer_auth("background-test-token")
@@ -516,8 +534,36 @@ prompts_dir = "{}"
     assert_eq!(db_tts_entry["adapter"], "vieneu");
     assert_eq!(db_tts_entry["tags"], json!(["tts"]));
 
+    assert!(
+        llm_providers.iter().find(|p| p["ref"] == muse_key).unwrap()["tags"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("agent_task"))
+    );
+    assert!(
+        !db_entry["tags"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("agent_task"))
+    );
+
     let agents = initial["agents"].as_array().unwrap();
-    assert_eq!(agents.len(), 10);
+    assert_eq!(agents.len(), 11);
+    let cloud_worker = agents.iter().find(|a| a["id"] == "cloud_worker").unwrap();
+    assert_eq!(cloud_worker["enabled"], false);
+    assert_eq!(cloud_worker["default_enabled"], false);
+    assert_eq!(cloud_worker["available_tools"], json!(["muse_task"]));
+    assert_eq!(
+        cloud_worker["tool_capability_tags"]["muse_task"],
+        "agent_task"
+    );
+    let daily_root = agents.iter().find(|a| a["id"] == "daily_root").unwrap();
+    assert!(
+        !daily_root["allowed_subagents"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("cloud_worker"))
+    );
     let initial_collector = agents
         .iter()
         .find(|a| a["id"] == "source_collector")
@@ -552,6 +598,10 @@ prompts_dir = "{}"
                 "media_creator": {
                     "enabled": false
                 },
+                "cloud_worker": {
+                    "enabled": true,
+                    "tool_providers": {"muse_task": muse_key}
+                },
                 "media_processor": {
                     "enabled": true,
                     "tool_providers": {
@@ -569,6 +619,16 @@ prompts_dir = "{}"
     assert_eq!(updated["worker_llm_provider"], db_provider_key);
 
     let updated_agents = updated["agents"].as_array().unwrap();
+    let cloud_worker = updated_agents
+        .iter()
+        .find(|a| a["id"] == "cloud_worker")
+        .unwrap();
+    assert_eq!(cloud_worker["enabled"], true);
+    assert_eq!(cloud_worker["tool_providers"]["muse_task"], muse_key);
+    assert_eq!(
+        cloud_worker["effective_tool_providers"]["muse_task"],
+        muse_key
+    );
     let media_processor = updated_agents
         .iter()
         .find(|a| a["id"] == "media_processor")
@@ -611,6 +671,19 @@ prompts_dir = "{}"
         !daily_subs.iter().any(|s| s == "media_creator"),
         "disabled subagent media_creator must be removed from daily_root.allowed_subagents"
     );
+
+    assert!(daily_subs.contains(&json!("cloud_worker")));
+    let rejected_cloud_provider = client
+        .put(format!("{base}/background/settings"))
+        .bearer_auth("background-test-token")
+        .header("If-Match", "\"2\"")
+        .json(&json!({"enabled": true, "agents": {"cloud_worker": {
+            "enabled": true, "tool_providers": {"muse_task": db_provider_key}
+        }}}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(rejected_cloud_provider.status(), StatusCode::BAD_REQUEST);
 
     // 4. Reject invalid provider_ref or disabling a primary root agent
     let bad_provider = client
@@ -1031,7 +1104,7 @@ skills_dir = "{}"
         .unwrap();
     assert_eq!(initial["revision"], 1);
     let initial_agents = initial["agents"].as_array().unwrap();
-    assert_eq!(initial_agents.len(), 10);
+    assert_eq!(initial_agents.len(), 11);
     assert!(initial_agents.iter().all(|a| a["is_builtin"] == true));
 
     // 2. Create a Custom Sub-Agent in Flow 1 (`daily`) via POST /api/admin/background/agents
@@ -1056,7 +1129,7 @@ skills_dir = "{}"
     let after_create: Value = create_resp.json().await.unwrap();
     assert_eq!(after_create["revision"], 2);
     let agents = after_create["agents"].as_array().unwrap();
-    assert_eq!(agents.len(), 11);
+    assert_eq!(agents.len(), 12);
     let custom = agents
         .iter()
         .find(|a| a["id"] == "custom_arxiv_digest")
@@ -1209,7 +1282,7 @@ skills_dir = "{}"
     assert_eq!(del_custom.status(), StatusCode::OK);
     let after_del: Value = del_custom.json().await.unwrap();
     assert_eq!(after_del["revision"], 4);
-    assert_eq!(after_del["agents"].as_array().unwrap().len(), 10);
+    assert_eq!(after_del["agents"].as_array().unwrap().len(), 11);
     assert!(!prompts_dir.join("custom_arxiv_digest.md").exists());
 
     server.abort();
