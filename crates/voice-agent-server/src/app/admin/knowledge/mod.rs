@@ -14,7 +14,10 @@ mod sources;
 mod tests;
 
 pub(in crate::app::admin) use ask::knowledge_ask;
-pub(super) use conversations::knowledge_conversation;
+pub(super) use conversations::{
+    delete_knowledge_conversation, knowledge_conversation, knowledge_conversations,
+    rename_knowledge_conversation,
+};
 pub(super) use graph::{knowledge_graph, knowledge_health, knowledge_rebuild};
 pub(super) use memory::{
     DeviceVaultPurge, memory_create, memory_discard, memory_forget, memory_health, memory_pin,

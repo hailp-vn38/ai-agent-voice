@@ -1,4 +1,4 @@
-import { apiUrl, requestJson, withQuery } from './client'
+import { apiUrl, jsonRequest, requestJson, withQuery } from './client'
 import { consumeSse, createSseParserState } from './sse'
 import { readAdminToken } from '@/stores/auth'
 
@@ -29,6 +29,14 @@ export interface WikiConversationDetail {
   created_at_ms: number
   updated_at_ms: number
   messages: WikiConversationMessage[]
+}
+
+export interface WikiConversationSummary {
+  id: string
+  title: string
+  updated_at_ms: number
+  message_count: number
+  running: boolean
 }
 
 export type WikiChatAskInput = {
@@ -98,6 +106,28 @@ export class WikiChatRequestError extends Error {
     super(code)
     this.name = 'WikiChatRequestError'
   }
+}
+
+export async function listWikiConversations(): Promise<WikiConversationSummary[]> {
+  const result = await requestJson<{ items: WikiConversationSummary[] }>(
+    '/api/admin/knowledge/conversations',
+    { cache: 'no-store' },
+  )
+  return result.items
+}
+
+export async function renameWikiConversation(id: string, title: string): Promise<void> {
+  await requestJson<void>(
+    `/api/admin/knowledge/conversations/${encodeURIComponent(id)}`,
+    jsonRequest('PATCH', { title }),
+  )
+}
+
+export async function deleteWikiConversation(id: string): Promise<void> {
+  await requestJson<void>(
+    `/api/admin/knowledge/conversations/${encodeURIComponent(id)}`,
+    { method: 'DELETE' },
+  )
 }
 
 export async function getWikiConversation(id: string, signal?: AbortSignal): Promise<WikiConversationDetail> {

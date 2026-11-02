@@ -1,11 +1,13 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUpdated, ref, watch } from 'vue'
-import { AlertCircle, ArrowUp, ArrowUpRight, BookOpenText, ChevronRight, CircleStop, FileText, Files, LoaderCircle, Network, Plus, RotateCcw, Search, Sparkles, Square, Wrench, X } from '@lucide/vue'
+import { AlertCircle, ArrowUp, ArrowUpRight, BookOpenText, Check, ChevronRight, CircleStop, FileText, Files, LoaderCircle, Network, Pencil, Plus, Search, Sparkles, Square, Trash2, Wrench, X } from '@lucide/vue'
 import { renderMarkdown } from '@/lib/markdown'
+import ConfirmDialog from '@/components/admin/ConfirmDialog.vue'
 import { useI18n } from '@/composables/useI18n'
 import { useTheme } from '@/composables/useTheme'
 import { renderMermaidBlocks } from './mermaidRenderer'
 import { MAX_PINNED_FILES, type WikiChatFile, type WikiChatMessage } from './useWikiChat'
+import type { WikiConversationSummary } from '@/api/wiki-chat'
 
 const props = defineProps<{
   messages: WikiChatMessage[]
@@ -16,12 +18,16 @@ const props = defineProps<{
   highlightedNode?: string | null
   pinnedFiles?: WikiChatFile[]
   openFile?: WikiChatFile | null
+  loadingConversation?: boolean
+  conversations?: WikiConversationSummary[]
+  conversationId?: string | null
+  loadingConversations?: boolean
+  conversationListError?: string | null
 }>()
 
 const emit = defineEmits<{
   send: [text: string]
   stop: []
-  reset: []
   retry: [id: string]
   refreshConversation: []
   showGraph: [id: string]
@@ -29,6 +35,11 @@ const emit = defineEmits<{
   highlightCitation: [path: string | null]
   pinFile: [file: WikiChatFile]
   unpinFile: [path: string]
+  loadConversations: []
+  selectConversation: [id: string]
+  newConversation: []
+  renameConversation: [id: string, title: string]
+  deleteConversation: [id: string]
 }>()
 
 const { t } = useI18n()
@@ -37,12 +48,18 @@ const draft = ref('')
 const panelElement = ref<HTMLElement | null>(null)
 const messagesElement = ref<HTMLElement | null>(null)
 const questionInput = ref<HTMLTextAreaElement | null>(null)
+const conversationListOpen = ref(false)
+const editingConversationId = ref<string | null>(null)
+const renameDraft = ref('')
+const deleteTarget = ref<WikiConversationSummary | null>(null)
+const deleteDialogOpen = ref(false)
 const pinnedFileList = computed(() => props.pinnedFiles ?? [])
 const pinnableFile = computed(() => {
   const file = props.openFile
   return file && !pinnedFileList.value.some(pinned => pinned.path === file.path) ? file : null
 })
 const pinLimitReached = computed(() => pinnedFileList.value.length >= MAX_PINNED_FILES)
+const conversations = computed(() => props.conversations ?? [])
 const latestMessageId = computed(() => props.messages.at(-1)?.id ?? null)
 // How close to the end still counts as following the answer as it streams.
 const FOLLOW_DISTANCE = 72
@@ -71,6 +88,51 @@ function submit() {
   if (!text || props.readOnly) return
   emit('send', text)
   draft.value = ''
+}
+
+function toggleConversationList() {
+  conversationListOpen.value = !conversationListOpen.value
+  if (conversationListOpen.value) emit('loadConversations')
+}
+
+function selectConversation(id: string) {
+  if (props.busy || id === props.conversationId) return
+  conversationListOpen.value = false
+  emit('selectConversation', id)
+}
+
+function startNewConversation() {
+  if (props.busy) return
+  conversationListOpen.value = false
+  emit('newConversation')
+}
+
+function beginRename(conversation: WikiConversationSummary) {
+  editingConversationId.value = conversation.id
+  renameDraft.value = conversation.title
+}
+
+function cancelRename() {
+  editingConversationId.value = null
+  renameDraft.value = ''
+}
+
+function saveRename(conversation: WikiConversationSummary) {
+  const title = renameDraft.value.trim()
+  if (!title || title.length > 120) return
+  emit('renameConversation', conversation.id, title)
+  cancelRename()
+}
+
+function confirmDelete(conversation: WikiConversationSummary) {
+  deleteTarget.value = conversation
+  deleteDialogOpen.value = true
+}
+
+function deleteConversation() {
+  if (!deleteTarget.value) return
+  emit('deleteConversation', deleteTarget.value.id)
+  deleteTarget.value = null
 }
 
 function citationPath(target: string, citations: string[]): string | null {
@@ -192,6 +254,12 @@ function errorText(code: string | null): string {
   if (code === 'wiki_chat_connection_lost') return t('knowledgeV3.chatConnectionLost')
   return t('knowledgeV3.chatFailed')
 }
+
+function conversationListErrorText(code: string): string {
+  if (code === 'wiki_conversation_busy') return t('knowledgeV3.chatDeleteConversationBusy')
+  if (code === 'invalid_input') return t('knowledgeV3.chatConversationTitleInvalid')
+  return t('knowledgeV3.chatConversationListFailed')
+}
 </script>
 
 <template>
@@ -201,10 +269,12 @@ function errorText(code: string | null): string {
         <span class="wiki-chat-orb wiki-chat-orb-small" aria-hidden="true"><Sparkles :size="11" /></span>
         <h2>{{ t('knowledgeV3.chatTitle') }}</h2>
       </slot>
-      <button v-if="messages.length" type="button" class="wiki-chat-icon-button" :aria-label="t('knowledgeV3.chatClear')"
-        :title="t('knowledgeV3.chatClear')" @click="emit('reset')">
-        <RotateCcw :size="14" aria-hidden="true" />
-      </button>
+      <div class="wiki-chat-header-actions">
+        <button type="button" class="wiki-chat-header-action" :aria-expanded="conversationListOpen"
+          @click="toggleConversationList">{{ t('knowledgeV3.chatConversations') }}</button>
+        <button type="button" class="wiki-chat-header-action" :disabled="busy || loadingConversation"
+          @click="startNewConversation">{{ t('knowledgeV3.chatNewConversation') }}</button>
+      </div>
     </header>
 
     <div class="wiki-chat-announcement sr-only" role="status" aria-live="polite" aria-atomic="true">{{ completedAnnouncement }}</div>
@@ -213,6 +283,43 @@ function errorText(code: string | null): string {
       <button type="button" @click="emit('refreshConversation')">{{ t('knowledgeV3.chatReloadConversation') }}</button>
     </div>
     <div ref="messagesElement" class="wiki-chat-messages" :aria-label="t('knowledgeV3.chatConversation')" @scroll.passive="onMessagesScroll">
+      <section v-if="conversationListOpen" class="wiki-chat-conversation-list" :aria-label="t('knowledgeV3.chatConversations')">
+        <div class="wiki-chat-conversation-list-heading">
+          <h3>{{ t('knowledgeV3.chatConversations') }}</h3>
+          <button type="button" class="wiki-chat-conversation-refresh" :disabled="loadingConversations"
+            @click="emit('loadConversations')">{{ t('knowledgeV3.chatRefreshConversations') }}</button>
+        </div>
+        <p v-if="loadingConversations" class="wiki-chat-conversation-state" role="status">{{ t('knowledgeV3.chatLoadingConversations') }}</p>
+        <p v-else-if="conversationListError" class="wiki-chat-conversation-error" role="alert">{{ conversationListErrorText(conversationListError) }}</p>
+        <p v-else-if="!conversations.length" class="wiki-chat-conversation-state">{{ t('knowledgeV3.chatNoConversations') }}</p>
+        <ul v-else class="wiki-chat-conversation-items">
+          <li v-for="conversation in conversations" :key="conversation.id"
+            class="wiki-chat-conversation-item" :class="{ 'is-active': conversation.id === conversationId }">
+            <form v-if="editingConversationId === conversation.id" class="wiki-chat-conversation-rename"
+              @submit.prevent="saveRename(conversation)">
+              <input v-model="renameDraft" :aria-label="t('knowledgeV3.chatConversationTitle')" maxlength="120" />
+              <button type="submit" :aria-label="t('knowledgeV3.chatSaveRename')"
+                :disabled="!renameDraft.trim() || renameDraft.trim().length > 120"><Check :size="13" aria-hidden="true" /></button>
+              <button type="button" :aria-label="t('knowledgeV3.chatCancelRename')" @click="cancelRename"><X :size="13" aria-hidden="true" /></button>
+            </form>
+            <template v-else>
+              <button type="button" class="wiki-chat-conversation-select"
+                :disabled="busy || loadingConversation || conversation.id === conversationId" @click="selectConversation(conversation.id)">
+                <span class="wiki-chat-conversation-title">{{ conversation.title }}</span>
+                <span class="wiki-chat-conversation-count">{{ t('knowledgeV3.chatConversationMessageCount', { count: conversation.message_count }) }}</span>
+                <span v-if="conversation.running" class="wiki-chat-conversation-running">{{ t('knowledgeV3.chatConversationRunning') }}</span>
+              </button>
+              <div class="wiki-chat-conversation-actions">
+                <button type="button" :aria-label="t('knowledgeV3.chatRenameConversation')" :title="t('knowledgeV3.chatRenameConversation')"
+                  @click="beginRename(conversation)"><Pencil :size="13" aria-hidden="true" /></button>
+                <button type="button" :aria-label="t('knowledgeV3.chatDeleteConversation')" :title="t('knowledgeV3.chatDeleteConversation')"
+                  :disabled="conversation.running" @click="confirmDelete(conversation)"><Trash2 :size="13" aria-hidden="true" /></button>
+              </div>
+            </template>
+          </li>
+        </ul>
+      </section>
+      <template v-else>
       <div v-if="messages.length === 0" class="wiki-chat-welcome">
         <span class="wiki-chat-orb" aria-hidden="true"><Sparkles :size="22" /></span>
         <p class="wiki-chat-empty">{{ t('knowledgeV3.chatEmpty') }}</p>
@@ -307,6 +414,7 @@ function errorText(code: string | null): string {
           </button>
         </template>
       </article>
+      </template>
     </div>
 
     <form class="wiki-chat-compose" @submit.prevent="submit">
@@ -338,5 +446,8 @@ function errorText(code: string | null): string {
         </button>
       </div>
     </form>
+    <ConfirmDialog v-model="deleteDialogOpen" :title="t('knowledgeV3.chatDeleteConversationTitle')"
+      :description="t('knowledgeV3.chatDeleteConversationConfirm', { title: deleteTarget?.title ?? '' })"
+      :confirm-label="t('knowledgeV3.chatDeleteConversation')" tone="danger" @confirm="deleteConversation" />
   </aside>
 </template>

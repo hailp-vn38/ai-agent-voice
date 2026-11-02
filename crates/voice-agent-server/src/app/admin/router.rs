@@ -69,7 +69,13 @@ fn knowledge_routes() -> Router<AppState> {
         )
         .route(
             "/knowledge/conversations/{id}",
-            get(knowledge::knowledge_conversation),
+            get(knowledge::knowledge_conversation)
+                .patch(knowledge::rename_knowledge_conversation)
+                .delete(knowledge::delete_knowledge_conversation),
+        )
+        .route(
+            "/knowledge/conversations",
+            get(knowledge::knowledge_conversations),
         )
         .route("/knowledge/graph", get(knowledge::knowledge_graph))
         .route(

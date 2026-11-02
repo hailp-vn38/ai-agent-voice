@@ -1,14 +1,19 @@
 import { computed, onBeforeUnmount, ref } from 'vue'
 import {
   askWiki,
+  deleteWikiConversation,
   getWikiConversation,
   getWikiPageTitle,
+  listWikiConversations,
+  renameWikiConversation,
   WikiChatRequestError,
   type AnswerGraph,
   type WikiChatAskInput,
   type WikiConversationDetail,
+  type WikiConversationSummary,
   type WikiChatTool,
 } from '@/api/wiki-chat'
+import { isApiError } from '@/api/errors'
 
 /** A vault file the user attached to the conversation; `path` is a `wiki/` or `sources/` path. */
 export interface WikiChatFile {
@@ -61,6 +66,9 @@ export function useWikiChat() {
   const pinnedFiles = ref<WikiChatFile[]>([])
   const conversationId = ref<string | null>(null)
   const loadingConversation = ref(false)
+  const conversations = ref<WikiConversationSummary[]>([])
+  const loadingConversations = ref(false)
+  const conversationListError = ref<string | null>(null)
   const readOnlyConversation = ref(false)
   let controller: AbortController | null = null
   let currentAssistantId: string | null = null
@@ -120,6 +128,47 @@ export function useWikiChat() {
       return false
     } finally {
       loadingConversation.value = false
+    }
+  }
+
+  async function refreshConversations(): Promise<void> {
+    loadingConversations.value = true
+    conversationListError.value = null
+    try {
+      conversations.value = await listWikiConversations()
+    } catch {
+      conversationListError.value = 'conversation_list_failed'
+    } finally {
+      loadingConversations.value = false
+    }
+  }
+
+  async function renameConversation(id: string, title: string): Promise<boolean> {
+    conversationListError.value = null
+    try {
+      await renameWikiConversation(id, title)
+      await refreshConversations()
+      return true
+    } catch (error) {
+      conversationListError.value = isApiError(error) ? error.code : 'conversation_rename_failed'
+      return false
+    }
+  }
+
+  async function deleteConversation(id: string): Promise<boolean> {
+    if (busy.value) {
+      conversationListError.value = 'wiki_conversation_busy'
+      return false
+    }
+    conversationListError.value = null
+    try {
+      await deleteWikiConversation(id)
+      if (conversationId.value === id) reset()
+      await refreshConversations()
+      return true
+    } catch (error) {
+      conversationListError.value = isApiError(error) ? error.code : 'conversation_delete_failed'
+      return false
     }
   }
 
@@ -305,6 +354,9 @@ export function useWikiChat() {
     messages,
     conversationId,
     loadingConversation,
+    conversations,
+    loadingConversations,
+    conversationListError,
     readOnlyConversation,
     activeGraph,
     activeGraphMessageId,
@@ -316,6 +368,9 @@ export function useWikiChat() {
     unpinFile,
     send,
     loadConversation,
+    refreshConversations,
+    renameConversation,
+    deleteConversation,
     refreshConversation,
     stop,
     retry,

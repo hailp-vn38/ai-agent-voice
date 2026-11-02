@@ -4,6 +4,7 @@ import { setLocale } from '@/composables/useI18n'
 import { renderMermaidBlocks } from './mermaidRenderer'
 import WikiChatPanel from './WikiChatPanel.vue'
 import type { WikiChatMessage } from './useWikiChat'
+import type { WikiConversationSummary } from '@/api/wiki-chat'
 
 function assistant(status: WikiChatMessage['status']): WikiChatMessage {
   return {
@@ -134,6 +135,63 @@ it('shows which files a question was asked about', () => {
   const wrapper = mount(WikiChatPanel, { props: { messages: [user], busy: false } })
   try {
     expect(wrapper.get('.wiki-chat-user-files').text()).toBe('Known')
+  } finally { wrapper.unmount() }
+})
+
+it('opens the saved conversation list, selects a conversation, renames, confirms deletion, and starts a new one', async () => {
+  const conversations: WikiConversationSummary[] = [
+    { id: 'current', title: 'Current topic', updated_at_ms: 20, message_count: 4, running: false },
+    { id: 'older', title: 'Older topic', updated_at_ms: 10, message_count: 2, running: false },
+  ]
+  const wrapper = mount(WikiChatPanel, {
+    props: {
+      messages: [], busy: false, conversations, conversationId: 'current',
+    },
+  })
+  try {
+    await wrapper.get('.wiki-chat-header-action').trigger('click')
+    expect(wrapper.emitted('loadConversations')).toHaveLength(1)
+    expect(wrapper.get('.wiki-chat-conversation-list').text()).toContain('Older topic')
+
+    const older = wrapper.findAll('.wiki-chat-conversation-item').find(item => item.text().includes('Older topic'))!
+    await older.get('.wiki-chat-conversation-select').trigger('click')
+    expect(wrapper.emitted('selectConversation')).toEqual([['older']])
+
+    await wrapper.get('.wiki-chat-header-action').trigger('click')
+    const current = wrapper.findAll('.wiki-chat-conversation-item').find(item => item.text().includes('Current topic'))!
+    await current.get('[aria-label="Rename"]').trigger('click')
+    const titleInput = current.get('input')
+    await titleInput.setValue('Renamed topic')
+    await current.get('form').trigger('submit')
+    expect(wrapper.emitted('renameConversation')).toEqual([['current', 'Renamed topic']])
+
+    await current.get('[aria-label="Delete"]').trigger('click')
+    const dialog = wrapper.findComponent({ name: 'ConfirmDialog' })
+    expect(dialog.props('modelValue')).toBe(true)
+    expect(wrapper.emitted('deleteConversation')).toBeUndefined()
+    dialog.vm.$emit('confirm')
+    expect(wrapper.emitted('deleteConversation')).toEqual([['current']])
+
+    await wrapper.get('.wiki-chat-header-action:last-child').trigger('click')
+    expect(wrapper.emitted('newConversation')).toHaveLength(1)
+  } finally { wrapper.unmount() }
+})
+
+it('prevents switching to another conversation or starting a new one while an answer is running', async () => {
+  const conversations: WikiConversationSummary[] = [
+    { id: 'current', title: 'Current topic', updated_at_ms: 20, message_count: 2, running: true },
+    { id: 'older', title: 'Older topic', updated_at_ms: 10, message_count: 2, running: false },
+  ]
+  const wrapper = mount(WikiChatPanel, {
+    props: { messages: [assistant('streaming')], busy: true, conversations, conversationId: 'current' },
+  })
+  try {
+    const newConversation = wrapper.get('.wiki-chat-header-action:last-child')
+    expect(newConversation.attributes('disabled')).toBeDefined()
+    await wrapper.get('.wiki-chat-header-action:first-child').trigger('click')
+    const select = wrapper.findAll('.wiki-chat-conversation-select').find(button => button.text().includes('Older topic'))!
+    expect(select.attributes('disabled')).toBeDefined()
+    expect(wrapper.findAll('.wiki-chat-conversation-actions button').at(1)?.attributes('disabled')).toBeDefined()
   } finally { wrapper.unmount() }
 })
 
