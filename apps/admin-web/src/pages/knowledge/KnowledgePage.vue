@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { Network, Link2, Copy, Download, FileText, Folder, FolderOpen, FolderPlus, FilePlus2, Pencil, ChevronsUp, BookOpen, ArrowUpRight, ChevronDown, ChevronRight, Search, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, Columns2, ListTree, Sparkles, SquarePlus, X } from '@lucide/vue'
+import { Network, Link2, Copy, Download, FileText, Folder, FolderOpen, FolderPlus, FilePlus2, Pencil, ChevronsUp, BookOpen, ArrowUpRight, ChevronDown, ChevronRight, Search, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, Columns2, SquarePlus, X } from '@lucide/vue'
 import { renderMarkdown, markdownOutline } from '@/lib/markdown'
 import { renderMermaidBlocks } from './mermaidRenderer'
 import { renderTradingChartBlocks } from './tradingChartRenderer'
@@ -16,6 +16,7 @@ import { ActionMenu, MenuItem } from '@/components/ui/action-menu'
 import { useI18n } from '@/composables/useI18n'
 import { useWikiChat, type WikiChatFile } from './useWikiChat'
 import WikiChatPanel from './WikiChatPanel.vue'
+import RightPanelTabs, { type RightTab } from './RightPanelTabs.vue'
 import KnowledgeNoteView, { noteIntroduction } from './KnowledgeNoteView.vue'
 import { useKnowledgeWorkspace, type NoteDoc, type Page, type RawFile, type TabRef, type TreeSpace, type WorkspacePane, type WorkspaceTab } from './useKnowledgeWorkspace'
 
@@ -35,7 +36,6 @@ type Hit = {
 type TreeNode = { type: 'file' | 'folder'; space: TreeSpace; path: string; name: string; editable: boolean; id?: string; revision?: number; status?: string; has_staged_draft?: boolean }
 type RecentItem = { space: TreeSpace; path: string; title: string; id?: string }
 type OpenMode = 'current' | 'tab' | 'side'
-type RightTab = 'outline' | 'chat'
 type Health = { health: string; document_count: number; last_complete_scan_at: number | null }
 type Source = { id: string; version: number; name: string; provenance: string; sha256: string }
 
@@ -140,6 +140,7 @@ const EXPLORER_COLLAPSED_KEY = 'voice-agent-knowledge-explorer-collapsed'
 const OUTLINE_COLLAPSED_KEY = 'voice-agent-knowledge-outline-collapsed'
 const PROPERTIES_COLLAPSED_KEY = 'voice-agent-knowledge-properties-collapsed'
 const RECENT_COLLAPSED_KEY = 'voice-agent-knowledge-recent-collapsed'
+const RIGHT_TAB_ORDER_KEY = 'voice-agent-knowledge-right-tab-order'
 const RECENT_ITEMS_KEY = 'voice-agent-knowledge-recent-v1'
 const PANEL_WIDTHS_KEY = 'voice-agent-knowledge-panel-widths-v1'
 const MIN_WORKSPACE_WIDTH = 320
@@ -273,6 +274,21 @@ function toggleRightPanel() {
 function toggleChatDrawer() {
   chatDrawerOpen.value = !chatDrawerOpen.value
   if (chatDrawerOpen.value) selectRightTab('chat')
+}
+function restoredRightTabOrder(): RightTab[] {
+  const fallback: RightTab[] = ['outline', 'chat']
+  try {
+    const saved: unknown = JSON.parse(window.localStorage.getItem(RIGHT_TAB_ORDER_KEY) ?? 'null')
+    if (Array.isArray(saved) && saved.length === fallback.length && fallback.every(tab => saved.includes(tab))) return saved as RightTab[]
+  } catch { /* Storage can be disabled or hold an old value; keep the default. */ }
+  return fallback
+}
+const rightTabOrder = ref<RightTab[]>(restoredRightTabOrder())
+function reorderRightTabs(order: RightTab[]) {
+  rightTabOrder.value = order
+  try {
+    window.localStorage.setItem(RIGHT_TAB_ORDER_KEY, JSON.stringify(order))
+  } catch { /* Storage can be disabled; keep the order for this visit. */ }
 }
 function selectRightTab(tab: RightTab) {
   readingRightTab.value = tab
@@ -2117,10 +2133,7 @@ onMounted(() => {
       @reset="resetWikiChat" @refresh-conversation="refreshWikiConversation"
       @focus-citation="openCitation" @highlight-citation="highlightChatCitation">
       <template v-if="viewMode !== 'graph'" #title>
-        <div class="a-right-tabs" role="tablist" :aria-label="t('knowledgeV3.rightPanel')">
-          <button type="button" role="tab" class="a-right-tab" aria-selected="false" @click="selectRightTab('outline')"><ListTree :size="13" aria-hidden="true" /> {{ t('knowledgeV3.rightOutline') }}</button>
-          <button type="button" role="tab" class="a-right-tab active" aria-selected="true"><Sparkles :size="13" aria-hidden="true" /> {{ t('knowledgeV3.chatTitle') }}</button>
-        </div>
+        <RightPanelTabs active="chat" :order="rightTabOrder" @select="selectRightTab" @reorder="reorderRightTabs" />
       </template>
     </WikiChatPanel>
     <button type="button" class="wiki-chat-drawer-toggle"
@@ -2131,10 +2144,7 @@ onMounted(() => {
     <aside v-if="rightPanel === 'outline'" id="knowledge-outline-panel" class="a-outline"
       :class="{ 'is-collapsed': rightPanelCollapsed }" :aria-hidden="rightPanelCollapsed">
       <div class="a-outline-top">
-        <div class="a-right-tabs" role="tablist" :aria-label="t('knowledgeV3.rightPanel')">
-          <button type="button" role="tab" class="a-right-tab active" aria-selected="true"><ListTree :size="13" aria-hidden="true" /> {{ t('knowledgeV3.rightOutline') }}</button>
-          <button type="button" role="tab" class="a-right-tab" aria-selected="false" @click="selectRightTab('chat')"><Sparkles :size="13" aria-hidden="true" /> {{ t('knowledgeV3.chatTitle') }}</button>
-        </div>
+        <RightPanelTabs active="outline" :order="rightTabOrder" @select="selectRightTab" @reorder="reorderRightTabs" />
       </div>
       <div class="aside-scroll">
         <div class="a-aside-label">On this page</div>

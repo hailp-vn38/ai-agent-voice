@@ -583,7 +583,16 @@
 .knowledge-a .a-right-tab { display: inline-flex; align-items: center; gap: 5px; min-width: 0; height: 26px; padding: 0 8px; overflow: hidden; border-radius: 7px; color: var(--muted-foreground); font-size: 11.5px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; transition: color 120ms ease, background-color 120ms ease; }
 .knowledge-a .a-right-tab svg { flex: none; }
 .knowledge-a .a-right-tab:hover { color: var(--foreground); background: var(--muted); }
+.knowledge-a .a-right-tabs.is-reordering, .knowledge-a .a-right-tabs.is-reordering .a-right-tab { cursor: grabbing; }
+.knowledge-a .a-right-tab { position: relative; touch-action: pan-y; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
+.knowledge-a .a-right-tabs.is-reordering .a-right-tab { transition: transform 180ms cubic-bezier(0.2, 0.8, 0.2, 1), scale 140ms ease, box-shadow 140ms ease, color 120ms ease, background-color 120ms ease; will-change: transform; }
+/* The held tab follows the pointer exactly until it is let go. */
+.knowledge-a .a-right-tabs.is-reordering:not(.is-settling) .a-right-tab.is-dragging { transition: scale 140ms ease, box-shadow 140ms ease; }
+.knowledge-a .a-right-tabs.is-instant .a-right-tab { transition: none; }
+.knowledge-a .a-right-tab.is-dragging { z-index: 1; scale: 1.04; background: var(--card, var(--background)); box-shadow: 0 0 0 1px color-mix(in srgb, var(--studio-violet) 55%, transparent), 0 6px 16px color-mix(in srgb, var(--foreground) 16%, transparent); }
+.knowledge-a .a-right-tabs.is-settling .a-right-tab.is-dragging { scale: 1; }
 .knowledge-a .a-right-tab.active { color: var(--studio-violet); background: color-mix(in srgb, var(--studio-violet) 13%, transparent); }
+.knowledge-a .a-right-tab.active.is-dragging { background: color-mix(in srgb, var(--studio-violet) 13%, var(--card, var(--background))); }
 @media (max-width: 950px) {
   .knowledge-a .wiki-chat-panel {
     position: absolute;

@@ -1690,6 +1690,17 @@ it('offers the Wiki chat beside a note and switches the right panel between outl
   } finally { wrapper.unmount() }
 })
 
+it('restores the saved order of the right panel tabs', async () => {
+  window.localStorage.setItem('voice-agent-knowledge-right-tab-order', JSON.stringify(['chat', 'outline']))
+  const wrapper = mount(KnowledgePage)
+  try {
+    await flushPromises()
+    expect(wrapper.findAll('.a-outline .a-right-tab').map(tab => tab.attributes('data-tab'))).toEqual(['chat', 'outline'])
+    await wrapper.get('.a-outline [data-tab="outline"]').trigger('keydown', { key: 'ArrowLeft', altKey: true })
+    expect(window.localStorage.getItem('voice-agent-knowledge-right-tab-order')).toBe('["outline","chat"]')
+  } finally { wrapper.unmount() }
+})
+
 it('keeps the chat beside a note opened from Graph', async () => {
   mockTwoWikiNotes()
   const wrapper = mount(KnowledgePage)
