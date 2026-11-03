@@ -166,43 +166,45 @@ impl PlaylistSourcesRecipe {
     }
 
     fn list_result<'a>(transcript: &'a [ModelMessage], url: &str) -> Option<&'a ModelMessage> {
-        transcript
-            .iter()
-            .flat_map(|message| message.tool_calls.iter())
-            .filter(|call| {
-                call.name == "yt_list_playlist"
-                    && call.arguments.get("url").and_then(Value::as_str) == Some(url)
-            })
-            .filter_map(|call| Self::result_for(transcript, &call.id))
-            .last()
-            .or_else(|| {
-                (!transcript
-                    .iter()
-                    .flat_map(|message| message.tool_calls.iter())
-                    .any(|call| call.name == "yt_list_playlist"))
+        let (result, has_tool_call) =
+            Self::result_for_tool_call(transcript, "yt_list_playlist", "url", url);
+        result.or_else(|| {
+            (!has_tool_call)
                 .then(|| Self::latest_list(transcript))
                 .flatten()
-            })
+        })
     }
 
     fn status_for<'a>(transcript: &'a [ModelMessage], url: &str) -> Option<&'a ModelMessage> {
-        transcript
+        let (result, has_tool_call) =
+            Self::result_for_tool_call(transcript, "collection_status", "playlist_url", url);
+        result.or_else(|| {
+            (!has_tool_call)
+                .then(|| Self::latest_status(transcript).map(|(_, status)| status))
+                .flatten()
+        })
+    }
+
+    fn result_for_tool_call<'a>(
+        transcript: &'a [ModelMessage],
+        tool_name: &str,
+        argument_name: &str,
+        argument_value: &str,
+    ) -> (Option<&'a ModelMessage>, bool) {
+        let mut has_tool_call = false;
+        let result = transcript
             .iter()
             .flat_map(|message| message.tool_calls.iter())
             .filter(|call| {
-                call.name == "collection_status"
-                    && call.arguments.get("playlist_url").and_then(Value::as_str) == Some(url)
+                if call.name != tool_name {
+                    return false;
+                }
+                has_tool_call = true;
+                call.arguments.get(argument_name).and_then(Value::as_str) == Some(argument_value)
             })
             .filter_map(|call| Self::result_for(transcript, &call.id))
-            .last()
-            .or_else(|| {
-                (!transcript
-                    .iter()
-                    .flat_map(|message| message.tool_calls.iter())
-                    .any(|call| call.name == "collection_status"))
-                .then(|| Self::latest_status(transcript).map(|(_, status)| status))
-                .flatten()
-            })
+            .last();
+        (result, has_tool_call)
     }
 
     fn status_items(params: &Value, transcript: &[ModelMessage]) -> Vec<(String, String)> {
