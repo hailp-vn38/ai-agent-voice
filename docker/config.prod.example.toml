@@ -56,3 +56,11 @@ preload = true
 per_server_resolution_timeout_ms = 400
 overall_resolution_budget_ms = 500
 
+
+# Background tasks (optional). The image's /app is read-only for the app user,
+# so keep every orchestrator path under the mounted data/ directory.
+# [orchestrator]
+# enabled = true
+# endpoint = "http://REPLACE_WITH_GATEWAY_HOST:20128/v1"
+# api_key = "REPLACE_WITH_GATEWAY_KEY"
+# skills_dir = "data/skills"
