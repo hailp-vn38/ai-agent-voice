@@ -8,8 +8,8 @@ mod tests;
 
 pub(super) use artifacts::{artifact, list_artifacts};
 pub(super) use jobs::{
-    batch_delete, cancel, create, delete, events, followup, get, history, list, resolve_invocation,
-    resume, retry, stream,
+    batch_delete, cancel, create, delete, events, followup, get, history, list, recipes,
+    resolve_invocation, resume, retry, stream,
 };
 pub(super) use settings::{create_agent, delete_agent, save_settings, settings};
 pub(super) use skills::{delete_skill, get_skill, save_skill};
@@ -46,6 +46,14 @@ fn task_manager_for_submit(state: &AppState, req: &Request) -> Result<Arc<TaskMa
 }
 
 fn task_failure(request: &Request, cause: TaskError) -> Response {
+    if let Some(details) = cause.message().strip_prefix("validation_path=")
+        && let Some((path, message)) = details.split_once(": ")
+    {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"error":{"code":"invalid_arguments","validation_path":path,"message":message,"request_id":id(request)}})),
+        ).into_response();
+    }
     if cause.code() == ErrorCode::OrchestratorError {
         let msg = cause.to_string();
         if msg.contains("WORKSPACE_QUOTA_EXCEEDED") {

@@ -167,6 +167,7 @@ fn background_routes() -> Router<AppState> {
             "/background/settings",
             get(background::settings).put(background::save_settings),
         )
+        .route("/background/recipes", get(background::recipes))
         .route(
             "/background/agents",
             axum::routing::post(background::create_agent),

@@ -6,6 +6,9 @@ pub mod charts;
 mod memory_tools;
 pub(crate) mod muse_task;
 mod projections;
+mod recipes;
+#[cfg(test)]
+pub(crate) use recipes::{PLAYLIST_RECIPE_ROOT, PlaylistSourcesRecipe};
 pub mod skills;
 mod voice;
 mod workspace_seed;
@@ -54,8 +57,8 @@ use std::time::Duration;
 
 use llm_wiki::{AdaptiveReadBudget, WikiEngine, WikiError};
 use orchestrator_agent_rs::{
-    HostTool, LlmConfig, Orchestrator, OrchestratorConfig, OrchestratorError, ToolContext,
-    ToolDescriptor, ToolError, ToolOutcome,
+    AgentDefinition, AgentMode, HostTool, LlmConfig, Orchestrator, OrchestratorConfig,
+    OrchestratorError, ToolContext, ToolDescriptor, ToolError, ToolOutcome,
 };
 use orchestrator_flow_rs::{
     CreateTaskRequest, TaskConfig, TaskError, TaskManager, TaskRuntimeConfig, TaskSource, TaskView,
@@ -233,11 +236,28 @@ async fn init_orchestrator_and_task_manager(
         .with_default_timezone(&cfg.default_timezone)
         .with_default_agent("daily_root")
         .with_runtime(runtime_cfg);
-    let task_init = TaskManager::prepare(task_cfg).await?;
+    let task_init = TaskManager::prepare(task_cfg)
+        .await?
+        .register_recipe(Arc::new(recipes::PlaylistSourcesRecipe))?;
+    let recipe_runtime = task_init.recipe_provider_runtime()?;
 
     let persisted = load_persisted_settings(&cfg.store_dir).unwrap_or_default();
     let _ = write_agent_prompts(&cfg.prompts_dir, &persisted);
-    let (providers, agents) = build_agent_definitions(cfg, &persisted, catalog);
+    let (providers, mut agents) = build_agent_definitions(cfg, &persisted, catalog);
+    agents.push(
+        AgentDefinition::new(
+            recipes::PLAYLIST_RECIPE_ROOT,
+            "recipe",
+            "playlist_sources@1",
+        )
+        .with_mode(AgentMode::Primary)
+        .with_description("Runs the fixed playlist collection recipe")
+        .with_prompt_path(cfg.prompts_dir.join("daily_root.md"))
+        .with_allowed_tools(["yt_list_playlist", "add_to_sources"])
+        .with_allowed_subagents(std::iter::empty::<String>())
+        .with_steps(8)
+        .with_context_limit_tokens(1_000_000),
+    );
     let llm_cfg = LlmConfig { providers };
     let ctx_limit = cfg.context_limit_tokens;
 
@@ -257,7 +277,9 @@ async fn init_orchestrator_and_task_manager(
         orch_cfg.runtime.artifact_max_bytes,
         orch_cfg.runtime.tool_output_cap_bytes,
     ));
-    let mut builder = Orchestrator::builder(orch_cfg).register_tool(muse_tool);
+    let mut builder = Orchestrator::builder(orch_cfg)
+        .with_provider_runtime(recipe_runtime)
+        .register_tool(muse_tool);
     for tool in toolkit.all_host_tools(&task_init) {
         builder = builder.register_tool(Arc::new(NormalizedWikiHostTool { inner: tool }));
     }

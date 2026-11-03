@@ -12,7 +12,7 @@ use crate::services::task_flow::{
 use orchestrator_agent_rs::CallerContext;
 use orchestrator_flow_rs::{
     CreateTaskRequest, ResolveStuckTool, StuckToolDecision, TaskDetailView, TaskEvent,
-    TaskFeedItem, TaskFilter, TaskManager, TaskSource, TaskStatus, TaskView,
+    TaskFeedItem, TaskFilter, TaskManager, TaskRecipeRequest, TaskSource, TaskStatus, TaskView,
 };
 use serde::Deserialize;
 
@@ -42,7 +42,10 @@ async fn project_job_with_history(
 
 #[derive(Deserialize)]
 pub(in crate::app::admin) struct CreateJobInput {
-    pub goal: String,
+    #[serde(default)]
+    pub goal: Option<String>,
+    #[serde(default)]
+    pub recipe: Option<TaskRecipeRequest>,
     #[serde(default)]
     pub title: Option<String>,
     #[serde(default)]
@@ -51,6 +54,17 @@ pub(in crate::app::admin) struct CreateJobInput {
     pub related_wiki_links: Vec<String>,
     #[serde(default)]
     pub attachments: Vec<JobAttachmentInput>,
+}
+
+pub(in crate::app::admin) async fn recipes(
+    State(state): State<AppState>,
+    request: Request,
+) -> Response {
+    let tm = match task_manager(&state, &request) {
+        Ok(tm) => tm,
+        Err(resp) => return resp,
+    };
+    Json(serde_json::json!({"items": tm.available_recipes()})).into_response()
 }
 
 fn extract_idempotency_key(
@@ -129,9 +143,12 @@ pub(in crate::app::admin) async fn create(
         Ok(tm) => tm,
         Err(resp) => return resp,
     };
-    let goal = input.goal.trim();
-    if goal.is_empty() {
+    let goal = input.goal.as_deref().unwrap_or("").trim();
+    if input.recipe.is_none() && goal.is_empty() {
         return error(&request, StatusCode::BAD_REQUEST, "invalid_arguments");
+    }
+    if input.recipe.is_some() && !input.attachments.is_empty() {
+        return error(&request, StatusCode::BAD_REQUEST, "invalid_attachment");
     }
     if input.attachments.len() > MAX_JOB_ATTACHMENTS {
         return error(&request, StatusCode::BAD_REQUEST, "invalid_attachment");
@@ -179,13 +196,22 @@ pub(in crate::app::admin) async fn create(
         ));
     }
 
+    let recipe_meta = input
+        .recipe
+        .as_ref()
+        .and_then(|r| tm.available_recipes().into_iter().find(|m| m.id == r.id));
     let title = input
         .title
         .as_deref()
         .map(str::trim)
         .filter(|s| !s.is_empty())
         .map(str::to_owned)
-        .unwrap_or_else(|| goal.chars().take(80).collect());
+        .unwrap_or_else(|| {
+            recipe_meta
+                .as_ref()
+                .map(|m| format!("{} v{}", m.title, m.version))
+                .unwrap_or_else(|| goal.chars().take(80).collect())
+        });
     let target_agent = input
         .target_agent
         .as_deref()
@@ -197,6 +223,9 @@ pub(in crate::app::admin) async fn create(
         target_agent.as_deref().unwrap_or(""),
         input.related_wiki_links
     );
+    if let Some(recipe) = input.recipe.as_ref() {
+        fingerprint.push_str(&format!(":recipe={}:{}", recipe.id, recipe.params));
+    }
     if !attachment_digests.is_empty() {
         fingerprint.push_str(":att=");
         fingerprint.push_str(&attachment_digests.join(","));
@@ -211,6 +240,7 @@ pub(in crate::app::admin) async fn create(
     let mut req = CreateTaskRequest::new(title, goal)
         .with_source(TaskSource::Api)
         .with_wiki_links(input.related_wiki_links);
+    req.recipe = input.recipe;
     if let Some(target) = target_agent {
         req = req.with_target(target);
     }
