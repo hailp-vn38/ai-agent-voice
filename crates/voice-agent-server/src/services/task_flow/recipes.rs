@@ -334,7 +334,20 @@ mod tests {
         let transcript = vec![listed, status, fetch_call, fetched];
         let decision = recipe.next(&params, &transcript);
         let RecipeDecision::ToolCalls(calls) = decision else {
-            panic!("expected source save")
+            panic!("expected refreshed collection status")
+        };
+        assert_eq!(calls[0].name, "collection_status");
+
+        let refresh_call = ModelMessage::assistant_with_calls("", vec![calls[0].clone()]);
+        let refreshed = ModelMessage::tool_result(
+            calls[0].id.clone(),
+            "collection_status",
+            "TOTAL: 1 | REMAINING: 1\nNEXT:\n1. video_id=v1 attempts=0 title=One",
+        );
+        let transcript = [transcript, vec![refresh_call, refreshed]].concat();
+        let decision = recipe.next(&params, &transcript);
+        let RecipeDecision::ToolCalls(calls) = decision else {
+            panic!("expected source save after refresh")
         };
         assert_eq!(calls[0].name, "add_to_sources");
     }
@@ -391,7 +404,21 @@ mod tests {
         ];
         let decision = recipe.next(&params, &transcript);
         let RecipeDecision::ToolCalls(calls) = decision else {
-            panic!("good sibling should be saved")
+            panic!("expected refreshed collection status")
+        };
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].name, "collection_status");
+
+        let refresh_call = ModelMessage::assistant_with_calls("", vec![calls[0].clone()]);
+        let refreshed = ModelMessage::tool_result(
+            calls[0].id.clone(),
+            "collection_status",
+            "TOTAL: 2 | REMAINING: 2\nNEXT:\n1. video_id=bad attempts=0 title=Bad\n2. video_id=good attempts=0 title=Good",
+        );
+        let transcript = [transcript, vec![refresh_call, refreshed]].concat();
+        let decision = recipe.next(&params, &transcript);
+        let RecipeDecision::ToolCalls(calls) = decision else {
+            panic!("good sibling should be saved after refresh")
         };
         assert_eq!(calls.len(), 1);
         assert_eq!(calls[0].name, "add_to_sources");
