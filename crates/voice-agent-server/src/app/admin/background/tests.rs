@@ -237,16 +237,55 @@ async fn recipe_admin_http_lists_validates_and_runs_playlist_recipe() {
         config::AppConfig,
         database::{Database, credentials::CredentialCipher, secrets::SecretResolver},
         providers::ProviderSet,
-        services::task_flow::{PLAYLIST_RECIPE_ROOT, PlaylistSourcesRecipe},
+        services::task_flow::{
+            PLAYLIST_COMPLETION_TOOL, PLAYLIST_DOMAIN_SELECTOR, PLAYLIST_RECIPE_ROOT,
+            PlaylistSourcesRecipe, TopicSelectionCompletionTool,
+        },
     };
     use orchestrator_agent_rs::{
-        AgentDefinition, AgentMode, LlmConfig, Orchestrator, OrchestratorConfig,
+        AgentDefinition, AgentMode, GatewayError, LlmConfig, ModelRequest, ModelResponse,
+        Orchestrator, OrchestratorConfig, ProviderRuntime, RuntimeProvider, StreamSink,
+        test_support::ScriptedGateway,
     };
     use orchestrator_flow_rs::{
         CreateTaskRequest, TaskConfig, TaskManager, TaskRecipeRequest, WorkspaceToolKit,
     };
     use std::{sync::Arc, time::Duration};
     use tokio::sync::Notify;
+
+    struct RecipeAndGateway {
+        recipes: Arc<orchestrator_flow_rs::RecipeProviderRuntime>,
+        scripted: Arc<ScriptedGateway>,
+    }
+
+    #[async_trait::async_trait]
+    impl ProviderRuntime for RecipeAndGateway {
+        fn providers(&self) -> Vec<RuntimeProvider> {
+            vec![
+                RuntimeProvider::new("recipe", "test-recipe-runtime:v1"),
+                RuntimeProvider::new("test", "scripted-test:v1"),
+            ]
+        }
+
+        async fn complete(
+            &self,
+            request: &ModelRequest,
+            cancel: &tokio_util::sync::CancellationToken,
+            sink: StreamSink<'_>,
+        ) -> Result<ModelResponse, GatewayError> {
+            if request.provider_id == "recipe" {
+                self.recipes.complete(request, cancel, sink).await
+            } else {
+                orchestrator_agent_rs::test_support::LlmGateway::complete(
+                    self.scripted.as_ref(),
+                    request,
+                    cancel,
+                    sink,
+                )
+                .await
+            }
+        }
+    }
 
     let temp = std::env::temp_dir().join(format!("admin-recipe-http-{}", uuid::Uuid::new_v4()));
     let vault = temp.join("vault");
@@ -276,7 +315,7 @@ async fn recipe_admin_http_lists_validates_and_runs_playlist_recipe() {
     )
     .await
     .unwrap()
-    .register_recipe(Arc::new(PlaylistSourcesRecipe))
+    .register_recipe(Arc::new(PlaylistSourcesRecipe::default()))
     .unwrap();
     let runtime = init.recipe_provider_runtime().unwrap();
     let kit = WorkspaceToolKit::new(
@@ -299,26 +338,38 @@ async fn recipe_admin_http_lists_validates_and_runs_playlist_recipe() {
         .iter()
         .map(|tool| tool.descriptor().name)
         .collect::<std::collections::HashSet<_>>();
-    init.validate_recipe_registry(&registered_tools, &std::collections::HashSet::new())
+    let registered_agents = std::collections::HashSet::from([PLAYLIST_DOMAIN_SELECTOR.to_owned()]);
+    init.validate_recipe_registry(&registered_tools, &registered_agents)
         .unwrap();
     let root = AgentDefinition::new(PLAYLIST_RECIPE_ROOT, "recipe", "playlist_sources@1")
         .with_mode(AgentMode::Primary)
-        .with_prompt_path(prompt)
+        .with_prompt_path(prompt.clone())
         .with_allowed_tools([
             "yt_list_playlist",
             "collection_status",
             "yt_fetch_transcript",
             "add_to_sources",
+            "subagent",
         ])
-        .with_allowed_subagents(std::iter::empty::<String>())
+        .with_allowed_subagents([PLAYLIST_DOMAIN_SELECTOR])
         .with_steps(64)
         .with_context_limit_tokens(1_000_000);
+    let selector = AgentDefinition::new(PLAYLIST_DOMAIN_SELECTOR, "test", "gpt-test")
+        .with_mode(AgentMode::Subagent)
+        .with_prompt_path(&prompt)
+        .with_allowed_tools([PLAYLIST_COMPLETION_TOOL])
+        .with_steps(4);
+    let gateway = ScriptedGateway::new();
     let mut builder = Orchestrator::builder(OrchestratorConfig::new(
         LlmConfig { providers: vec![] },
-        vec![root],
+        vec![root, selector],
         temp.join("orch"),
     ))
-    .with_provider_runtime(runtime);
+    .with_provider_runtime(Arc::new(RecipeAndGateway {
+        recipes: runtime,
+        scripted: gateway.clone(),
+    }))
+    .register_tool(Arc::new(TopicSelectionCompletionTool));
     for tool in kit_tools {
         builder = builder.register_tool(tool);
     }
@@ -361,12 +412,21 @@ async fn recipe_admin_http_lists_validates_and_runs_playlist_recipe() {
             .as_array()
             .unwrap()
             .len(),
-        3
+        4
     );
-    assert_eq!(
-        listed_recipes["items"][0]["outline"][1]["host_tools"][0],
-        "yt_fetch_transcript"
-    );
+    assert_eq!(listed_recipes["items"][0]["outline"][2]["kind"], "agent");
+
+    let enqueue_topic_selection = || {
+        gateway.push_tool_calls(
+            "",
+            vec![(
+                "topic-selection",
+                PLAYLIST_COMPLETION_TOOL,
+                serde_json::json!({"domain":"youtube", "topic":"playlist"}),
+            )],
+        );
+        gateway.push_text_with_usage(r#"{"domain":"youtube","topic":"playlist"}"#, 12, 4);
+    };
 
     let invalid = client.post(format!("{base}/jobs")).bearer_auth("recipe-admin-token")
         .json(&serde_json::json!({"recipe":{"id":"playlist_sources","params":{"url":"file:///private/list"}}})).send().await.unwrap();
@@ -376,6 +436,7 @@ async fn recipe_admin_http_lists_validates_and_runs_playlist_recipe() {
         "params.url"
     );
 
+    enqueue_topic_selection();
     let created = client.post(format!("{base}/jobs")).bearer_auth("recipe-admin-token")
         .json(&serde_json::json!({"recipe":{"id":"playlist_sources","params":{"url":"https://www.youtube.com/playlist?list=PL1"}}})).send().await.unwrap();
     assert_eq!(created.status(), reqwest::StatusCode::CREATED);
@@ -401,8 +462,7 @@ async fn recipe_admin_http_lists_validates_and_runs_playlist_recipe() {
     );
     let detail = manager.get_task_detail_any_scope(id).await.unwrap();
     let summary = detail.execution_summary.unwrap();
-    assert_eq!(summary.total_input_tokens, 0);
-    assert_eq!(summary.total_output_tokens, 0);
+    assert!(summary.total_input_tokens > 0 || summary.total_output_tokens > 0);
     let files: Vec<_> = std::fs::read_dir(vault.join("sources/youtube/playlist"))
         .unwrap()
         .filter_map(Result::ok)
@@ -412,6 +472,7 @@ async fn recipe_admin_http_lists_validates_and_runs_playlist_recipe() {
     assert!(source.contains("A useful source transcript for vid123."));
     assert!(source.contains("vid123"));
 
+    enqueue_topic_selection();
     let mixed = client
         .post(format!("{base}/jobs"))
         .bearer_auth("recipe-admin-token")
@@ -462,6 +523,7 @@ async fn recipe_admin_http_lists_validates_and_runs_playlist_recipe() {
             .contains("vidmix")
     }));
 
+    enqueue_topic_selection();
     let failed = client
         .post(format!("{base}/jobs"))
         .bearer_auth("recipe-admin-token")
@@ -491,6 +553,7 @@ async fn recipe_admin_http_lists_validates_and_runs_playlist_recipe() {
         Some("RECIPE_STEP_FAILED")
     );
 
+    enqueue_topic_selection();
     let max_playlist_task = manager
         .create_task(CreateTaskRequest {
             recipe: Some(TaskRecipeRequest {

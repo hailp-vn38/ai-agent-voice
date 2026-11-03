@@ -9,7 +9,10 @@ mod projections;
 mod recipe_start;
 mod recipes;
 #[cfg(test)]
-pub(crate) use recipes::{PLAYLIST_RECIPE_ROOT, PlaylistSourcesRecipe};
+pub(crate) use recipes::{
+    PLAYLIST_COMPLETION_TOOL, PLAYLIST_DOMAIN_SELECTOR, PLAYLIST_RECIPE_ROOT,
+    PlaylistSourcesRecipe, TopicSelectionCompletionTool,
+};
 pub mod skills;
 mod voice;
 mod workspace_seed;
@@ -104,6 +107,8 @@ pub enum TaskFlowError {
     Orchestrator(#[from] OrchestratorError),
     #[error("task error: {0}")]
     Task(#[from] TaskError),
+    #[error("task flow configuration error: {0}")]
+    Config(String),
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),
 }
@@ -112,11 +117,27 @@ impl TaskFlowError {
     pub fn code(&self) -> &'static str {
         match self {
             Self::Task(err) => err.code().as_str(),
+            Self::Config(_) => "config_error",
             Self::Wiki(_) => "knowledge_unavailable",
             Self::Orchestrator(_) => "orchestrator_error",
             Self::Io(_) => "io_error",
         }
     }
+}
+
+fn wiki_domain_options(engine: &WikiEngine) -> Vec<String> {
+    let source_root = engine.config().sources_dir();
+    let Ok(entries) = std::fs::read_dir(source_root) else {
+        return Vec::new();
+    };
+    let mut domains = entries
+        .filter_map(Result::ok)
+        .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_dir()))
+        .filter_map(|entry| entry.file_name().into_string().ok())
+        .filter(|name| !name.starts_with('.'))
+        .collect::<Vec<_>>();
+    domains.sort();
+    domains
 }
 
 #[derive(Clone)]
@@ -239,26 +260,68 @@ async fn init_orchestrator_and_task_manager(
         .with_default_timezone(&cfg.default_timezone)
         .with_default_agent("daily_root")
         .with_runtime(runtime_cfg);
+    let wiki_domains = wiki_domain_options(&engine);
+    let playlist_recipe = Arc::new(recipes::PlaylistSourcesRecipe::new(wiki_domains));
     let task_init = TaskManager::prepare(task_cfg)
         .await?
-        .register_recipe(Arc::new(recipes::PlaylistSourcesRecipe))?;
+        .register_recipe(playlist_recipe.clone())?;
     let recipe_runtime = task_init.recipe_provider_runtime()?;
 
     let persisted = load_persisted_settings(&cfg.store_dir).unwrap_or_default();
     let _ = write_agent_prompts(&cfg.prompts_dir, &persisted);
     let (providers, mut agents) = build_agent_definitions(cfg, &persisted, catalog);
-    let recipe_metadata = recipes::PlaylistSourcesRecipe.metadata();
+    let recipe_metadata = playlist_recipe.metadata();
     let recipe_start_manager = Arc::new(OnceLock::new());
     let recipe_tools = recipe_metadata
         .outline
         .iter()
         .flat_map(|step| step.host_tools.iter().cloned())
         .collect::<std::collections::BTreeSet<_>>();
+    let mut recipe_tools = recipe_tools;
+    if recipe_metadata
+        .outline
+        .iter()
+        .any(|step| step.kind == orchestrator_flow_rs::RecipeStepKind::Agent)
+    {
+        recipe_tools.insert("subagent".to_owned());
+    }
     let recipe_subagents = recipe_metadata
         .outline
         .iter()
         .flat_map(|step| step.sub_agents.iter().cloned())
         .collect::<std::collections::BTreeSet<_>>();
+    let selector_prompt = cfg
+        .prompts_dir
+        .join(format!("{}.md", recipes::PLAYLIST_DOMAIN_SELECTOR));
+    if !selector_prompt.exists() {
+        std::fs::write(
+            &selector_prompt,
+            format!(
+                "You classify playlist sources into a Wiki domain and topic. Use only `{}` as your completion tool. After calling it, return its canonical JSON output as your entire final response, with no prose or markdown. The delegated user message contains the allowed domains and task details.",
+                recipes::PLAYLIST_COMPLETION_TOOL
+            ),
+        )?;
+    }
+    let (selector_provider, selector_model) = agents
+        .iter()
+        .find(|agent| agent.id == "daily_root")
+        .map(|agent| (agent.provider_id.clone(), agent.model_id.clone()))
+        .ok_or_else(|| {
+            TaskFlowError::Config("daily_root agent is unavailable for recipe classifier".into())
+        })?;
+    agents.push(
+        AgentDefinition::new(
+            recipes::PLAYLIST_DOMAIN_SELECTOR,
+            selector_provider,
+            selector_model,
+        )
+        .with_mode(AgentMode::Subagent)
+        .with_description("Selects a Wiki source domain and topic for a playlist recipe")
+        .with_prompt_path(selector_prompt)
+        .with_allowed_tools([recipes::PLAYLIST_COMPLETION_TOOL])
+        .with_steps(4)
+        .with_context_limit_tokens(32_000),
+    );
     agents.push(
         AgentDefinition::new(
             recipes::PLAYLIST_RECIPE_ROOT,
@@ -289,6 +352,7 @@ async fn init_orchestrator_and_task_manager(
         vec![recipe_metadata.clone()],
         recipe_start_manager.clone(),
     )));
+    host_tools.push(Arc::new(recipes::TopicSelectionCompletionTool));
     let llm_cfg = LlmConfig { providers };
     let ctx_limit = cfg.context_limit_tokens;
 

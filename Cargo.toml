@@ -55,7 +55,7 @@ zeroize = "1.8"
 
 [patch.crates-io]
 orchestrator-agent = { path = "../libs/orchestrator_agent_rs-task-recipes-integration" }
-orchestrator-flow = { path = "../libs/orchestrator_task_rs-task-recipes-06" }
+orchestrator-flow = { path = "../libs/orchestrator_task_rs-task-recipes-04" }
 
 [profile.dev]
 debug = "line-tables-only"
