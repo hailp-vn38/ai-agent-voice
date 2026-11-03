@@ -51,6 +51,8 @@ pub(crate) fn daily_root_prompt_with_routing_guidance(base: &str) -> String {
 pub const WIKI_TAXONOMY_SKILL: &str =
     include_str!("../../../builtin-skills/wiki-taxonomy/SKILL.md");
 pub const WIKI_INGEST_SKILL: &str = include_str!("../../../builtin-skills/wiki-ingest/SKILL.md");
+pub const WIKI_PAGE_FORMAT_SKILL: &str =
+    include_str!("../../../builtin-skills/wiki-page-format/SKILL.md");
 pub const WIKI_QUERY_SKILL: &str = include_str!("../../../builtin-skills/wiki-query/SKILL.md");
 pub const WIKI_CHAT_SKILL: &str = include_str!("../../../builtin-skills/wiki-chat/SKILL.md");
 pub const WIKI_LINT_SKILL: &str = include_str!("../../../builtin-skills/wiki-lint/SKILL.md");
@@ -70,6 +72,7 @@ pub const BUILTIN_SKILLS: &[(&str, &str)] = &[
     ("batch-source-collection", BATCH_SOURCE_COLLECTION_SKILL),
     ("wiki-taxonomy", WIKI_TAXONOMY_SKILL),
     ("wiki-ingest", WIKI_INGEST_SKILL),
+    ("wiki-page-format", WIKI_PAGE_FORMAT_SKILL),
     ("wiki-query", WIKI_QUERY_SKILL),
     ("wiki-chat", WIKI_CHAT_SKILL),
     ("wiki-lint", WIKI_LINT_SKILL),

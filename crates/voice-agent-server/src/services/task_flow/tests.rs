@@ -372,6 +372,16 @@ fn dual_flow_agent_specs_assign_collectors_to_daily_flow_and_keep_wiki_flow_pure
             .any(|(id, _)| *id == "web-fetch-policy")
     );
 
+    assert!(
+        BUILTIN_SKILLS
+            .iter()
+            .any(|(id, body)| *id == "wiki-page-format" && body.contains("name: wiki-page-format"))
+    );
+    for writer in ["wiki_ingestor", "wiki_curator"] {
+        let spec = find_agent_spec(writer).expect("wiki writer spec");
+        assert!(spec.default_allowed_skills.contains(&"wiki-page-format"));
+    }
+
     let report_stager = find_agent_spec("report_stager").expect("report_stager spec");
     assert!(
         report_stager
