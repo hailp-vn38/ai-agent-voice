@@ -123,6 +123,7 @@ export interface AgentRunView {
   parent_agent_run_id: string | null
   fork_group_id?: string | null
   role: AgentRole
+  run_kind?: 'recipe' | 'free'
   goal_excerpt: string
   result?: Record<string, unknown> | null
   messages?: AgentMessageView[]

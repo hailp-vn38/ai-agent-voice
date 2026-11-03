@@ -99,6 +99,7 @@ describe('Job activity presentation', () => {
         agent_run_id: 'sess-root-1',
         parent_agent_run_id: null,
         role: 'daily_root',
+        run_kind: 'free',
         goal_excerpt: 'Search wiki for Rust',
         status: 'running',
         run_index: 0,
@@ -144,6 +145,7 @@ describe('Job activity presentation', () => {
     try {
       expect(wrapper.text()).toContain('I will search the Wiki for Rust now.')
       expect(wrapper.text()).toContain('Search wiki for Rust')
+      expect(wrapper.text()).toContain(translate('jobUi.agentRunKindFree'))
     } finally { wrapper.unmount() }
   })
 
