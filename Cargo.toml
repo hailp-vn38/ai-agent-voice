@@ -24,8 +24,8 @@ ndarray-npy = "0.10"
 http = "1.0"
 hound = "3.5"
 opus2 = { version = "0.4", default-features = false, features = ["backend-libopus", "bundled", "static"] }
-orchestrator-agent = "0.6.0"
-orchestrator-flow = "0.3.0"
+orchestrator-agent = "0.7.0"
+orchestrator-flow = "0.4.0"
 ort = { version = "=2.0.0-rc.13", default-features = false, features = ["load-dynamic"] }
 reqwest = { version = "0.13", default-features = false, features = ["blocking", "json", "multipart", "rustls", "stream", "gzip", "brotli", "deflate"] }
 rustls = { version = "0.23", default-features = false, features = ["ring"] }
@@ -55,7 +55,7 @@ zeroize = "1.8"
 
 [patch.crates-io]
 orchestrator-agent = { path = "../libs/orchestrator_agent_rs-task-recipes-integration" }
-orchestrator-flow = { path = "../libs/orchestrator_task_rs-task-recipes-04" }
+orchestrator-flow = { path = "../libs/orchestrator_task_rs-task-recipes-integration" }
 
 [profile.dev]
 debug = "line-tables-only"
