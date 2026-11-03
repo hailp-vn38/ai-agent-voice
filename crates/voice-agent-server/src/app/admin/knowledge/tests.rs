@@ -688,3 +688,57 @@ async fn knowledge_chart_read_serves_synthesized_chart_and_rejects_invalid_paths
     handle.abort();
     let _ = std::fs::remove_dir_all(temp_root);
 }
+
+#[tokio::test]
+async fn knowledge_raw_create_places_root_and_folder_files_in_their_folder() {
+    let (base, temp_root, handle) = fixture_server().await;
+    let client = reqwest::Client::new();
+    let create = |folder: &'static str, name: &'static str, body: &'static str| {
+        client
+            .post(format!("{base}/knowledge/raw/files"))
+            .bearer_auth("knowledge-test-token")
+            .json(&serde_json::json!({ "folder_path": folder, "file_name": name, "body": body }))
+            .send()
+    };
+
+    let duplicate = create("raw/notes", "field-observation.md", "overwrite")
+        .await
+        .unwrap();
+    assert_eq!(duplicate.status(), StatusCode::CONFLICT);
+    let kept = std::fs::read_to_string(temp_root.join("vault/sources/notes/field-observation.md"))
+        .unwrap();
+    assert!(kept.contains("42 milliseconds"));
+
+    let root: Value = create("raw", "Guide.md", "# Guide\n")
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(root["path"], "raw/Guide.md");
+    assert!(temp_root.join("vault/sources/Guide.md").exists());
+
+    let nested: Value = create("raw/notes", "Inside.md", "inside")
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(nested["path"], "raw/notes/Inside.md");
+
+    let folder: Value = client
+        .post(format!("{base}/knowledge/folders"))
+        .bearer_auth("knowledge-test-token")
+        .json(&serde_json::json!({ "space": "raw", "parent_path": "raw", "name": "docs" }))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(folder["path"], "raw/docs");
+    assert!(temp_root.join("vault/sources/docs").is_dir());
+
+    handle.abort();
+    let _ = std::fs::remove_dir_all(&temp_root);
+}

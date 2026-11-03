@@ -47,6 +47,7 @@ export function formatApiError(error: unknown): string {
     unauthorized: 'Admin token không hợp lệ hoặc đã hết hạn.',
     not_found: 'Không tìm thấy tài nguyên.',
     revision_conflict: 'Dữ liệu đã thay đổi trên server. Đã tải lại bản mới nhất.',
+    file_exists: 'File cùng tên đã tồn tại trong thư mục này.',
     default_template_conflict: 'Không thể unlink Template mặc định.',
     agent_in_use: 'Agent vẫn còn dependency và chưa thể xoá.',
     device_in_use: 'Device vẫn còn dependency và chưa thể xoá.',

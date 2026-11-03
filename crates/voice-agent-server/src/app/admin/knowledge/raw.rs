@@ -12,6 +12,24 @@ use llm_wiki::{
 };
 use serde::{Deserialize, Serialize};
 
+/// Strips the UI space prefix (`raw`, `sources` or `wiki`) from an Admin path, including the
+/// bare root folder itself, so `"raw"` and `"raw/notes"` resolve to `""` and `"notes"`.
+fn space_relative(path: &str) -> &str {
+    let path = path.trim().trim_matches('/');
+    for space in ["sources", "raw", "wiki"] {
+        if path == space {
+            return "";
+        }
+        if let Some(rest) = path
+            .strip_prefix(space)
+            .and_then(|rest| rest.strip_prefix('/'))
+        {
+            return rest;
+        }
+    }
+    path
+}
+
 fn verify_expected_sha256(
     engine: &WikiEngine,
     normalized_path: &str,
@@ -154,13 +172,7 @@ pub(in crate::app::admin) async fn knowledge_folder_create(
         "wiki" => engine.config().wiki_dir(),
         _ => return error(&req, StatusCode::BAD_REQUEST, "invalid_arguments"),
     };
-    let clean_parent = input
-        .parent_path
-        .trim()
-        .trim_matches('/')
-        .trim_start_matches("sources/")
-        .trim_start_matches("raw/")
-        .trim_start_matches("wiki/");
+    let clean_parent = space_relative(&input.parent_path);
     let clean_name = input
         .name
         .split('/')
@@ -213,12 +225,7 @@ pub(in crate::app::admin) async fn knowledge_raw_create(
         Ok(engine) => engine,
         Err(resp) => return resp,
     };
-    let folder = input
-        .folder_path
-        .trim()
-        .trim_matches('/')
-        .trim_start_matches("sources/")
-        .trim_start_matches("raw/");
+    let folder = space_relative(&input.folder_path);
     let file_name = input.file_name.trim().trim_matches('/');
     if file_name.is_empty() {
         return error(&req, StatusCode::BAD_REQUEST, "invalid_arguments");
@@ -228,6 +235,15 @@ pub(in crate::app::admin) async fn knowledge_raw_create(
     } else {
         format!("{folder}/{file_name}")
     };
+    let md_path = if rel_path.to_lowercase().ends_with(".md") {
+        rel_path.clone()
+    } else {
+        format!("{rel_path}.md")
+    };
+    // Creating never replaces an existing note; edits go through the revision-checked update.
+    if engine.config().sources_dir().join(&md_path).exists() {
+        return error(&req, StatusCode::CONFLICT, "file_exists");
+    }
     match engine.write_source_file(&rel_path, &input.body) {
         Ok(info) => {
             if let Some(ref notify) = state.autoflow_notify {
@@ -395,12 +411,7 @@ pub(in crate::app::admin) async fn knowledge_raw_move(
     if !verify_expected_sha256(&engine, &normalized, input.expected_sha256.as_deref()) {
         return error(&req, StatusCode::CONFLICT, "revision_conflict");
     }
-    let target_folder = input
-        .target_folder_path
-        .trim()
-        .trim_matches('/')
-        .trim_start_matches("sources/")
-        .trim_start_matches("raw/");
+    let target_folder = space_relative(&input.target_folder_path);
     let to_rel = if target_folder.is_empty() {
         input.file_name.trim().to_string()
     } else {
