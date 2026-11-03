@@ -196,10 +196,7 @@ pub(in crate::app::admin) async fn create(
         ));
     }
 
-    let recipe_meta = input
-        .recipe
-        .as_ref()
-        .and_then(|r| tm.available_recipes().into_iter().find(|m| m.id == r.id));
+    // A recipe Task without an explicit title is named by TaskManager from its validated params.
     let title = input
         .title
         .as_deref()
@@ -207,17 +204,10 @@ pub(in crate::app::admin) async fn create(
         .filter(|s| !s.is_empty())
         .map(str::to_owned)
         .unwrap_or_else(|| {
-            if let Some(recipe) = input
-                .recipe
-                .as_ref()
-                .filter(|recipe| recipe.id == crate::services::task_flow::PLAYLIST_RECIPE_ID)
-            {
-                crate::services::task_flow::generated_playlist_title(&recipe.params)
+            if input.recipe.is_some() {
+                String::new()
             } else {
-                recipe_meta
-                    .as_ref()
-                    .map(|m| format!("{} v{}", m.title, m.version))
-                    .unwrap_or_else(|| goal.chars().take(80).collect())
+                goal.chars().take(80).collect()
             }
         });
     let target_agent = input

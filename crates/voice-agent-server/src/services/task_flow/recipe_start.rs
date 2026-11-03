@@ -6,40 +6,49 @@ use orchestrator_agent_rs::{
     ToolOperationStatus, ToolOutcome,
 };
 use orchestrator_flow_rs::{
-    CreateTaskRequest, RecipeMetadata, TaskManager, TaskRecipeRequest, TaskScope, TaskSource,
+    CreateTaskRequest, RecipeMetadata, TaskManager, TaskRecipe, TaskRecipeRequest, TaskScope,
+    TaskSource,
 };
 use serde_json::{Value, json};
 
-use super::{PLAYLIST_RECIPE_ID, generated_playlist_title};
+use super::recipe_validation_error;
 
 const TOOL_NAME: &str = "recipe_start";
 const OPERATION_REF: &str = "task_recipe_start";
 
 pub(super) struct TaskRecipeStartTool {
-    recipes: Vec<RecipeMetadata>,
+    recipes: Vec<Arc<dyn TaskRecipe>>,
     manager: Arc<OnceLock<Arc<TaskManager>>>,
 }
 
 impl TaskRecipeStartTool {
     pub(super) fn new(
-        recipes: Vec<RecipeMetadata>,
+        recipes: Vec<Arc<dyn TaskRecipe>>,
         manager: Arc<OnceLock<Arc<TaskManager>>>,
     ) -> Self {
         Self { recipes, manager }
+    }
+
+    /// Read on each use: a recipe schema may carry live options such as Wiki domains.
+    fn metadata(&self) -> Vec<RecipeMetadata> {
+        self.recipes
+            .iter()
+            .map(|recipe| recipe.metadata())
+            .collect()
     }
 
     fn descriptor_description(&self) -> String {
         let mut description = String::from(
             "Creates a new Task using one of the server-owned recipes. Choose a matching recipe and pass its validated parameters. Available recipes:",
         );
-        for recipe in &self.recipes {
+        for recipe in self.metadata() {
             description.push_str(&format!(
                 "\n- {} ({} v{}): {} Parameters: {}",
                 recipe.id,
                 recipe.title,
                 recipe.version,
                 recipe.description,
-                parameter_summary(recipe)
+                parameter_summary(&recipe)
             ));
         }
         description
@@ -55,7 +64,7 @@ impl TaskRecipeStartTool {
                 message: "recipe_id is required".into(),
             })?;
         let params = args.get("params").cloned().unwrap_or_else(|| json!({}));
-        if !self.recipes.iter().any(|recipe| recipe.id == recipe_id) {
+        if !self.metadata().iter().any(|recipe| recipe.id == recipe_id) {
             return Ok(outcome(
                 &ctx,
                 json!({
@@ -97,17 +106,9 @@ impl TaskRecipeStartTool {
             })
             .await?;
 
-        let title = if recipe_id == PLAYLIST_RECIPE_ID {
-            generated_playlist_title(&params)
-        } else {
-            self.recipes
-                .iter()
-                .find(|recipe| recipe.id == recipe_id)
-                .map(|recipe| format!("{} v{}", recipe.title, recipe.version))
-                .unwrap_or_default()
-        };
+        // An empty title lets TaskManager name the Task from the recipe's validated parameters.
         let task_request = CreateTaskRequest {
-            title,
+            title: String::new(),
             prompt: String::new(),
             target_agent: None,
             source: TaskSource::Voice,
@@ -129,18 +130,17 @@ impl TaskRecipeStartTool {
                 Ok(outcome(&ctx, result))
             }
             Err(error) => {
-                let message = error.message().to_owned();
-                if !message.contains("validation_path=") {
+                let Some((path, _)) = recipe_validation_error(&error) else {
                     return Err(ToolError {
                         code: error.code().as_str().to_owned(),
-                        message,
+                        message: error.message().to_owned(),
                     });
-                }
+                };
                 let result = json!({
                     "created": false,
                     "isError": true,
-                    "error": { "code": error.code().as_str(), "message": message },
-                    "validation_path": validation_path(error.message()),
+                    "error": { "code": error.code().as_str(), "message": error.message() },
+                    "validation_path": path,
                 });
                 persist_result(&ctx, ToolOperationStatus::Failed, &request_json, &result).await?;
                 Ok(outcome(&ctx, result))
@@ -217,15 +217,6 @@ fn parameter_summary(recipe: &RecipeMetadata) -> String {
         })
         .collect::<Vec<_>>()
         .join(", ")
-}
-
-fn validation_path(message: &str) -> String {
-    let path = message
-        .split_once("validation_path=")
-        .and_then(|(_, path)| path.split_once(':').map(|(path, _)| path.to_owned()))
-        .unwrap_or_default();
-    path.trim_matches(|character: char| character.is_whitespace() || character == '[')
-        .to_owned()
 }
 
 async fn persist_result(

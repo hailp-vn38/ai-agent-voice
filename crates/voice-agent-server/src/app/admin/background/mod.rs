@@ -46,9 +46,7 @@ fn task_manager_for_submit(state: &AppState, req: &Request) -> Result<Arc<TaskMa
 }
 
 fn task_failure(request: &Request, cause: TaskError) -> Response {
-    if let Some(details) = cause.message().strip_prefix("validation_path=")
-        && let Some((path, message)) = details.split_once(": ")
-    {
+    if let Some((path, message)) = crate::services::task_flow::recipe_validation_error(&cause) {
         return (
             StatusCode::BAD_REQUEST,
             Json(serde_json::json!({"error":{"code":"invalid_arguments","validation_path":path,"message":message,"request_id":id(request)}})),

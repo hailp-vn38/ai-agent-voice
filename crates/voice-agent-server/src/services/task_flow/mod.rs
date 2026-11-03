@@ -6,6 +6,7 @@ pub mod charts;
 mod memory_tools;
 pub(crate) mod muse_task;
 mod projections;
+mod recipe_agents;
 mod recipe_start;
 mod recipes;
 #[cfg(test)]
@@ -13,7 +14,6 @@ pub(crate) use recipes::{
     PLAYLIST_COMPLETION_TOOL, PLAYLIST_DOMAIN_SELECTOR, PLAYLIST_RECIPE_ROOT,
     PlaylistSourcesRecipe, TopicSelectionCompletionTool,
 };
-pub(crate) use recipes::{PLAYLIST_RECIPE_ID, generated_playlist_title};
 pub mod skills;
 mod voice;
 mod workspace_seed;
@@ -64,8 +64,8 @@ use std::time::Duration;
 
 use llm_wiki::{AdaptiveReadBudget, WikiEngine, WikiError};
 use orchestrator_agent_rs::{
-    AgentDefinition, AgentMode, HostTool, LlmConfig, Orchestrator, OrchestratorConfig,
-    OrchestratorError, ToolContext, ToolDescriptor, ToolError, ToolOutcome,
+    AgentMode, HostTool, LlmConfig, Orchestrator, OrchestratorConfig, OrchestratorError,
+    ToolContext, ToolDescriptor, ToolError, ToolOutcome,
 };
 use orchestrator_flow_rs::{
     CreateTaskRequest, TaskConfig, TaskError, TaskManager, TaskRecipe, TaskRuntimeConfig,
@@ -82,6 +82,15 @@ use workspace_seed::ensure_prompts_and_skills;
 pub(crate) struct NormalizedWikiHostTool {
     inner: Arc<dyn HostTool>,
     recipe_start_manager: Arc<OnceLock<Arc<TaskManager>>>,
+}
+
+/// TaskManager reports recipe parameter errors as `validation_path=<path>: <message>`.
+/// Returns `(path, message)` for that encoding.
+pub(crate) fn recipe_validation_error(error: &TaskError) -> Option<(&str, &str)> {
+    error
+        .message()
+        .strip_prefix("validation_path=")?
+        .split_once(": ")
 }
 
 fn task_tool_error(error: TaskError) -> ToolError {
@@ -107,13 +116,13 @@ impl NormalizedWikiHostTool {
 impl HostTool for NormalizedWikiHostTool {
     fn descriptor(&self) -> ToolDescriptor {
         let mut descriptor = self.inner.descriptor();
-        if descriptor.name == "add_to_sources" {
-            if let Some(properties) = descriptor
+        if descriptor.name == "add_to_sources"
+            && let Some(properties) = descriptor
                 .input_schema
                 .get_mut("properties")
                 .and_then(serde_json::Value::as_object_mut)
-            {
-                properties.insert(
+        {
+            properties.insert(
                     "ingest_to_wiki".into(),
                     serde_json::json!({
                         "type": "boolean",
@@ -121,7 +130,6 @@ impl HostTool for NormalizedWikiHostTool {
                         "description": "Whether this recipe source should be included in Wiki Auto-Flow."
                     }),
                 );
-            }
         }
         descriptor
     }
@@ -354,8 +362,10 @@ async fn init_orchestrator_and_task_manager(
         .with_default_timezone(&cfg.default_timezone)
         .with_default_agent("daily_root")
         .with_runtime(runtime_cfg);
-    let wiki_domains = wiki_domain_options(&engine);
-    let playlist_recipe = Arc::new(recipes::PlaylistSourcesRecipe::new(wiki_domains));
+    let domain_engine = engine.clone();
+    let playlist_recipe = Arc::new(recipes::PlaylistSourcesRecipe::with_domain_source(
+        Arc::new(move || wiki_domain_options(&domain_engine)),
+    ));
     let task_init = TaskManager::prepare(task_cfg)
         .await?
         .register_recipe(playlist_recipe.clone())?;
@@ -364,72 +374,12 @@ async fn init_orchestrator_and_task_manager(
     let persisted = load_persisted_settings(&cfg.store_dir).unwrap_or_default();
     let _ = write_agent_prompts(&cfg.prompts_dir, &persisted);
     let (providers, mut agents) = build_agent_definitions(cfg, &persisted, catalog);
-    let recipe_metadata = playlist_recipe.metadata();
     let recipe_start_manager = Arc::new(OnceLock::new());
-    let recipe_tools = recipe_metadata
-        .outline
-        .iter()
-        .flat_map(|step| step.host_tools.iter().cloned())
-        .collect::<std::collections::BTreeSet<_>>();
-    let mut recipe_tools = recipe_tools;
-    if recipe_metadata
-        .outline
-        .iter()
-        .any(|step| step.kind == orchestrator_flow_rs::RecipeStepKind::Agent)
-    {
-        recipe_tools.insert("subagent".to_owned());
-    }
-    let recipe_subagents = recipe_metadata
-        .outline
-        .iter()
-        .flat_map(|step| step.sub_agents.iter().cloned())
-        .collect::<std::collections::BTreeSet<_>>();
-    let selector_prompt = cfg
-        .prompts_dir
-        .join(format!("{}.md", recipes::PLAYLIST_DOMAIN_SELECTOR));
-    if !selector_prompt.exists() {
-        std::fs::write(
-            &selector_prompt,
-            format!(
-                "You classify playlist sources into a Wiki domain and topic. Use only `{}` as your completion tool. After calling it, return its canonical JSON output as your entire final response, with no prose or markdown. The delegated user message contains the allowed domains and task details.",
-                recipes::PLAYLIST_COMPLETION_TOOL
-            ),
-        )?;
-    }
-    let (selector_provider, selector_model) = agents
-        .iter()
-        .find(|agent| agent.id == "daily_root")
-        .map(|agent| (agent.provider_id.clone(), agent.model_id.clone()))
-        .ok_or_else(|| {
-            TaskFlowError::Config("daily_root agent is unavailable for recipe classifier".into())
-        })?;
-    agents.push(
-        AgentDefinition::new(
-            recipes::PLAYLIST_DOMAIN_SELECTOR,
-            selector_provider,
-            selector_model,
-        )
-        .with_mode(AgentMode::Subagent)
-        .with_description("Selects a Wiki source domain and topic for a playlist recipe")
-        .with_prompt_path(selector_prompt)
-        .with_allowed_tools([recipes::PLAYLIST_COMPLETION_TOOL])
-        .with_steps(4)
-        .with_context_limit_tokens(32_000),
-    );
-    agents.push(
-        AgentDefinition::new(
-            recipes::PLAYLIST_RECIPE_ROOT,
-            "recipe",
-            format!("{}@{}", recipe_metadata.id, recipe_metadata.version),
-        )
-        .with_mode(AgentMode::Primary)
-        .with_description("Runs the fixed YouTube source collection recipe")
-        .with_prompt_path(cfg.prompts_dir.join("daily_root.md"))
-        .with_allowed_tools(recipe_tools.iter().cloned())
-        .with_allowed_subagents(recipe_subagents.iter().cloned())
-        .with_steps(recipe_metadata.max_steps)
-        .with_context_limit_tokens(1_000_000),
-    );
+    agents.extend(recipe_agents::playlist_recipe_agents(
+        &cfg.prompts_dir,
+        &agents,
+        &playlist_recipe.metadata(),
+    )?);
     let registered_agents = agents
         .iter()
         .filter(|agent| agent.mode != AgentMode::Primary)
@@ -448,7 +398,7 @@ async fn init_orchestrator_and_task_manager(
     host_tools.extend(chart_host_tools(&wiki_cfg.vault_dir));
     host_tools.extend(memory.host_tools());
     host_tools.push(Arc::new(recipe_start::TaskRecipeStartTool::new(
-        vec![recipe_metadata.clone()],
+        vec![playlist_recipe.clone() as Arc<dyn TaskRecipe>],
         recipe_start_manager.clone(),
     )));
     host_tools.push(Arc::new(recipes::TopicSelectionCompletionTool));

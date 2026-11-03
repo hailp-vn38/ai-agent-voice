@@ -1,4 +1,5 @@
 import type { RecipeParameterSchema } from '@/api/types/agent-jobs'
+import { translate } from '@/composables/useI18n'
 
 export function recipeParamDefaults(schema: RecipeParameterSchema): Record<string, unknown> {
   const result: Record<string, unknown> = {}
@@ -16,14 +17,14 @@ export function validateRecipeParams(schema: RecipeParameterSchema, params: Reco
     const value = params[key]
     const empty = value === undefined || value === null || value === '' || (Array.isArray(value) && value.length === 0)
     if (schema.required?.includes(key) && empty) {
-      errors[key] = 'This field is required.'
+      errors[key] = translate('jobUi.recipeFieldRequired')
       continue
     }
     if (field.type === 'integer' && value !== undefined && value !== null && value !== '') {
       const number = Number(value)
-      if (!Number.isInteger(number)) errors[key] = 'Must be a whole number.'
-      else if (field.minimum !== undefined && number < field.minimum) errors[key] = `Must be at least ${field.minimum}.`
-      else if (field.maximum !== undefined && number > field.maximum) errors[key] = `Must be at most ${field.maximum}.`
+      if (!Number.isInteger(number)) errors[key] = translate('jobUi.recipeFieldInteger')
+      else if (field.minimum !== undefined && number < field.minimum) errors[key] = translate('jobUi.recipeFieldMin', { min: field.minimum })
+      else if (field.maximum !== undefined && number > field.maximum) errors[key] = translate('jobUi.recipeFieldMax', { max: field.maximum })
     }
   }
   return errors

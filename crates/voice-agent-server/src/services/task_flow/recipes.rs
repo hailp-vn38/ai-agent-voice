@@ -1,4 +1,5 @@
 use std::collections::HashSet;
+use std::sync::Arc;
 
 use async_trait::async_trait;
 use orchestrator_agent_rs::{
@@ -17,44 +18,81 @@ pub const PLAYLIST_DOMAIN_SELECTOR: &str = "recipe_playlist_domain_selector";
 pub const PLAYLIST_COMPLETION_TOOL: &str = "recipe_topic_selection_complete";
 const BATCH_SIZE: usize = 10;
 const MAX_VIDEOS: usize = 50;
+/// Schema value of the `domain` enum meaning "let the selector Agent Step choose". It exists only
+/// on the wire; [`PlaylistParams::domain`] turns it into `None`.
 const AGENT_AUTO_DOMAIN: &str = "agent tự chọn";
 
-pub(crate) fn generated_playlist_title(params: &Value) -> String {
-    let video_urls = params
-        .get("video_urls")
-        .and_then(Value::as_array)
-        .map(|urls| urls.len().min(PlaylistSourcesRecipe::max_videos(params)))
-        .unwrap_or(0);
-    let source = if video_urls > 0 {
-        format!("{video_urls} video lẻ")
-    } else {
-        let max_videos = params
-            .get("max_videos")
-            .and_then(Value::as_u64)
-            .unwrap_or(MAX_VIDEOS as u64)
-            .min(MAX_VIDEOS as u64);
-        format!("playlist · tối đa {max_videos} video")
-    };
-    let domain = params
-        .get("domain")
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|domain| !domain.is_empty() && *domain != AGENT_AUTO_DOMAIN)
-        .map(|domain| domain.chars().take(32).collect::<String>());
-    let ingest = params
-        .get("ingest_to_wiki")
-        .and_then(Value::as_bool)
-        .unwrap_or(false);
+/// Live Wiki domain catalog, read on every use so domains created after startup are accepted.
+pub type WikiDomainSource = Arc<dyn Fn() -> Vec<String> + Send + Sync>;
 
-    let mut title = format!("Thu thập {source}");
-    if let Some(domain) = domain {
-        title.push_str(" · ");
-        title.push_str(&domain);
+/// Typed view of the recipe parameters, parsed once from the validated JSON.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct PlaylistParams {
+    playlist_url: Option<String>,
+    video_urls: Vec<String>,
+    /// `None` lets the selector choose among the current Wiki domains.
+    domain: Option<String>,
+    max_videos: usize,
+    ingest_to_wiki: bool,
+}
+
+impl PlaylistParams {
+    fn from_value(params: &Value) -> Self {
+        Self {
+            playlist_url: params.get("url").and_then(Value::as_str).map(str::to_owned),
+            video_urls: params
+                .get("video_urls")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(Value::as_str)
+                .map(str::to_owned)
+                .collect(),
+            domain: params
+                .get("domain")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|domain| !domain.is_empty() && *domain != AGENT_AUTO_DOMAIN)
+                .map(str::to_owned),
+            max_videos: params
+                .get("max_videos")
+                .and_then(Value::as_u64)
+                .map_or(MAX_VIDEOS, |max| (max as usize).min(MAX_VIDEOS)),
+            ingest_to_wiki: params
+                .get("ingest_to_wiki")
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
+        }
     }
-    if ingest {
-        title.push_str(" · Wiki");
+
+    fn source_urls(&self) -> Vec<String> {
+        if let Some(url) = &self.playlist_url {
+            return vec![url.clone()];
+        }
+        self.video_urls
+            .iter()
+            .take(self.max_videos)
+            .cloned()
+            .collect()
     }
-    title
+
+    fn title(&self) -> String {
+        let video_urls = self.video_urls.len().min(self.max_videos);
+        let source = if video_urls > 0 {
+            format!("{video_urls} video lẻ")
+        } else {
+            format!("playlist · tối đa {} video", self.max_videos)
+        };
+        let mut title = format!("Thu thập {source}");
+        if let Some(domain) = &self.domain {
+            title.push_str(" · ");
+            title.extend(domain.chars().take(32));
+        }
+        if self.ingest_to_wiki {
+            title.push_str(" · Wiki");
+        }
+        title
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
@@ -92,26 +130,40 @@ fn validate_topic_selection(selection: &TopicSelection) -> Vec<String> {
 
 /// First server-owned recipe. It lists a playlist or individual video URLs, fetches bounded
 /// transcript batches, then saves successful items through the ordinary mutating HostTool pipeline.
-#[derive(Default)]
 pub struct PlaylistSourcesRecipe {
-    wiki_domains: Vec<String>,
+    wiki_domains: WikiDomainSource,
+}
+
+impl Default for PlaylistSourcesRecipe {
+    fn default() -> Self {
+        Self::new(Vec::new())
+    }
 }
 
 impl PlaylistSourcesRecipe {
+    /// Fixed domain catalog, for tests and callers without a live Wiki.
     pub fn new(wiki_domains: Vec<String>) -> Self {
-        let mut wiki_domains = wiki_domains
+        Self::with_domain_source(Arc::new(move || wiki_domains.clone()))
+    }
+
+    pub fn with_domain_source(wiki_domains: WikiDomainSource) -> Self {
+        Self { wiki_domains }
+    }
+
+    fn wiki_domains(&self) -> Vec<String> {
+        let mut wiki_domains = (self.wiki_domains)()
             .into_iter()
             .map(|domain| domain.trim().to_owned())
             .filter(|domain| !domain.is_empty() && domain != AGENT_AUTO_DOMAIN)
             .collect::<Vec<_>>();
         wiki_domains.sort();
         wiki_domains.dedup();
-        Self { wiki_domains }
+        wiki_domains
     }
 
     fn params_schema(&self) -> Value {
         let mut domains = vec![Value::String(AGENT_AUTO_DOMAIN.into())];
-        domains.extend(self.wiki_domains.iter().cloned().map(Value::String));
+        domains.extend(self.wiki_domains().into_iter().map(Value::String));
         json!({
             "type": "object",
             "properties": {
@@ -128,26 +180,11 @@ impl PlaylistSourcesRecipe {
                     "enum": domains,
                     "x-options-source": "wiki_domains"
                 },
-                "max_videos": {"type": "integer", "minimum": 1, "maximum": 50, "default": 50, "title": "Số video tối đa"},
+                "max_videos": {"type": "integer", "minimum": 1, "maximum": MAX_VIDEOS, "default": MAX_VIDEOS, "title": "Số video tối đa"},
                 "ingest_to_wiki": {"type": "boolean", "default": false, "title": "Ingest vào Wiki sau khi thu thập"}
             },
             "required": []
         })
-    }
-
-    fn source_urls(params: &Value) -> Vec<String> {
-        if let Some(url) = params.get("url").and_then(Value::as_str) {
-            return vec![url.to_owned()];
-        }
-        params
-            .get("video_urls")
-            .and_then(Value::as_array)
-            .into_iter()
-            .flatten()
-            .filter_map(Value::as_str)
-            .map(str::to_owned)
-            .take(Self::max_videos(params))
-            .collect()
     }
 
     fn valid_youtube_url(raw: &str) -> bool {
@@ -207,10 +244,10 @@ impl PlaylistSourcesRecipe {
         (result, has_tool_call)
     }
 
-    fn status_items(params: &Value, transcript: &[ModelMessage]) -> Vec<(String, String)> {
-        let limit = Self::max_videos(params);
+    fn status_items(params: &PlaylistParams, transcript: &[ModelMessage]) -> Vec<(String, String)> {
+        let limit = params.max_videos;
         let mut items = Vec::new();
-        for url in Self::source_urls(params) {
+        for url in params.source_urls() {
             let Some(status) = Self::status_for(transcript, &url) else {
                 continue;
             };
@@ -303,19 +340,11 @@ impl PlaylistSourcesRecipe {
             .collect()
     }
 
-    fn max_videos(params: &Value) -> usize {
-        params
-            .get("max_videos")
-            .and_then(Value::as_u64)
-            .unwrap_or(MAX_VIDEOS as u64)
-            .min(MAX_VIDEOS as u64) as usize
-    }
-
     fn failed_source_list<'a>(
-        params: &Value,
+        params: &PlaylistParams,
         transcript: &'a [ModelMessage],
     ) -> Option<&'a ModelMessage> {
-        Self::source_urls(params).iter().find_map(|url| {
+        params.source_urls().iter().find_map(|url| {
             Self::list_result(transcript, url)
                 .filter(|result| result.text.trim_start().starts_with("error "))
         })
@@ -333,9 +362,7 @@ impl PlaylistSourcesRecipe {
         }
     }
 
-    fn selector_results<'a>(
-        transcript: &'a [ModelMessage],
-    ) -> Vec<(&'a ModelToolCall, &'a ModelMessage)> {
+    fn selector_results(transcript: &[ModelMessage]) -> Vec<(&ModelToolCall, &ModelMessage)> {
         Self::calls(transcript, "subagent")
             .into_iter()
             .filter(|(call, _)| {
@@ -373,58 +400,56 @@ impl PlaylistSourcesRecipe {
 
     fn selector_decision(
         &self,
-        params: &Value,
+        params: &PlaylistParams,
         transcript: &[ModelMessage],
     ) -> Result<TopicSelection, RecipeDecision> {
         let attempts = Self::selector_results(transcript);
-        if let Some((_, result)) = attempts.last() {
-            if !result.text.trim_start().starts_with("error ") {
-                match Self::selector_output(result) {
-                    Ok(selection) => {
-                        let requested_domain = params
-                            .get("domain")
-                            .and_then(Value::as_str)
-                            .unwrap_or(AGENT_AUTO_DOMAIN);
-                        if requested_domain != AGENT_AUTO_DOMAIN
-                            && selection.domain != requested_domain
-                        {
+        if let Some((_, result)) = attempts.last()
+            && !result.text.trim_start().starts_with("error ")
+        {
+            match Self::selector_output(result) {
+                Ok(selection) => {
+                    match params.domain.as_deref() {
+                        Some(requested) if selection.domain != requested => {
                             return Err(RecipeDecision::Failed {
-                                stop_reason: "RECIPE_STEP_FAILED: agent selected a different domain than requested".into(),
-                                failed_step: 2,
-                            });
+                                    stop_reason: "RECIPE_STEP_FAILED: agent selected a different domain than requested".into(),
+                                    failed_step: 2,
+                                });
                         }
-                        if requested_domain == AGENT_AUTO_DOMAIN
-                            && !self.wiki_domains.is_empty()
-                            && !self.wiki_domains.contains(&selection.domain)
-                        {
-                            return Err(RecipeDecision::Failed {
-                                stop_reason: "RECIPE_STEP_FAILED: agent selected a domain outside the current Wiki catalog".into(),
-                                failed_step: 2,
-                            });
+                        Some(_) => {}
+                        None => {
+                            let wiki_domains = self.wiki_domains();
+                            if !wiki_domains.is_empty() && !wiki_domains.contains(&selection.domain)
+                            {
+                                return Err(RecipeDecision::Failed {
+                                        stop_reason: "RECIPE_STEP_FAILED: agent selected a domain outside the current Wiki catalog".into(),
+                                        failed_step: 2,
+                                    });
+                            }
                         }
-                        return Ok(selection);
                     }
-                    Err(errors) if attempts.len() >= 2 => {
-                        let diagnosis = TopicSelectionDiagnosis {
-                            code: "INVALID_AGENT_STEP_OUTPUT",
-                            errors,
-                            expected: "JSON object with exactly string fields domain and topic; topic is a lowercase kebab-case slug",
-                        };
-                        return Err(RecipeDecision::Failed {
-                            stop_reason: format!(
-                                "RECIPE_STEP_FAILED: {}",
-                                serde_json::to_string(&diagnosis).unwrap_or_default()
-                            ),
-                            failed_step: 2,
-                        });
-                    }
-                    Err(errors) => {
-                        return Err(self.selector_call(
-                            params,
-                            attempts.last().map(|(_, result)| *result),
-                            Some(errors),
-                        ));
-                    }
+                    return Ok(selection);
+                }
+                Err(errors) if attempts.len() >= 2 => {
+                    let diagnosis = TopicSelectionDiagnosis {
+                        code: "INVALID_AGENT_STEP_OUTPUT",
+                        errors,
+                        expected: "JSON object with exactly string fields domain and topic; topic is a lowercase kebab-case slug",
+                    };
+                    return Err(RecipeDecision::Failed {
+                        stop_reason: format!(
+                            "RECIPE_STEP_FAILED: {}",
+                            serde_json::to_string(&diagnosis).unwrap_or_default()
+                        ),
+                        failed_step: 2,
+                    });
+                }
+                Err(errors) => {
+                    return Err(self.selector_call(
+                        params,
+                        attempts.last().map(|(_, result)| *result),
+                        Some(errors),
+                    ));
                 }
             }
         }
@@ -440,7 +465,7 @@ impl PlaylistSourcesRecipe {
 
     fn selector_failure(
         &self,
-        params: &Value,
+        params: &PlaylistParams,
         transcript: &[ModelMessage],
     ) -> Option<(usize, String)> {
         match self.selector_decision(params, transcript) {
@@ -454,7 +479,7 @@ impl PlaylistSourcesRecipe {
 
     fn selector_call(
         &self,
-        params: &Value,
+        params: &PlaylistParams,
         previous: Option<&ModelMessage>,
         errors: Option<Vec<String>>,
     ) -> RecipeDecision {
@@ -467,23 +492,15 @@ impl PlaylistSourcesRecipe {
                 .split_once('\"')
                 .map(|(sid, _)| sid)
         });
-        let domain = params
-            .get("domain")
-            .and_then(Value::as_str)
-            .unwrap_or(AGENT_AUTO_DOMAIN);
-        let source_kind = if params
-            .get("video_urls")
-            .and_then(Value::as_array)
-            .is_some_and(|urls| !urls.is_empty())
-        {
-            "provided YouTube videos"
-        } else {
+        let source_kind = if params.video_urls.is_empty() {
             "YouTube playlist"
+        } else {
+            "provided YouTube videos"
         };
         let payload = json!({
             "task": format!("Choose a Wiki source folder domain/topic for these {source_kind}"),
-            "requested_domain": domain,
-            "available_domains": self.wiki_domains,
+            "requested_domain": params.domain.as_deref().unwrap_or(AGENT_AUTO_DOMAIN),
+            "available_domains": self.wiki_domains(),
             "output_schema": TopicSelection::schema(),
             "diagnosis": errors.map(|errors| TopicSelectionDiagnosis {
                 code: "INVALID_AGENT_STEP_OUTPUT",
@@ -654,11 +671,12 @@ impl TaskRecipe for PlaylistSourcesRecipe {
     }
 
     fn title_for_params(&self, params: &Value) -> Option<String> {
-        Some(generated_playlist_title(params))
+        Some(PlaylistParams::from_value(params).title())
     }
 
     fn next(&self, params: &Value, transcript: &[ModelMessage]) -> RecipeDecision {
-        let urls = Self::source_urls(params);
+        let params = &PlaylistParams::from_value(params);
+        let urls = params.source_urls();
         if urls.is_empty() {
             return RecipeDecision::Failed {
                 stop_reason: "playlist URL or video URL list is missing".into(),
@@ -757,10 +775,7 @@ impl TaskRecipe for PlaylistSourcesRecipe {
                             "video_id": video_id,
                             "title": title,
                             "provenance": "source",
-                            "ingest_to_wiki": params
-                                .get("ingest_to_wiki")
-                                .and_then(Value::as_bool)
-                                .unwrap_or(false)
+                            "ingest_to_wiki": params.ingest_to_wiki
                         }),
                     })
                     .collect(),
@@ -771,7 +786,8 @@ impl TaskRecipe for PlaylistSourcesRecipe {
     }
 
     fn progress(&self, params: &Value, transcript: &[ModelMessage]) -> RecipeProgress {
-        let urls = Self::source_urls(params);
+        let params = &PlaylistParams::from_value(params);
+        let urls = params.source_urls();
         let listed = !urls.is_empty()
             && urls.iter().all(|url| {
                 Self::list_result(transcript, url)
@@ -909,12 +925,13 @@ mod tests {
 
     #[test]
     fn generated_title_summarizes_recipe_parameters_without_copying_urls() {
-        let playlist = generated_playlist_title(&json!({
+        let playlist = PlaylistParams::from_value(&json!({
             "url": "https://www.youtube.com/playlist?list=private-token-value",
             "max_videos": 18,
             "domain": "rust",
             "ingest_to_wiki": true
-        }));
+        }))
+        .title();
         assert_eq!(
             playlist,
             "Thu thập playlist · tối đa 18 video · rust · Wiki"
@@ -922,14 +939,15 @@ mod tests {
         assert!(!playlist.contains("youtube.com"));
         assert!(!playlist.contains("private-token-value"));
 
-        let list = generated_playlist_title(&json!({
+        let list = PlaylistParams::from_value(&json!({
             "video_urls": [
                 "https://youtu.be/secret-id-one",
                 "https://youtu.be/secret-id-two"
             ],
             "domain": AGENT_AUTO_DOMAIN,
             "ingest_to_wiki": false
-        }));
+        }))
+        .title();
         assert_eq!(list, "Thu thập 2 video lẻ");
         assert!(!list.contains("secret-id"));
     }
@@ -1170,6 +1188,30 @@ mod tests {
     }
 
     #[test]
+    fn domains_created_after_startup_are_accepted_without_restart() {
+        let catalog = Arc::new(std::sync::Mutex::new(vec!["science".to_owned()]));
+        let source = catalog.clone();
+        let recipe = PlaylistSourcesRecipe::with_domain_source(Arc::new(move || {
+            source.lock().unwrap().clone()
+        }));
+        let params = json!({
+            "url":"https://www.youtube.com/playlist?list=PL1",
+            "domain":"history"
+        });
+        assert!(recipe.validate_params(&params).is_err());
+
+        catalog.lock().unwrap().push("history".into());
+        assert_eq!(
+            recipe.metadata().params_schema["properties"]["domain"]["enum"][1],
+            "history"
+        );
+        assert_eq!(
+            recipe.validate_params(&params).unwrap()["domain"],
+            "history"
+        );
+    }
+
+    #[test]
     fn playlist_progress_reports_repeated_items_and_completion_from_transcript() {
         let recipe = PlaylistSourcesRecipe::default();
         let params = json!({"url":"https://www.youtube.com/playlist?list=PL1"});
@@ -1266,7 +1308,7 @@ mod tests {
         let params = json!({"url":"https://www.youtube.com/playlist?list=PL1"});
         let listed =
             ModelMessage::tool_result("list", "yt_list_playlist", "1. video_id=v1 title=One");
-        let decision = recipe.next(&params, &[listed.clone()]);
+        let decision = recipe.next(&params, std::slice::from_ref(&listed));
         let RecipeDecision::ToolCalls(calls) = decision else {
             panic!("expected status lookup")
         };

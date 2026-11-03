@@ -37,7 +37,7 @@ fn recipe_start_is_only_an_available_tool_on_daily_root_and_describes_catalog_pa
         );
     }
 
-    let tool = TaskRecipeStartTool::new(vec![NoopRecipe.metadata()], Arc::new(OnceLock::new()));
+    let tool = TaskRecipeStartTool::new(vec![Arc::new(NoopRecipe)], Arc::new(OnceLock::new()));
     let descriptor = tool.descriptor();
     assert_eq!(descriptor.name, "recipe_start");
     assert_eq!(
@@ -143,7 +143,7 @@ impl Harness {
         let metadata = NoopRecipe.metadata();
         let slot = Arc::new(OnceLock::new());
         let start_tool: Arc<dyn HostTool> = Arc::new(TaskRecipeStartTool::new(
-            vec![metadata.clone()],
+            vec![Arc::new(NoopRecipe)],
             slot.clone(),
         ));
         let registered_tool: Arc<dyn HostTool> = if replay {

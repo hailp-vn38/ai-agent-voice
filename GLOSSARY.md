@@ -78,6 +78,18 @@ _Avoid_: Conversational Turn, Plugin Operation Job
 Quy trình Background Task có version, schema tham số và thứ tự bước do server định nghĩa trong code; cùng đầu vào và cùng lịch sử bước thì runtime tiếp tục theo cùng quy trình, còn phán đoán chỉ xảy ra trong Agent Step đã khai báo.
 _Avoid_: Job Skill, workflow do LLM tự lập, recipe do Admin chỉnh sửa
 
+**Tool Step**:
+Bước của Task Recipe mà recipe tự phát tool call tới HostTool, không qua model, nên không tốn token và cùng lịch sử thì ra cùng lời gọi.
+_Avoid_: bước tool do LLM chọn
+
+**Agent Step**:
+Bước của Task Recipe giao cho một Sub-Agent trong catalog qua `subagent`; Sub-Agent kết thúc bằng tool hoàn tất có schema output, sai schema thì được sửa một lần rồi dừng.
+_Avoid_: lượt agent loop tự do, fallback sang agent
+
+**Recipe Progress**:
+Tiến độ của một Task recipe mà recipe tính lại từ tham số và transcript: bước hiện tại, các bước xong, số mục, và bước dừng kèm lý do nếu có.
+_Avoid_: tiến độ do LLM báo, state riêng của recipe
+
 **Collection Ledger**:
 Sổ theo dõi bền trong `tasks.db` ghi trạng thái từng video của một playlist, để session mới hoặc lần chạy lại biết còn việc nào mà không dựa vào context của LLM.
 _Avoid_: danh sách video trong context, tiến độ trong transcript
