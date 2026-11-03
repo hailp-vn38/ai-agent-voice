@@ -530,7 +530,12 @@ fn task_flow_only_daily_root_is_allowed_memory_tools() {
         |id: &str| agents.iter().find(|agent| agent["id"] == id).unwrap()["allowed_tools"].clone();
     assert_eq!(
         allowed("daily_root"),
-        json!(["subagent", "memory_recall", "memory_summary"])
+        json!([
+            "subagent",
+            "memory_recall",
+            "memory_summary",
+            "recipe_start"
+        ])
     );
     assert_eq!(allowed("wiki_root"), json!(["subagent"]));
     for agent in agents.iter().filter(|agent| agent["id"] != "daily_root") {

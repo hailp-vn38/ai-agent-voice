@@ -242,7 +242,9 @@ async fn recipe_admin_http_lists_validates_and_runs_playlist_recipe() {
     use orchestrator_agent_rs::{
         AgentDefinition, AgentMode, HostTool, LlmConfig, Orchestrator, OrchestratorConfig,
     };
-    use orchestrator_flow_rs::{TaskConfig, TaskManager, WorkspaceToolKit};
+    use orchestrator_flow_rs::{
+        CreateTaskRequest, TaskConfig, TaskManager, TaskRecipeRequest, WorkspaceToolKit,
+    };
     use std::{sync::Arc, time::Duration};
     use tokio::sync::Notify;
 
@@ -253,7 +255,7 @@ async fn recipe_admin_http_lists_validates_and_runs_playlist_recipe() {
     std::fs::create_dir_all(&temp).unwrap();
     std::fs::write(&prompt, "recipe root").unwrap();
     let fake_ytdlp = temp.join("yt-dlp");
-    let fake_script = "#!/bin/sh\nif [ \"$1\" = \"--flat-playlist\" ]; then case \"$*\" in *fail*) exit 1;; *mixed*) printf 'bad\\tBad Video\\nvidmix\\tGood Video\\n';; *) printf 'vid123\\tSample Video\\n';; esac; exit 0; fi\nvideo=''\nfor arg in \"$@\"; do case \"$arg\" in *watch?v=*) video=\"${arg##*watch?v=}\";; esac; done\nprintf '%s\\n' \"$video\" >> 'CALLS_LOG_PATH'\ncase \"$video\" in bad) exit 1;; esac\nout=''\nwhile [ \"$#\" -gt 0 ]; do if [ \"$1\" = \"-o\" ]; then out=\"$2\"; shift 2; else shift; fi; done\ndir=\"${out%/*}\"\nmkdir -p \"$dir\"\ncat > \"$dir/$video.en-orig.vtt\" <<VTT\nWEBVTT\n\n00:00:00.000 --> 00:00:02.000\nA useful source transcript for $video.\nVTT\n";
+    let fake_script = "#!/bin/sh\nif [ \"$1\" = \"--flat-playlist\" ]; then case \"$*\" in *fail*) exit 1;; *mixed*) printf 'bad\\tBad Video\\nvidmix\\tGood Video\\n';; *max*) i=1; while [ $i -le 50 ]; do printf 'maxvid%02d\\tLong Playlist Video %02d\\n' $i $i; i=$((i + 1)); done;; *) printf 'vid123\\tSample Video\\n';; esac; exit 0; fi\nvideo=''\nfor arg in \"$@\"; do case \"$arg\" in *watch?v=*) video=\"${arg##*watch?v=}\";; esac; done\nprintf '%s\\n' \"$video\" >> 'CALLS_LOG_PATH'\ncase \"$video\" in bad) exit 1;; esac\nout=''\nwhile [ \"$#\" -gt 0 ]; do if [ \"$1\" = \"-o\" ]; then out=\"$2\"; shift 2; else shift; fi; done\ndir=\"${out%/*}\"\nmkdir -p \"$dir\"\ncat > \"$dir/$video.en-orig.vtt\" <<VTT\nWEBVTT\n\n00:00:00.000 --> 00:00:02.000\nA useful source transcript for $video.\nVTT\n";
     std::fs::write(
         &fake_ytdlp,
         fake_script.replace("CALLS_LOG_PATH", &ytdlp_calls.display().to_string()),
@@ -488,6 +490,44 @@ async fn recipe_admin_http_lists_validates_and_runs_playlist_recipe() {
         failed_task.error_code.as_deref(),
         Some("RECIPE_STEP_FAILED")
     );
+
+    let max_playlist_task = manager
+        .create_task(CreateTaskRequest {
+            recipe: Some(TaskRecipeRequest {
+                id: "playlist_sources".into(),
+                params: serde_json::json!({
+                    "url":"https://www.youtube.com/playlist?list=max",
+                    "max_videos":50
+                }),
+            }),
+            ..CreateTaskRequest::new("", "")
+        })
+        .await
+        .unwrap();
+    for _ in 0..300 {
+        if manager
+            .get_task(&max_playlist_task.id)
+            .await
+            .unwrap()
+            .status
+            .is_terminal()
+        {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    let max_task = manager.get_task(&max_playlist_task.id).await.unwrap();
+    assert_eq!(
+        max_task.status,
+        orchestrator_flow_rs::TaskStatus::Completed,
+        "maximum playlist should complete without hitting the step cap: {max_task:?}"
+    );
+    let max_sources: Vec<_> = std::fs::read_dir(vault.join("sources/youtube/playlist"))
+        .unwrap()
+        .filter_map(Result::ok)
+        .collect();
+    assert_eq!(max_sources.len(), 52);
+
     server.abort();
     let _ = std::fs::remove_dir_all(&temp);
 }
