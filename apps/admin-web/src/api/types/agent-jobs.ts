@@ -178,6 +178,51 @@ export interface JobAttachmentUpload {
   data_base64: string
 }
 
+export interface RecipeParameterDefinition {
+  type: 'string' | 'integer' | 'boolean' | 'array' | 'enum'
+  format?: 'uri' | string
+  title?: string
+  description?: string
+  default?: string | number | boolean | string[]
+  minimum?: number
+  maximum?: number
+  enum?: string[]
+  items?: { type: 'string' }
+  'x-options-source'?: string
+}
+
+export interface RecipeParameterSchema {
+  type: 'object'
+  title?: string
+  description?: string
+  properties: Record<string, RecipeParameterDefinition>
+  required?: string[]
+}
+
+export interface RecipeOutlineStep {
+  title: string
+  kind: 'tool' | 'agent'
+  repeat: boolean
+}
+
+export interface TaskRecipeSummary {
+  id: string
+  version: number
+  title: string
+  description: string
+  params_schema: RecipeParameterSchema
+  outline: RecipeOutlineStep[]
+}
+
+export interface TaskRecipeCatalog {
+  items: TaskRecipeSummary[]
+}
+
+export interface RecipeOption {
+  value: string
+  label: string
+}
+
 export interface JobArtifact {
   id: string
   step_key: string | null

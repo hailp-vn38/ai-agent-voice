@@ -10,6 +10,11 @@ describe('API errors', () => {
       .resolves.toEqual(new ApiError('API request failed: http_502', 502, 'http_502'))
   })
 
+  it('preserves validation_path so schema forms can attach server errors to a field', async () => {
+    await expect(toApiError(new Response(JSON.stringify({ error: { code: 'invalid_arguments', validation_path: '$.url' } }), { status: 400 })))
+      .resolves.toMatchObject({ validationPath: '$.url' })
+  })
+
   it('formats known error codes, request ids, and generic errors for the UI', () => {
     const error = new ApiError('ignored', 409, 'revision_conflict', 'req-3')
     expect(isApiError(error)).toBe(true)
