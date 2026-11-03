@@ -485,7 +485,10 @@ const newNoteFolder = ref<string | null>(null)
 const newNoteName = ref('')
 const treeHolder = ref<HTMLElement | null>(null)
 const editorSavedBody = ref('')
-const editorDirty = computed(() => viewMode.value === 'compose' && body.value !== editorSavedBody.value)
+// A note named in the Explorer exists only in the editor until its first save creates the file.
+const pendingRawFile = ref<{ folder: string; fileName: string; path: string } | null>(null)
+const editorDirty = computed(() => viewMode.value === 'compose'
+  && (pendingRawFile.value !== null || body.value !== editorSavedBody.value))
 const editorSaving = computed(() => busy.value || !editorDirty.value)
 function suggestedNoteName(folder: string): string {
   let number = 0
@@ -535,30 +538,38 @@ async function confirmInlineNote() {
     error.value = t('knowledgeV3.fileExists')
     return
   }
-  const heading = fileName.slice(0, -3)
+  error.value = ''
+  rawFile.value = null
+  selected.value = null
+  title.value = fileName.slice(0, -3)
+  body.value = ''
+  editorSavedBody.value = ''
+  sourceRef.value = ''
+  readOnlySource.value = false
+  newFileName.value = fileName
+  composeBaseFolder.value = folder
+  folderPath.value = folder
+  selectedPath.value = path
+  composeOpen.value = true
+  viewMode.value = 'compose'
+  pendingRawFile.value = { folder, fileName, path }
+  cancelInlineNote()
+  await nextTick()
+  document.getElementById('knowledge-note-body')?.focus()
+}
+async function createPendingRawFile() {
+  const pending = pendingRawFile.value
+  if (!pending) return
   busy.value = true
   error.value = ''
   try {
     rawFile.value = await requestJson<RawFile>('/api/admin/knowledge/raw/files',
-      jsonRequest('POST', { folder_path: folder, file_name: fileName, body: '' }))
-    selected.value = null
-    title.value = heading
-    body.value = ''
-    editorSavedBody.value = ''
-    sourceRef.value = ''
-    readOnlySource.value = false
-    newFileName.value = fileName
-    composeBaseFolder.value = folder
-    folderPath.value = folder
-    selectedPath.value = path
-    recordRecentItem({ space: 'raw', path, title: heading })
-    composeOpen.value = true
-    viewMode.value = 'compose'
-    cancelInlineNote()
+      jsonRequest('POST', { folder_path: pending.folder, file_name: pending.fileName, body: body.value }))
+    pendingRawFile.value = null
+    selectedPath.value = rawFile.value.path || pending.path
+    recordRecentItem({ space: 'raw', path: selectedPath.value, title: title.value })
     await refreshTree()
     await refreshHealth()
-    await nextTick()
-    document.getElementById('knowledge-note-body')?.focus()
   } catch (cause) {
     error.value = formatApiError(cause)
   } finally { busy.value = false }
@@ -707,7 +718,13 @@ function startEditNote() {
   void nextTick(() => document.getElementById('knowledge-note-body')?.focus())
 }
 async function saveNote() {
-  if (busy.value || !editorDirty.value || (!rawFile.value && !selected.value)) return
+  if (busy.value || !editorDirty.value) return
+  if (pendingRawFile.value) {
+    await createPendingRawFile()
+    if (!error.value) editorSavedBody.value = body.value
+    return
+  }
+  if (!rawFile.value && !selected.value) return
   await save()
   if (error.value) return
   editorSavedBody.value = body.value
@@ -722,7 +739,9 @@ async function saveNote() {
 }
 async function closeEditor() {
   if (busy.value) return
-  if (editorDirty.value && !window.confirm(t('knowledgeV3.discardChanges'))) return
+  // An untouched new note closes without asking; nothing was ever written for it.
+  if (viewMode.value === 'compose' && body.value !== editorSavedBody.value
+      && !window.confirm(t('knowledgeV3.discardChanges'))) return
   composeOpen.value = false
   preview.value = false
   viewMode.value = 'read'
@@ -848,6 +867,10 @@ const sourceProvenance = ref('')
 const sourceContent = ref('')
 const health = ref<Health | null>(null)
 const selected = ref<Page | null>(null)
+// Leaving the unsaved note, by closing the editor or opening another one, abandons it.
+watch([composeOpen, rawFile, selected], ([open, file, page]) => {
+  if (!open || file || page) pendingRawFile.value = null
+})
 const title = ref('')
 const body = ref('')
 const sourceRef = ref('')

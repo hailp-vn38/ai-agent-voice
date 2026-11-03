@@ -595,7 +595,7 @@ it('persists the selected vault and restores it on reload', async () => {
   } finally { again.unmount() }
 })
 
-it('creates an empty Raw note in the selected folder and saves its content with CAS', async () => {
+it('creates a Raw note only when its first save sends the content, then saves edits with CAS', async () => {
   const original = requestJsonMock.getMockImplementation()!
   const writes: Array<{url:string; options?:{method?: string;body?:Record<string,unknown>}}> = []
   requestJsonMock.mockImplementation(async (url: string, options?:{method?:string;body?:Record<string,unknown>}) => {
@@ -607,7 +607,7 @@ it('creates an empty Raw note in the selected folder and saves its content with 
     }
     if (url === '/api/admin/knowledge/raw/files' && options?.method === 'POST') {
       writes.push({url, options})
-      return {path:'raw/notes/Meeting.md',body:'',sha256:'empty-sha'}
+      return {path:'raw/notes/Meeting.md',body:options.body?.body,sha256:'created-sha'}
     }
     if (url === '/api/admin/knowledge/raw/files' && options?.method === 'PUT') {
       writes.push({url,options})
@@ -627,15 +627,44 @@ it('creates an empty Raw note in the selected folder and saves its content with 
     await name.setValue('Meeting.md')
     await name.trigger('keydown',{key:'Enter'})
     await flushPromises()
-    expect(writes[0]).toEqual({url:'/api/admin/knowledge/raw/files',options:{
-      method:'POST',body:{folder_path:'raw/notes',file_name:'Meeting.md',body:''},
-    }})
+    expect(writes).toEqual([])
+    expect(wrapper.find('textarea#knowledge-note-body').exists()).toBe(true)
     await wrapper.get('textarea#knowledge-note-body').setValue('Meeting notes')
     await wrapper.get('form.knowledge-note-editor').trigger('submit')
     await flushPromises()
+    expect(writes).toEqual([{url:'/api/admin/knowledge/raw/files',options:{
+      method:'POST',body:{folder_path:'raw/notes',file_name:'Meeting.md',body:'Meeting notes'},
+    }}])
+    await wrapper.get('textarea#knowledge-note-body').setValue('Meeting notes, revised')
+    await wrapper.get('form.knowledge-note-editor').trigger('submit')
+    await flushPromises()
     expect(writes[1]).toEqual({url:'/api/admin/knowledge/raw/files',options:{
-      method:'PUT',body:{path:'raw/notes/Meeting.md',body:'Meeting notes',expected_sha256:'empty-sha'},
+      method:'PUT',body:{path:'raw/notes/Meeting.md',body:'Meeting notes, revised',expected_sha256:'created-sha'},
     }})
+  } finally {wrapper.unmount()}
+})
+
+it('abandons a named Raw note without writing it when the editor closes before saving', async () => {
+  const original = requestJsonMock.getMockImplementation()!
+  const posts: unknown[] = []
+  requestJsonMock.mockImplementation(async (url: string, options?:{method?:string;body?:Record<string,unknown>}) => {
+    if (url === '/api/admin/knowledge/raw/files' && options?.method === 'POST') posts.push(options.body)
+    return original(url, options)
+  })
+  const wrapper=mount(KnowledgePage)
+  try {
+    await flushPromises()
+    const fileTab = wrapper.findAll('[role="tablist"][aria-label="Knowledge source"] [role="tab"]')
+      .find(tab => tab.attributes('aria-label') === 'File')!
+    await fileTab.trigger('click')
+    await flushPromises()
+    await wrapper.get('button[aria-label="Add file"]').trigger('click')
+    await wrapper.get('input[aria-label="New note name"]').trigger('keydown',{key:'Enter'})
+    await flushPromises()
+    await wrapper.get('button.knowledge-close-editor').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('textarea#knowledge-note-body').exists()).toBe(false)
+    expect(posts).toEqual([])
   } finally {wrapper.unmount()}
 })
 
