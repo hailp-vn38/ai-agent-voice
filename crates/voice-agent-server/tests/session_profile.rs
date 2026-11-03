@@ -1709,9 +1709,18 @@ async fn public_api_created_provider_is_used_by_new_ws_and_patch_keeps_old_sessi
         .await
         .unwrap();
     assert_eq!(response.status(), reqwest::StatusCode::OK);
+    // Binding the template enqueues a coalesced prewarm, which may already have run on a
+    // loaded machine. It may only warm the bound revision-1 providers, each at most once.
+    let prewarmed_only = |builds: &[ManagedBuild]| {
+        builds.len() <= generated.len()
+            && builds.iter().all(|(_, revision, kind, key)| {
+                *revision == 1 && generated.iter().any(|(k, g)| k == kind && g == key)
+            })
+    };
     assert!(
-        builds.lock().unwrap().is_empty(),
-        "CRUD must not build runtimes"
+        prewarmed_only(&builds.lock().unwrap()),
+        "CRUD must only prewarm bound providers: {:?}",
+        builds.lock().unwrap()
     );
     let cold: serde_json::Value = client
         .get(format!("{providers}/{llm_key}"))
@@ -1724,7 +1733,13 @@ async fn public_api_created_provider_is_used_by_new_ws_and_patch_keeps_old_sessi
         .unwrap();
     assert_eq!(cold["requires_restart"], false);
     assert_eq!(cold["runtime"]["desired_state"], "cold");
-    assert!(builds.lock().unwrap().is_empty());
+    assert!(prewarmed_only(&builds.lock().unwrap()));
+    // With no pending-load slots, admitting during the prewarm batch would be refused as busy.
+    let settle = tokio::time::Instant::now() + Duration::from_secs(10);
+    while builds.lock().unwrap().len() < generated.len() && tokio::time::Instant::now() < settle {
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert!(prewarmed_only(&builds.lock().unwrap()));
     let mut first = admit(&base).await;
     assert!(
         speak_and_observe(&mut first)
