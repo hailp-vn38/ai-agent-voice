@@ -61,8 +61,8 @@ use orchestrator_agent_rs::{
     OrchestratorError, ToolContext, ToolDescriptor, ToolError, ToolOutcome,
 };
 use orchestrator_flow_rs::{
-    CreateTaskRequest, TaskConfig, TaskError, TaskManager, TaskRuntimeConfig, TaskSource, TaskView,
-    WikiAutoFlowBinding, WorkspaceToolKit,
+    CreateTaskRequest, TaskConfig, TaskError, TaskManager, TaskRecipe, TaskRuntimeConfig,
+    TaskSource, TaskView, WikiAutoFlowBinding, WorkspaceToolKit,
 };
 use serde_json::Value;
 use thiserror::Error;
@@ -244,20 +244,43 @@ async fn init_orchestrator_and_task_manager(
     let persisted = load_persisted_settings(&cfg.store_dir).unwrap_or_default();
     let _ = write_agent_prompts(&cfg.prompts_dir, &persisted);
     let (providers, mut agents) = build_agent_definitions(cfg, &persisted, catalog);
+    let recipe_metadata = recipes::PlaylistSourcesRecipe.metadata();
+    let recipe_tools = recipe_metadata
+        .outline
+        .iter()
+        .flat_map(|step| step.host_tools.iter().cloned())
+        .collect::<std::collections::BTreeSet<_>>();
+    let recipe_subagents = recipe_metadata
+        .outline
+        .iter()
+        .flat_map(|step| step.sub_agents.iter().cloned())
+        .collect::<std::collections::BTreeSet<_>>();
     agents.push(
         AgentDefinition::new(
             recipes::PLAYLIST_RECIPE_ROOT,
             "recipe",
-            "playlist_sources@1",
+            format!("{}@{}", recipe_metadata.id, recipe_metadata.version),
         )
         .with_mode(AgentMode::Primary)
         .with_description("Runs the fixed playlist collection recipe")
         .with_prompt_path(cfg.prompts_dir.join("daily_root.md"))
-        .with_allowed_tools(["yt_list_playlist", "add_to_sources"])
-        .with_allowed_subagents(std::iter::empty::<String>())
-        .with_steps(8)
+        .with_allowed_tools(recipe_tools.iter().cloned())
+        .with_allowed_subagents(recipe_subagents.iter().cloned())
+        .with_steps(recipe_metadata.max_steps)
         .with_context_limit_tokens(1_000_000),
     );
+    let registered_agents = agents
+        .iter()
+        .filter(|agent| agent.mode != AgentMode::Primary)
+        .map(|agent| agent.id.clone())
+        .collect::<std::collections::HashSet<_>>();
+    let mut host_tools: Vec<Arc<dyn HostTool>> = toolkit
+        .all_host_tools(&task_init)
+        .into_iter()
+        .map(|tool| Arc::new(NormalizedWikiHostTool { inner: tool }) as Arc<dyn HostTool>)
+        .collect();
+    host_tools.extend(chart_host_tools(&wiki_cfg.vault_dir));
+    host_tools.extend(memory.host_tools());
     let llm_cfg = LlmConfig { providers };
     let ctx_limit = cfg.context_limit_tokens;
 
@@ -277,16 +300,15 @@ async fn init_orchestrator_and_task_manager(
         orch_cfg.runtime.artifact_max_bytes,
         orch_cfg.runtime.tool_output_cap_bytes,
     ));
-    let mut builder = Orchestrator::builder(orch_cfg)
-        .with_provider_runtime(recipe_runtime)
-        .register_tool(muse_tool);
-    for tool in toolkit.all_host_tools(&task_init) {
-        builder = builder.register_tool(Arc::new(NormalizedWikiHostTool { inner: tool }));
-    }
-    for tool in chart_host_tools(&wiki_cfg.vault_dir) {
-        builder = builder.register_tool(tool);
-    }
-    for tool in memory.host_tools() {
+    host_tools.push(muse_tool);
+    let registered_tools = host_tools
+        .iter()
+        .map(|tool| tool.descriptor().name)
+        .collect::<std::collections::HashSet<_>>();
+    task_init.validate_recipe_registry(&registered_tools, &registered_agents)?;
+
+    let mut builder = Orchestrator::builder(orch_cfg).with_provider_runtime(recipe_runtime);
+    for tool in host_tools {
         builder = builder.register_tool(tool);
     }
     let orchestrator = Arc::new(builder.build().await?);
