@@ -8,9 +8,9 @@
 
 - [ ] Thẻ "Tự do" giữ nguyên hành vi hiện tại, gồm mục tiêu và đính kèm WAV.
 - [ ] Thẻ recipe hiện tên, mô tả và version. Ô tìm kiếm lọc được theo tên và mô tả.
-- [ ] Form render đúng control cho từng kiểu trong tập con: URL, textarea, number có min/max, checkbox, select (cả danh sách động), danh sách nhiều dòng và vùng tải file có `accept`.
+- [ ] Form render đúng control cho từng kiểu trong tập con: URL, number có min/max, checkbox, select (cả danh sách động) và danh sách nhiều dòng.
 - [ ] `default` được điền sẵn, và trường bắt buộc trống bị chặn phía client.
 - [ ] Lỗi server gắn vào đúng trường theo `validation_path`. Lỗi không khớp trường nào thì hiện ở đầu form.
-- [ ] Danh sách bước hiện loại Tool hay Agent và có lặp hay không.
+- [ ] Danh sách bước lấy từ `outline`, hiện loại Tool hay Agent và có lặp hay không.
 - [ ] Gửi lại cùng một lần tạo không tạo Job thứ hai, nhờ idempotency key hiện có.
 - [ ] Có Vitest cho form dựng từ schema và cho API client.

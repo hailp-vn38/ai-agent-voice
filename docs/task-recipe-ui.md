@@ -20,19 +20,20 @@ Server trả schema tham số theo một tập con nhỏ, cùng tinh thần vớ
 
 | Kiểu schema | Control | Ghi chú |
 | --- | --- | --- |
-| `string` | `input` | `format: uri` thành ô URL; `multiline: true` thành `textarea` |
+| `string` | `input` | `format: uri` thành ô URL |
 | `integer` | `input type=number` | Dùng `minimum` và `maximum` |
 | `boolean` | checkbox | |
 | `enum` | `select` | Có `x-options-source` để lấy danh sách động, ví dụ domain Wiki |
 | `array<string>` | textarea mỗi dòng một mục | Ví dụ danh sách URL video |
-| `artifact` | vùng tải file | Dùng lại cơ chế đính kèm hiện có, giới hạn MIME theo `accept` |
+
+Kiểu `artifact` (vùng tải file) và `multiline` chỉ thêm khi có recipe cần tới.
 
 Lỗi từ server trả về theo `validation_path`, và client gắn lỗi vào đúng trường đó. Nếu một lỗi không khớp trường nào thì hiện ở đầu form.
 
 ## API cần thêm
 
-- `GET /api/admin/background/recipes`: trả danh sách gồm `id`, `version`, `title`, `description`, `params_schema` và `steps`. `steps` chỉ có `title`, `kind` (`tool`/`agent`) và `repeat`.
-- `POST /api/admin/jobs` nhận thêm `recipe: { id, version, params }`. Nếu body có `recipe` thì không cần `goal`. Server tự sinh tiêu đề Job từ recipe và tham số. Idempotency key giữ như hiện tại.
+- `GET /api/admin/background/recipes`: trả danh sách gồm `id`, `version`, `title`, `description`, `params_schema` và `outline`. `outline` chỉ có `title`, `kind` (`tool`/`agent`) và `repeat`.
+- `POST /api/admin/jobs` nhận thêm `recipe: { id, params }`. Nếu body có `recipe` thì không cần `goal`. Server tự sinh tiêu đề Job từ recipe và tham số. Idempotency key giữ như hiện tại.
 
 ## Thay đổi ở danh sách và chi tiết Job
 

@@ -6,7 +6,8 @@
 
 **Status:** ready-for-agent
 
-- [ ] Phát hành thư viện theo thứ tự trong `AGENTS.md`: `llm-wiki-rs` (nếu có thay đổi), `orchestrator-agent`, rồi `orchestrator-flow`.
+- [ ] Phát hành thư viện theo thứ tự trong `AGENTS.md`: `orchestrator-agent` (trộn provider), rồi `orchestrator-flow` (recipe). `llm-wiki-rs` chỉ phát hành nếu có thay đổi.
 - [ ] Bỏ `[patch.crates-io]` và dùng version đã phát hành. Test workspace pass qua `scripts/agent-test.sh`.
+- [ ] Xóa nhánh `spike/recipe-gateway` sau khi test của ticket 01 đã thay thế nó.
 - [ ] `GLOSSARY.md` có thuật ngữ **Task Recipe**. ADR 0140 chuyển sang Accepted. `docs/task-recipe-ui.md` khớp với UI đã làm.
 - [ ] Ghi số liệu nền về độ ổn định từ `tasks.db`: tỉ lệ hoàn tất của Task playlist, số lượt LLM mỗi Task, và tần suất `STEP_LIMIT_REACHED`.

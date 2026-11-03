@@ -110,41 +110,73 @@ Recipe đầu tiên: **thu thập playlist hoặc danh sách video vào `sources
 
 ## Implementation Decisions
 
-### Mô hình recipe (thư viện `orchestrator-flow`)
+Thiết kế theo phương án đã qua spike: recipe là một adapter `ProviderRuntime` xác định đứng sau một Root agent riêng. Kết quả spike ở [spike-recipe-gateway.md](spike-recipe-gateway.md).
 
-- Thêm khái niệm Task Recipe vào `orchestrator-flow`. Một recipe là một giá trị Rust do host đăng ký lúc khởi động, cùng chỗ đăng ký flow và WikiAutoFlowBinding. Recipe không được nạp từ file, DB hay request.
-- Mỗi recipe có `id`, `version` (số nguyên tăng dần), `title`, `description`, `params_schema` và danh sách bước có thứ tự.
-- Có hai loại bước:
-  - *Tool Step* nêu tên HostTool và cách dựng tham số tool từ tham số recipe cùng output của bước trước. Đây là ánh xạ cố định trong code, không phải template do LLM sinh.
-  - *Agent Step* nêu Sub-Agent trong catalog, template Delegated Task Prompt, tập tool và skill, và schema output.
-- Một bước có thể đánh dấu lặp theo lô trên các mục Collection Ledger, với kích thước lô và số lần thử tối đa cho mỗi mục trước khi cách ly. Không có nhánh điều kiện, vòng lặp tùy ý hay DSL.
-- Registry từ chối lúc khởi động khi có hai recipe trùng `(id, version)`, khi bước tham chiếu HostTool hoặc Sub-Agent không tồn tại, hoặc khi `params_schema` dùng kiểu ngoài tập con cho phép.
-- Registry giữ được nhiều version của cùng một recipe, để Task đã ghim version cũ chạy tiếp sau khi nâng cấp nếu version đó còn được giữ.
+### Trộn provider trong Orchestrator (thư viện `orchestrator-agent`)
+
+- Builder nhận cùng lúc `ProviderRuntime` và `llm.providers`. Alias do runtime khai báo đi vào runtime, các alias còn lại đi vào `ClientGateway`.
+- Build thất bại khi một alias được khai báo ở cả hai nơi.
+- Hành vi hiện tại giữ nguyên khi chỉ dùng một trong hai.
+- Đây là thay đổi duy nhất ở `orchestrator-agent`. Không thêm interface chạy tool bên ngoài Agent Run.
+
+### Interface của recipe (thư viện `orchestrator-flow`)
+
+Một recipe là một giá trị Rust do host đăng ký lúc khởi động, cùng chỗ đăng ký flow và WikiAutoFlowBinding. Recipe không được nạp từ file, DB hay request. Interface của recipe gồm:
+
+- metadata: `id`, `version` (số nguyên tăng khi đổi bước hoặc schema), `title`, `description`, `params_schema`, `outline` (danh sách bước rút gọn gồm `title`, `kind` là `tool` hoặc `agent`, và `repeat`) và `max_steps`;
+- `next(params, transcript)`: trả một trong ba kết quả: một lô tool call (có thể gồm `subagent`), hoàn tất kèm tóm tắt, hoặc thất bại kèm `stop_reason` và bước lỗi;
+- `progress(params, transcript)`: trả `RecipeProgress`.
+
+`next` và `progress` là hàm thuần, chỉ đọc tham số và transcript. Cùng đầu vào thì luôn ra cùng kết quả. Recipe đọc thêm Collection Ledger qua tool result, không truy cập trực tiếp.
+
+### Adapter và Root recipe
+
+- `orchestrator-flow` cung cấp một adapter `ProviderRuntime` khai báo alias `recipe`.
+  - Với mỗi lượt, adapter tách `recipe_id` và `version` từ `model_id` (`<id>@<version>`), lấy tham số từ user message đầu tiên, rồi gọi `next`.
+  - Adapter luôn trả usage bằng 0.
+  - Version không khớp với registry thì adapter trả lỗi vĩnh viễn `RECIPE_VERSION_UNAVAILABLE`.
+  - Recipe trả thất bại thì adapter trả lỗi vĩnh viễn kèm mã `RECIPE_STEP_FAILED`. Thông tin `stop_reason` và bước lỗi đọc lại qua `progress`.
+- Mỗi recipe có một Root agent dành riêng:
+  - provider `recipe`, `model_id` theo recipe, `allowed_tools` đúng các tool trong outline, và `allowed_subagents` đúng các Sub-Agent của Agent Step;
+  - step cap bằng `max_steps`;
+  - compaction không được tóm tắt mất tool result. Root recipe dùng context limit đủ lớn, và recipe chỉ đưa vào transcript tham chiếu ngắn.
+- Registry từ chối khởi động khi có hai recipe trùng `id`, khi outline tham chiếu HostTool hoặc Sub-Agent không tồn tại, hoặc khi `params_schema` dùng kiểu ngoài tập con cho phép.
 
 ### Tập con schema tham số
 
-Chỉ cho phép: `string` (có `format: uri`, `multiline`), `integer` (`minimum`, `maximum`), `boolean`, `enum` (có thể có `x-options-source` để host cung cấp danh sách động), `array<string>` và `artifact` (`accept` theo MIME). Mỗi tham số có thể có `default`, `title`, `description` và `required`. Server validate tham số trước khi tạo Task và trả lỗi kèm `validation_path`.
+Chỉ cho phép những gì recipe đầu tiên cần:
+
+- `string`, có thể có `format: uri`;
+- `integer`, có `minimum` và `maximum`;
+- `boolean`;
+- `enum`, có thể có `x-options-source` để host cung cấp danh sách động;
+- `array<string>`.
+
+Mỗi tham số có thể có `default`, `title`, `description` và `required`. Server validate tham số trước khi tạo Task và trả lỗi kèm `validation_path`. Kiểu `artifact` và `multiline` chỉ thêm khi có recipe cần.
 
 ### Interface của TaskManager
 
-- `CreateTaskRequest` có thêm trường tùy chọn `recipe` gồm `id`, `version` tùy chọn (bỏ trống thì dùng bản mới nhất) và `params`. Khi có `recipe` thì `prompt` không bắt buộc, và tiêu đề được sinh từ recipe khi request không truyền.
-- TaskManager có thêm thao tác liệt kê recipe đã đăng ký, trả metadata công khai gồm `id`, `version`, `title`, `description`, `params_schema` và danh sách bước rút gọn (`title`, `kind`, `repeat`).
-- TaskView và TaskDetailView có thêm thông tin recipe đã ghim cùng tiến độ bước: bước hiện tại, trạng thái từng bước, số mục đã xong trên tổng số với bước lặp, và bước dừng kèm `stop_reason`.
+- `CreateTaskRequest` có thêm trường tùy chọn `recipe` gồm `id` và `params`. Khi có `recipe`:
+  - `prompt` không bắt buộc;
+  - target là Root của recipe;
+  - tiêu đề được sinh từ recipe khi request không truyền;
+  - TaskManager ghim version hiện tại vào `model_id` của Root.
+- TaskManager có thêm thao tác liệt kê recipe, trả metadata gồm `id`, `version`, `title`, `description`, `params_schema` và `outline`.
+- TaskView và TaskDetailView có thêm trường tùy chọn `recipe` chứa `id`, `version`, `params` và `RecipeProgress`. `RecipeProgress` gồm trạng thái từng bước trong outline, bước hiện tại, số mục đã xong trên tổng số với bước lặp, cùng `stop_reason` và bước lỗi nếu có. Mọi tầng phía trên trả nguyên kiểu này, không tự diễn giải lại.
 - Schedule `spawn_task` vẫn chưa nhận recipe ở spec này. Kiểu request được thiết kế sao cho thêm sau không phá vỡ tương thích.
 
 ### Thực thi
 
-- Task recipe có một runner riêng trong `orchestrator-flow`, chạy song song với đường agent loop hiện có. Runner dùng chung scheduler slot, Job Budget, Waiting Retry, recovery khi khởi động và cơ chế hủy.
-- Con trỏ bước và trạng thái từng bước nằm trong `tasks.db` qua migration forward-only. Bước được commit là hoàn tất trước khi runner sang bước sau.
-- Tool Step gọi HostTool qua đúng đường dispatch mà agent dùng, để phân loại `ToolEffect`, Tool Operation, quyền và ArtifactStore giữ nguyên. Tool `Mutating` không rõ kết quả đi qua đường ResolveStuckTool có sẵn.
-- Agent Step tạo một Agent Session con cho Sub-Agent. Mỗi lô của bước lặp dùng một session con mới, theo ADR 0136. Output được kiểm theo schema; sai thì gửi một lượt sửa có chẩn đoán, sai tiếp thì bước thất bại.
-- Bước lỗi vĩnh viễn thì Task chuyển sang trạng thái kết thúc kèm `stop_reason`, bước lỗi và kết quả từng phần. Lỗi tạm thời đi qua Waiting Retry. Runtime không bao giờ fallback sang agent loop.
-- Version đã ghim không còn trong registry lúc resume thì Task kết thúc với mã lỗi riêng, không chạy theo version khác.
-- Collection Ledger được tổng quát hóa theo loại mục để bước lặp dùng được cho recipe, đồng thời giữ nguyên hành vi hiện có của playlist.
+- Task recipe là Task thường có Root là Root recipe. Recovery, Waiting Retry, hủy, Job Budget, Tool Operation, chính sách không chạy lại mù với tool `Mutating` và timeline đều đi qua đường hiện có, không có bảng hay con trỏ bước riêng. Transcript chính là con trỏ bước.
+- Agent Step là lời gọi `subagent`. Sub-Agent kết thúc bằng một tool hoàn tất có schema output, theo cách V3 Child kết thúc bằng completion function. Output sai schema thì `next` phát một lời gọi `subagent` resume session con kèm chẩn đoán có kiểu. Sai tiếp thì `next` trả thất bại.
+- Bước lặp theo lô phát nhiều tool call trong một bước, tối đa bằng kích thước lô do recipe khai báo. Collection Ledger giữ danh sách mục và trạng thái từng mục như hiện có. Mục lỗi bị cách ly theo ADR 0136.
+- Bước lỗi vĩnh viễn làm Task kết thúc. Runtime không bao giờ fallback sang agent loop.
 
 ### Follow-up
 
-Follow-up trên Task recipe đi qua đường Task Follow-up hiện có, vào Agent Session của `daily_root`. Lượt này nhận một tóm tắt có cấu trúc gồm recipe, tham số, trạng thái từng bước, artifact và `stop_reason`. Recipe đã ghim không bị chạy lại. Mỗi Agent Run được đánh dấu là lượt recipe hay lượt tự do.
+- Follow-up trên Task recipe không vào Root recipe. TaskManager mở một Agent Session `daily_root` gắn với Task, kèm tóm tắt có cấu trúc gồm recipe, tham số, `RecipeProgress` và artifact. Các follow-up sau đó tiếp tục trên cùng session này.
+- Lượt recipe không bị chạy lại hay sửa.
+- Mỗi Agent Run của Task được đánh dấu là lượt recipe hay lượt tự do.
 
 ### Tool `recipe_start` cho `daily_root`
 
@@ -155,6 +187,7 @@ Follow-up trên Task recipe đi qua đường Task Follow-up hiện có, vào Ag
 ### Recipe đầu tiên: thu thập video vào `sources/`
 
 - Tham số: URL playlist hoặc danh sách URL video (bắt buộc có một trong hai), domain Wiki (enum động, có giá trị "agent tự chọn"), số video tối đa (integer, mặc định 50) và có ingest vào Wiki sau khi thu thập hay không (boolean).
+- Kích thước lô mặc định là 10, cùng giá trị với Auto-Flow.
 - Các bước:
   1. Tool Step lấy danh sách video vào Collection Ledger.
   2. Tool Step lặp theo lô lấy transcript.
@@ -166,7 +199,7 @@ Follow-up trên Task recipe đi qua đường Task Follow-up hiện có, vào Ag
 
 - Đăng ký recipe đầu tiên lúc khởi động task flow.
 - `GET /api/admin/background/recipes` trả danh sách recipe từ TaskManager.
-- `POST /api/admin/jobs` nhận thêm `recipe: { id, version?, params }`. Khi có `recipe` thì `goal` không bắt buộc. Idempotency key giữ như hiện tại. Lỗi tham số trả về theo định dạng lỗi admin hiện có, kèm `validation_path`.
+- `POST /api/admin/jobs` nhận thêm `recipe: { id, params }`. Khi có `recipe` thì `goal` không bắt buộc. Idempotency key giữ như hiện tại. Lỗi tham số trả về theo định dạng lỗi admin hiện có, kèm `validation_path`.
 - Projection Admin Job có thêm metadata recipe và tiến độ bước.
 - Thứ tự phát hành thư viện theo `AGENTS.md`. Thử trước bằng `[patch.crates-io]` trên nhánh feature, rồi thay bằng bản đã phát hành trước khi merge.
 
@@ -179,7 +212,11 @@ Follow-up trên Task recipe đi qua đường Task Follow-up hiện có, vào Ag
 
 ## Testing Decisions
 
-Test chỉ kiểm hành vi nhìn thấy từ bên ngoài qua interface công khai: trạng thái Task, TaskDetailView, artifact, file trong `sources/` và response HTTP. Test không kiểm bảng nội bộ, tên hàm hay thứ tự gọi bên trong. Có ba seam, đã được xác nhận.
+Test chỉ kiểm hành vi nhìn thấy từ bên ngoài qua interface công khai: trạng thái Task, TaskDetailView, artifact, file trong `sources/` và response HTTP. Test không kiểm bảng nội bộ, tên hàm hay thứ tự gọi bên trong. Seam 1 đến 3 đã được xác nhận. Seam 0 thêm sau spike, chỉ cho thay đổi ở thư viện `orchestrator-agent`.
+
+### Seam 0: builder của `orchestrator-agent`
+
+Chỉ cho thay đổi trộn provider. Test qua public interface của Orchestrator: một Root dùng alias của `ProviderRuntime`, Sub-Agent dùng alias của `llm.providers`, và mỗi request đi đúng nơi. Có thêm test cho alias trùng làm build thất bại. Prior art là test provider runtime và test Parent–Child hiện có, cùng spike `spike_recipe_gateway`.
 
 ### Seam 1: interface công khai của TaskManager (seam chính)
 
@@ -187,14 +224,17 @@ Dùng harness hiện có của integration test `orchestrator-flow`: `ScriptedGa
 
 Phủ các trường hợp:
 
-- Recipe playlist chạy hết các bước, tạo đúng file trong `sources/`. Tool Step không tiêu lượt LLM nào: ScriptedGateway chỉ nhận lượt của Agent Step.
+- Recipe playlist chạy hết các bước, tạo đúng file trong `sources/`. Tool Step không tiêu lượt LLM nào: ScriptedGateway chỉ nhận lượt của Agent Step, và token của lượt recipe bằng 0.
+- `next` và `progress` của recipe playlist được test trực tiếp như hàm thuần với transcript dựng sẵn, cho các trường hợp: bắt đầu, giữa lô, Agent Step sai schema, và hoàn tất.
 - Tham số sai bị từ chối lúc tạo, kèm `validation_path`. Không có Task nào được tạo.
-- Registry từ chối recipe trùng `(id, version)`, tham chiếu tool không tồn tại, hoặc schema ngoài tập con.
+- Registry từ chối recipe trùng `id`, tham chiếu tool hoặc Sub-Agent không tồn tại, hoặc schema ngoài tập con.
 - Restart giữa bước lặp thì Task chạy tiếp từ bước dở, không lưu trùng nguồn.
 - Lỗi tạm thời đưa Task vào Waiting Retry rồi chạy tiếp. Hết ngân sách thì Task dừng và giữ kết quả từng phần.
 - Agent Step trả output sai schema hai lần thì Task dừng với bước lỗi và `stop_reason`, và không có lượt agent loop nào tiếp theo.
 - Mục lỗi trong lô bị cách ly, các mục khác vẫn xong.
-- Version đã ghim bị gỡ khỏi registry thì Task kết thúc với mã lỗi riêng khi resume.
+- Version đã ghim khác bản trong registry thì Task kết thúc với `RECIPE_VERSION_UNAVAILABLE` khi resume.
+- Tool Step `Mutating` bị gián đoạn khi restart thì Task chặn ở đường gỡ tool kẹt, không chạy lại.
+- Agent Step con gặp 429 thì Task vào Waiting Retry rồi chạy tiếp, không làm lại Tool Step đã xong.
 - Hủy Task dừng bước đang chạy.
 - Follow-up trên Task recipe chạy một lượt agent loop có ngữ cảnh recipe, và recipe không chạy lại.
 - `recipe_start` từ `daily_root` tạo một Task recipe mới. Gọi lại với cùng khóa idempotency không tạo Task thứ hai.
@@ -225,5 +265,6 @@ Chạy test theo `AGENTS.md`: luôn dùng `scripts/agent-test.sh`, chạy test c
 ## Further Notes
 
 - Trước đây repo từng có "knowledge fixed job" thuộc JobEngine cũ (`.scratch/knowledge-fixed-job/`), đã bị ADR 0127 thay thế. Spec này không dùng lại mã hay bảng của nó.
+- Spike phương án adapter `ProviderRuntime` nằm ở nhánh `spike/recipe-gateway` của `orchestrator-agent`. Test của spike là điểm khởi đầu cho Seam 0, không phải code để merge.
 - Thêm thuật ngữ **Task Recipe** vào `GLOSSARY.md` và đổi ADR 0140 sang Accepted khi bắt đầu triển khai.
 - Cần đo độ ổn định trước và sau bằng `tasks.db`: tỉ lệ Task playlist hoàn tất, số lượt LLM mỗi Task, và tần suất `STEP_LIMIT_REACHED`. Số liệu này dùng để quyết định recipe tiếp theo.
