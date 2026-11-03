@@ -160,6 +160,7 @@ Mỗi tham số có thể có `default`, `title`, `description` và `required`. 
   - `prompt` không bắt buộc;
   - target là Root của recipe;
   - tiêu đề được sinh từ recipe khi request không truyền;
+  - recipe thu thập video tóm tắt loại nguồn, số video tối đa, domain cố định và lựa chọn Wiki vào tiêu đề; không đưa URL hoặc cả danh sách URL vào tiêu đề, và tiêu đề tường minh của người gọi luôn được giữ;
   - TaskManager ghim version hiện tại vào `model_id` của Root.
 - TaskManager có thêm thao tác liệt kê recipe, trả metadata gồm `id`, `version`, `title`, `description`, `params_schema` và `outline`.
 - TaskView và TaskDetailView có thêm trường tùy chọn `recipe` chứa `id`, `version`, `params` và `RecipeProgress`. `RecipeProgress` gồm trạng thái từng bước trong outline, bước hiện tại, số mục đã xong trên tổng số với bước lặp, cùng `stop_reason` và bước lỗi nếu có. Mọi tầng phía trên trả nguyên kiểu này, không tự diễn giải lại.
@@ -186,7 +187,7 @@ Mỗi tham số có thể có `default`, `title`, `description` và `required`. 
 
 ### Recipe đầu tiên: thu thập video vào `sources/`
 
-- Tham số: URL playlist hoặc danh sách URL video (bắt buộc có một trong hai), domain Wiki (enum động, có giá trị "agent tự chọn"), số video tối đa (integer, mặc định 50) và có ingest vào Wiki sau khi thu thập hay không (boolean).
+- Tham số: URL playlist hoặc danh sách không rỗng URL video (bắt buộc có đúng một trong hai, tối đa 50 URL YouTube), domain Wiki (enum động, có giá trị "agent tự chọn"), số video tối đa (integer, mặc định 50) và có ingest vào Wiki sau khi thu thập hay không (boolean, mặc định tắt). Khi tắt, nguồn vẫn được lưu bền trong `sources/` nhưng bị loại khỏi Wiki Auto-Flow tới khi có yêu cầu ingest tường minh.
 - Kích thước lô mặc định là 10, cùng giá trị với Auto-Flow.
 - Các bước:
   1. Tool Step lấy danh sách video vào Collection Ledger.

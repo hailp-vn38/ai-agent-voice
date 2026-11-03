@@ -18,3 +18,7 @@
 ## Answer
 
 Đã merge vào integration branch `feat/task-recipes` tại `a3086f2`. Đã thêm API/types catalog, thẻ recipe có tìm kiếm (Tự do đứng đầu), form schema-driven, domain Wiki động từ `/api/admin/knowledge/tree?space=wiki`, preview outline, validation/error mapping, idempotency và chuyển trang chi tiết; luồng goal cùng WAV/MP4 được giữ. Targeted Vitest 47/47, Admin Web suite 525/525 (90 files), typecheck và `git diff --check` pass. Chưa kiểm live server/API.
+
+## Review follow-up — 2026-11-03
+
+Schema recipe hiện cung cấp `video_urls` (`array<string>`) cho textarea nhiều URL và checkbox `ingest_to_wiki` mặc định tắt; form hiện tại tự render đúng tiêu đề trường và control từ schema, không cần sửa component. Tạo Job không truyền title dùng tiêu đề tóm tắt tham số; title do người gọi nhập vẫn ưu tiên. Admin HTTP test xác nhận title, list mode và cờ ingest qua tool pipeline.

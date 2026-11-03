@@ -1037,6 +1037,7 @@ fn normalized_wiki_host_tool_preserves_inner_tool_timeout_for_long_media_tasks()
 
     let wrapped = NormalizedWikiHostTool {
         inner: Arc::new(LongVideoTool),
+        recipe_start_manager: Arc::new(std::sync::OnceLock::new()),
     };
     assert_eq!(
         wrapped.timeout(),

@@ -207,10 +207,18 @@ pub(in crate::app::admin) async fn create(
         .filter(|s| !s.is_empty())
         .map(str::to_owned)
         .unwrap_or_else(|| {
-            recipe_meta
+            if let Some(recipe) = input
+                .recipe
                 .as_ref()
-                .map(|m| format!("{} v{}", m.title, m.version))
-                .unwrap_or_else(|| goal.chars().take(80).collect())
+                .filter(|recipe| recipe.id == crate::services::task_flow::PLAYLIST_RECIPE_ID)
+            {
+                crate::services::task_flow::generated_playlist_title(&recipe.params)
+            } else {
+                recipe_meta
+                    .as_ref()
+                    .map(|m| format!("{} v{}", m.title, m.version))
+                    .unwrap_or_else(|| goal.chars().take(80).collect())
+            }
         });
     let target_agent = input
         .target_agent

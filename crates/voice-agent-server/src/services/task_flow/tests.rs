@@ -266,18 +266,20 @@ fn project_task_to_admin_job_preserves_recipe_progress_without_reinterpreting_it
             recent_messages: Vec::new(),
         });
 
-    detail.followup_agents.push(orchestrator_flow_rs::TaskAgentSessionView {
-        session_id: "daily-followup-session".into(),
-        parent_session_id: None,
-        agent_id: "daily_root".into(),
-        run_kind: orchestrator_flow_rs::AgentRunKind::Free,
-        is_root: true,
-        archived: false,
-        state_revision: 1,
-        latest_run: None,
-        invocations: Vec::new(),
-        recent_messages: Vec::new(),
-    });
+    detail
+        .followup_agents
+        .push(orchestrator_flow_rs::TaskAgentSessionView {
+            session_id: "daily-followup-session".into(),
+            parent_session_id: None,
+            agent_id: "daily_root".into(),
+            run_kind: orchestrator_flow_rs::AgentRunKind::Free,
+            is_root: true,
+            archived: false,
+            state_revision: 1,
+            latest_run: None,
+            invocations: Vec::new(),
+            recent_messages: Vec::new(),
+        });
 
     let projected = project_task_to_admin_job(&task, Some(&detail));
     assert_eq!(projected["recipe"], serde_json::to_value(recipe).unwrap());
