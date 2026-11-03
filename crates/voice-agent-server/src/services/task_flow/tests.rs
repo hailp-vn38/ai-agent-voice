@@ -61,6 +61,7 @@ fn project_task_to_admin_job_includes_multi_kind_artifacts_and_download_urls() {
         related_wiki_links: Vec::new(),
         error_code: None,
         error_message: None,
+        recipe: None,
         created_at: 1_760_000_000_000,
         started_at: Some(1_760_000_001_000),
         updated_at: 1_760_000_005_000,
@@ -132,6 +133,7 @@ fn project_task_to_admin_job_includes_multi_kind_artifacts_and_download_urls() {
         execution_summary: Some(summary),
         root_agent: None,
         subagents: Vec::new(),
+        recipe: None,
         family_snapshot: None,
     };
 
@@ -151,6 +153,129 @@ fn project_task_to_admin_job_includes_multi_kind_artifacts_and_download_urls() {
     assert_eq!(projected["budget_used"]["report_artifacts"], 1);
     assert_eq!(projected["budget_used"]["image_artifacts"], 1);
     assert_eq!(projected["budget_used"]["audio_artifacts"], 1);
+}
+
+#[test]
+fn project_task_to_admin_job_preserves_recipe_progress_without_reinterpreting_it() {
+    use orchestrator_flow_rs::{
+        RecipeProgress, RecipeStepKind, RecipeStepOutline, TaskDetailView, TaskRecipeView,
+    };
+
+    let mut task = TaskView {
+        id: "recipe-task".into(),
+        owner_id: "personal".into(),
+        workspace_id: "homelab".into(),
+        title: "Playlist job".into(),
+        prompt: "{}".into(),
+        flow_id: "daily".into(),
+        agent_id: "recipe_playlist_sources".into(),
+        source: TaskSource::Api,
+        schedule_id: None,
+        session_id: "root-session".into(),
+        latest_turn_id: None,
+        status: orchestrator_flow_rs::TaskStatus::Stopped,
+        active_subagent: None,
+        active_tool: None,
+        progress_summary: None,
+        output_preview: None,
+        related_wiki_links: Vec::new(),
+        wait_reason: None,
+        next_attempt_at: None,
+        error_code: None,
+        error_message: None,
+        recipe: None,
+        created_at: 1_760_000_000_000,
+        started_at: Some(1_760_000_001_000),
+        updated_at: 1_760_000_002_000,
+        finished_at: Some(1_760_000_002_000),
+    };
+    let recipe = TaskRecipeView {
+        id: "playlist_sources".into(),
+        version: 1,
+        title: "Thu thập playlist vào sources".into(),
+        params: serde_json::json!({"url":"https://youtube.com/playlist?list=PL1"}),
+        outline: vec![RecipeStepOutline {
+            title: "Lấy transcript theo lô".into(),
+            kind: RecipeStepKind::Tool,
+            repeat: true,
+            host_tools: vec!["yt_fetch_transcript".into()],
+            sub_agents: Vec::new(),
+        }],
+        progress: RecipeProgress {
+            current_step: None,
+            completed_steps: vec![],
+            completed_items: Some(4),
+            total_items: Some(10),
+            summary: Some("Transcript 4 · đã lưu 2".into()),
+            stop_reason: Some("Job budget exhausted".into()),
+            failed_step: Some(0),
+        },
+    };
+    task.recipe = Some(recipe.clone());
+    let mut detail = TaskDetailView::from_parts(task.clone(), Vec::new(), None);
+    detail.recipe = Some(recipe.clone());
+    detail.root_agent = Some(orchestrator_flow_rs::TaskAgentSessionView {
+        session_id: "root-session".into(),
+        parent_session_id: None,
+        agent_id: "recipe_playlist_sources".into(),
+        is_root: true,
+        archived: false,
+        state_revision: 1,
+        latest_run: None,
+        invocations: vec![orchestrator_flow_rs::TaskToolInvocationView {
+            invocation_id: "root-agent-step".into(),
+            run_id: "run-root".into(),
+            tool_call_id: "call-root".into(),
+            tool_name: "subagent".into(),
+            status: "completed".into(),
+            error_code: None,
+            arguments: serde_json::json!({"agent":"media_processor"}),
+            result: Some(serde_json::json!("Agent Step completed")),
+            child_session_id: Some("agent-step-session".into()),
+        }],
+        recent_messages: Vec::new(),
+    });
+    detail
+        .subagents
+        .push(orchestrator_flow_rs::TaskAgentSessionView {
+            session_id: "agent-step-session".into(),
+            parent_session_id: Some("root-session".into()),
+            agent_id: "media_processor".into(),
+            is_root: false,
+            archived: false,
+            state_revision: 1,
+            latest_run: None,
+            invocations: vec![orchestrator_flow_rs::TaskToolInvocationView {
+                invocation_id: "agent-step-tool".into(),
+                run_id: "run-child".into(),
+                tool_call_id: "call-child".into(),
+                tool_name: "yt_fetch_transcript".into(),
+                status: "completed".into(),
+                error_code: None,
+                arguments: serde_json::json!({"video_id":"v1"}),
+                result: Some(serde_json::json!("Transcript fetched")),
+                child_session_id: None,
+            }],
+            recent_messages: Vec::new(),
+        });
+
+    let projected = project_task_to_admin_job(&task, Some(&detail));
+    assert_eq!(projected["recipe"], serde_json::to_value(recipe).unwrap());
+    assert_eq!(projected["agent_runs"].as_array().unwrap().len(), 2);
+    assert!(
+        projected["steps"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|step| step["operation"] == "subagent")
+    );
+    assert!(
+        projected["steps"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|step| step["operation"] == "yt_fetch_transcript")
+    );
 }
 
 #[test]
@@ -509,6 +634,7 @@ fn project_task_to_admin_job_and_events_include_agent_messages_for_tool_calls() 
         related_wiki_links: Vec::new(),
         error_code: None,
         error_message: None,
+        recipe: None,
         created_at: 1_760_000_000_000,
         started_at: Some(1_760_000_001_000),
         updated_at: 1_760_000_005_000,
@@ -606,6 +732,7 @@ fn project_task_to_admin_job_and_events_include_agent_messages_for_tool_calls() 
         execution_summary: None,
         root_agent: Some(root_session),
         subagents: Vec::new(),
+        recipe: None,
         family_snapshot: None,
     };
 

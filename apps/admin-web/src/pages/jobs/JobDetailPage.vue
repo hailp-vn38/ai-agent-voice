@@ -9,6 +9,7 @@ import { formatApiError, isApiError } from '@/api/errors'
 import type { AdminJob, JobEvent, JobStatus } from '@/api/types/agent-jobs'
 import DetailHeader from '@/components/admin/DetailHeader.vue'
 import JobUnifiedTimeline, { type JobCanvasStats } from '@/components/jobs/JobUnifiedTimeline.vue'
+import RecipeProgress from '@/components/jobs/RecipeProgress.vue'
 import KnowledgeJobState from '@/components/jobs/KnowledgeJobState.vue'
 import { llmTokenSummary, projectLlmRuns } from '@/domain/jobs/llm-activity'
 import { projectUnifiedActivity, visibleActivities, type ActivityFilter } from '@/domain/jobs/unified-activity'
@@ -331,6 +332,7 @@ onBeforeUnmount(() => {
         <p class="mb-2 font-semibold">{{ t('jobUi.partialOutput') }}</p>{{ partialOutput }}
       </div>
       <p v-if="eventsError" role="alert" class="text-xs text-danger">{{ eventsError }}</p>
+      <RecipeProgress v-if="job.recipe" :recipe="job.recipe" />
       <JobUnifiedTimeline
         :job="job"
         :job-id="job.id"

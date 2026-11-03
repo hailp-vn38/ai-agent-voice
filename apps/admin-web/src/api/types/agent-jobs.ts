@@ -203,6 +203,27 @@ export interface RecipeOutlineStep {
   title: string
   kind: 'tool' | 'agent'
   repeat: boolean
+  host_tools?: string[]
+  sub_agents?: string[]
+}
+
+export interface RecipeProgressView {
+  current_step: number | null
+  completed_steps: number[]
+  completed_items?: number | null
+  total_items?: number | null
+  summary?: string | null
+  stop_reason?: string | null
+  failed_step?: number | null
+}
+
+export interface TaskRecipeView {
+  id: string
+  version: number
+  title: string
+  params: Record<string, unknown>
+  outline: RecipeOutlineStep[]
+  progress: RecipeProgressView
 }
 
 export interface TaskRecipeSummary {
@@ -297,6 +318,7 @@ export interface AdminJob {
   retry_of_job_id: string | null
   result: Record<string, unknown> | null
   output_preview?: string | null
+  recipe?: TaskRecipeView | null
   max_resume_attempts?: number | null
   wait_reason?: string | null
   next_attempt_at?: number | null

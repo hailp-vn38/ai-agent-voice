@@ -384,6 +384,9 @@ pub fn project_task_to_admin_job(task: &TaskView, detail: Option<&TaskDetailView
         "active_subagent": task.active_subagent,
         "active_tool": task.active_tool,
         "progress_summary": task.progress_summary,
+        "recipe": detail
+            .and_then(|detail| detail.recipe.as_ref())
+            .or(task.recipe.as_ref()),
         "output_preview": task.output_preview,
         "wait_reason": task.wait_reason,
         "next_attempt_at": task.next_attempt_at,

@@ -240,7 +240,7 @@ async fn recipe_admin_http_lists_validates_and_runs_playlist_recipe() {
         services::task_flow::{PLAYLIST_RECIPE_ROOT, PlaylistSourcesRecipe},
     };
     use orchestrator_agent_rs::{
-        AgentDefinition, AgentMode, HostTool, LlmConfig, Orchestrator, OrchestratorConfig,
+        AgentDefinition, AgentMode, LlmConfig, Orchestrator, OrchestratorConfig,
     };
     use orchestrator_flow_rs::{
         CreateTaskRequest, TaskConfig, TaskManager, TaskRecipeRequest, WorkspaceToolKit,
