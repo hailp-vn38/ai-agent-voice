@@ -8,6 +8,7 @@ export class ApiError extends Error {
     readonly requestId?: string,
     readonly affectedLinks?: Array<{ source_id: string; source_path: string; source_line: number; raw_target: string }>,
     readonly detail?: string,
+    readonly validationPath?: string,
   ) {
     super(message)
     this.name = 'ApiError'
@@ -33,6 +34,7 @@ export async function toApiError(response: Response): Promise<ApiError> {
     body?.error?.request_id,
     body?.error?.affected_links,
     body?.error?.message,
+    body?.error?.validation_path,
   )
 }
 

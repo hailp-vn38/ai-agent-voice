@@ -10,12 +10,15 @@ import type {
   JobEventPage,
   JobPage,
   JobSkillDetail,
+  RecipeOption,
+  TaskRecipeCatalog,
   SaveJobSkillInput,
 } from './types/agent-jobs'
 
 const backgroundPath = '/api/admin/background/settings'
 const agentsPath = '/api/admin/background/agents'
 const skillsPath = '/api/admin/background/skills'
+const recipesPath = '/api/admin/background/recipes'
 const jobsPath = '/api/admin/jobs'
 const artifactsPath = '/api/admin/artifacts'
 
@@ -42,6 +45,16 @@ const inFlightArtifacts = new Map<string, Promise<Blob>>()
 export const agentJobsApi = {
   settings(signal?: AbortSignal) {
     return requestJson<BackgroundSettings>(backgroundPath, {}, { signal })
+  },
+  listRecipes(signal?: AbortSignal) {
+    return requestJson<TaskRecipeCatalog>(recipesPath, {}, { signal })
+  },
+  wikiDomains(signal?: AbortSignal) {
+    return requestJson<{ items: Array<{ node_type: string; space: string; path: string; name: string }> }>(
+      withQuery('/api/admin/knowledge/tree', { space: 'wiki' }), {}, { signal },
+    ).then(({ items }) => items
+      .filter(item => item.node_type === 'folder' && item.space === 'wiki' && /^wiki\/[^/]+$/.test(item.path))
+      .map(item => ({ value: item.path.slice('wiki/'.length), label: item.name } satisfies RecipeOption)))
   },
   updateSettings(input: BackgroundSettingsUpdate, revision: number) {
     return requestJson<BackgroundSettings>(backgroundPath, jsonRequest('PUT', input), { revision })
@@ -129,6 +142,13 @@ export const agentJobsApi = {
       output_format: 'text',
       allow_partial: false,
       ...(attachments && attachments.length > 0 ? { attachments } : {}),
+    }), { headers: idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : undefined })
+  },
+  createRecipeJob(id: string, params: Record<string, unknown>, idempotencyKey?: string) {
+    return requestJson<AdminJob>(jobsPath, jsonRequest('POST', {
+      recipe: { id, params },
+      output_format: 'text',
+      allow_partial: false,
     }), { headers: idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : undefined })
   },
   cancelJob(id: string) {

@@ -4,10 +4,12 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { agentJobsApi } from '@/api/agent-jobs'
 import { formatApiError, isApiError } from '@/api/errors'
-import type { AdminJob, JobAttachmentUpload, JobStatus } from '@/api/types/agent-jobs'
+import type { AdminJob, JobAttachmentUpload, JobStatus, RecipeOption, TaskRecipeSummary } from '@/api/types/agent-jobs'
 import PageHeader from '@/components/admin/PageHeader.vue'
 import BaseModal from '@/components/admin/BaseModal.vue'
 import ConfirmDialog from '@/components/admin/ConfirmDialog.vue'
+import RecipeParamsForm from '@/components/jobs/RecipeParamsForm.vue'
+import { recipeFieldForValidationPath, recipeParamDefaults, validateRecipeParams } from '@/domain/jobs/recipe-form'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { useI18n } from '@/composables/useI18n'
@@ -39,6 +41,16 @@ const createOpen = ref(false)
 const batchDeleteOpen = ref(false)
 const selectedIds = ref<string[]>([])
 const goal = ref('')
+const recipes = ref<TaskRecipeSummary[]>([])
+const recipesLoaded = ref(false)
+const recipesLoading = ref(false)
+const recipeCatalogError = ref('')
+const recipeSearch = ref('')
+const activeRecipe = ref<TaskRecipeSummary | null>(null)
+const recipeParams = ref<Record<string, unknown>>({})
+const recipeOptions = ref<Record<string, RecipeOption[]>>({})
+const recipeFieldErrors = ref<Record<string, string>>({})
+const recipeGlobalError = ref('')
 const wavAttachments = ref<PendingWavAttachment[]>([])
 const wavDragActive = ref(false)
 const wavInputRef = ref<HTMLInputElement | null>(null)
@@ -50,6 +62,10 @@ const activeCount = computed(() => jobs.value.filter(job => ['queued', 'planning
 const completedCount = computed(() => jobs.value.filter(job => ['succeeded', 'partial_success'].includes(job.status)).length)
 const failedCount = computed(() => jobs.value.filter(job => job.status === 'failed').length)
 const allSelected = computed(() => jobs.value.length > 0 && jobs.value.every(job => selectedIds.value.includes(job.id)))
+const visibleRecipes = computed(() => {
+  const query = recipeSearch.value.trim().toLocaleLowerCase()
+  return recipes.value.filter(recipe => !query || `${recipe.title} ${recipe.description}`.toLocaleLowerCase().includes(query))
+})
 const tone = (status: JobStatus): 'success' | 'danger' | 'secondary' | 'outline' =>
   status === 'succeeded' ? 'success' : status === 'failed' ? 'danger' :
     status === 'partial_success' || status === 'cancelled' || status === 'stopped' ? 'outline' : 'secondary'
@@ -96,6 +112,36 @@ function clearWavAttachments() {
     if (item.previewUrl) URL.revokeObjectURL(item.previewUrl)
   }
   wavAttachments.value = []
+}
+
+async function loadRecipeCatalog() {
+  if (recipesLoaded.value || recipesLoading.value) return
+  recipesLoading.value = true
+  recipeCatalogError.value = ''
+  try {
+    const catalog = await agentJobsApi.listRecipes()
+    recipes.value = catalog.items
+    recipesLoaded.value = true
+    const sources = new Set(catalog.items.flatMap(recipe => Object.values(recipe.params_schema.properties)
+      .map(field => field['x-options-source']).filter((source): source is string => Boolean(source))))
+    for (const source of sources) {
+      if (!/wiki.*domain|domain.*wiki/i.test(source)) continue
+      try { recipeOptions.value[source] = await agentJobsApi.wikiDomains() }
+      catch { recipeCatalogError.value = t('jobUi.recipeOptionsFailed') }
+    }
+  } catch (cause) {
+    recipeCatalogError.value = formatApiError(cause)
+  } finally {
+    recipesLoading.value = false
+  }
+}
+
+function selectRecipe(recipe: TaskRecipeSummary | null) {
+  activeRecipe.value = recipe
+  recipeFieldErrors.value = {}
+  recipeGlobalError.value = ''
+  error.value = ''
+  if (recipe) recipeParams.value = recipeParamDefaults(recipe.params_schema)
 }
 
 function removeWavAttachment(id: string) {
@@ -205,32 +251,50 @@ function onWavDrop(event: DragEvent) {
 watch(createOpen, isOpen => {
   if (!isOpen && !busy.value) {
     clearWavAttachments()
+  } else if (isOpen) {
+    void loadRecipeCatalog()
   }
 })
 
 async function create() {
-  if (goal.value.trim().length < 5 || busy.value) return
+  if (busy.value) return
+  if (activeRecipe.value) {
+    const validation = validateRecipeParams(activeRecipe.value.params_schema, recipeParams.value)
+    recipeFieldErrors.value = validation
+    if (Object.keys(validation).length) return
+  } else if (goal.value.trim().length < 5) return
   busy.value = true
   error.value = ''
+  recipeGlobalError.value = ''
   notice.value = ''
   try {
     const trimmedGoal = goal.value.trim()
     const attSig = wavAttachments.value.map(a => `${a.name}:${a.sizeBytes}:${a.lastModified}`).join('|')
-    const nextSig = `${trimmedGoal}::${attSig}`
+    const nextSig = activeRecipe.value
+      ? `recipe:${activeRecipe.value.id}:${JSON.stringify(recipeParams.value)}`
+      : `${trimmedGoal}::${attSig}`
     if (creation.sig !== nextSig) creation = { sig: nextSig, key: crypto.randomUUID() }
-    const uploads: JobAttachmentUpload[] = wavAttachments.value.map(a => ({
-      name: a.name,
-      mime_type: a.mime_type,
-      data_base64: a.data_base64,
-    }))
-    const job = await agentJobsApi.createJob(trimmedGoal, creation.key, uploads)
+    const job = activeRecipe.value
+      ? await agentJobsApi.createRecipeJob(activeRecipe.value.id, recipeParams.value, creation.key)
+      : await agentJobsApi.createJob(trimmedGoal, creation.key, wavAttachments.value.map(a => ({
+        name: a.name,
+        mime_type: a.mime_type,
+        data_base64: a.data_base64,
+      } satisfies JobAttachmentUpload)))
     creation = { sig: '', key: '' }
     clearWavAttachments()
     createOpen.value = false
     goal.value = ''
+    activeRecipe.value = null
+    recipeParams.value = {}
     await router.push({ name: 'job-detail', params: { jobId: job.id } })
   } catch (cause) {
-    error.value = formatApiError(cause)
+    if (activeRecipe.value && isApiError(cause) && cause.validationPath) {
+      const field = recipeFieldForValidationPath(activeRecipe.value.params_schema, cause.validationPath)
+      if (field) recipeFieldErrors.value = { ...recipeFieldErrors.value, [field]: formatApiError(cause) }
+      else recipeGlobalError.value = formatApiError(cause)
+    } else if (activeRecipe.value) recipeGlobalError.value = formatApiError(cause)
+    else error.value = formatApiError(cause)
   } finally {
     busy.value = false
   }
@@ -376,11 +440,67 @@ onBeforeUnmount(() => {
     <BaseModal v-model="createOpen" :title="t('jobUi.newJob')" :description="t('jobUi.createHint')">
       <form class="space-y-4" @submit.prevent="create">
         <label class="block space-y-2">
-          <span class="text-sm font-medium">{{ t('jobUi.goal') }}</span>
-          <textarea v-model="goal" class="admin-textarea min-h-32" maxlength="3000" required :placeholder="t('jobUi.goalPlaceholder')" />
+          <span class="text-sm font-medium">{{ t('jobUi.searchRecipes') }}</span>
+          <input v-model="recipeSearch" class="admin-input" type="search" :placeholder="t('jobUi.searchRecipes')" />
         </label>
+        <div class="grid gap-2 sm:grid-cols-2">
+          <button
+            type="button"
+            class="rounded-lg border p-3 text-left transition-colors hover:border-studio-violet/60"
+            :class="activeRecipe === null ? 'border-studio-violet bg-studio-violet/5' : 'border-border'"
+            :aria-pressed="activeRecipe === null"
+            data-testid="free-job-card"
+            @click="selectRecipe(null)"
+          >
+            <span class="block font-medium">{{ t('jobUi.freeRecipe') }}</span>
+            <span class="mt-1 block text-xs text-muted-foreground">{{ t('jobUi.freeRecipeDescription') }}</span>
+          </button>
+          <button
+            v-for="recipe in visibleRecipes"
+            :key="recipe.id"
+            type="button"
+            class="rounded-lg border p-3 text-left transition-colors hover:border-studio-violet/60"
+            :class="activeRecipe?.id === recipe.id ? 'border-studio-violet bg-studio-violet/5' : 'border-border'"
+            :aria-pressed="activeRecipe?.id === recipe.id"
+            :data-recipe-id="recipe.id"
+            @click="selectRecipe(recipe)"
+          >
+            <span class="flex items-center justify-between gap-2 font-medium"><span>{{ recipe.title }}</span><span class="shrink-0 text-xs text-muted-foreground">v{{ recipe.version }}</span></span>
+            <span class="mt-1 block text-xs text-muted-foreground">{{ recipe.description }}</span>
+          </button>
+          <p v-if="recipesLoading" class="text-xs text-muted-foreground" role="status">{{ t('common.loading') }}</p>
+          <p v-else-if="recipesLoaded && !visibleRecipes.length" class="text-xs text-muted-foreground">{{ t('jobUi.noRecipes') }}</p>
+        </div>
+        <p v-if="recipeCatalogError" role="status" class="text-xs text-muted-foreground">{{ recipeCatalogError }}</p>
 
-        <div class="space-y-2">
+        <template v-if="activeRecipe">
+          <div class="rounded-lg border bg-muted/15 p-3">
+            <div class="flex items-start justify-between gap-3">
+              <div><h3 class="font-medium">{{ activeRecipe.title }}</h3><p class="mt-1 text-xs text-muted-foreground">{{ activeRecipe.description }}</p></div>
+              <Badge variant="outline">v{{ activeRecipe.version }}</Badge>
+            </div>
+          </div>
+          <RecipeParamsForm v-model="recipeParams" :schema="activeRecipe.params_schema" :options-by-source="recipeOptions" :field-errors="recipeFieldErrors" />
+          <section class="space-y-2 rounded-lg border p-3" aria-label="Recipe outline">
+            <h3 class="text-sm font-medium">{{ t('jobUi.recipeSteps') }}</h3>
+            <ol class="space-y-2">
+              <li v-for="(step, index) in activeRecipe.outline" :key="`${index}-${step.title}`" class="flex items-start gap-2 text-sm">
+                <span class="flex size-5 shrink-0 items-center justify-center rounded-full bg-muted text-xs">{{ index + 1 }}</span>
+                <span class="min-w-0 flex-1">{{ step.title }}</span>
+                <span class="shrink-0 text-xs text-muted-foreground">{{ step.kind === 'tool' ? t('jobUi.recipeTool') : t('jobUi.recipeAgent') }}<template v-if="step.repeat"> · {{ t('jobUi.recipeRepeats') }}</template></span>
+              </li>
+            </ol>
+          </section>
+          <p v-if="recipeGlobalError" role="alert" class="text-sm text-danger">{{ recipeGlobalError }}</p>
+        </template>
+
+        <template v-else>
+          <label class="block space-y-2">
+            <span class="text-sm font-medium">{{ t('jobUi.goal') }}</span>
+            <textarea v-model="goal" class="admin-textarea min-h-32" maxlength="3000" required :placeholder="t('jobUi.goalPlaceholder')" />
+          </label>
+
+          <div class="space-y-2">
           <div class="flex items-center justify-between">
             <span class="text-sm font-medium">{{ t('jobUi.wavAttachments') }}</span>
             <span class="text-xs text-muted-foreground">{{ wavAttachments.length }}/{{ MAX_WAV_ATTACHMENTS }}</span>
@@ -449,13 +569,14 @@ onBeforeUnmount(() => {
               />
             </li>
           </ul>
-        </div>
+          </div>
 
-        <p class="text-xs text-muted-foreground">{{ t('jobUi.adminRequester') }}</p>
-        <p v-if="error" role="alert" class="text-sm text-danger">{{ error }}</p>
+          <p class="text-xs text-muted-foreground">{{ t('jobUi.adminRequester') }}</p>
+          <p v-if="error" role="alert" class="text-sm text-danger">{{ error }}</p>
+        </template>
         <div class="flex justify-end gap-2">
           <Button variant="outline" type="button" @click="createOpen = false">{{ t('jobUi.close') }}</Button>
-          <Button type="submit" :disabled="busy || goal.trim().length < 5"><Plus class="size-4" />{{ t('jobUi.create') }}</Button>
+          <Button type="submit" :disabled="busy || (activeRecipe ? Object.keys(validateRecipeParams(activeRecipe.params_schema, recipeParams)).length > 0 : goal.trim().length < 5)"><Plus class="size-4" />{{ activeRecipe ? t('jobUi.runRecipe') : t('jobUi.create') }}</Button>
         </div>
       </form>
     </BaseModal>

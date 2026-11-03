@@ -52,6 +52,36 @@ describe('Agent Job admin clients', () => {
     expect(JSON.parse(String(create.body))).toEqual({ goal: 'Collect public posts', output_format: 'text', allow_partial: false })
   })
 
+  it('loads the recipe catalog from the Admin background API', async () => {
+    const recipes = { items: [{ id: 'playlist_sources', version: 1, title: 'Playlist', description: 'Collect', params_schema: { type: 'object', properties: {} }, outline: [] }] }
+    const fetch = vi.fn().mockResolvedValue(json(recipes))
+    vi.stubGlobal('fetch', fetch)
+    await expect(agentJobsApi.listRecipes()).resolves.toEqual(recipes)
+    expect(fetch.mock.calls[0]?.[0]).toContain('/api/admin/background/recipes')
+  })
+
+  it('loads top-level Wiki folders as dynamic recipe domain options', async () => {
+    const fetch = vi.fn().mockResolvedValue(json({ items: [
+      { node_type: 'folder', space: 'wiki', path: 'wiki/technology', name: 'Technology' },
+      { node_type: 'folder', space: 'wiki', path: 'wiki/technology/ai', name: 'AI' },
+      { node_type: 'file', space: 'wiki', path: 'wiki/readme.md', name: 'readme.md' },
+      { node_type: 'folder', space: 'raw', path: 'raw/technology', name: 'Raw Technology' },
+    ] }))
+    vi.stubGlobal('fetch', fetch)
+    await expect(agentJobsApi.wikiDomains()).resolves.toEqual([{ value: 'technology', label: 'Technology' }])
+    expect(fetch.mock.calls[0]?.[0]).toContain('/api/admin/knowledge/tree?space=wiki')
+  })
+
+  it('creates a recipe Job with the existing idempotency header', async () => {
+    const fetch = vi.fn().mockResolvedValue(json({ id: 'recipe-job', status: 'queued' }))
+    vi.stubGlobal('fetch', fetch)
+    await agentJobsApi.createRecipeJob('playlist_sources', { url: 'https://example.test/playlist' }, 'same-create')
+    const init = fetch.mock.calls[0]?.[1] as RequestInit
+    expect(fetch.mock.calls[0]?.[0]).toContain('/api/admin/jobs')
+    expect(new Headers(init.headers).get('Idempotency-Key')).toBe('same-create')
+    expect(JSON.parse(String(init.body))).toEqual({ recipe: { id: 'playlist_sources', params: { url: 'https://example.test/playlist' } }, output_format: 'text', allow_partial: false })
+  })
+
   it('downloads a Job artifact with the Admin request boundary', async () => {
     const fetch = vi.fn().mockResolvedValue(new Response('fixture result', { status: 200, headers: { 'Content-Type': 'text/plain' } }))
     vi.stubGlobal('fetch', fetch)
