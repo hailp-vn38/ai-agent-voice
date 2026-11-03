@@ -632,7 +632,10 @@ async fn recipe_admin_http_lists_validates_and_runs_playlist_recipe() {
         })
         .await
         .unwrap();
-    assert_eq!(max_playlist_task.title, "Thu thập playlist · tối đa 50 video");
+    assert_eq!(
+        max_playlist_task.title,
+        "Thu thập playlist · tối đa 50 video"
+    );
     for _ in 0..300 {
         if manager
             .get_task(&max_playlist_task.id)
