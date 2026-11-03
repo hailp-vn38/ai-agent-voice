@@ -87,6 +87,8 @@ impl TaskRecipe for NoopRecipe {
         RecipeProgress {
             current_step: None,
             completed_steps: Vec::new(),
+            completed_items: None,
+            total_items: None,
             summary: Some("done".into()),
             stop_reason: None,
             failed_step: None,
