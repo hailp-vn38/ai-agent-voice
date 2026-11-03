@@ -265,6 +265,10 @@ pub fn project_task_to_admin_job(task: &TaskView, detail: Option<&TaskDetailView
                 "parent_agent_run_id": session.parent_session_id,
                 "fork_group_id": Value::Null,
                 "role": session.agent_id,
+                "run_kind": match session.run_kind {
+                    orchestrator_flow_rs::AgentRunKind::Recipe => "recipe",
+                    orchestrator_flow_rs::AgentRunKind::Free => "free",
+                },
                 "goal_excerpt": goal_excerpt,
                 "result": last_assistant,
                 "messages": messages,
