@@ -240,7 +240,7 @@ async fn recipe_admin_http_lists_validates_and_runs_playlist_recipe() {
         services::task_flow::{PLAYLIST_RECIPE_ROOT, PlaylistSourcesRecipe},
     };
     use orchestrator_agent_rs::{
-        AgentDefinition, AgentMode, LlmConfig, Orchestrator, OrchestratorConfig,
+        AgentDefinition, AgentMode, HostTool, LlmConfig, Orchestrator, OrchestratorConfig,
     };
     use orchestrator_flow_rs::{TaskConfig, TaskManager, WorkspaceToolKit};
     use std::{sync::Arc, time::Duration};
@@ -249,10 +249,16 @@ async fn recipe_admin_http_lists_validates_and_runs_playlist_recipe() {
     let temp = std::env::temp_dir().join(format!("admin-recipe-http-{}", uuid::Uuid::new_v4()));
     let vault = temp.join("vault");
     let prompt = temp.join("recipe.md");
+    let ytdlp_calls = temp.join("ytdlp-calls.log");
     std::fs::create_dir_all(&temp).unwrap();
     std::fs::write(&prompt, "recipe root").unwrap();
     let fake_ytdlp = temp.join("yt-dlp");
-    std::fs::write(&fake_ytdlp, "#!/bin/sh\nif [ \"$1\" = \"--flat-playlist\" ]; then case \"$*\" in *fail*) exit 1;; esac; printf 'vid123\\tSample Video\\n'; exit 0; fi\nout=''\nwhile [ \"$#\" -gt 0 ]; do if [ \"$1\" = \"-o\" ]; then out=\"$2\"; shift 2; else shift; fi; done\ndir=\"${out%/*}\"\nmkdir -p \"$dir\"\ncat > \"$dir/vid123.en-orig.vtt\" <<'VTT'\nWEBVTT\n\n00:00:00.000 --> 00:00:02.000\nA useful source transcript.\nVTT\n").unwrap();
+    let fake_script = "#!/bin/sh\nif [ \"$1\" = \"--flat-playlist\" ]; then case \"$*\" in *fail*) exit 1;; *mixed*) printf 'bad\\tBad Video\\nvidmix\\tGood Video\\n';; *) printf 'vid123\\tSample Video\\n';; esac; exit 0; fi\nvideo=''\nfor arg in \"$@\"; do case \"$arg\" in *watch?v=*) video=\"${arg##*watch?v=}\";; esac; done\nprintf '%s\\n' \"$video\" >> 'CALLS_LOG_PATH'\ncase \"$video\" in bad) exit 1;; esac\nout=''\nwhile [ \"$#\" -gt 0 ]; do if [ \"$1\" = \"-o\" ]; then out=\"$2\"; shift 2; else shift; fi; done\ndir=\"${out%/*}\"\nmkdir -p \"$dir\"\ncat > \"$dir/$video.en-orig.vtt\" <<VTT\nWEBVTT\n\n00:00:00.000 --> 00:00:02.000\nA useful source transcript for $video.\nVTT\n";
+    std::fs::write(
+        &fake_ytdlp,
+        fake_script.replace("CALLS_LOG_PATH", &ytdlp_calls.display().to_string()),
+    )
+    .unwrap();
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -279,12 +285,31 @@ async fn recipe_admin_http_lists_validates_and_runs_playlist_recipe() {
         temp.join("yt"),
     )
     .with_ytdlp(&fake_ytdlp, Duration::from_secs(5));
+    assert!(
+        init.validate_recipe_registry(
+            &std::collections::HashSet::from(["yt_list_playlist".to_string()]),
+            &std::collections::HashSet::new(),
+        )
+        .is_err()
+    );
+    let kit_tools = kit.all_host_tools(&init);
+    let registered_tools = kit_tools
+        .iter()
+        .map(|tool| tool.descriptor().name)
+        .collect::<std::collections::HashSet<_>>();
+    init.validate_recipe_registry(&registered_tools, &std::collections::HashSet::new())
+        .unwrap();
     let root = AgentDefinition::new(PLAYLIST_RECIPE_ROOT, "recipe", "playlist_sources@1")
         .with_mode(AgentMode::Primary)
         .with_prompt_path(prompt)
-        .with_allowed_tools(["yt_list_playlist", "add_to_sources"])
+        .with_allowed_tools([
+            "yt_list_playlist",
+            "collection_status",
+            "yt_fetch_transcript",
+            "add_to_sources",
+        ])
         .with_allowed_subagents(std::iter::empty::<String>())
-        .with_steps(8)
+        .with_steps(64)
         .with_context_limit_tokens(1_000_000);
     let mut builder = Orchestrator::builder(OrchestratorConfig::new(
         LlmConfig { providers: vec![] },
@@ -292,7 +317,7 @@ async fn recipe_admin_http_lists_validates_and_runs_playlist_recipe() {
         temp.join("orch"),
     ))
     .with_provider_runtime(runtime);
-    for tool in kit.all_host_tools(&init) {
+    for tool in kit_tools {
         builder = builder.register_tool(tool);
     }
     let orchestrator = Arc::new(builder.build().await.unwrap());
@@ -327,9 +352,18 @@ async fn recipe_admin_http_lists_validates_and_runs_playlist_recipe() {
         .await
         .unwrap();
     assert_eq!(list.status(), reqwest::StatusCode::OK);
+    let listed_recipes: serde_json::Value = list.json().await.unwrap();
+    assert_eq!(listed_recipes["items"][0]["id"], "playlist_sources");
     assert_eq!(
-        list.json::<serde_json::Value>().await.unwrap()["items"][0]["id"],
-        "playlist_sources"
+        listed_recipes["items"][0]["outline"]
+            .as_array()
+            .unwrap()
+            .len(),
+        3
+    );
+    assert_eq!(
+        listed_recipes["items"][0]["outline"][1]["host_tools"][0],
+        "yt_fetch_transcript"
     );
 
     let invalid = client.post(format!("{base}/jobs")).bearer_auth("recipe-admin-token")
@@ -373,8 +407,58 @@ async fn recipe_admin_http_lists_validates_and_runs_playlist_recipe() {
         .collect();
     assert_eq!(files.len(), 1);
     let source = std::fs::read_to_string(files[0].path()).unwrap();
-    assert!(source.contains("A useful source transcript."));
+    assert!(source.contains("A useful source transcript for vid123."));
     assert!(source.contains("vid123"));
+
+    let mixed = client
+        .post(format!("{base}/jobs"))
+        .bearer_auth("recipe-admin-token")
+        .json(&serde_json::json!({"recipe":{"id":"playlist_sources","params":{"url":"https://www.youtube.com/playlist?list=mixed"}}}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(mixed.status(), reqwest::StatusCode::CREATED);
+    let mixed_job: serde_json::Value = mixed.json().await.unwrap();
+    let mixed_id = mixed_job["id"].as_str().unwrap();
+    for _ in 0..200 {
+        if manager
+            .get_task_any_scope(mixed_id)
+            .await
+            .unwrap()
+            .status
+            .is_terminal()
+        {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    assert_eq!(
+        manager.get_task_any_scope(mixed_id).await.unwrap().status,
+        orchestrator_flow_rs::TaskStatus::Completed
+    );
+    let bad_attempts = std::fs::read_to_string(&ytdlp_calls)
+        .unwrap()
+        .lines()
+        .filter(|line| *line == "bad")
+        .count();
+    assert_eq!(
+        bad_attempts, 6,
+        "three bounded ledger attempts each try the two subtitle language variants"
+    );
+    let mixed_sources: Vec<_> = std::fs::read_dir(vault.join("sources/youtube/playlist"))
+        .unwrap()
+        .filter_map(Result::ok)
+        .collect();
+    assert_eq!(
+        mixed_sources.len(),
+        2,
+        "the failed sibling must not prevent the good video from being saved"
+    );
+    assert!(mixed_sources.iter().any(|file| {
+        std::fs::read_to_string(file.path())
+            .unwrap()
+            .contains("vidmix")
+    }));
 
     let failed = client
         .post(format!("{base}/jobs"))
@@ -405,4 +489,5 @@ async fn recipe_admin_http_lists_validates_and_runs_playlist_recipe() {
         Some("RECIPE_STEP_FAILED")
     );
     server.abort();
+    let _ = std::fs::remove_dir_all(&temp);
 }

@@ -54,8 +54,8 @@ unicode-normalization = "0.1"
 zeroize = "1.8"
 
 [patch.crates-io]
-orchestrator-agent = { path = "../libs/orchestrator_agent_rs-task-recipes-02" }
-orchestrator-flow = { path = "../libs/orchestrator_task_rs-task-recipes-02" }
+orchestrator-agent = { path = "../libs/orchestrator_agent_rs-task-recipes-02-followup" }
+orchestrator-flow = { path = "../libs/orchestrator_task_rs-task-recipes-02-followup" }
 
 [profile.dev]
 debug = "line-tables-only"
