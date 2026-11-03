@@ -13,6 +13,7 @@ pub(crate) use recipes::{
     PLAYLIST_COMPLETION_TOOL, PLAYLIST_DOMAIN_SELECTOR, PLAYLIST_RECIPE_ROOT,
     PlaylistSourcesRecipe, TopicSelectionCompletionTool,
 };
+pub(crate) use recipes::{PLAYLIST_RECIPE_ID, generated_playlist_title};
 pub mod skills;
 mod voice;
 mod workspace_seed;
@@ -78,14 +79,44 @@ use crate::config::{AppConfig, OrchestratorSectionConfig, WikiSectionConfig};
 use crate::tools::knowledge_mcp::normalize_wiki_tool_arguments;
 use workspace_seed::ensure_prompts_and_skills;
 
-struct NormalizedWikiHostTool {
+pub(crate) struct NormalizedWikiHostTool {
     inner: Arc<dyn HostTool>,
+    recipe_start_manager: Arc<OnceLock<Arc<TaskManager>>>,
+}
+
+impl NormalizedWikiHostTool {
+    pub(crate) fn new(
+        inner: Arc<dyn HostTool>,
+        recipe_start_manager: Arc<OnceLock<Arc<TaskManager>>>,
+    ) -> Self {
+        Self {
+            inner,
+            recipe_start_manager,
+        }
+    }
 }
 
 #[async_trait::async_trait]
 impl HostTool for NormalizedWikiHostTool {
     fn descriptor(&self) -> ToolDescriptor {
-        self.inner.descriptor()
+        let mut descriptor = self.inner.descriptor();
+        if descriptor.name == "add_to_sources" {
+            if let Some(properties) = descriptor
+                .input_schema
+                .get_mut("properties")
+                .and_then(serde_json::Value::as_object_mut)
+            {
+                properties.insert(
+                    "ingest_to_wiki".into(),
+                    serde_json::json!({
+                        "type": "boolean",
+                        "default": false,
+                        "description": "Whether this recipe source should be included in Wiki Auto-Flow."
+                    }),
+                );
+            }
+        }
+        descriptor
     }
 
     fn timeout(&self) -> Option<Duration> {
@@ -95,7 +126,72 @@ impl HostTool for NormalizedWikiHostTool {
     async fn execute(&self, ctx: ToolContext, mut args: Value) -> Result<ToolOutcome, ToolError> {
         let name = self.inner.descriptor().name;
         normalize_wiki_tool_arguments(&name, &mut args);
-        self.inner.execute(ctx, args).await
+        if name != "add_to_sources" || !args.get("ingest_to_wiki").is_some_and(Value::is_boolean) {
+            return self.inner.execute(ctx, args).await;
+        }
+
+        let ingest_to_wiki = args
+            .get("ingest_to_wiki")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        let video_id = args
+            .get("video_id")
+            .and_then(Value::as_str)
+            .map(str::to_owned);
+        if !ingest_to_wiki && video_id.is_none() {
+            return Err(ToolError {
+                code: "invalid_arguments".into(),
+                message: "ingest_to_wiki=false requires a video_id source".into(),
+            });
+        }
+        if let Some(video_id) = video_id.as_deref() {
+            let manager = self.recipe_start_manager.get().ok_or_else(|| ToolError {
+                code: "runtime_unavailable".into(),
+                message: "task manager is not ready".into(),
+            })?;
+            if ingest_to_wiki {
+                manager
+                    .resume_wiki_ingest_for_video(video_id)
+                    .await
+                    .map_err(|error| ToolError {
+                        code: error.code().as_str().to_owned(),
+                        message: error.message().to_owned(),
+                    })?;
+            } else {
+                // Commit the durable exclusion before AddToSources makes the file visible to Auto-Flow.
+                manager
+                    .defer_wiki_ingest_for_video(video_id)
+                    .await
+                    .map_err(|error| ToolError {
+                        code: error.code().as_str().to_owned(),
+                        message: error.message().to_owned(),
+                    })?;
+                args["defer_wiki_ingest"] = Value::Bool(true);
+            }
+        }
+        if let Some(object) = args.as_object_mut() {
+            object.remove("ingest_to_wiki");
+        }
+        let outcome = self.inner.execute(ctx, args).await?;
+        if !ingest_to_wiki
+            && let (Some(video_id), Some(source_path)) = (
+                video_id.as_deref(),
+                outcome
+                    .metadata
+                    .get("source_rel_path")
+                    .and_then(Value::as_str),
+            )
+            && let Some(manager) = self.recipe_start_manager.get()
+        {
+            manager
+                .record_deferred_wiki_source_path(video_id, source_path)
+                .await
+                .map_err(|error| ToolError {
+                    code: error.code().as_str().to_owned(),
+                    message: error.message().to_owned(),
+                })?;
+        }
+        Ok(outcome)
     }
 }
 
@@ -329,7 +425,7 @@ async fn init_orchestrator_and_task_manager(
             format!("{}@{}", recipe_metadata.id, recipe_metadata.version),
         )
         .with_mode(AgentMode::Primary)
-        .with_description("Runs the fixed playlist collection recipe")
+        .with_description("Runs the fixed YouTube source collection recipe")
         .with_prompt_path(cfg.prompts_dir.join("daily_root.md"))
         .with_allowed_tools(recipe_tools.iter().cloned())
         .with_allowed_subagents(recipe_subagents.iter().cloned())
@@ -344,7 +440,12 @@ async fn init_orchestrator_and_task_manager(
     let mut host_tools: Vec<Arc<dyn HostTool>> = toolkit
         .all_host_tools(&task_init)
         .into_iter()
-        .map(|tool| Arc::new(NormalizedWikiHostTool { inner: tool }) as Arc<dyn HostTool>)
+        .map(|tool| {
+            Arc::new(NormalizedWikiHostTool::new(
+                tool,
+                recipe_start_manager.clone(),
+            )) as Arc<dyn HostTool>
+        })
         .collect();
     host_tools.extend(chart_host_tools(&wiki_cfg.vault_dir));
     host_tools.extend(memory.host_tools());
@@ -556,5 +657,11 @@ pub async fn submit_wiki_source_analysis(
     let req = CreateTaskRequest::new(title, prompt)
         .with_target("wiki_root")
         .with_source(TaskSource::Autoflow);
-    Ok(task_manager.create_task(req).await?)
+    let task = task_manager.create_task(req).await?;
+    // Explicit operator ingestion opts this source back into Wiki Auto-Flow after TaskManager
+    // has accepted the focused Wiki task.
+    task_manager
+        .resume_wiki_ingest_for_source_path(source_id)
+        .await?;
+    Ok(task)
 }

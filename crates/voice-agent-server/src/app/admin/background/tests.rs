@@ -238,8 +238,8 @@ async fn recipe_admin_http_lists_validates_and_runs_playlist_recipe() {
         database::{Database, credentials::CredentialCipher, secrets::SecretResolver},
         providers::ProviderSet,
         services::task_flow::{
-            PLAYLIST_COMPLETION_TOOL, PLAYLIST_DOMAIN_SELECTOR, PLAYLIST_RECIPE_ROOT,
-            PlaylistSourcesRecipe, TopicSelectionCompletionTool,
+            NormalizedWikiHostTool, PLAYLIST_COMPLETION_TOOL, PLAYLIST_DOMAIN_SELECTOR,
+            PLAYLIST_RECIPE_ROOT, PlaylistSourcesRecipe, TopicSelectionCompletionTool,
         },
     };
     use orchestrator_agent_rs::{
@@ -250,7 +250,10 @@ async fn recipe_admin_http_lists_validates_and_runs_playlist_recipe() {
     use orchestrator_flow_rs::{
         CreateTaskRequest, TaskConfig, TaskManager, TaskRecipeRequest, WorkspaceToolKit,
     };
-    use std::{sync::Arc, time::Duration};
+    use std::{
+        sync::{Arc, OnceLock},
+        time::Duration,
+    };
     use tokio::sync::Notify;
 
     struct RecipeAndGateway {
@@ -294,7 +297,7 @@ async fn recipe_admin_http_lists_validates_and_runs_playlist_recipe() {
     std::fs::create_dir_all(&temp).unwrap();
     std::fs::write(&prompt, "recipe root").unwrap();
     let fake_ytdlp = temp.join("yt-dlp");
-    let fake_script = "#!/bin/sh\nif [ \"$1\" = \"--flat-playlist\" ]; then case \"$*\" in *fail*) exit 1;; *mixed*) printf 'bad\\tBad Video\\nvidmix\\tGood Video\\n';; *max*) i=1; while [ $i -le 50 ]; do printf 'maxvid%02d\\tLong Playlist Video %02d\\n' $i $i; i=$((i + 1)); done;; *) printf 'vid123\\tSample Video\\n';; esac; exit 0; fi\nvideo=''\nfor arg in \"$@\"; do case \"$arg\" in *watch?v=*) video=\"${arg##*watch?v=}\";; esac; done\nprintf '%s\\n' \"$video\" >> 'CALLS_LOG_PATH'\ncase \"$video\" in bad) exit 1;; esac\nout=''\nwhile [ \"$#\" -gt 0 ]; do if [ \"$1\" = \"-o\" ]; then out=\"$2\"; shift 2; else shift; fi; done\ndir=\"${out%/*}\"\nmkdir -p \"$dir\"\ncat > \"$dir/$video.en-orig.vtt\" <<VTT\nWEBVTT\n\n00:00:00.000 --> 00:00:02.000\nA useful source transcript for $video.\nVTT\n";
+    let fake_script = "#!/bin/sh\nif [ \"$1\" = \"--flat-playlist\" ]; then case \"$*\" in *fail*) exit 1;; *mixed*) printf 'bad\\tBad Video\\nvidmix\\tGood Video\\n';; *max*) i=1; while [ $i -le 50 ]; do printf 'maxvid%02d\\tLong Playlist Video %02d\\n' $i $i; i=$((i + 1)); done;; *youtu.be/one*) printf 'vidone\\tVideo One\\n';; *youtu.be/two*) printf 'vidtwo\\tVideo Two\\n';; *) printf 'vid123\\tSample Video\\n';; esac; exit 0; fi\nvideo=''\nfor arg in \"$@\"; do case \"$arg\" in *watch?v=*) video=\"${arg##*watch?v=}\";; esac; done\nprintf '%s\\n' \"$video\" >> 'CALLS_LOG_PATH'\ncase \"$video\" in bad) exit 1;; esac\nout=''\nwhile [ \"$#\" -gt 0 ]; do if [ \"$1\" = \"-o\" ]; then out=\"$2\"; shift 2; else shift; fi; done\ndir=\"${out%/*}\"\nmkdir -p \"$dir\"\ncat > \"$dir/$video.en-orig.vtt\" <<VTT\nWEBVTT\n\n00:00:00.000 --> 00:00:02.000\nA useful source transcript for $video.\nVTT\n";
     std::fs::write(
         &fake_ytdlp,
         fake_script.replace("CALLS_LOG_PATH", &ytdlp_calls.display().to_string()),
@@ -370,8 +373,12 @@ async fn recipe_admin_http_lists_validates_and_runs_playlist_recipe() {
         scripted: gateway.clone(),
     }))
     .register_tool(Arc::new(TopicSelectionCompletionTool));
+    let recipe_start_manager = Arc::new(OnceLock::new());
     for tool in kit_tools {
-        builder = builder.register_tool(tool);
+        builder = builder.register_tool(Arc::new(NormalizedWikiHostTool::new(
+            tool,
+            recipe_start_manager.clone(),
+        )));
     }
     let orchestrator = Arc::new(builder.build().await.unwrap());
     let manager = init
@@ -379,6 +386,7 @@ async fn recipe_admin_http_lists_validates_and_runs_playlist_recipe() {
         .start()
         .await
         .unwrap();
+    assert!(recipe_start_manager.set(manager.clone()).is_ok());
 
     let db = Database::connect(&config.database).await.unwrap();
     let resolver: Arc<dyn SecretResolver> = Arc::new(CredentialCipher::new(1, &[9u8; 32]).unwrap());
@@ -441,6 +449,7 @@ async fn recipe_admin_http_lists_validates_and_runs_playlist_recipe() {
         .json(&serde_json::json!({"recipe":{"id":"playlist_sources","params":{"url":"https://www.youtube.com/playlist?list=PL1"}}})).send().await.unwrap();
     assert_eq!(created.status(), reqwest::StatusCode::CREATED);
     let job: serde_json::Value = created.json().await.unwrap();
+    assert_eq!(job["title"], "Thu thập playlist · tối đa 50 video");
     let id = job["id"].as_str().unwrap();
     for _ in 0..100 {
         if manager
@@ -471,6 +480,62 @@ async fn recipe_admin_http_lists_validates_and_runs_playlist_recipe() {
     let source = std::fs::read_to_string(files[0].path()).unwrap();
     assert!(source.contains("A useful source transcript for vid123."));
     assert!(source.contains("vid123"));
+    assert_eq!(
+        manager.deferred_wiki_ingest_video_ids().await.unwrap(),
+        ["vid123"],
+        "default false must durably defer Wiki Auto-Flow"
+    );
+
+    enqueue_topic_selection();
+    let video_list = client
+        .post(format!("{base}/jobs"))
+        .bearer_auth("recipe-admin-token")
+        .json(&serde_json::json!({
+            "title": "Video URL batch",
+            "recipe": {"id":"playlist_sources", "params": {
+                "video_urls":["https://youtu.be/one", "https://youtu.be/two"],
+                "ingest_to_wiki":true
+            }}
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(video_list.status(), reqwest::StatusCode::CREATED);
+    let video_list_job: serde_json::Value = video_list.json().await.unwrap();
+    assert_eq!(video_list_job["title"], "Video URL batch");
+    let video_list_id = video_list_job["id"].as_str().unwrap();
+    for _ in 0..200 {
+        if manager
+            .get_task_any_scope(video_list_id)
+            .await
+            .unwrap()
+            .status
+            .is_terminal()
+        {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    assert_eq!(
+        manager
+            .get_task_any_scope(video_list_id)
+            .await
+            .unwrap()
+            .status,
+        orchestrator_flow_rs::TaskStatus::Completed
+    );
+    let list_sources = std::fs::read_dir(vault.join("sources/youtube/playlist"))
+        .unwrap()
+        .filter_map(Result::ok)
+        .map(|entry| std::fs::read_to_string(entry.path()).unwrap())
+        .collect::<Vec<_>>();
+    assert!(list_sources.iter().any(|source| source.contains("vidone")));
+    assert!(list_sources.iter().any(|source| source.contains("vidtwo")));
+    assert_eq!(
+        manager.deferred_wiki_ingest_video_ids().await.unwrap(),
+        ["vid123"],
+        "ingest=true must leave listed videos eligible for Auto-Flow"
+    );
 
     enqueue_topic_selection();
     let mixed = client
@@ -514,7 +579,7 @@ async fn recipe_admin_http_lists_validates_and_runs_playlist_recipe() {
         .collect();
     assert_eq!(
         mixed_sources.len(),
-        2,
+        4,
         "the failed sibling must not prevent the good video from being saved"
     );
     assert!(mixed_sources.iter().any(|file| {
@@ -567,6 +632,7 @@ async fn recipe_admin_http_lists_validates_and_runs_playlist_recipe() {
         })
         .await
         .unwrap();
+    assert_eq!(max_playlist_task.title, "Thu thập playlist · tối đa 50 video");
     for _ in 0..300 {
         if manager
             .get_task(&max_playlist_task.id)
@@ -589,7 +655,7 @@ async fn recipe_admin_http_lists_validates_and_runs_playlist_recipe() {
         .unwrap()
         .filter_map(Result::ok)
         .collect();
-    assert_eq!(max_sources.len(), 52);
+    assert_eq!(max_sources.len(), 54);
 
     server.abort();
     let _ = std::fs::remove_dir_all(&temp);

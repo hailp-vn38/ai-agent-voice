@@ -10,6 +10,8 @@ use orchestrator_flow_rs::{
 };
 use serde_json::{Value, json};
 
+use super::{PLAYLIST_RECIPE_ID, generated_playlist_title};
+
 const TOOL_NAME: &str = "recipe_start";
 const OPERATION_REF: &str = "task_recipe_start";
 
@@ -95,8 +97,17 @@ impl TaskRecipeStartTool {
             })
             .await?;
 
+        let title = if recipe_id == PLAYLIST_RECIPE_ID {
+            generated_playlist_title(&params)
+        } else {
+            self.recipes
+                .iter()
+                .find(|recipe| recipe.id == recipe_id)
+                .map(|recipe| format!("{} v{}", recipe.title, recipe.version))
+                .unwrap_or_default()
+        };
         let task_request = CreateTaskRequest {
-            title: String::new(),
+            title,
             prompt: String::new(),
             target_agent: None,
             source: TaskSource::Voice,

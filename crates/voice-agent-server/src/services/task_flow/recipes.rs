@@ -19,6 +19,44 @@ const BATCH_SIZE: usize = 10;
 const MAX_VIDEOS: usize = 50;
 const AGENT_AUTO_DOMAIN: &str = "agent tự chọn";
 
+pub(crate) fn generated_playlist_title(params: &Value) -> String {
+    let video_urls = params
+        .get("video_urls")
+        .and_then(Value::as_array)
+        .map(|urls| urls.len().min(PlaylistSourcesRecipe::max_videos(params)))
+        .unwrap_or(0);
+    let source = if video_urls > 0 {
+        format!("{video_urls} video lẻ")
+    } else {
+        let max_videos = params
+            .get("max_videos")
+            .and_then(Value::as_u64)
+            .unwrap_or(MAX_VIDEOS as u64)
+            .min(MAX_VIDEOS as u64);
+        format!("playlist · tối đa {max_videos} video")
+    };
+    let domain = params
+        .get("domain")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|domain| !domain.is_empty() && *domain != AGENT_AUTO_DOMAIN)
+        .map(|domain| domain.chars().take(32).collect::<String>());
+    let ingest = params
+        .get("ingest_to_wiki")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+
+    let mut title = format!("Thu thập {source}");
+    if let Some(domain) = domain {
+        title.push_str(" · ");
+        title.push_str(&domain);
+    }
+    if ingest {
+        title.push_str(" · Wiki");
+    }
+    title
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
 #[serde(deny_unknown_fields)]
 struct TopicSelection {
@@ -33,8 +71,27 @@ struct TopicSelectionDiagnosis {
     expected: &'static str,
 }
 
-/// First server-owned recipe. It lists once, fetches bounded transcript batches, then saves
-/// successful items through the ordinary mutating HostTool pipeline.
+fn validate_topic_selection(selection: &TopicSelection) -> Vec<String> {
+    let mut errors = Vec::new();
+    if selection.domain.trim().is_empty() {
+        errors.push("domain must be a non-empty Wiki domain".into());
+    }
+    if selection.topic.is_empty()
+        || !selection
+            .topic
+            .bytes()
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
+        || selection.topic.starts_with('-')
+        || selection.topic.ends_with('-')
+        || selection.topic.contains("--")
+    {
+        errors.push("topic must be a lowercase kebab-case slug".into());
+    }
+    errors
+}
+
+/// First server-owned recipe. It lists a playlist or individual video URLs, fetches bounded
+/// transcript batches, then saves successful items through the ordinary mutating HostTool pipeline.
 #[derive(Default)]
 pub struct PlaylistSourcesRecipe {
     wiki_domains: Vec<String>,
@@ -59,6 +116,11 @@ impl PlaylistSourcesRecipe {
             "type": "object",
             "properties": {
                 "url": {"type": "string", "format": "uri", "title": "Playlist URL"},
+                "video_urls": {
+                    "type": "array",
+                    "title": "Danh sách URL video",
+                    "items": {"type": "string", "format": "uri"}
+                },
                 "domain": {
                     "type": "string",
                     "title": "Wiki domain",
@@ -66,10 +128,100 @@ impl PlaylistSourcesRecipe {
                     "enum": domains,
                     "x-options-source": "wiki_domains"
                 },
-                "max_videos": {"type": "integer", "minimum": 1, "maximum": 50, "default": 50, "title": "Số video tối đa"}
+                "max_videos": {"type": "integer", "minimum": 1, "maximum": 50, "default": 50, "title": "Số video tối đa"},
+                "ingest_to_wiki": {"type": "boolean", "default": false, "title": "Ingest vào Wiki sau khi thu thập"}
             },
-            "required": ["url"]
+            "required": []
         })
+    }
+
+    fn source_urls(params: &Value) -> Vec<String> {
+        if let Some(url) = params.get("url").and_then(Value::as_str) {
+            return vec![url.to_owned()];
+        }
+        params
+            .get("video_urls")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_str)
+            .map(str::to_owned)
+            .take(Self::max_videos(params))
+            .collect()
+    }
+
+    fn valid_youtube_url(raw: &str) -> bool {
+        let Ok(url) = url::Url::parse(raw) else {
+            return false;
+        };
+        if !matches!(url.scheme(), "http" | "https") {
+            return false;
+        }
+        url.host_str().is_some_and(|host| {
+            host == "youtu.be"
+                || host == "www.youtu.be"
+                || host == "youtube.com"
+                || host.ends_with(".youtube.com")
+        })
+    }
+
+    fn list_result<'a>(transcript: &'a [ModelMessage], url: &str) -> Option<&'a ModelMessage> {
+        transcript
+            .iter()
+            .flat_map(|message| message.tool_calls.iter())
+            .filter(|call| {
+                call.name == "yt_list_playlist"
+                    && call.arguments.get("url").and_then(Value::as_str) == Some(url)
+            })
+            .filter_map(|call| Self::result_for(transcript, &call.id))
+            .last()
+            .or_else(|| {
+                (!transcript
+                    .iter()
+                    .flat_map(|message| message.tool_calls.iter())
+                    .any(|call| call.name == "yt_list_playlist"))
+                .then(|| Self::latest_list(transcript))
+                .flatten()
+            })
+    }
+
+    fn status_for<'a>(transcript: &'a [ModelMessage], url: &str) -> Option<&'a ModelMessage> {
+        transcript
+            .iter()
+            .flat_map(|message| message.tool_calls.iter())
+            .filter(|call| {
+                call.name == "collection_status"
+                    && call.arguments.get("playlist_url").and_then(Value::as_str) == Some(url)
+            })
+            .filter_map(|call| Self::result_for(transcript, &call.id))
+            .last()
+            .or_else(|| {
+                (!transcript
+                    .iter()
+                    .flat_map(|message| message.tool_calls.iter())
+                    .any(|call| call.name == "collection_status"))
+                .then(|| Self::latest_status(transcript).map(|(_, status)| status))
+                .flatten()
+            })
+    }
+
+    fn status_items(params: &Value, transcript: &[ModelMessage]) -> Vec<(String, String)> {
+        let limit = Self::max_videos(params);
+        let mut items = Vec::new();
+        for url in Self::source_urls(params) {
+            let Some(status) = Self::status_for(transcript, &url) else {
+                continue;
+            };
+            items.extend(
+                Self::next_items(&status.text, MAX_VIDEOS)
+                    .into_iter()
+                    .take(limit.saturating_sub(items.len())),
+            );
+            if items.len() >= limit {
+                break;
+            }
+        }
+        items
     }
 
     fn result_for<'a>(transcript: &'a [ModelMessage], call_id: &str) -> Option<&'a ModelMessage> {
@@ -157,9 +309,14 @@ impl PlaylistSourcesRecipe {
             .min(MAX_VIDEOS as u64) as usize
     }
 
-    fn failed_list(transcript: &[ModelMessage]) -> Option<&ModelMessage> {
-        Self::latest_list(transcript)
-            .filter(|result| result.text.trim_start().starts_with("error "))
+    fn failed_source_list<'a>(
+        params: &Value,
+        transcript: &'a [ModelMessage],
+    ) -> Option<&'a ModelMessage> {
+        Self::source_urls(params).iter().find_map(|url| {
+            Self::list_result(transcript, url)
+                .filter(|result| result.text.trim_start().starts_with("error "))
+        })
     }
 
     fn decision_failure(result: &ModelMessage, step: usize) -> RecipeDecision {
@@ -205,18 +362,9 @@ impl PlaylistSourcesRecipe {
                 "completion output must match the declared JSON schema: {error}"
             )]
         })?;
-        if selection.domain.trim().is_empty() {
-            return Err(vec!["domain must be a non-empty Wiki domain".into()]);
-        }
-        if selection.topic.is_empty()
-            || !selection
-                .topic
-                .bytes()
-                .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
-            || selection.topic.starts_with('-')
-            || selection.topic.ends_with('-')
-        {
-            return Err(vec!["topic must be a lowercase kebab-case slug".into()]);
+        let errors = validate_topic_selection(&selection);
+        if !errors.is_empty() {
+            return Err(errors);
         }
         Ok(selection)
     }
@@ -321,8 +469,17 @@ impl PlaylistSourcesRecipe {
             .get("domain")
             .and_then(Value::as_str)
             .unwrap_or(AGENT_AUTO_DOMAIN);
+        let source_kind = if params
+            .get("video_urls")
+            .and_then(Value::as_array)
+            .is_some_and(|urls| !urls.is_empty())
+        {
+            "provided YouTube videos"
+        } else {
+            "YouTube playlist"
+        };
         let payload = json!({
-            "task": "Choose a Wiki source folder domain/topic for this playlist",
+            "task": format!("Choose a Wiki source folder domain/topic for these {source_kind}"),
             "requested_domain": domain,
             "available_domains": self.wiki_domains,
             "output_schema": TopicSelection::schema(),
@@ -334,7 +491,7 @@ impl PlaylistSourcesRecipe {
         });
         let mut arguments = json!({
             "agent": PLAYLIST_DOMAIN_SELECTOR,
-            "description": "Choose a Wiki domain and topic for the playlist",
+            "description": "Choose a Wiki domain and topic for the collected YouTube source items",
             "prompt": format!(
                 "Use the only available completion tool `{PLAYLIST_COMPLETION_TOOL}` with the output fields `domain` and `topic`. Then return exactly the same canonical JSON object as your final response, with no prose or markdown. The delegated task is: {}",
                 serde_json::to_string(&payload).unwrap_or_default()
@@ -388,19 +545,11 @@ impl HostTool for TopicSelectionCompletionTool {
                 code: "INVALID_COMPLETION_OUTPUT".into(),
                 message: error.to_string(),
             })?;
-        if selection.domain.trim().is_empty()
-            || selection.topic.is_empty()
-            || !selection
-                .topic
-                .bytes()
-                .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
-            || selection.topic.starts_with('-')
-            || selection.topic.ends_with('-')
-        {
+        let errors = validate_topic_selection(&selection);
+        if !errors.is_empty() {
             return Err(ToolError {
                 code: "INVALID_COMPLETION_OUTPUT".into(),
-                message: "domain must be non-empty and topic must be a lowercase kebab-case slug"
-                    .into(),
+                message: errors.join("; "),
             });
         }
         let output = serde_json::to_string(&selection).map_err(|error| ToolError {
@@ -420,10 +569,8 @@ impl TaskRecipe for PlaylistSourcesRecipe {
         RecipeMetadata {
             id: PLAYLIST_RECIPE_ID.into(),
             version: 1,
-            title: "Thu thập playlist vào sources".into(),
-            description:
-                "Liệt kê video, lấy transcript theo lô, chọn domain/topic Wiki rồi lưu vào sources."
-                    .into(),
+            title: "Thu thập video vào sources".into(),
+            description: "Liệt kê playlist hoặc URL video, lấy transcript theo lô, chọn domain/topic Wiki rồi lưu vào sources.".into(),
             params_schema: self.params_schema(),
             outline: vec![
                 RecipeStepOutline {
@@ -460,48 +607,112 @@ impl TaskRecipe for PlaylistSourcesRecipe {
     }
 
     fn validate_params(&self, params: &Value) -> Result<Value, RecipeValidationError> {
-        validate_recipe_params(&self.params_schema(), params)
+        let params = validate_recipe_params(&self.params_schema(), params)?;
+        let playlist_url = params
+            .get("url")
+            .and_then(Value::as_str)
+            .filter(|url| !url.trim().is_empty());
+        let video_urls = params
+            .get("video_urls")
+            .and_then(Value::as_array)
+            .filter(|urls| !urls.is_empty());
+        if playlist_url.is_some() == video_urls.is_some() {
+            return Err(RecipeValidationError {
+                validation_path: "params".into(),
+                message: "provide exactly one of url or a non-empty video_urls list".into(),
+            });
+        }
+        if let Some(url) = playlist_url
+            && !Self::valid_youtube_url(url)
+        {
+            return Err(RecipeValidationError {
+                validation_path: "params.url".into(),
+                message: "value must be a YouTube playlist URL".into(),
+            });
+        }
+        if let Some(urls) = video_urls {
+            if urls.len() > MAX_VIDEOS {
+                return Err(RecipeValidationError {
+                    validation_path: "params.video_urls".into(),
+                    message: format!("at most {MAX_VIDEOS} video URLs are allowed"),
+                });
+            }
+            if let Some((index, _)) = urls
+                .iter()
+                .enumerate()
+                .find(|(_, url)| !url.as_str().is_some_and(Self::valid_youtube_url))
+            {
+                return Err(RecipeValidationError {
+                    validation_path: format!("params.video_urls.{index}"),
+                    message: "value must be a YouTube video URL".into(),
+                });
+            }
+        }
+        Ok(params)
+    }
+
+    fn title_for_params(&self, params: &Value) -> Option<String> {
+        Some(generated_playlist_title(params))
     }
 
     fn next(&self, params: &Value, transcript: &[ModelMessage]) -> RecipeDecision {
-        let Some(url) = params.get("url").and_then(Value::as_str) else {
+        let urls = Self::source_urls(params);
+        if urls.is_empty() {
             return RecipeDecision::Failed {
-                stop_reason: "playlist URL is missing".into(),
+                stop_reason: "playlist URL or video URL list is missing".into(),
                 failed_step: 0,
             };
-        };
-        if let Some(error) = Self::failed_list(transcript) {
+        }
+        if let Some(error) = Self::failed_source_list(params, transcript) {
             return Self::decision_failure(error, 0);
         }
-        if Self::latest_list(transcript).is_none() {
-            return RecipeDecision::ToolCalls(vec![ModelToolCall {
-                id: "recipe-list-playlist".into(),
-                name: "yt_list_playlist".into(),
-                arguments: json!({"url": url}),
-            }]);
+        let unlisted = urls
+            .iter()
+            .filter(|url| Self::list_result(transcript, url).is_none())
+            .collect::<Vec<_>>();
+        if !unlisted.is_empty() {
+            return RecipeDecision::ToolCalls(
+                unlisted
+                    .into_iter()
+                    .enumerate()
+                    .map(|(index, url)| ModelToolCall {
+                        id: format!("recipe-list-{index}-{}", transcript.len()),
+                        name: "yt_list_playlist".into(),
+                        arguments: json!({"url": url}),
+                    })
+                    .collect(),
+            );
         }
 
-        let Some((status_index, status)) = Self::latest_status(transcript) else {
-            return RecipeDecision::ToolCalls(vec![ModelToolCall {
-                id: "recipe-collection-status-initial".into(),
-                name: "collection_status".into(),
-                arguments: json!({"playlist_url": url, "limit": BATCH_SIZE}),
-            }]);
-        };
+        let statuses = urls
+            .iter()
+            .filter_map(|url| Self::status_for(transcript, url))
+            .collect::<Vec<_>>();
+        let status_index = Self::latest_result_index(transcript, &["collection_status"]);
         let latest_item_action =
             Self::latest_result_index(transcript, &["yt_fetch_transcript", "add_to_sources"]);
-        if latest_item_action.is_some_and(|index| index > status_index) {
-            return RecipeDecision::ToolCalls(vec![ModelToolCall {
-                id: format!("recipe-collection-status-{}", transcript.len()),
-                name: "collection_status".into(),
-                arguments: json!({"playlist_url": url, "limit": BATCH_SIZE}),
-            }]);
+        if statuses.len() != urls.len()
+            || latest_item_action.is_some_and(|index| status_index.is_none_or(|s| index > s))
+        {
+            return RecipeDecision::ToolCalls(
+                urls.iter()
+                    .enumerate()
+                    .map(|(index, url)| ModelToolCall {
+                        id: format!("recipe-collection-status-{index}-{}", transcript.len()),
+                        name: "collection_status".into(),
+                        arguments: json!({"playlist_url": url, "limit": BATCH_SIZE}),
+                    })
+                    .collect(),
+            );
         }
-        if status.text.trim_start().starts_with("error ") {
-            return Self::decision_failure(status, 0);
+        if let Some(status_error) = statuses
+            .iter()
+            .find(|status| status.text.trim_start().starts_with("error "))
+        {
+            return Self::decision_failure(status_error, 0);
         }
 
-        let next = Self::next_items(&status.text, Self::max_videos(params));
+        let next = Self::status_items(params, transcript);
         let fetched = Self::successful_ids(transcript, "yt_fetch_transcript");
         let saved = Self::successful_ids(transcript, "add_to_sources");
         let pending_fetch = next
@@ -543,7 +754,11 @@ impl TaskRecipe for PlaylistSourcesRecipe {
                             "topic_folder": format!("{}/{}", selection.domain, selection.topic),
                             "video_id": video_id,
                             "title": title,
-                            "provenance": "source"
+                            "provenance": "source",
+                            "ingest_to_wiki": params
+                                .get("ingest_to_wiki")
+                                .and_then(Value::as_bool)
+                                .unwrap_or(false)
                         }),
                     })
                     .collect(),
@@ -554,49 +769,28 @@ impl TaskRecipe for PlaylistSourcesRecipe {
     }
 
     fn progress(&self, params: &Value, transcript: &[ModelMessage]) -> RecipeProgress {
-        let listed = Self::latest_list(transcript)
-            .is_some_and(|result| !result.text.trim_start().starts_with("error "));
-        let Some((_, status)) = Self::latest_status(transcript) else {
-            if let Some(failed) = Self::failed_list(transcript) {
-                return RecipeProgress {
-                    current_step: None,
-                    completed_steps: vec![],
-                    completed_items: None,
-                    total_items: None,
-                    summary: None,
-                    stop_reason: Some(
-                        failed
-                            .text
-                            .lines()
-                            .next()
-                            .unwrap_or("recipe tool failed")
-                            .to_owned(),
-                    ),
-                    failed_step: Some(0),
-                };
-            }
-            return RecipeProgress {
-                current_step: Some(0),
-                completed_steps: vec![],
-                completed_items: None,
-                total_items: None,
-                summary: None,
-                stop_reason: None,
-                failed_step: None,
-            };
-        };
-        let items = Self::next_items(&status.text, Self::max_videos(params));
+        let urls = Self::source_urls(params);
+        let listed = !urls.is_empty()
+            && urls.iter().all(|url| {
+                Self::list_result(transcript, url)
+                    .is_some_and(|result| !result.text.trim_start().starts_with("error "))
+            });
+        let statuses = urls
+            .iter()
+            .filter_map(|url| Self::status_for(transcript, url))
+            .collect::<Vec<_>>();
         let fetched = Self::successful_ids(transcript, "yt_fetch_transcript");
         let saved = Self::successful_ids(transcript, "add_to_sources");
         let selected = Self::selector_results(transcript)
             .last()
             .is_some_and(|(_, result)| Self::selector_output(result).is_ok());
-        let stopped = Self::failed_list(transcript).or_else(|| {
-            Self::latest_status(transcript)
-                .map(|(_, result)| result)
-                .filter(|result| result.text.trim_start().starts_with("error "))
-        });
-        let failure = stopped
+        let failed_list = Self::failed_source_list(params, transcript);
+        let failed_status = statuses
+            .iter()
+            .copied()
+            .find(|result| result.text.trim_start().starts_with("error "));
+        let failure = failed_list
+            .or(failed_status)
             .map(|result| {
                 (
                     0,
@@ -609,9 +803,21 @@ impl TaskRecipe for PlaylistSourcesRecipe {
                 )
             })
             .or_else(|| self.selector_failure(params, transcript));
+        if statuses.is_empty() && failure.is_none() {
+            return RecipeProgress {
+                current_step: Some(0),
+                completed_steps: vec![],
+                completed_items: None,
+                total_items: None,
+                summary: None,
+                stop_reason: None,
+                failed_step: None,
+            };
+        }
+        let items = Self::status_items(params, transcript);
         let current_step = if failure.is_some() {
             None
-        } else if !listed {
+        } else if !listed || statuses.len() != urls.len() {
             Some(0)
         } else if items.iter().any(|(id, _)| !fetched.contains(id)) {
             Some(1)
@@ -625,19 +831,24 @@ impl TaskRecipe for PlaylistSourcesRecipe {
         } else {
             None
         };
-        let total_items = status
-            .text
-            .split_once("TOTAL:")
-            .and_then(|(_, rest)| {
-                rest.trim_start()
-                    .split(|ch: char| !ch.is_ascii_digit())
-                    .next()
+        let total_items = statuses
+            .iter()
+            .filter_map(|status| {
+                status
+                    .text
+                    .split_once("TOTAL:")
+                    .and_then(|(_, rest)| {
+                        rest.trim_start()
+                            .split(|ch: char| !ch.is_ascii_digit())
+                            .next()
+                    })
+                    .and_then(|count| count.parse::<usize>().ok())
             })
-            .and_then(|count| count.parse::<usize>().ok());
+            .sum::<usize>();
         let (completed_items, current_total) = match current_step {
             Some(1) => (Some(fetched.len()), total_items),
-            Some(2) => (Some(saved.len()), total_items),
-            _ => (total_items, total_items),
+            Some(2 | 3) => (Some(saved.len()), total_items),
+            _ => (Some(total_items), total_items),
         };
         let completed_steps = if listed { vec![0] } else { vec![] };
         let completed_steps = if current_step.is_none() && failure.is_none() {
@@ -653,7 +864,7 @@ impl TaskRecipe for PlaylistSourcesRecipe {
             current_step,
             completed_steps,
             completed_items,
-            total_items: current_total,
+            total_items: Some(current_total),
             summary: Some(format!(
                 "Transcript {} · đã lưu {}",
                 fetched.len(),
@@ -692,6 +903,121 @@ mod tests {
                 "TOTAL: 1 | REMAINING: 1\nNEXT:\n1. video_id=v1 title=One",
             ),
         ]
+    }
+
+    #[test]
+    fn generated_title_summarizes_recipe_parameters_without_copying_urls() {
+        let playlist = generated_playlist_title(&json!({
+            "url": "https://www.youtube.com/playlist?list=private-token-value",
+            "max_videos": 18,
+            "domain": "rust",
+            "ingest_to_wiki": true
+        }));
+        assert_eq!(
+            playlist,
+            "Thu thập playlist · tối đa 18 video · rust · Wiki"
+        );
+        assert!(!playlist.contains("youtube.com"));
+        assert!(!playlist.contains("private-token-value"));
+
+        let list = generated_playlist_title(&json!({
+            "video_urls": [
+                "https://youtu.be/secret-id-one",
+                "https://youtu.be/secret-id-two"
+            ],
+            "domain": AGENT_AUTO_DOMAIN,
+            "ingest_to_wiki": false
+        }));
+        assert_eq!(list, "Thu thập 2 video lẻ");
+        assert!(!list.contains("secret-id"));
+    }
+
+    #[test]
+    fn recipe_accepts_either_playlist_or_video_url_list_but_not_both() {
+        let recipe = PlaylistSourcesRecipe::default();
+        let playlist = recipe
+            .validate_params(&json!({"url":"https://www.youtube.com/playlist?list=abc"}))
+            .expect("playlist mode should validate");
+        assert_eq!(playlist["ingest_to_wiki"], false);
+
+        let videos = recipe
+            .validate_params(&json!({
+                "video_urls": ["https://youtu.be/one", "https://www.youtube.com/watch?v=two"]
+            }))
+            .expect("video list mode should validate");
+        assert_eq!(videos["video_urls"].as_array().unwrap().len(), 2);
+
+        let both = recipe
+            .validate_params(&json!({
+                "url":"https://www.youtube.com/playlist?list=abc",
+                "video_urls":["https://youtu.be/one"]
+            }))
+            .unwrap_err();
+        assert_eq!(both.validation_path, "params");
+
+        let neither = recipe.validate_params(&json!({})).unwrap_err();
+        assert_eq!(neither.validation_path, "params");
+    }
+
+    #[test]
+    fn video_url_list_is_collected_through_the_existing_playlist_host_tool() {
+        let params = json!({
+            "video_urls": ["https://youtu.be/one", "https://youtu.be/two"]
+        });
+        let RecipeDecision::ToolCalls(calls) = PlaylistSourcesRecipe::default().next(&params, &[])
+        else {
+            panic!("expected video URLs to be listed through the collection tool")
+        };
+        assert_eq!(calls.len(), 2);
+        assert!(calls.iter().all(|call| call.name == "yt_list_playlist"));
+        assert_eq!(calls[0].arguments["url"], "https://youtu.be/one");
+        assert_eq!(calls[1].arguments["url"], "https://youtu.be/two");
+
+        let mut transcript = Vec::new();
+        for call in calls {
+            transcript.push(ModelMessage::assistant_with_calls("", vec![call.clone()]));
+            transcript.push(ModelMessage::tool_result(
+                &call.id,
+                "yt_list_playlist",
+                "listed",
+            ));
+        }
+        let RecipeDecision::ToolCalls(status_calls) =
+            PlaylistSourcesRecipe::default().next(&params, &transcript)
+        else {
+            panic!("expected both URL collections to be read")
+        };
+        assert_eq!(status_calls.len(), 2);
+        assert!(
+            status_calls
+                .iter()
+                .all(|call| call.name == "collection_status")
+        );
+    }
+
+    #[test]
+    fn topic_selection_validation_accepts_only_nonempty_domain_and_kebab_topic() {
+        assert!(
+            validate_topic_selection(&TopicSelection {
+                domain: "technology".into(),
+                topic: "machine-learning".into(),
+            })
+            .is_empty()
+        );
+        assert_eq!(
+            validate_topic_selection(&TopicSelection {
+                domain: "  ".into(),
+                topic: "machine-learning".into(),
+            }),
+            vec!["domain must be a non-empty Wiki domain".to_owned()]
+        );
+        assert_eq!(
+            validate_topic_selection(&TopicSelection {
+                domain: "technology".into(),
+                topic: "Machine Learning".into(),
+            }),
+            vec!["topic must be a lowercase kebab-case slug".to_owned()]
+        );
     }
 
     fn selector_result(call_id: &str, session_id: &str, output: &str) -> Vec<ModelMessage> {

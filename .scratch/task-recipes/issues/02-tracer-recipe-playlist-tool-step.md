@@ -23,3 +23,7 @@
 ## Answer
 
 Đã merge vào integration branch `feat/task-recipes` qua các merge commits server `c53cc9c`, flow `0562a3b` và agent `34d01e2` (ticket 01). Recipe có ba bước riêng để liệt kê/đọc ledger, fetch transcript và lưu nguồn theo batch 10; item fetch lỗi được thử tối đa ba lần rồi chuyển `gave_up`, không chặn video khác. Registry kiểm tra reference HostTool/Sub-Agent khi khởi động. HTTP test với fake `yt-dlp` xác nhận recipe hoàn tất, `sources/` đúng, usage 0, `validation_path`, lỗi `RECIPE_STEP_FAILED` và Task tự do vẫn chạy; flow registry/package tests và server check/clippy pass. Flow `scripts/check.sh fast` còn cảnh báo nền `src/tools/pdf.rs:142` (`too_many_arguments`), ngoài diff.
+
+## Review follow-up — 2026-11-03
+
+Recipe nhận đúng một trong hai: URL playlist hoặc tối đa 50 URL video YouTube. Danh sách video đi qua cùng `yt_list_playlist`, Collection Ledger, transcript và `add_to_sources` HostTool như playlist. Checkbox Wiki mặc định tắt: TaskStore ghi marker hoãn theo `video_id` trước khi nguồn xuất hiện; Auto-Flow loại trừ đúng các nguồn đã đánh dấu. Yêu cầu ingest tường minh xóa marker theo đường dẫn sau khi TaskManager nhận Task. Tập trung test HTTP xác nhận hai video lẻ được lưu và cờ bật/tắt được truyền đúng; test Auto-Flow xác nhận nguồn tắt bị bỏ qua, nguồn thường vẫn chạy và nguồn đã resume được xử lý.

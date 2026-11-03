@@ -20,6 +20,8 @@ Giá trị `default` được điền sẵn. Client chặn tham số thiếu ho�
 
 Với recipe đầu tiên, danh sách domain Wiki động được nạp từ cây Wiki trong Admin API. Tùy chọn này không thay đổi nội dung recipe.
 
+Recipe thu thập video yêu cầu đúng một trong hai đầu vào: URL playlist hoặc danh sách URL video, mỗi dòng một URL. Danh sách tối đa 50 mục; URL phải thuộc YouTube. Checkbox **Ingest vào Wiki sau khi thu thập** mặc định tắt. Khi tắt, video vẫn được lưu bền trong `sources/` nhưng Auto-Flow bỏ qua các nguồn đó cho đến khi người vận hành yêu cầu ingest rõ ràng; khi bật, nguồn đi vào Auto-Flow như luồng lưu hiện tại. Tiêu đề Job tự sinh tóm tắt loại đầu vào, giới hạn số video, domain cố định nếu có và lựa chọn Wiki; tiêu đề do người gọi nhập vẫn được giữ nguyên.
+
 Chọn **Chạy recipe** gửi `recipe.id`, tham số và khóa idempotency. Khi tạo thành công, modal đóng và trang chi tiết Job mở. Thẻ **Tự do** giữ luồng tạo goal và tệp WAV/MP4 như trước; trường đính kèm chỉ hiện ở luồng này.
 
 ## Danh sách và chi tiết Job
