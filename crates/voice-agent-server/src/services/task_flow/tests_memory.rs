@@ -22,6 +22,7 @@ use super::{
     AgentConfigOverride, CUSTOM_DAILY_SUBAGENT_TOOLS, CUSTOM_WIKI_SUBAGENT_TOOLS,
     PersistedBackgroundSettings, TaskMemoryAccess, VoiceTaskSubmit, default_orchestrator_provider,
     init_orchestrator_and_task_manager, open_wiki_engine, project_agents_json,
+    submit_wiki_source_analysis,
 };
 use crate::{
     config::{DatabaseConfig, MemorySectionConfig, OrchestratorSectionConfig, WikiSectionConfig},
@@ -462,6 +463,38 @@ async fn task_flow_task_without_a_live_device_owner_is_denied() {
         .await;
     assert!(deleted.contains("memory_scope_denied"), "{deleted}");
 
+    flow.stop().await;
+}
+
+#[tokio::test]
+async fn explicit_source_ingest_clears_video_deferral_when_path_was_never_recorded() {
+    let flow = TaskFlow::boot(false).await;
+    let video_id = "video-path-record-crash";
+    let source_path = "sources/youtube/video-path-record-crash.md";
+    let source_file = flow.root.join("wiki").join(source_path);
+    std::fs::create_dir_all(source_file.parent().unwrap()).unwrap();
+    std::fs::write(
+        &source_file,
+        format!("---\nvideo_id: {video_id}\ntitle: Crash recovery source\n---\nSource body.\n"),
+    )
+    .unwrap();
+    flow.manager
+        .defer_wiki_ingest_for_video(video_id)
+        .await
+        .unwrap();
+
+    submit_wiki_source_analysis(&flow.manager, source_path)
+        .await
+        .unwrap();
+
+    assert!(
+        flow.manager
+            .deferred_wiki_ingest_video_ids()
+            .await
+            .unwrap()
+            .is_empty(),
+        "explicit ingest should clear a video_id marker even if no source path was recorded"
+    );
     flow.stop().await;
 }
 

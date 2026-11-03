@@ -84,6 +84,13 @@ pub(crate) struct NormalizedWikiHostTool {
     recipe_start_manager: Arc<OnceLock<Arc<TaskManager>>>,
 }
 
+fn task_tool_error(error: TaskError) -> ToolError {
+    ToolError {
+        code: error.code().as_str().to_owned(),
+        message: error.message().to_owned(),
+    }
+}
+
 impl NormalizedWikiHostTool {
     pub(crate) fn new(
         inner: Arc<dyn HostTool>,
@@ -153,19 +160,13 @@ impl HostTool for NormalizedWikiHostTool {
                 manager
                     .resume_wiki_ingest_for_video(video_id)
                     .await
-                    .map_err(|error| ToolError {
-                        code: error.code().as_str().to_owned(),
-                        message: error.message().to_owned(),
-                    })?;
+                    .map_err(task_tool_error)?;
             } else {
                 // Commit the durable exclusion before AddToSources makes the file visible to Auto-Flow.
                 manager
                     .defer_wiki_ingest_for_video(video_id)
                     .await
-                    .map_err(|error| ToolError {
-                        code: error.code().as_str().to_owned(),
-                        message: error.message().to_owned(),
-                    })?;
+                    .map_err(task_tool_error)?;
                 args["defer_wiki_ingest"] = Value::Bool(true);
             }
         }
@@ -186,10 +187,7 @@ impl HostTool for NormalizedWikiHostTool {
             manager
                 .record_deferred_wiki_source_path(video_id, source_path)
                 .await
-                .map_err(|error| ToolError {
-                    code: error.code().as_str().to_owned(),
-                    message: error.message().to_owned(),
-                })?;
+                .map_err(task_tool_error)?;
         }
         Ok(outcome)
     }
@@ -663,5 +661,18 @@ pub async fn submit_wiki_source_analysis(
     task_manager
         .resume_wiki_ingest_for_source_path(source_id)
         .await?;
+    if let Some(engine) = task_manager.wiki_engine() {
+        engine.sync_index()?;
+        let sources = engine.sources_by_frontmatter("video_id")?;
+        let deferred_video_ids = task_manager.deferred_wiki_ingest_video_ids().await?;
+        for video_id in deferred_video_ids {
+            let Some(source) = sources.get(&video_id) else {
+                continue;
+            };
+            if source.rel_path == source_id || source.scoped_path == source_id {
+                task_manager.resume_wiki_ingest_for_video(&video_id).await?;
+            }
+        }
+    }
     Ok(task)
 }
