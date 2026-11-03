@@ -32,7 +32,7 @@ Staged drafts/ never contribute unaccepted replacement relationships. Knowledge 
 
 ## Query graph and read-only Wiki Chat
 
-The graph tab keeps Global and Local behavior and adds two paths. Query graph searches Wiki and Source without an LLM. Wiki Chat streams a bounded read-only turn; the server derives the answer graph from tool evidence and canonical Wikilinks. The browser holds the temporary conversation and cancels the request on Stop or disconnect.
+The graph tab keeps Global and Local behavior and adds two paths. Query graph searches Wiki and Source without an LLM. Wiki Chat streams a bounded read-only turn; the server derives the answer graph from tool evidence and canonical Wikilinks. Wiki Conversations persist in SQLite and survive reloads. The server supplies prompt history from saved messages, while an active request is still cancelled on Stop or disconnect.
 
 ```mermaid
 flowchart TD
@@ -59,7 +59,9 @@ flowchart TD
 
 The read allowlist is `wiki_query`, `wiki_get`, and `wiki_multi_get`; Knowledge MCP enablement does not gate this Admin feature. Tool-result text is marked untrusted, and paths are captured before text truncation. A model-generated Wikilink outside the evidence remains plain text. The query and answer graphs use only resolved Wikilinks already present in the server graph projection, consistent with ADR 0124.
 
-The chat provider is selected separately in Background settings (`wiki_chat_llm_provider`); saving requires the Chat tag and tool support. The setting is persisted with existing Background settings and does not add a database migration. Missing configuration returns `wiki_chat_not_configured` instead of silently selecting a provider.
+The chat provider is selected separately in Background settings (`wiki_chat_llm_provider`); saving requires the Chat tag and tool support. The setting is persisted with existing Background settings. Missing configuration returns `wiki_chat_not_configured` instead of silently selecting a provider.
+
+The Admin conversation list, detail, rename, and delete routes are documented in the [Wiki Chat API contract](../api/knowledge-wiki-chat.md). Config-only SQLite snapshots explicitly exclude conversations; Full SQLite snapshots include them. The portable Database Backup Bundle does not contain conversations and its import/replace flow leaves them untouched. Live vault/provider acceptance remains a separate manual gate; it has not been inferred from local checks.
 
 See the [Knowledge Wiki Chat API contract](../api/knowledge-wiki-chat.md) for request limits, SSE events, errors, and settings fields.
 

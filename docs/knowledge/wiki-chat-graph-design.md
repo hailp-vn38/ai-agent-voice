@@ -1,6 +1,6 @@
 # Thiết kế: Hỏi wiki và Graph theo câu trả lời
 
-Trạng thái: đề xuất, chưa có code. Cập nhật 2026-11-02.
+Trạng thái: đã triển khai cục bộ; nghiệm thu vault/provider thật đang chờ. Cập nhật 2026-11-03.
 Việc cần làm theo thứ tự nằm ở [tài liệu triển khai](wiki-chat-graph-implementation.md).
 
 ## Bài toán
@@ -18,7 +18,7 @@ Tính năng này thêm một khung chat ngay trong tab Graph. Khi agent trả l�
 
 ## Ngoài phạm vi
 
-- Lưu lịch sử chat qua lần tải lại trang.
+- Đồng bộ hội thoại giữa các người dùng; hiện dữ liệu thuộc deployment Admin.
 - Lưu câu trả lời thành trang synthesis.
 - Link do AI suy luận, đúng như phần Deferred của [ADR 0124](../adr/0124-wiki-wikilinks-graph-projection.md).
 - Hỏi bằng giọng nói. Assistant voice vẫn dùng `server_wiki_search` như hiện tại.
@@ -50,7 +50,7 @@ Số liệu này lấy bằng `grep` và bảng `graph_links`, chưa qua `wiki_q
 | --- | --- |
 | Dùng lại Assistant WebSocket | Loại. Tool voice chỉ tìm từ khóa, tối đa 5 kết quả, 5 giây mỗi lần gọi; sự kiện `tool` không gửi kết quả về web |
 | Tạo Task qua `orchestrator-flow` | Loại. Mỗi câu hỏi thành một job lưu bền, hiện trong danh sách Jobs, quá nặng cho hỏi đáp |
-| Endpoint SSE riêng cho Knowledge | **Chọn.** Vòng lặp ngắn, chỉ đọc, không lưu trạng thái ở server |
+| Endpoint SSE riêng cho Knowledge | **Chọn.** Mỗi lượt là một request ngắn, chỉ đọc; nội dung hội thoại được lưu bền trong SQLite, không chạy nền giữa các lượt |
 
 ## Kiến trúc
 
@@ -120,9 +120,11 @@ Không đi qua `KnowledgeMcp::call_tool` còn có lợi thứ hai: tắt MCP tro
 
 Agent chỉ có `wiki_query`, `wiki_get`, `wiki_multi_get`. Không cấp `wiki_graph_neighbors`, vì flow hiện tại ghi Job tools không duyệt đồ thị và việc mở rộng đã do server làm. Tên tool ngoài allowlist bị từ chối ngay cả khi LLM tự gọi.
 
-### Server không giữ phiên
+### Hội thoại lưu trong server
 
-Web gửi kèm lịch sử trong mỗi yêu cầu, có giới hạn. Không có bảng mới, không có migration. Đóng kết nối là hủy lượt chạy.
+Wiki Conversation là dữ liệu bền trong SQLite, không phải một phiên chạy nền. Server ghi câu hỏi/câu trả lời và dựng lịch sử prompt từ các tin đã lưu; web gửi `conversation_id` cùng câu hỏi kế tiếp thay vì tự gửi lịch sử. Một lượt vẫn là request SSE có giới hạn; đóng kết nối hoặc bấm Dừng sẽ hủy lượt và lưu phần trả lời đã có. Khi khởi động, server đánh dấu lượt `running` còn sót lại là `interrupted`.
+
+Mỗi hội thoại có tối đa 100 tin; deployment giữ tối đa 200 hội thoại và loại hội thoại cũ nhất không chạy khi cần chỗ. Câu trả lời lưu tối đa 64 KiB, metadata tool tối đa 64 KiB, đồ thị tối đa 256 KiB. Config-only SQLite snapshot loại hai bảng hội thoại; Full SQLite snapshot giữ chúng. Portable Database Backup Bundle hiện không chứa hội thoại, và import/replace không đụng tới chúng.
 
 ### Provider
 
@@ -147,11 +149,13 @@ Mở rộng API sẵn có, không cần LLM. Trả cùng khung với Graph hiệ
 
 ```json
 {
-  "messages": [
-    { "role": "user", "content": "FVG liên hệ thế nào với Sharp Turn Entry?" }
-  ]
+  "conversation_id": "optional-existing-id",
+  "question": "FVG liên hệ thế nào với Sharp Turn Entry?",
+  "pinned_paths": ["wiki/concepts/trading/fair-value-gap.md"]
 }
 ```
+
+`conversation_id` có thể bỏ để tạo hội thoại mới. Lượt thử lại dùng `{ "conversation_id": "…", "retry_message_id": "…" }` thay cho `question`. Web không gửi lịch sử; server dựng prompt từ tin đã lưu trong SQLite. SSE bắt đầu bằng `turn`, rồi có thể phát `tool`, `graph`, `delta`, `done` hoặc `error`. Sự kiện `done` có các cờ lưu `saved`, `content_truncated`, và `graph_saved`. Xem chi tiết giới hạn và các route quản lý trong [tài liệu API](../api/knowledge-wiki-chat.md).
 
 Trả `text/event-stream`:
 
@@ -160,12 +164,12 @@ Trả `text/event-stream`:
 | `tool` | `{ call_id, name, state, query? }` | Agent bắt đầu hoặc xong một tool |
 | `graph` | Cùng khung như trên, kèm `revision` | Sau mỗi tool làm đổi bằng chứng, và một lần cuối |
 | `delta` | `{ text }` | Từng đoạn câu trả lời |
-| `done` | `{ citations, stop_reason }` | Kết thúc bình thường |
+| `done` | `{ citations, stop_reason, saved, content_truncated, graph_saved }` | Kết thúc lượt và báo trạng thái lưu |
 | `error` | `{ code }` | Lỗi, không kèm thông điệp của engine vì có thể chứa đường dẫn vault |
 
 Sự kiện `graph` luôn là ảnh chụp đầy đủ, không phải phần chênh lệch. Web chỉ cần thay thế, không phải gộp, và mất một sự kiện cũng không sai lệch.
 
-Mã lỗi: `wiki_chat_not_configured`, `wiki_chat_busy` (429), `knowledge_unavailable`, `invalid_input`, `provider_failed`, `step_limit`, `timeout`.
+Mã lỗi: `wiki_chat_not_configured`, `wiki_chat_busy` (429), `wiki_conversation_not_found` (404), `wiki_conversation_busy` (409), `wiki_conversation_full` (409), `database_unavailable` (503), `knowledge_unavailable`, `invalid_input`, `provider_failed`, `step_limit`, `timeout`.
 
 ## Giới hạn
 
@@ -175,7 +179,7 @@ Mã lỗi: `wiki_chat_not_configured`, `wiki_chat_busy` (429), `knowledge_unavai
 | Thời gian mỗi lượt | 90 giây | Hỏi đáp có người đợi |
 | Thời gian mỗi tool | 15 giây | Có vector search và rerank nên rộng hơn voice |
 | Kết quả tool gửi LLM | 12.000 ký tự | Giữ context nhỏ |
-| Lịch sử gửi lên | 12 tin, 16 KB | Server không giữ phiên |
+| Lịch sử của một lượt | 12 tin, 16 KB | Giới hạn prompt đầu vào lấy từ hội thoại lưu trong DB |
 | Node đồ thị con | 60 | Layout hiện tại là O(n²) |
 | Lượt chạy đồng thời | 2 | `WikiEngine` dùng chung một khóa SQLite |
 

@@ -284,6 +284,10 @@ _Avoid_: canonical Wiki body, second knowledge store, Memory graph
 Đồ thị con gắn với một câu trả lời Wiki, gồm các trang đã được truy vấn, đọc hoặc trích dẫn cùng những láng giềng nối với chúng bằng Wiki Link có thật.
 _Avoid_: AI-inferred graph, canonical graph, second knowledge store
 
+**Wiki Conversation**:
+Chuỗi câu hỏi và câu trả lời đã lưu của Admin với wiki, có thể mở lại và hỏi tiếp; là dữ liệu đã lưu, giữa các lượt không có gì đang chạy.
+_Avoid_: session, phiên, Voice Session, Agent Session
+
 **Unresolved Wiki Link**:
 Liên kết có đích chưa tồn tại hoặc không phân giải được sang tài liệu hợp lệ trong kho tri thức; được ghi nhận riêng trên đồ thị và trong báo cáo `wiki_lint`, không tự động tạo trang mới.
 _Avoid_: verified edge, automatically created page
