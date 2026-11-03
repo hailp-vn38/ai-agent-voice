@@ -3,6 +3,7 @@ export interface ApiErrorBody {
     code: string
     message?: string
     request_id?: string
+    validation_path?: string
     affected_links?: Array<{ source_id: string; source_path: string; source_line: number; raw_target: string }>
   }
 }

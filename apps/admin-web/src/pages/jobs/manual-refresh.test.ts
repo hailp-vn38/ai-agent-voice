@@ -8,7 +8,7 @@ import JobsPage from './JobsPage.vue'
 import JobDetailPage from './JobDetailPage.vue'
 
 const { api, listenJobChanges, push } = vi.hoisted(() => ({
-  api: { listJobs: vi.fn(), job: vi.fn(), events: vi.fn(), deleteJob: vi.fn(), deleteJobs: vi.fn(), createJob: vi.fn() },
+  api: { listJobs: vi.fn(), job: vi.fn(), events: vi.fn(), deleteJob: vi.fn(), deleteJobs: vi.fn(), createJob: vi.fn(), listRecipes: vi.fn(), wikiDomains: vi.fn(), createRecipeJob: vi.fn() },
   listenJobChanges: vi.fn(),
   push: vi.fn(),
 }))
@@ -35,6 +35,8 @@ beforeEach(() => {
   api.events.mockResolvedValue({ items: [] })
   api.deleteJob.mockResolvedValue(undefined)
   api.deleteJobs.mockResolvedValue({ deleted: 0, deleted_ids: [] })
+  api.listRecipes.mockResolvedValue({ items: [] })
+  api.wikiDomains.mockResolvedValue([])
 })
 afterEach(() => { vi.useRealTimers() })
 
@@ -401,6 +403,50 @@ it('attaches .wav audio in Create Job modal, auto-fills goal, and submits base64
       },
     ])
     expect(push).toHaveBeenCalledWith({ name: 'job-detail', params: { jobId: 'job-wav-1' } })
+  } finally {
+    wrapper.unmount()
+  }
+})
+
+it('searches recipes, validates parameters, maps server paths, and reuses the idempotency key on retry', async () => {
+  const createdJob = await api.job()
+  const recipe = {
+    id: 'playlist_sources', version: 2, title: 'Collect playlist', description: 'Collect videos from a playlist.',
+    params_schema: { type: 'object', properties: { url: { type: 'string', format: 'uri', title: 'Playlist URL' }, max_videos: { type: 'integer', minimum: 1, maximum: 50, default: 12, title: 'Maximum videos' } }, required: ['url'] },
+    outline: [{ title: 'List videos', kind: 'tool', repeat: false }, { title: 'Fetch transcripts', kind: 'tool', repeat: true }],
+  }
+  api.listRecipes.mockResolvedValue({ items: [recipe, { ...recipe, id: 'other', title: 'Other recipe', description: 'Another flow.' }] })
+  api.createRecipeJob.mockRejectedValueOnce(new ApiError('API request failed: invalid_arguments', 400, 'invalid_arguments', undefined, undefined, 'URL is not allowed', '$.url'))
+    .mockResolvedValueOnce({ ...createdJob, id: 'recipe-job' })
+  const wrapper = mount(JobsPage, { global: { stubs: { teleport: true } } })
+  try {
+    await flushPromises()
+    await wrapper.findAll('button').find(button => button.text().includes(translate('jobUi.newJob')))!.trigger('click')
+    await flushPromises()
+    const cards = wrapper.findAll('[data-recipe-id]')
+    expect(cards).toHaveLength(2)
+    expect(wrapper.find('[data-testid="free-job-card"]').text()).toContain(translate('jobUi.freeRecipe'))
+    expect(wrapper.find('[data-testid="free-job-card"]').element.compareDocumentPosition(cards[0]!.element) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    await wrapper.get('[role="dialog"] input[type="search"]').setValue('playlist')
+    expect(wrapper.findAll('[data-recipe-id]')).toHaveLength(1)
+    await wrapper.get('[data-recipe-id="playlist_sources"]').trigger('click')
+    expect(wrapper.get('input[type="number"]').element).toHaveProperty('value', '12')
+    expect(wrapper.text()).toContain('Tool')
+    expect(wrapper.text()).toContain('Fetch transcripts')
+    expect(wrapper.text()).toContain('repeats in batches')
+    expect(wrapper.get('button[type="submit"]').attributes('disabled')).toBeDefined()
+    await wrapper.get('input[type="url"]').setValue('https://example.test/playlist')
+    await wrapper.get('[role="dialog"] form').trigger('submit')
+    await flushPromises()
+    expect(wrapper.text()).toContain('URL is not allowed')
+    const firstKey = api.createRecipeJob.mock.calls[0]?.[2]
+    expect(firstKey).toEqual(expect.any(String))
+    await wrapper.get('[role="dialog"] form').trigger('submit')
+    await flushPromises()
+    expect(api.createRecipeJob).toHaveBeenCalledTimes(2)
+    expect(api.createRecipeJob.mock.calls[0]?.[2]).toBe(api.createRecipeJob.mock.calls[1]?.[2])
+    expect(api.createRecipeJob.mock.calls[0]?.slice(0, 2)).toEqual(['playlist_sources', { url: 'https://example.test/playlist', max_videos: 12 }])
+    expect(push).toHaveBeenCalledWith({ name: 'job-detail', params: { jobId: 'recipe-job' } })
   } finally {
     wrapper.unmount()
   }
