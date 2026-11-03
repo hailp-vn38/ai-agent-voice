@@ -51,6 +51,7 @@ const {
   loadingConversations: wikiChatLoadingConversations,
   conversationListError: wikiChatConversationListError,
   readOnlyConversation: wikiChatReadOnlyConversation,
+  conversationLoadFailed: wikiChatConversationLoadFailed,
   activeGraph: activeAnswerGraph,
   busy: wikiChatBusy,
   chatDrawerOpen,
@@ -113,8 +114,9 @@ watch(() => route.query.conversation, async rawId => {
     return
   }
   if (wikiChatConversationId.value === id || wikiChatLoadingConversation.value) return
-  const loaded = await loadWikiConversation(id)
-  if (!loaded) replaceConversationQuery(null)
+  const result = await loadWikiConversation(id)
+  if (result === 'not_found') replaceConversationQuery(null)
+  else if (result === 'failed') selectRightTab('chat')
 }, { immediate: true })
 const graphControls = ref<{ focusNode: (id: string, showInspector?: boolean) => void; highlightNode: (id: string | null) => void } | null>(null)
 const highlightedChatNode = ref<string | null>(null)
@@ -2102,6 +2104,7 @@ onMounted(() => {
       :conversations="wikiChatConversations" :conversation-id="wikiChatConversationId"
       :loading-conversations="wikiChatLoadingConversations" :conversation-list-error="wikiChatConversationListError"
       :read-only="wikiChatReadOnlyConversation"
+      :load-failed="wikiChatConversationLoadFailed"
       :class="{ 'is-collapsed': rightPanelCollapsed }"
       :drawer-open="chatDrawerOpen" :suggestions="chatSuggestions"
       :pinned-files="wikiChatPinnedFiles" :open-file="openChatFile"

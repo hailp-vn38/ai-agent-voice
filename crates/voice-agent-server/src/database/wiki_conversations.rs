@@ -159,10 +159,12 @@ pub(crate) async fn conversation_exists(
 
 pub(crate) async fn list_conversations(
     database: &Database,
+    now_ms: i64,
 ) -> Result<Vec<ConversationSummary>, sqlx::Error> {
     let rows = sqlx::query_as::<_, ConversationSummaryRow>(
-        "SELECT c.id, c.title, c.updated_at_ms, COUNT(m.id) AS message_count, EXISTS(SELECT 1 FROM wiki_conversation_messages running WHERE running.conversation_id = c.id AND running.status = 'running') AS running FROM wiki_conversations c LEFT JOIN wiki_conversation_messages m ON m.conversation_id = c.id GROUP BY c.id ORDER BY c.updated_at_ms DESC, c.created_at_ms DESC, c.id DESC LIMIT 200",
+        "SELECT c.id, c.title, c.updated_at_ms, COUNT(m.id) AS message_count, EXISTS(SELECT 1 FROM wiki_conversation_messages running WHERE running.conversation_id = c.id AND running.status = 'running' AND running.updated_at_ms >= ?) AS running FROM wiki_conversations c LEFT JOIN wiki_conversation_messages m ON m.conversation_id = c.id GROUP BY c.id ORDER BY c.updated_at_ms DESC, c.created_at_ms DESC, c.id DESC LIMIT 200",
     )
+    .bind(stale_running_cutoff(now_ms))
     .fetch_all(database.pool())
     .await?;
     Ok(rows
@@ -194,6 +196,7 @@ pub(crate) async fn delete_conversation(
     database: &Database,
     id: &str,
     request_id: &str,
+    now_ms: i64,
 ) -> Result<(), DeleteConversationError> {
     let mut transaction = database.pool().begin_with("BEGIN IMMEDIATE").await?;
     let exists: bool =
@@ -205,6 +208,7 @@ pub(crate) async fn delete_conversation(
         transaction.rollback().await?;
         return Err(DeleteConversationError::NotFound);
     }
+    mark_stale_running_in_transaction(&mut transaction, id, now_ms).await?;
     let running: bool = sqlx::query_scalar(
         "SELECT EXISTS(SELECT 1 FROM wiki_conversation_messages WHERE conversation_id = ? AND status = 'running')",
     )
@@ -261,6 +265,13 @@ pub(crate) async fn mark_all_running_interrupted(
     transaction.commit().await
 }
 
+/// A running row older than this outlived the 90-second turn limit, so no task is finishing it.
+const STALE_RUNNING_MS: i64 = 120_000;
+
+fn stale_running_cutoff(now_ms: i64) -> i64 {
+    now_ms.saturating_sub(STALE_RUNNING_MS)
+}
+
 /// Mark only expired turns in the conversation currently being started. Kept separate so the
 /// normal start transaction and the 100-message storage limit can call the same recovery step.
 pub(crate) async fn mark_stale_running_in_transaction(
@@ -268,7 +279,7 @@ pub(crate) async fn mark_stale_running_in_transaction(
     conversation_id: &str,
     now_ms: i64,
 ) -> Result<(), sqlx::Error> {
-    let cutoff_ms = now_ms.saturating_sub(120_000);
+    let cutoff_ms = stale_running_cutoff(now_ms);
     let result = sqlx::query(
         "UPDATE wiki_conversation_messages SET status = 'interrupted', updated_at_ms = ? WHERE conversation_id = ? AND status = 'running' AND updated_at_ms < ?",
     )
@@ -603,9 +614,12 @@ fn truncate_at_char_boundary(value: &str, max_bytes: usize) -> &str {
     &value[..end]
 }
 
+/// Reads stay read-only: an expired running row is reported as interrupted and rewritten when the
+/// next turn starts, so opening a conversation can never leave it stuck behind a dead turn.
 pub(crate) async fn get_conversation(
     database: &Database,
     id: &str,
+    now_ms: i64,
 ) -> Result<Option<ConversationDetail>, sqlx::Error> {
     let Some(conversation) = sqlx::query_as::<_, ConversationRow>(
         "SELECT id, title, created_at_ms, updated_at_ms FROM wiki_conversations WHERE id = ?",
@@ -630,7 +644,12 @@ pub(crate) async fn get_conversation(
             role: row.role,
             content: row.content,
             content_truncated: row.content_truncated != 0,
-            status: row.status,
+            status: if row.status == "running" && row.updated_at_ms < stale_running_cutoff(now_ms)
+            {
+                "interrupted".to_owned()
+            } else {
+                row.status
+            },
             error_code: row.error_code,
             pinned_paths: decode_json(row.pinned_paths_json.as_deref()),
             tools: decode_json(row.tools_json.as_deref()),

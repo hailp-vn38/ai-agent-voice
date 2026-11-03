@@ -237,3 +237,50 @@ it('explains storage limits and a failed save without offering an invalid retry'
     expect(wrapper.findAll('.wiki-chat-error button')).toHaveLength(0)
   } finally { wrapper.unmount() }
 })
+
+it('spins only for running tools of a streaming answer', async () => {
+  const tools: WikiChatMessage['tools'] = [
+    { call_id: 'running', name: 'wiki_get', state: 'running', pages: [] },
+    { call_id: 'broken', name: 'wiki_query', state: 'failed', pages: [] },
+  ]
+  const wrapper = mount(WikiChatPanel, { props: { messages: [{ ...assistant('streaming'), tools }], busy: true } })
+  try {
+    expect(wrapper.findAll('.wiki-chat-tools li')).toHaveLength(2)
+    expect(wrapper.findAll('.wiki-chat-spinner')).toHaveLength(1)
+
+    await wrapper.setProps({ messages: [{ ...assistant('stopped'), tools }], busy: false })
+    expect(wrapper.findAll('.wiki-chat-tools li')).toHaveLength(1)
+    expect(wrapper.find('.wiki-chat-spinner').exists()).toBe(false)
+  } finally { wrapper.unmount() }
+})
+
+it('offers a reload and hides suggestions when a conversation fails to load', async () => {
+  const wrapper = mount(WikiChatPanel, {
+    props: { messages: [], busy: false, readOnly: true, loadFailed: true, suggestions: [{ label: 'Try', prompt: 'Try' }] },
+  })
+  try {
+    expect(wrapper.get('.wiki-chat-status').text()).toContain('could not be loaded')
+    expect(wrapper.find('.wiki-chat-suggestions').exists()).toBe(false)
+    await wrapper.get('.wiki-chat-status button').trigger('click')
+    expect(wrapper.emitted('refreshConversation')).toHaveLength(1)
+  } finally { wrapper.unmount() }
+})
+
+it('returns to the open conversation when its card is chosen again', async () => {
+  const conversations: WikiConversationSummary[] = [
+    { id: 'current', title: 'Current topic', updated_at_ms: 20, message_count: 2, running: false },
+  ]
+  const wrapper = mount(WikiChatPanel, {
+    props: { messages: [assistant('done')], busy: false, conversations, conversationId: 'current' },
+  })
+  try {
+    await wrapper.get('.wiki-chat-header-action').trigger('click')
+    const card = wrapper.get('.wiki-chat-conversation-item.is-active .wiki-chat-conversation-select')
+    expect(card.attributes('disabled')).toBeUndefined()
+    expect(card.attributes('aria-current')).toBe('true')
+    await card.trigger('click')
+    expect(wrapper.find('.wiki-chat-conversation-list').exists()).toBe(false)
+    expect(wrapper.text()).toContain('The answer.')
+    expect(wrapper.emitted('selectConversation')).toBeUndefined()
+  } finally { wrapper.unmount() }
+})

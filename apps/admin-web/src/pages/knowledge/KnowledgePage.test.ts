@@ -145,11 +145,35 @@ it('explains a deleted citation target and leaves the saved answer and graph ava
 
 it('clears a conversation id from the URL when the saved conversation no longer exists', async () => {
   routeQuery.conversation = 'missing-conversation'
+  const respond = requestJsonMock.getMockImplementation()!
+  requestJsonMock.mockImplementation(async (url: string, ...rest: unknown[]) => {
+    if (url === '/api/admin/knowledge/conversations/missing-conversation') {
+      throw new ApiError('missing', 404, 'wiki_conversation_not_found')
+    }
+    return respond(url, ...rest)
+  })
   const wrapper = mount(KnowledgePage)
   try {
     await flushPromises()
     expect(wrapper.text()).not.toContain('Saved question')
     expect(routerReplaceMock).toHaveBeenCalledWith({ query: {} })
+  } finally { wrapper.unmount() }
+})
+
+it('keeps a conversation id in the URL and offers a reload after a temporary load failure', async () => {
+  routeQuery.conversation = 'unreachable-conversation'
+  const respond = requestJsonMock.getMockImplementation()!
+  requestJsonMock.mockImplementation(async (url: string, ...rest: unknown[]) => {
+    if (url === '/api/admin/knowledge/conversations/unreachable-conversation') {
+      throw new ApiError('down', 503, 'database_unavailable')
+    }
+    return respond(url, ...rest)
+  })
+  const wrapper = mount(KnowledgePage)
+  try {
+    await flushPromises()
+    expect(routerReplaceMock).not.toHaveBeenCalled()
+    expect(wrapper.text()).toContain('This conversation could not be loaded.')
   } finally { wrapper.unmount() }
 })
 

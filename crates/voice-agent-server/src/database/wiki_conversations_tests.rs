@@ -72,7 +72,7 @@ async fn creating_the_201st_conversation_evicts_the_oldest_idle_conversation() {
     }
 
     let overflow = start_turn(&database, 200, None).await;
-    let conversations = wiki_conversations::list_conversations(&database)
+    let conversations = wiki_conversations::list_conversations(&database, 200)
         .await
         .expect("list conversations");
     assert_eq!(conversations.len(), 200);
@@ -119,6 +119,7 @@ async fn a_conversation_stops_at_one_hundred_messages_without_writing_a_new_turn
     let saved = wiki_conversations::get_conversation(
         &database,
         conversation_id.as_deref().unwrap(),
+        0,
     )
     .await
     .unwrap()
@@ -169,7 +170,7 @@ async fn saved_answers_tools_and_graphs_respect_their_byte_limits() {
     .await
     .expect("finish bounded answer");
 
-    let saved = wiki_conversations::get_conversation(&database, &turn.conversation_id)
+    let saved = wiki_conversations::get_conversation(&database, &turn.conversation_id, 10)
         .await
         .unwrap()
         .unwrap();
@@ -188,6 +189,60 @@ async fn saved_answers_tools_and_graphs_respect_their_byte_limits() {
         assistant.graph.is_none(),
         "oversized graph snapshots are omitted"
     );
+
+    drop(database);
+    remove_database(&path);
+}
+
+#[tokio::test]
+async fn expired_running_turn_reads_as_interrupted_and_can_be_deleted() {
+    let (database, path) = open_database().await;
+    let turn = start_turn(&database, 0, None).await;
+    let fresh_ms = 120_000;
+    let expired_ms = 120_001;
+
+    let fresh = wiki_conversations::get_conversation(&database, &turn.conversation_id, fresh_ms)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(fresh.messages[1].status, "running");
+    assert!(
+        wiki_conversations::list_conversations(&database, fresh_ms)
+            .await
+            .unwrap()[0]
+            .running
+    );
+    assert!(matches!(
+        wiki_conversations::delete_conversation(
+            &database,
+            &turn.conversation_id,
+            "request",
+            fresh_ms
+        )
+        .await,
+        Err(wiki_conversations::DeleteConversationError::Busy)
+    ));
+
+    let expired =
+        wiki_conversations::get_conversation(&database, &turn.conversation_id, expired_ms)
+            .await
+            .unwrap()
+            .unwrap();
+    assert_eq!(expired.messages[1].status, "interrupted");
+    assert!(
+        !wiki_conversations::list_conversations(&database, expired_ms)
+            .await
+            .unwrap()[0]
+            .running
+    );
+    wiki_conversations::delete_conversation(
+        &database,
+        &turn.conversation_id,
+        "request",
+        expired_ms,
+    )
+    .await
+    .expect("an expired turn does not block delete");
 
     drop(database);
     remove_database(&path);

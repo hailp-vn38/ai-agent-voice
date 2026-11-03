@@ -1,6 +1,7 @@
 import { flushPromises, mount } from '@vue/test-utils'
 import { beforeEach, expect, it, vi } from 'vitest'
 import { defineComponent } from 'vue'
+import { ApiError } from '@/api/errors'
 import { WikiChatRequestError, type AnswerGraph, type WikiChatAskInput, type WikiConversationDetail } from '@/api/wiki-chat'
 import { useWikiChat } from './useWikiChat'
 
@@ -133,7 +134,7 @@ it('restores saved messages, citations, graph and the latest question pinned fil
 
   getWikiPageTitleMock.mockResolvedValue('Current title')
   const chat = mountChat()
-  expect(await chat.loadConversation('conversation-9')).toBe(true)
+  expect(await chat.loadConversation('conversation-9')).toBe('loaded')
   expect(chat.conversationId.value).toBe('conversation-9')
   expect(chat.messages.value[3]?.text).toBe('Saved answer')
   expect(chat.messages.value[3]?.contentTruncated).toBe(true)
@@ -186,7 +187,7 @@ it('keeps a conversation with a running answer read-only until the user reloads 
     ],
   } satisfies WikiConversationDetail)
   const chat = mountChat()
-  expect(await chat.loadConversation('conversation-running')).toBe(true)
+  expect(await chat.loadConversation('conversation-running')).toBe('loaded')
   expect(chat.readOnlyConversation.value).toBe(true)
   await chat.send('do not send')
   expect(askWikiMock).not.toHaveBeenCalled()
@@ -275,4 +276,126 @@ it('sends server retry ids and keeps retry files attached', async () => {
 
   chat.reset()
   expect(chat.pinnedFiles.value).toEqual([])
+})
+
+it.each(['wiki_chat_busy', 'database_unavailable', 'wiki_chat_connection_lost'])(
+  'resends the question in a new conversation after %s rejected it before a turn was saved',
+  async code => {
+    const chat = mountChat()
+    askWikiMock.mockRejectedValueOnce(new WikiChatRequestError(code))
+    await chat.send('question')
+    const assistant = chat.messages.value.at(-1)!
+    expect(assistant.errorCode).toBe(code)
+
+    answerWith('recovered')
+    chat.retry(assistant.id)
+    await flushPromises()
+    expect(lastInput()).toEqual({ question: 'question', pinned_paths: [] })
+    expect(chat.messages.value.at(-1)?.text).toBe('recovered')
+  },
+)
+
+it('resends the question to the existing conversation instead of sending a local retry id', async () => {
+  const chat = mountChat()
+  answerWith('first')
+  await chat.send('first')
+  askWikiMock.mockRejectedValueOnce(new WikiChatRequestError('wiki_chat_busy'))
+  await chat.send('second')
+
+  answerWith('recovered')
+  chat.retry(chat.messages.value.at(-1)!.id)
+  await flushPromises()
+  expect(lastInput()).toEqual({ conversation_id: 'conversation-1', question: 'second', pinned_paths: [] })
+})
+
+it('clears the previous attempt graph and storage flags when retrying a saved answer', async () => {
+  const chat = mountChat()
+  askWikiMock.mockImplementationOnce(async (input: WikiChatAskInput, handlers) => {
+    handlers.onTurn({
+      conversation_id: input.conversation_id ?? 'conversation-1',
+      user_message_id: 'user-1', assistant_message_id: 'assistant-1',
+    })
+    handlers.onGraph(graphWith(1, 'failed attempt'))
+    handlers.onDone({ citations: [], stop_reason: 'timeout', saved: false, content_truncated: true, graph_saved: true })
+  })
+  await chat.send('question')
+  expect(chat.activeGraphMessageId.value).toBe('assistant-1')
+
+  let release: () => void = () => undefined
+  askWikiMock.mockImplementationOnce(() => new Promise<void>(resolve => { release = resolve }))
+  chat.retry('assistant-1')
+  const assistant = chat.messages.value.at(-1)!
+  expect(assistant.graph).toBeNull()
+  expect(assistant.saved).toBeUndefined()
+  expect(assistant.contentTruncated).toBeUndefined()
+  expect(chat.activeGraph.value).toBeNull()
+  release()
+  await flushPromises()
+})
+
+function savedAnswer(id: string, seq: number, graph: AnswerGraph | null): WikiConversationDetail['messages'][number] {
+  return {
+    id, seq, role: 'assistant', content: id, content_truncated: false, status: 'done', error_code: null,
+    pinned_paths: [], tools: [], citations: [], graph, created_at_ms: 1, updated_at_ms: 1,
+  }
+}
+
+it('opens on the latest answer whose graph has nodes', async () => {
+  getWikiConversationMock.mockResolvedValue({
+    id: 'conversation-graph', title: 'Graphs', created_at_ms: 1, updated_at_ms: 2,
+    messages: [
+      savedAnswer('with-evidence', 1, graphWith(1, 'real graph')),
+      savedAnswer('no-evidence', 2, { revision: 1, nodes: [], edges: [], unresolved: [], truncated: false }),
+    ],
+  } satisfies WikiConversationDetail)
+  const chat = mountChat()
+  await chat.loadConversation('conversation-graph')
+  expect(chat.activeGraphMessageId.value).toBe('with-evidence')
+  expect(chat.activeGraph.value?.nodes[0]?.title).toBe('real graph')
+})
+
+it('reports a missing conversation as not found and forgets it', async () => {
+  getWikiConversationMock.mockRejectedValue(new ApiError('gone', 404, 'wiki_conversation_not_found'))
+  const chat = mountChat()
+  expect(await chat.loadConversation('missing')).toBe('not_found')
+  expect(chat.conversationId.value).toBeNull()
+  expect(chat.conversationLoadFailed.value).toBe(false)
+})
+
+it.each([
+  ['a database outage', new ApiError('down', 503, 'database_unavailable')],
+  ['a network error', new TypeError('fetch failed')],
+])('keeps the conversation id after %s and recovers when reloaded', async (_name, failure) => {
+  getWikiConversationMock.mockRejectedValueOnce(failure)
+  const chat = mountChat()
+  expect(await chat.loadConversation('conversation-5')).toBe('failed')
+  expect(chat.conversationId.value).toBe('conversation-5')
+  expect(chat.conversationLoadFailed.value).toBe(true)
+  expect(chat.readOnlyConversation.value).toBe(true)
+  await chat.send('must not reach an unseen conversation')
+  expect(askWikiMock).not.toHaveBeenCalled()
+
+  getWikiConversationMock.mockResolvedValueOnce({
+    id: 'conversation-5', title: 'Back', created_at_ms: 1, updated_at_ms: 2,
+    messages: [savedAnswer('answer-5', 1, null)],
+  } satisfies WikiConversationDetail)
+  chat.refreshConversation()
+  await flushPromises()
+  expect(chat.conversationLoadFailed.value).toBe(false)
+  expect(chat.readOnlyConversation.value).toBe(false)
+  expect(chat.messages.value[0]?.text).toBe('answer-5')
+})
+
+it('keeps the visible messages when reloading the same conversation fails', async () => {
+  getWikiConversationMock.mockResolvedValueOnce({
+    id: 'conversation-6', title: 'Kept', created_at_ms: 1, updated_at_ms: 2,
+    messages: [savedAnswer('answer-6', 1, null)],
+  } satisfies WikiConversationDetail)
+  const chat = mountChat()
+  await chat.loadConversation('conversation-6')
+  getWikiConversationMock.mockRejectedValueOnce(new ApiError('down', 503, 'database_unavailable'))
+  chat.refreshConversation()
+  await flushPromises()
+  expect(chat.messages.value[0]?.text).toBe('answer-6')
+  expect(chat.conversationLoadFailed.value).toBe(true)
 })

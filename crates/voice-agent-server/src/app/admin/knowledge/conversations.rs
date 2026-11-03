@@ -30,7 +30,12 @@ pub(in crate::app::admin) async fn knowledge_conversations(
             ));
         }
     };
-    match crate::database::wiki_conversations::list_conversations(database).await {
+    match crate::database::wiki_conversations::list_conversations(
+        database,
+        now().saturating_mul(1000),
+    )
+    .await
+    {
         Ok(items) => no_store(Json(serde_json::json!({ "items": items })).into_response()),
         Err(_) => no_store(error(
             &request,
@@ -108,6 +113,7 @@ pub(in crate::app::admin) async fn delete_knowledge_conversation(
         database,
         &conversation_id,
         &request_id,
+        now().saturating_mul(1000),
     )
     .await
     {
@@ -145,7 +151,13 @@ pub(in crate::app::admin) async fn knowledge_conversation(
             ));
         }
     };
-    match crate::database::wiki_conversations::get_conversation(database, &id).await {
+    match crate::database::wiki_conversations::get_conversation(
+        database,
+        &id,
+        now().saturating_mul(1000),
+    )
+    .await
+    {
         Ok(Some(conversation)) => no_store(Json(conversation).into_response()),
         Ok(None) => no_store(error(
             &request,
@@ -236,7 +248,8 @@ admin_token = "wiki-conversations-test-token"
         let (base, database, root, server) = fixture().await;
         seed_conversation(&database, "older", "Older research", 10).await;
         seed_conversation(&database, "latest", "Latest research", 20).await;
-        sqlx::query("INSERT INTO wiki_conversation_messages (id, conversation_id, seq, role, content, status, created_at_ms, updated_at_ms) VALUES ('older-running', 'older', 1, 'assistant', '', 'running', 10, 10)")
+        sqlx::query("INSERT INTO wiki_conversation_messages (id, conversation_id, seq, role, content, status, created_at_ms, updated_at_ms) VALUES ('older-running', 'older', 1, 'assistant', '', 'running', 10, ?)")
+            .bind(super::now().saturating_mul(1000))
             .execute(database.pool())
             .await
             .unwrap();

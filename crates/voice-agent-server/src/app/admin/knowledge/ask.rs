@@ -692,7 +692,7 @@ async fn run_ask(
                 query: query.clone(),
                 pages: Vec::new(),
             };
-            tool_steps.push(running_step.clone());
+            record_tool_step(&mut tool_steps, running_step.clone());
             if !send_event(&events, running_step.into_event(), &cancellation).await {
                 stopped!();
             }
@@ -710,7 +710,7 @@ async fn run_ask(
                     query,
                     pages: Vec::new(),
                 };
-                tool_steps.push(failed_step.clone());
+                record_tool_step(&mut tool_steps, failed_step.clone());
                 let _ = send_event(&events, failed_step.into_event(), &cancellation).await;
                 continue;
             }
@@ -743,7 +743,7 @@ async fn run_ask(
                         query,
                         pages,
                     };
-                    tool_steps.push(completed_step.clone());
+                    record_tool_step(&mut tool_steps, completed_step.clone());
                     let _ = send_event(&events, completed_step.into_event(), &cancellation).await;
                     if changed {
                         graph_revision += 1;
@@ -781,7 +781,7 @@ async fn run_ask(
                         query,
                         pages: Vec::new(),
                     };
-                    tool_steps.push(failed_step.clone());
+                    record_tool_step(&mut tool_steps, failed_step.clone());
                     let _ = send_event(&events, failed_step.into_event(), &cancellation).await;
                     failed!("timeout");
                 }
@@ -803,7 +803,7 @@ async fn run_ask(
                         query,
                         pages: Vec::new(),
                     };
-                    tool_steps.push(failed_step.clone());
+                    record_tool_step(&mut tool_steps, failed_step.clone());
                     let _ = send_event(&events, failed_step.into_event(), &cancellation).await;
                 }
             }
@@ -922,6 +922,14 @@ fn ask_event_to_sse(event: AskEvent) -> Event {
         AskEvent::Error(code) => Event::default()
             .event("error")
             .data(json!({"code":code}).to_string()),
+    }
+}
+
+/// A saved turn keeps one step per call, in its latest state, as the live event stream shows it.
+fn record_tool_step(steps: &mut Vec<AskToolStep>, step: AskToolStep) {
+    match steps.iter_mut().find(|item| item.call_id == step.call_id) {
+        Some(existing) => *existing = step,
+        None => steps.push(step),
     }
 }
 
@@ -1916,6 +1924,8 @@ model = "fake"
             detail["messages"][1]["tools"][0]["call_id"],
             "persist-query"
         );
+        assert_eq!(detail["messages"][1]["tools"].as_array().unwrap().len(), 1);
+        assert_eq!(detail["messages"][1]["tools"][0]["state"], "completed");
         assert!(detail["messages"][1]["graph"].is_object());
         assert_eq!(sse_payloads(&body, "done")[0]["saved"], true);
         let unauthorized = reqwest::Client::new()

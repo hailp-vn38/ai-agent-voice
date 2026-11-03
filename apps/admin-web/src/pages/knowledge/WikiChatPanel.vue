@@ -13,6 +13,7 @@ const props = defineProps<{
   messages: WikiChatMessage[]
   busy: boolean
   readOnly?: boolean
+  loadFailed?: boolean
   drawerOpen?: boolean
   suggestions?: Array<{ label: string; prompt: string }>
   highlightedNode?: string | null
@@ -95,10 +96,11 @@ function toggleConversationList() {
   if (conversationListOpen.value) emit('loadConversations')
 }
 
+// Choosing the open conversation just returns to its messages.
 function selectConversation(id: string) {
-  if (props.busy || id === props.conversationId) return
+  if (props.busy) return
   conversationListOpen.value = false
-  emit('selectConversation', id)
+  if (id !== props.conversationId) emit('selectConversation', id)
 }
 
 function startNewConversation() {
@@ -242,8 +244,9 @@ function completedTools(message: WikiChatMessage) {
   return message.tools.filter(tool => tool.state === 'completed')
 }
 
+// A finished answer has nothing running, even if its turn ended before a step could complete.
 function activeTools(message: WikiChatMessage) {
-  return message.tools.filter(tool => tool.state !== 'completed')
+  return message.tools.filter(tool => tool.state === 'failed' || (tool.state === 'running' && message.status === 'streaming'))
 }
 
 function errorText(code: string | null): string {
@@ -279,7 +282,7 @@ function conversationListErrorText(code: string): string {
 
     <div class="wiki-chat-announcement sr-only" role="status" aria-live="polite" aria-atomic="true">{{ completedAnnouncement }}</div>
     <div v-if="readOnly" class="wiki-chat-status" role="status">
-      <span>{{ t('knowledgeV3.chatConversationRunningReadOnly') }}</span>
+      <span>{{ t(loadFailed ? 'knowledgeV3.chatConversationLoadFailed' : 'knowledgeV3.chatConversationRunningReadOnly') }}</span>
       <button type="button" @click="emit('refreshConversation')">{{ t('knowledgeV3.chatReloadConversation') }}</button>
     </div>
     <div ref="messagesElement" class="wiki-chat-messages" :aria-label="t('knowledgeV3.chatConversation')" @scroll.passive="onMessagesScroll">
@@ -304,7 +307,8 @@ function conversationListErrorText(code: string): string {
             </form>
             <template v-else>
               <button type="button" class="wiki-chat-conversation-select"
-                :disabled="busy || loadingConversation || conversation.id === conversationId" @click="selectConversation(conversation.id)">
+                :aria-current="conversation.id === conversationId ? 'true' : undefined"
+                :disabled="busy || loadingConversation" @click="selectConversation(conversation.id)">
                 <span class="wiki-chat-conversation-title">{{ conversation.title }}</span>
                 <span class="wiki-chat-conversation-count">{{ t('knowledgeV3.chatConversationMessageCount', { count: conversation.message_count }) }}</span>
                 <span v-if="conversation.running" class="wiki-chat-conversation-running">{{ t('knowledgeV3.chatConversationRunning') }}</span>
@@ -324,7 +328,7 @@ function conversationListErrorText(code: string): string {
         <span class="wiki-chat-orb" aria-hidden="true"><Sparkles :size="22" /></span>
         <p class="wiki-chat-empty">{{ t('knowledgeV3.chatEmpty') }}</p>
         <p class="wiki-chat-empty-note">{{ t('knowledgeV3.chatDescription') }}</p>
-        <div v-if="suggestions?.length" class="wiki-chat-suggestions" :aria-label="t('knowledgeV3.chatSuggestions')">
+        <div v-if="suggestions?.length && !readOnly" class="wiki-chat-suggestions" :aria-label="t('knowledgeV3.chatSuggestions')">
           <button v-for="suggestion in suggestions" :key="suggestion.label" type="button" class="wiki-chat-suggestion"
             :title="suggestion.prompt" @click="emit('send', suggestion.prompt)">
             <span>{{ suggestion.label }}</span><ArrowUpRight :size="13" aria-hidden="true" />

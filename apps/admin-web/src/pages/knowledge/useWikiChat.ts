@@ -37,6 +37,8 @@ export interface WikiChatMessage {
 
 export const MAX_PINNED_FILES = 4
 
+export type ConversationLoadResult = 'loaded' | 'not_found' | 'failed'
+
 function messageFromSaved(message: WikiConversationDetail['messages'][number]): WikiChatMessage {
   const files = message.pinned_paths.map(path => ({ path, title: path }))
   return {
@@ -70,6 +72,7 @@ export function useWikiChat() {
   const loadingConversations = ref(false)
   const conversationListError = ref<string | null>(null)
   const readOnlyConversation = ref(false)
+  const conversationLoadFailed = ref(false)
   let controller: AbortController | null = null
   let currentAssistantId: string | null = null
 
@@ -90,13 +93,14 @@ export function useWikiChat() {
     pinnedFiles.value = pinnedFiles.value.filter(file => file.path !== path)
   }
 
-  async function loadConversation(id: string): Promise<boolean> {
+  async function loadConversation(id: string): Promise<ConversationLoadResult> {
     loadingConversation.value = true
     try {
       const conversation = await getWikiConversation(id)
       conversationId.value = conversation.id
       messages.value = conversation.messages.map(messageFromSaved)
       readOnlyConversation.value = conversation.messages.some(message => message.status === 'running')
+      conversationLoadFailed.value = false
       const latestUser = [...conversation.messages].reverse().find(message => message.role === 'user')
       pinnedFiles.value = latestUser?.pinned_paths.map(path => ({ path, title: path })) ?? []
       const pinnedPaths = [...new Set(conversation.messages.flatMap(message => message.pinned_paths))]
@@ -118,14 +122,25 @@ export function useWikiChat() {
         message.files = message.files.map(file => ({ ...file, title: titles.get(file.path) ?? file.path }))
       }
       pinnedFiles.value = pinnedFiles.value.map(file => ({ ...file, title: titles.get(file.path) ?? file.path }))
-      const graphMessage = [...messages.value].reverse().find(message => message.role === 'assistant' && message.graph)
+      const graphMessage = [...messages.value].reverse().find(message => message.role === 'assistant' && message.graph?.nodes.length)
       activeGraph.value = graphMessage?.graph ?? null
       activeGraphMessageId.value = graphMessage?.id ?? null
       chatDrawerOpen.value = true
-      return true
-    } catch {
-      reset()
-      return false
+      return 'loaded'
+    } catch (error) {
+      if (isApiError(error) && error.status === 404) {
+        reset()
+        return 'not_found'
+      }
+      // The conversation may still exist, so keep its id and offer a reload instead of forgetting it.
+      if (conversationId.value !== id) {
+        reset()
+        conversationId.value = id
+      }
+      readOnlyConversation.value = true
+      conversationLoadFailed.value = true
+      chatDrawerOpen.value = true
+      return 'failed'
     } finally {
       loadingConversation.value = false
     }
@@ -296,6 +311,20 @@ export function useWikiChat() {
     controller.abort()
   }
 
+  function clearAnswer(assistant: WikiChatMessage) {
+    assistant.text = ''
+    assistant.tools = []
+    assistant.citations = []
+    assistant.errorCode = null
+    assistant.graph = null
+    delete assistant.saved
+    delete assistant.contentTruncated
+    if (activeGraphMessageId.value === assistant.id) {
+      activeGraph.value = null
+      activeGraphMessageId.value = null
+    }
+  }
+
   function retry(assistantId: string) {
     if (busy.value || readOnlyConversation.value) return
     const assistantIndex = messages.value.findIndex(message => message.id === assistantId)
@@ -303,12 +332,10 @@ export function useWikiChat() {
     const previousUser = assistantIndex > 0 ? messages.value[assistantIndex - 1] : undefined
     if (!assistant || assistant.role !== 'assistant' || !previousUser || previousUser.role !== 'user') return
     if (assistantIndex !== messages.value.length - 1) return
-    if (assistant.id.startsWith('local:') && assistant.errorCode === 'wiki_conversation_busy') {
-      assistant.text = ''
-      assistant.tools = []
-      assistant.citations = []
-      assistant.errorCode = null
-      assistant.status = 'streaming'
+    if (assistant.status !== 'failed' && assistant.status !== 'interrupted') return
+    clearAnswer(assistant)
+    // A local id means the server rejected the request before saving a turn, so there is nothing to retry by id.
+    if (assistant.id.startsWith('local:')) {
       void runRequest({
         ...(conversationId.value ? { conversation_id: conversationId.value } : {}),
         question: previousUser.text,
@@ -316,12 +343,7 @@ export function useWikiChat() {
       }, assistantId)
       return
     }
-    if (assistant.status !== 'failed' && assistant.status !== 'interrupted') return
     if (!conversationId.value) return
-    assistant.text = ''
-    assistant.tools = []
-    assistant.citations = []
-    assistant.errorCode = null
     void runRequest({ conversation_id: conversationId.value, retry_message_id: assistantId }, assistantId)
   }
 
@@ -342,6 +364,7 @@ export function useWikiChat() {
     messages.value = []
     conversationId.value = null
     readOnlyConversation.value = false
+    conversationLoadFailed.value = false
     pinnedFiles.value = []
     activeGraph.value = null
     activeGraphMessageId.value = null
@@ -358,6 +381,7 @@ export function useWikiChat() {
     loadingConversations,
     conversationListError,
     readOnlyConversation,
+    conversationLoadFailed,
     activeGraph,
     activeGraphMessageId,
     busy,
