@@ -50,6 +50,8 @@ fn project_task_to_admin_job_includes_multi_kind_artifacts_and_download_urls() {
         source: TaskSource::Api,
         schedule_id: None,
         session_id: "sess-root-1".to_string(),
+        active_session_id: "sess-root-1".to_string(),
+        followup_session_id: None,
         latest_turn_id: Some("turn-1".to_string()),
         status: orchestrator_flow_rs::TaskStatus::Completed,
         active_subagent: None,
@@ -133,6 +135,7 @@ fn project_task_to_admin_job_includes_multi_kind_artifacts_and_download_urls() {
         execution_summary: Some(summary),
         root_agent: None,
         subagents: Vec::new(),
+        followup_agents: Vec::new(),
         recipe: None,
         family_snapshot: None,
     };
@@ -172,6 +175,8 @@ fn project_task_to_admin_job_preserves_recipe_progress_without_reinterpreting_it
         source: TaskSource::Api,
         schedule_id: None,
         session_id: "root-session".into(),
+        active_session_id: "root-session".into(),
+        followup_session_id: None,
         latest_turn_id: None,
         status: orchestrator_flow_rs::TaskStatus::Stopped,
         active_subagent: None,
@@ -218,6 +223,7 @@ fn project_task_to_admin_job_preserves_recipe_progress_without_reinterpreting_it
         session_id: "root-session".into(),
         parent_session_id: None,
         agent_id: "recipe_playlist_sources".into(),
+        run_kind: orchestrator_flow_rs::AgentRunKind::Recipe,
         is_root: true,
         archived: false,
         state_revision: 1,
@@ -241,6 +247,7 @@ fn project_task_to_admin_job_preserves_recipe_progress_without_reinterpreting_it
             session_id: "agent-step-session".into(),
             parent_session_id: Some("root-session".into()),
             agent_id: "media_processor".into(),
+            run_kind: orchestrator_flow_rs::AgentRunKind::Recipe,
             is_root: false,
             archived: false,
             state_revision: 1,
@@ -259,9 +266,26 @@ fn project_task_to_admin_job_preserves_recipe_progress_without_reinterpreting_it
             recent_messages: Vec::new(),
         });
 
+    detail.followup_agents.push(orchestrator_flow_rs::TaskAgentSessionView {
+        session_id: "daily-followup-session".into(),
+        parent_session_id: None,
+        agent_id: "daily_root".into(),
+        run_kind: orchestrator_flow_rs::AgentRunKind::Free,
+        is_root: true,
+        archived: false,
+        state_revision: 1,
+        latest_run: None,
+        invocations: Vec::new(),
+        recent_messages: Vec::new(),
+    });
+
     let projected = project_task_to_admin_job(&task, Some(&detail));
     assert_eq!(projected["recipe"], serde_json::to_value(recipe).unwrap());
-    assert_eq!(projected["agent_runs"].as_array().unwrap().len(), 2);
+    let agent_runs = projected["agent_runs"].as_array().unwrap();
+    assert_eq!(agent_runs.len(), 3);
+    assert_eq!(agent_runs[0]["run_kind"], "recipe");
+    assert_eq!(agent_runs[1]["run_kind"], "recipe");
+    assert_eq!(agent_runs[2]["run_kind"], "free");
     assert!(
         projected["steps"]
             .as_array()
@@ -623,6 +647,8 @@ fn project_task_to_admin_job_and_events_include_agent_messages_for_tool_calls() 
         source: TaskSource::Api,
         schedule_id: None,
         session_id: "sess-root-1".to_string(),
+        active_session_id: "sess-root-1".to_string(),
+        followup_session_id: None,
         latest_turn_id: Some("turn-1".to_string()),
         status: orchestrator_flow_rs::TaskStatus::Completed,
         active_subagent: None,
@@ -645,6 +671,7 @@ fn project_task_to_admin_job_and_events_include_agent_messages_for_tool_calls() 
         session_id: "sess-root-1".to_string(),
         parent_session_id: None,
         agent_id: "daily_root".to_string(),
+        run_kind: orchestrator_flow_rs::AgentRunKind::Free,
         is_root: true,
         archived: false,
         state_revision: 3,
@@ -732,6 +759,7 @@ fn project_task_to_admin_job_and_events_include_agent_messages_for_tool_calls() 
         execution_summary: None,
         root_agent: Some(root_session),
         subagents: Vec::new(),
+        followup_agents: Vec::new(),
         recipe: None,
         family_snapshot: None,
     };

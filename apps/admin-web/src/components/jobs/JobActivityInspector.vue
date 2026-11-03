@@ -310,6 +310,9 @@ function stageNote(event: JobEvent): string {
         </div>
         <strong class="ins-name block break-words text-base font-bold">{{ activity.title }}</strong>
         <p class="ins-sub mb-3 mt-1 break-words text-xs text-muted-foreground">{{ activity.note }}</p>
+        <Badge v-if="activity.agentRun?.run_kind" variant="outline" class="mb-3">
+          {{ activity.agentRun.run_kind === 'recipe' ? t('jobUi.agentRunKindRecipe') : t('jobUi.agentRunKindFree') }}
+        </Badge>
 
         <template v-if="run">
           <dl class="divide-y divide-border/60 text-xs">
