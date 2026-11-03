@@ -74,6 +74,10 @@ _Avoid_: generated assistant response, Reminder (khi nói về khả năng phát
 Đơn vị công việc chạy nền bền vững độc lập với Voice Session hoặc yêu cầu Admin đã khởi tạo nó, được chiếu sang giao diện Job để quan sát và quản trị.
 _Avoid_: Conversational Turn, Plugin Operation Job
 
+**Task Recipe**:
+Quy trình Background Task có version, schema tham số và thứ tự bước do server định nghĩa trong code; cùng đầu vào và cùng lịch sử bước thì runtime tiếp tục theo cùng quy trình, còn phán đoán chỉ xảy ra trong Agent Step đã khai báo.
+_Avoid_: Job Skill, workflow do LLM tự lập, recipe do Admin chỉnh sửa
+
 **Collection Ledger**:
 Sổ theo dõi bền trong `tasks.db` ghi trạng thái từng video của một playlist, để session mới hoặc lần chạy lại biết còn việc nào mà không dựa vào context của LLM.
 _Avoid_: danh sách video trong context, tiến độ trong transcript

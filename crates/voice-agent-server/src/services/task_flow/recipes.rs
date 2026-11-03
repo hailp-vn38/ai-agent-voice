@@ -970,7 +970,12 @@ mod tests {
             "collection_status",
             "TOTAL: 1 | REMAINING: 1\nNEXT:\n1. video_id=v1 attempts=0 title=One",
         );
-        let transcript = [transcript, vec![refresh_call, refreshed]].concat();
+        let mut transcript = [transcript, vec![refresh_call, refreshed]].concat();
+        transcript.extend(selector_result(
+            "select-topic",
+            "selector-session",
+            r#"{"domain":"youtube","topic":"playlist"}"#,
+        ));
         let decision = recipe.next(&params, &transcript);
         let RecipeDecision::ToolCalls(calls) = decision else {
             panic!("expected source save after refresh")
@@ -1039,9 +1044,14 @@ mod tests {
         let refreshed = ModelMessage::tool_result(
             calls[0].id.clone(),
             "collection_status",
-            "TOTAL: 2 | REMAINING: 2\nNEXT:\n1. video_id=bad attempts=0 title=Bad\n2. video_id=good attempts=0 title=Good",
+            "TOTAL: 2 | REMAINING: 1\nNEXT:\n2. video_id=good attempts=0 title=Good",
         );
-        let transcript = [transcript, vec![refresh_call, refreshed]].concat();
+        let mut transcript = [transcript, vec![refresh_call, refreshed]].concat();
+        transcript.extend(selector_result(
+            "select-topic",
+            "selector-session",
+            r#"{"domain":"youtube","topic":"playlist"}"#,
+        ));
         let decision = recipe.next(&params, &transcript);
         let RecipeDecision::ToolCalls(calls) = decision else {
             panic!("good sibling should be saved after refresh")

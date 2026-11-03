@@ -1,6 +1,6 @@
 # ADR 0140 — Server-Owned Task Recipes
 
-Status: Proposed, 2026-11-03.
+Status: Accepted, 2026-11-03.
 Extends: [ADR 0127](0127-orchestrator-flow-task-and-wiki-runtime.md), [ADR 0133](0133-durable-waiting-retry-and-job-budgets.md), [ADR 0136](0136-collection-ledger-and-bounded-autoflow-batches.md).
 
 Mọi Background Task hiện chạy theo agent loop: Root tự quyết gọi Sub-Agent nào, Sub-Agent tự quyết gọi tool nào. Với việc lặp lại và đã biết trước các bước, như thu thập playlist vào `sources/`, cách này làm mỗi lần chạy đi một đường khác nhau, tốn token cho việc chọn bước và có thể chạm step cap giữa chừng. ADR 0136 đã ghi nhận rằng skill chỉ là lời nhắc, không ép được quy trình.

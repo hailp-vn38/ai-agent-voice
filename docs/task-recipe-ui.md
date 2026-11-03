@@ -1,48 +1,33 @@
-# Giao diện tạo Job từ Task Recipe
+# Giao diện Admin cho Task Recipe
 
-Cập nhật: 2026-11-03. Trạng thái: đề xuất, đi kèm [ADR 0140](adr/0140-server-owned-task-recipes.md).
+Cập nhật: 2026-11-03. Trạng thái: đã triển khai trong Admin Web.
 
-Modal "Tạo job" ở `apps/admin-web/src/pages/jobs/JobsPage.vue` hiện chỉ có ô mục tiêu và đính kèm WAV. Đề xuất: modal này mở bằng danh sách recipe. Người dùng chọn một recipe, điền tham số theo form dựng từ schema, xem trước các bước rồi bấm chạy. Ô "Tự do" vẫn là lựa chọn đầu tiên và giữ nguyên hành vi hiện tại.
+## Tạo Job
 
-## Luồng
+Trang Jobs tải danh mục bằng `GET /api/admin/background/recipes` khi mở modal **Tạo job**. Modal có ô tìm theo tên hoặc mô tả, thẻ **Tự do** và một thẻ cho mỗi recipe server trả về. Mỗi thẻ recipe hiện tên, mô tả và version. Lỗi tải danh mục hoặc tùy chọn động hiện trong modal.
 
-1. Bấm **Tạo job** trên trang Jobs.
-2. Modal hiện ô tìm kiếm và lưới thẻ: thẻ **Tự do** đứng đầu, tiếp theo là các recipe đang bật. Mỗi thẻ có tên, mô tả ngắn và version.
-3. Chọn recipe thì phần dưới hiện form tham số và danh sách bước chỉ đọc, ghi rõ bước nào là Tool, bước nào là Agent và bước nào lặp theo lô.
-4. Bấm **Chạy job**. Client kiểm tra trường bắt buộc; server kiểm tra lại và là nơi quyết định cuối cùng.
-5. Tạo xong thì đóng modal và mở trang chi tiết Job, như luồng hiện tại.
+Chọn recipe sẽ hiện form dựng từ `params_schema` và outline chỉ đọc. Form hỗ trợ:
 
-Không có trang danh mục recipe riêng ở v1. Modal là nơi duy nhất để xem và chạy recipe, vì recipe nằm trong code và Admin không sửa được nội dung của nó.
+| Schema | Control |
+| --- | --- |
+| `string` | Ô text; `format: uri` dùng ô URL |
+| `integer` | Ô số nguyên, có `minimum`/`maximum` nếu schema khai báo |
+| `boolean` | Checkbox |
+| `enum` | Select; lựa chọn tĩnh lấy từ `enum`, tùy chọn động lấy theo `x-options-source` |
+| `array<string>` | Textarea, mỗi dòng một mục |
 
-## Form từ schema tham số
+Giá trị `default` được điền sẵn. Client chặn tham số thiếu hoặc nằm ngoài giới hạn số; server vẫn xác thực lại. Lỗi có `validation_path` được gắn cạnh trường tương ứng; lỗi còn lại hiện ở đầu form. Danh sách bước hiển thị số thứ tự, tiêu đề, loại Tool/Agent và nhãn lặp khi outline đánh dấu `repeat`.
 
-Server trả schema tham số theo một tập con nhỏ, cùng tinh thần với ADR 0059. Client chỉ render những kiểu dưới đây; recipe dùng kiểu khác thì server không được đăng ký nó.
+Với recipe đầu tiên, danh sách domain Wiki động được nạp từ cây Wiki trong Admin API. Tùy chọn này không thay đổi nội dung recipe.
 
-| Kiểu schema | Control | Ghi chú |
-| --- | --- | --- |
-| `string` | `input` | `format: uri` thành ô URL |
-| `integer` | `input type=number` | Dùng `minimum` và `maximum` |
-| `boolean` | checkbox | |
-| `enum` | `select` | Có `x-options-source` để lấy danh sách động, ví dụ domain Wiki |
-| `array<string>` | textarea mỗi dòng một mục | Ví dụ danh sách URL video |
+Chọn **Chạy recipe** gửi `recipe.id`, tham số và khóa idempotency. Khi tạo thành công, modal đóng và trang chi tiết Job mở. Thẻ **Tự do** giữ luồng tạo goal và tệp WAV/MP4 như trước; trường đính kèm chỉ hiện ở luồng này.
 
-Kiểu `artifact` (vùng tải file) và `multiline` chỉ thêm khi có recipe cần tới.
+## Danh sách và chi tiết Job
 
-Lỗi từ server trả về theo `validation_path`, và client gắn lỗi vào đúng trường đó. Nếu một lỗi không khớp trường nào thì hiện ở đầu form.
+Trong danh sách Jobs, Job recipe có dòng `recipe · <tên> v<version>` dưới goal.
 
-## API cần thêm
+Trang chi tiết hiển thị `RecipeProgress` phía trên timeline hiện có. Progress trình bày các bước thành thẻ trạng thái hoàn tất/đang chạy/chờ/thất bại, số mục đã xong trên tổng số ở bước lặp khi có dữ liệu, cùng `stop_reason` và bước lỗi. Đây là danh sách thẻ bước, không phải thanh tiến độ dạng phần trăm. Timeline giữ các Agent Run và tool call; nhãn lượt recipe hoặc lượt tự do hiện trên Agent Run khi server cung cấp `run_kind`.
 
-- `GET /api/admin/background/recipes`: trả danh sách gồm `id`, `version`, `title`, `description`, `params_schema` và `outline`. `outline` chỉ có `title`, `kind` (`tool`/`agent`) và `repeat`.
-- `POST /api/admin/jobs` nhận thêm `recipe: { id, params }`. Nếu body có `recipe` thì không cần `goal`. Server tự sinh tiêu đề Job từ recipe và tham số. Idempotency key giữ như hiện tại.
+## Phạm vi
 
-## Thay đổi ở danh sách và chi tiết Job
-
-- Danh sách Job: dưới mục tiêu hiện nhãn `recipe · <tên> v<version>`, giống cách nhãn Knowledge đang hiện.
-- Chi tiết Job: thêm thanh tiến độ theo bước của recipe ở trên timeline hiện có. Thanh này cho biết bước hiện tại, số mục đã xong trong lô và bước dừng kèm `stop_reason`. Các lượt follow-up chạy agent loop vẫn hiện trong timeline như trước, có đánh dấu là lượt tự do.
-- Ô follow-up giữ nguyên. Theo ADR 0140, follow-up trên Job recipe chạy agent loop tự do.
-
-## Ngoài phạm vi v1
-
-- Admin tạo hoặc sửa recipe trên giao diện.
-- Lên lịch recipe ngay trong modal. Schedule `spawn_task` sẽ nhận `recipe` ở một bước sau.
-- Lưu bộ tham số hay dùng thành preset.
+Recipe chỉ được server đăng ký; giao diện không tạo, sửa hay xóa recipe. Không có trang danh mục riêng, preset tham số hoặc lập lịch recipe trong modal. Follow-up vẫn dùng giao diện Job hiện có.
