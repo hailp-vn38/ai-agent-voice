@@ -397,4 +397,38 @@ mod tests {
         assert_eq!(calls[0].name, "add_to_sources");
         assert_eq!(calls[0].arguments["video_id"], "good");
     }
+
+    #[test]
+    fn compacted_transcript_uses_the_durable_ledger_for_the_next_batch() {
+        let recipe = PlaylistSourcesRecipe;
+        let params = json!({
+            "url":"https://www.youtube.com/playlist?list=PL1",
+            "max_videos":50
+        });
+        let compacted = ModelMessage::text(
+            ModelRole::Assistant,
+            "Earlier batches were saved; continue from the durable collection ledger.",
+        );
+        let listed = ModelMessage::tool_result(
+            "list",
+            "yt_list_playlist",
+            "Playlist listed; collection ledger is durable.",
+        );
+        let mut next_items = String::from("TOTAL: 50 | REMAINING: 30\nNEXT:\n");
+        for position in 21..=50 {
+            next_items.push_str(&format!(
+                "{position}. video_id=v{position} attempts=0 title=Video {position}\n"
+            ));
+        }
+        let ledger = ModelMessage::tool_result("status-next", "collection_status", next_items);
+
+        let RecipeDecision::ToolCalls(calls) = recipe.next(&params, &[compacted, listed, ledger])
+        else {
+            panic!("the compacted transcript should select remaining ledger items")
+        };
+        assert_eq!(calls.len(), 10);
+        assert!(calls.iter().all(|call| call.name == "yt_fetch_transcript"));
+        assert_eq!(calls.first().unwrap().arguments["video_id"], "v21");
+        assert_eq!(calls.last().unwrap().arguments["video_id"], "v30");
+    }
 }
