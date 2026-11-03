@@ -6,6 +6,7 @@ pub mod charts;
 mod memory_tools;
 pub(crate) mod muse_task;
 mod projections;
+mod recipe_start;
 mod recipes;
 #[cfg(test)]
 pub(crate) use recipes::{PLAYLIST_RECIPE_ROOT, PlaylistSourcesRecipe};
@@ -21,6 +22,8 @@ mod tests_media;
 mod tests_memory;
 #[cfg(test)]
 mod tests_providers;
+#[cfg(test)]
+mod tests_recipe_start;
 
 pub(crate) use agent_settings::install_server_media_runtime;
 pub use agent_settings::{
@@ -52,7 +55,7 @@ pub use workspace_seed::{
     WIKI_RESEARCHER_PROMPT, WIKI_ROOT_PROMPT, WIKI_TAXONOMY_SKILL,
 };
 
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 use llm_wiki::{AdaptiveReadBudget, WikiEngine, WikiError};
@@ -245,6 +248,7 @@ async fn init_orchestrator_and_task_manager(
     let _ = write_agent_prompts(&cfg.prompts_dir, &persisted);
     let (providers, mut agents) = build_agent_definitions(cfg, &persisted, catalog);
     let recipe_metadata = recipes::PlaylistSourcesRecipe.metadata();
+    let recipe_start_manager = Arc::new(OnceLock::new());
     let recipe_tools = recipe_metadata
         .outline
         .iter()
@@ -281,6 +285,10 @@ async fn init_orchestrator_and_task_manager(
         .collect();
     host_tools.extend(chart_host_tools(&wiki_cfg.vault_dir));
     host_tools.extend(memory.host_tools());
+    host_tools.push(Arc::new(recipe_start::TaskRecipeStartTool::new(
+        vec![recipe_metadata.clone()],
+        recipe_start_manager.clone(),
+    )));
     let llm_cfg = LlmConfig { providers };
     let ctx_limit = cfg.context_limit_tokens;
 
@@ -327,6 +335,7 @@ async fn init_orchestrator_and_task_manager(
         ))
         .start()
         .await?;
+    let _ = recipe_start_manager.set(task_manager.clone());
     spawn_job_session_reaper(&task_manager, &orchestrator);
     muse_task::closer::SubagentMuseCloser::spawn(&orchestrator);
 
