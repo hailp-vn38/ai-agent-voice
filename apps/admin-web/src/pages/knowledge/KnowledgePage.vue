@@ -17,6 +17,7 @@ import { useI18n } from '@/composables/useI18n'
 import { useWikiChat, type WikiChatFile } from './useWikiChat'
 import WikiChatPanel from './WikiChatPanel.vue'
 import RightPanelTabs, { type RightTab } from './RightPanelTabs.vue'
+import { movedOrder, useDragReorder } from './useDragReorder'
 import KnowledgeNoteView, { noteIntroduction } from './KnowledgeNoteView.vue'
 import { useKnowledgeWorkspace, type NoteDoc, type Page, type RawFile, type TabRef, type TreeSpace, type WorkspacePane, type WorkspaceTab } from './useKnowledgeWorkspace'
 
@@ -1018,6 +1019,43 @@ function scrollTabList(event: WheelEvent) {
   list.scrollLeft += event.deltaY
 }
 
+function draggableTabs(pane: WorkspacePane): WorkspaceTab[] {
+  return pane.tabs.filter(tab => tab.doc || tab.ref || tab.pending)
+}
+// Each pane has its own tab list; the one pressed last is the one being reordered.
+const reorderPaneId = ref<string | null>(null)
+const reorderTabList = ref<HTMLElement | null>(null)
+function reorderPane(): WorkspacePane | undefined {
+  return panes.value.find(pane => pane.id === reorderPaneId.value)
+}
+function reorderPaneTabs(pane: WorkspacePane, ids: string[]) {
+  const visible = draggableTabs(pane)
+  const byId = new Map(visible.map(tab => [tab.id, tab]))
+  const reordered = ids.map(id => byId.get(id)).filter((tab): tab is WorkspaceTab => !!tab)
+  if (reordered.length !== visible.length) return
+  // Tabs that are not shown keep their places; the shown ones take their new order.
+  let next = 0
+  pane.tabs = pane.tabs.map(tab => byId.has(tab.id) ? reordered[next++]! : tab)
+}
+const tabReorder = useDragReorder<string>({
+  container: reorderTabList,
+  order: () => { const pane = reorderPane(); return pane ? draggableTabs(pane).map(tab => tab.id) : [] },
+  onReorder: ids => { const pane = reorderPane(); if (pane) reorderPaneTabs(pane, ids) },
+  ignore: '.a-tab-close',
+})
+function pressTabList(event: PointerEvent, pane: WorkspacePane) {
+  reorderPaneId.value = pane.id
+  reorderTabList.value = event.currentTarget as HTMLElement
+}
+function clickTab(pane: WorkspacePane, tab: WorkspaceTab) {
+  if (tabReorder.consumeClick()) return
+  activateTab(pane, tab)
+}
+function moveTabWithKeyboard(pane: WorkspacePane, tab: WorkspaceTab, step: -1 | 1) {
+  const next = movedOrder(draggableTabs(pane).map(item => item.id), tab.id, step)
+  if (next) reorderPaneTabs(pane, next)
+}
+
 // Keep the active tab visible when it is opened or selected while the list is scrolled away from it.
 watch(() => panes.value.map(pane => [pane.activeTabId, paneShowsGraph(pane)]).join() + viewMode.value, () => {
   panesEl.value?.querySelectorAll<HTMLElement>('.a-tab-list').forEach(list => {
@@ -1996,14 +2034,17 @@ onMounted(() => {
                   <PanelLeftClose v-else :size="16" />
                 </button>
               </div>
-              <div class="a-tab-list" @wheel="scrollTabList">
-                <button v-if="pane.id === graphPaneId" class="other-tab a-graph-tab" :class="{ active: paneShowsGraph(pane) }"
+              <div class="a-tab-list" :class="{ 'is-reordering': reorderPaneId === pane.id && tabReorder.draggingKey.value, 'is-settling': reorderPaneId === pane.id && tabReorder.settling.value, 'is-instant': tabReorder.instant.value }"
+                @wheel="scrollTabList" @pointerdown.capture="pressTabList($event, pane)">
+                <button v-if="pane.id === graphPaneId" class="other-tab a-graph-tab" data-reorder-pinned :class="{ active: paneShowsGraph(pane) }"
                   type="button" :aria-pressed="paneShowsGraph(pane)" @click="showGraph"><Network :size="15" class="inline-block mr-1" /> Graph</button>
-                <button v-for="tab in pane.tabs.filter(item => item.doc || item.ref || item.pending)" :key="tab.id" class="a-tab" type="button"
-                  :class="{ active: tab.id === pane.activeTabId && !paneShowsGraph(pane) && !(pane.id === focusedPaneId && viewMode === 'compose') }"
+                <button v-for="tab in draggableTabs(pane)" :key="tab.id" class="a-tab" type="button" :data-reorder-key="tab.id"
+                  :class="{ active: tab.id === pane.activeTabId && !paneShowsGraph(pane) && !(pane.id === focusedPaneId && viewMode === 'compose'), 'is-dragging': tab.id === tabReorder.draggingKey.value }"
+                  :style="tabReorder.itemStyle(tab.id)"
                   :aria-pressed="tab.id === pane.activeTabId && !paneShowsGraph(pane) && !(pane.id === focusedPaneId && viewMode === 'compose')"
                   :title="tab.doc?.path ?? tab.ref?.path ?? tabTitle(tab)"
-                  @click="activateTab(pane, tab)" @auxclick.prevent="$event.button === 1 && closeTab(pane, tab)">
+                  v-on="tabReorder.listeners(tab.id)" @click="clickTab(pane, tab)" @auxclick.prevent="$event.button === 1 && closeTab(pane, tab)"
+                  @keydown.alt.left.prevent="moveTabWithKeyboard(pane, tab, -1)" @keydown.alt.right.prevent="moveTabWithKeyboard(pane, tab, 1)">
                   <FileText /><span class="tab-name">{{ tabTitle(tab) }}</span>
                   <span class="a-tab-close" :aria-label="t('knowledgeV3.closeTab')" @click.stop="closeTab(pane, tab)">×</span>
                 </button>

@@ -1392,6 +1392,43 @@ function openInTabButton(wrapper: ReturnType<typeof mount>, label: string, title
   return wrapper.get('[aria-label="' + label + ': ' + title + '"]')
 }
 
+it('reorders the note tabs by dragging, without opening the dragged tab, and keeps the order', async () => {
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+  mockTwoWikiNotes()
+  const wrapper = mount(KnowledgePage, { attachTo: document.body })
+  try {
+    await flushPromises()
+    await openInTabButton(wrapper, 'Open in new tab', 'beta').trigger('click')
+    await flushPromises()
+    const list = wrapper.get('.a-tab-list').element as HTMLElement
+    list.getBoundingClientRect = () => ({ left: 0, width: 600, top: 0, height: 40 } as DOMRect)
+    wrapper.findAll('button.a-tab').forEach((tab, index) => {
+      tab.element.getBoundingClientRect = () => ({ left: index * 201, width: 200, top: 0, height: 40 } as DOMRect)
+      ;(tab.element as HTMLElement).setPointerCapture = () => {}
+    })
+    const alpha = wrapper.findAll('button.a-tab')[0]!.element
+    const press = (type: string, clientX: number) => alpha.dispatchEvent(new MouseEvent(type, { bubbles: true, button: 0, clientX, clientY: 10 }))
+    press('pointerdown', 100)
+    press('pointermove', 260)
+    await flushPromises()
+    expect(alpha.classList.contains('is-dragging')).toBe(true)
+    press('pointerup', 260)
+    alpha.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    vi.advanceTimersByTime(200)
+    await flushPromises()
+    expect(wrapper.findAll('button.a-tab .tab-name').map(tab => tab.text())).toEqual(['Beta', 'Alpha'])
+    expect(wrapper.get('.doc h1').text()).toBe('Beta')
+    const saved = JSON.parse(window.localStorage.getItem('voice-agent-knowledge-workspace-v1') ?? '{}')
+    expect(saved.panes[0].tabs.map((tab: { title: string }) => tab.title)).toEqual(['Beta', 'Alpha'])
+
+    await wrapper.findAll('button.a-tab')[1]!.trigger('keydown', { key: 'ArrowLeft', altKey: true })
+    expect(wrapper.findAll('button.a-tab .tab-name').map(tab => tab.text())).toEqual(['Alpha', 'Beta'])
+  } finally {
+    wrapper.unmount()
+    vi.useRealTimers()
+  }
+})
+
 it('opens an Explorer file in a new tab, keeps the first tab, and reuses a tab already open', async () => {
   mockTwoWikiNotes()
   const wrapper = mount(KnowledgePage)
