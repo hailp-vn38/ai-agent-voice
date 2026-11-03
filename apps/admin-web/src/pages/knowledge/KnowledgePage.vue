@@ -1182,6 +1182,32 @@ function isTabLoading(pane: WorkspacePane, tab: WorkspaceTab): boolean {
 function panePath(tab: WorkspaceTab): string {
   return (tab.doc?.path ?? tab.ref?.path ?? '').replace(/^[^/]+\/?/, '')
 }
+function paneSpace(tab: WorkspaceTab): TreeSpace {
+  return tab.doc?.space ?? tab.ref?.space ?? activeSpace.value
+}
+/** The folders above the note, each with the Explorer path it opens. */
+function paneFolders(tab: WorkspaceTab): Array<{ name: string; path: string }> {
+  const parts = (tab.doc?.path ?? tab.ref?.path ?? '').split('/').filter(Boolean)
+  return parts.slice(1, -1).map((name, index) => ({ name, path: parts.slice(0, index + 2).join('/') }))
+}
+function paneFileName(tab: WorkspaceTab): string {
+  return panePath(tab).split('/').at(-1) ?? ''
+}
+/** Shows a folder from the path bar in the Explorer: its space, every ancestor open, scrolled into view. */
+async function revealFolder(space: TreeSpace, path: string) {
+  if (busy.value) return
+  explorerCollapsed.value = false
+  if (searchOpen.value) closeSearch()
+  await switchExplorerSpace(space)
+  const segments = path.split('/')
+  openFolders.value = new Set([...openFolders.value,
+    ...segments.map((_, index) => segments.slice(0, index + 1).join('/'))])
+  await nextTick()
+  const row = Array.from(treeHolder.value?.querySelectorAll<HTMLElement>('[data-folder-path]') ?? [])
+    .find(element => element.dataset.folderPath === path)
+  row?.scrollIntoView?.({ block: 'nearest' })
+  row?.focus()
+}
 function editPaneNote(pane: WorkspacePane) {
   if (focusPane(pane)) startEditNote()
 }
@@ -1949,6 +1975,7 @@ onMounted(() => {
               @dragleave="onFolderDragLeave(node.path)"
               @drop.prevent.stop="onFileDrop($event, node.path)">
               <button type="button" role="treeitem" class="tree-folder" :aria-expanded="openFolders.has(node.path)"
+                :data-folder-path="node.path"
                 :style="{ paddingLeft: (14 + Math.max(0, node.path.split('/').length - 2) * 13) + 'px' }"
                 @click="chooseNode(node)">
                 <FolderOpen v-if="openFolders.has(node.path)" :size="15" />
@@ -2096,8 +2123,20 @@ onMounted(() => {
               </div>
             </div>
             <div v-if="!paneShowsGraph(pane) && !(pane.id === focusedPaneId && viewMode === 'compose')" class="a-pathbar">
-              <Folder :size="15" /><span>knowledge</span><span>/</span><span>{{ workspace.activeTab(pane).doc?.space ?? workspace.activeTab(pane).ref?.space ?? activeSpace }}</span><span>/</span>
-              <span class="active-path">{{ panePath(workspace.activeTab(pane)) }}</span>
+              <Folder :size="15" /><span>knowledge</span><span>/</span>
+              <button type="button" class="path-folder" :disabled="busy"
+                :title="t('knowledgeV3.showInExplorer')"
+                @click="revealFolder(paneSpace(workspace.activeTab(pane)), paneSpace(workspace.activeTab(pane)))">{{ paneSpace(workspace.activeTab(pane)) }}</button>
+              <template v-for="folder in paneFolders(workspace.activeTab(pane))" :key="folder.path">
+                <span>/</span>
+                <button type="button" class="path-folder" :disabled="busy"
+                  :title="t('knowledgeV3.showInExplorer') + ' · ' + folder.path"
+                  @click="revealFolder(paneSpace(workspace.activeTab(pane)), folder.path)">{{ folder.name }}</button>
+              </template>
+              <template v-if="paneFileName(workspace.activeTab(pane))">
+                <span>/</span>
+                <span class="active-path">{{ paneFileName(workspace.activeTab(pane)) }}</span>
+              </template>
               <div class="path-actions">
                 <button v-if="workspace.activeTab(pane).doc && workspace.activeTab(pane).doc?.space !== 'drafts' && !workspace.activeTab(pane).doc?.readOnly"
                   class="icon-button" type="button" :title="t('knowledgeV3.edit')"

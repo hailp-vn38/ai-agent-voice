@@ -214,6 +214,9 @@
 .knowledge-a .a-tabs .a-tab-actions .icon-button:hover, .knowledge-a .a-tabs .a-tab-actions .icon-button.active { color: var(--studio-violet); }
 .knowledge-a .a-pathbar { height: 50px; padding: 0 31px; display: flex; align-items: center; gap: 7px; color: var(--muted-foreground); font-size: 11px; border-bottom: 1px solid var(--border); flex: none; white-space: nowrap; min-width: 0; }
 .knowledge-a .a-pathbar .active-path { color: var(--foreground); overflow: hidden; text-overflow: ellipsis; }
+.knowledge-a .a-pathbar .path-folder { color: inherit; font: inherit; border-radius: 4px; padding: 2px 3px; margin: 0 -3px; flex: none; }
+.knowledge-a .a-pathbar .path-folder:hover:not(:disabled) { color: var(--foreground); background: var(--muted); }
+.knowledge-a .a-pathbar .path-folder:focus-visible { outline: 2px solid var(--ring); outline-offset: 1px; }
 .knowledge-a .a-pathbar .path-actions { margin-left: auto; display: flex; align-items: center; gap: 8px; flex: none; }
 .knowledge-a .a-pathbar .path-actions .icon-button:disabled { opacity: .35; cursor: not-allowed; }
 @container (max-width: 560px) {

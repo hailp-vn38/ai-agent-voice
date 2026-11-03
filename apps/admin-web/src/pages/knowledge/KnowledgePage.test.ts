@@ -1421,6 +1421,36 @@ function openInTabButton(wrapper: ReturnType<typeof mount>, label: string, title
   return wrapper.get('[aria-label="' + label + ': ' + title + '"]')
 }
 
+it('splits the note path into folders and opens a clicked folder in the Explorer', async () => {
+  const base = requestJsonMock.getMockImplementation()!
+  requestJsonMock.mockImplementation(async (url: string, init?: unknown) => {
+    if (url === '/api/admin/knowledge/tree?space=wiki') return { items: [
+      { type: 'folder', space: 'wiki', path: 'wiki', name: 'wiki', editable: true },
+      { type: 'folder', space: 'wiki', path: 'wiki/concepts', name: 'concepts', editable: true },
+      { type: 'folder', space: 'wiki', path: 'wiki/concepts/documentation', name: 'documentation', editable: true },
+      { type: 'file', space: 'wiki', path: 'wiki/concepts/documentation/steel.md', name: 'steel.md', editable: true, id: 'steel', revision: 1, status: 'verified' },
+    ] }
+    if (url === '/api/admin/knowledge/pages/steel') return { id: 'steel', title: 'Steel', body: 'Steel body', status: 'verified', revision: 1, source_ref: null }
+    return base(url, init)
+  })
+  const wrapper = mount(KnowledgePage)
+  try {
+    await flushPromises()
+    expect(wrapper.get('.doc h1').text()).toBe('Steel')
+    const pathbar = wrapper.get('.a-pathbar')
+    expect(pathbar.findAll('button.path-folder').map(button => button.text())).toEqual(['wiki', 'concepts', 'documentation'])
+    expect(pathbar.get('.active-path').text()).toBe('steel.md')
+
+    await wrapper.get('button[aria-label="Collapse folders"]').trigger('click')
+    expect(wrapper.find('[data-folder-path="wiki/concepts/documentation"]').exists()).toBe(false)
+    await pathbar.findAll('button.path-folder')[2]!.trigger('click')
+    await flushPromises()
+    expect(wrapper.get('[data-folder-path="wiki/concepts"]').attributes('aria-expanded')).toBe('true')
+    expect(wrapper.get('[data-folder-path="wiki/concepts/documentation"]').attributes('aria-expanded')).toBe('true')
+    expect(wrapper.get('.doc h1').text()).toBe('Steel')
+  } finally { wrapper.unmount() }
+})
+
 it('reorders the note tabs by dragging, without opening the dragged tab, and keeps the order', async () => {
   vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
   mockTwoWikiNotes()
