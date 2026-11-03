@@ -1427,13 +1427,10 @@ mod tests {
             if self.calls.fetch_add(1, Ordering::SeqCst) == 0 {
                 return Err(LlmError::Failed);
             }
-            Ok(Box::pin(stream::iter(
-                vec![
-                    Ok(LlmEvent::TextDelta("Recovered answer".into())),
-                    Ok(LlmEvent::Finished),
-                ]
-                .into_iter(),
-            )))
+            Ok(Box::pin(stream::iter(vec![
+                Ok(LlmEvent::TextDelta("Recovered answer".into())),
+                Ok(LlmEvent::Finished),
+            ])))
         }
     }
 

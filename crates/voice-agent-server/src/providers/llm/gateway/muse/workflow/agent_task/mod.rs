@@ -271,16 +271,15 @@ pub(crate) async fn run_turn(
                         status => AgentTaskError::Rejected(format!("Muse send HTTP {status}")),
                     });
                 }
-                if let Ok(value) = response.json() {
-                    if let Some(sid) = value
+                if let Ok(value) = response.json()
+                    && let Some(sid) = value
                         .get("session_id")
                         .or_else(|| value.get("result").and_then(|v| v.get("session_id")))
                         .and_then(Value::as_str)
                         .filter(|s| !s.is_empty())
-                    {
-                        lease.set_session_id(sid.to_owned());
-                        slot.as_mut().unwrap().session_id = sid.to_owned();
-                    }
+                {
+                    lease.set_session_id(sid.to_owned());
+                    slot.as_mut().unwrap().session_id = sid.to_owned();
                 }
             }
             record(
@@ -416,10 +415,9 @@ pub(crate) async fn run_turn(
                         }
                     }
                     if let Some(contract) = prompt::contract(&request.session_key, &request.action)
+                        && !paths.contains(&contract)
                     {
-                        if !paths.contains(&contract) {
-                            paths.insert(0, contract);
-                        }
+                        paths.insert(0, contract);
                     }
                     record(
                         journal,
@@ -453,13 +451,14 @@ pub(crate) async fn run_turn(
                     ]
                     .iter()
                     .any(|prefix| lower.starts_with(prefix));
-                    if downloaded.is_empty() && error_reply {
-                        if let Some((kind, reason)) = super::classify_assistant_error(&message) {
-                            if kind == super::super::pool::UpstreamFailureKind::QuotaExceeded {
-                                lease.fail_account(kind).await;
-                            }
-                            return Err(AgentTaskError::RetryLater(reason));
+                    if downloaded.is_empty()
+                        && error_reply
+                        && let Some((kind, reason)) = super::classify_assistant_error(&message)
+                    {
+                        if kind == super::super::pool::UpstreamFailureKind::QuotaExceeded {
+                            lease.fail_account(kind).await;
                         }
+                        return Err(AgentTaskError::RetryLater(reason));
                     }
                     let linked_file_missing =
                         files::collect_file_paths(&[], &[], std::slice::from_ref(&message))

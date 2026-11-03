@@ -194,19 +194,15 @@ impl SubagentMuseCloser {
             .get_session(&caller, &scope.session_id)
             .await?
             .archived
-        {
-            if let Err(error) = orchestrator
+            && let Err(error) = orchestrator
                 .archive_session(&caller, &scope.session_id)
                 .await
-            {
-                if !orchestrator
-                    .get_session(&caller, &scope.session_id)
-                    .await?
-                    .archived
-                {
-                    return Err(error);
-                }
-            }
+            && !orchestrator
+                .get_session(&caller, &scope.session_id)
+                .await?
+                .archived
+        {
+            return Err(error);
         }
         // Archive blocks admission, but an already-admitted attempt can still run/resume.
         let latest = latest_run(orchestrator, &caller, &scope.session_id).await?;

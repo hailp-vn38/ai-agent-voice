@@ -187,38 +187,38 @@ async fn muse_task_live_stage0_probe() {
     }
     // Inspect only metadata/event types, never credential-bearing requests.
     let mut history_evidence = json!({"result":"NOT_RUN"});
-    if let Some(sid) = &last_op.remote_session_id {
-        if let Ok(lease) = hub.acquire_account_for_polling(&account) {
-            let pool = SharedMusePool::for_gateway_lease(
-                &reqwest::Client::new(),
-                &account,
-                lease.access_token.expose(),
-                None,
-            );
-            if let Ok(mut vm) = pool.acquire_existing_session(sid.clone()).await {
-                vm.retain_session();
-                if let Ok(response) = vm
-                    .client()
-                    .send_request(
-                        "GET",
-                        &format!("/chat/history?session_id={sid}"),
-                        None,
-                        SERVICE_DAEMON,
-                        Duration::from_secs(20),
-                        false,
-                    )
-                    .await
-                {
-                    let value = response.json().unwrap_or(Value::Null);
-                    std::fs::write(
-                        output_dir.join("history.json"),
-                        serde_json::to_vec_pretty(&value).unwrap(),
-                    )
-                    .unwrap();
-                    history_evidence = json!({"result":"PASS","http_status":response.status});
-                }
-                vm.finish_clean(None);
+    if let Some(sid) = &last_op.remote_session_id
+        && let Ok(lease) = hub.acquire_account_for_polling(&account)
+    {
+        let pool = SharedMusePool::for_gateway_lease(
+            &reqwest::Client::new(),
+            &account,
+            lease.access_token.expose(),
+            None,
+        );
+        if let Ok(mut vm) = pool.acquire_existing_session(sid.clone()).await {
+            vm.retain_session();
+            if let Ok(response) = vm
+                .client()
+                .send_request(
+                    "GET",
+                    &format!("/chat/history?session_id={sid}"),
+                    None,
+                    SERVICE_DAEMON,
+                    Duration::from_secs(20),
+                    false,
+                )
+                .await
+            {
+                let value = response.json().unwrap_or(Value::Null);
+                std::fs::write(
+                    output_dir.join("history.json"),
+                    serde_json::to_vec_pretty(&value).unwrap(),
+                )
+                .unwrap();
+                history_evidence = json!({"result":"PASS","http_status":response.status});
             }
+            vm.finish_clean(None);
         }
     }
     let deleted = release_recorded_job_session(&last_op).await.is_some();

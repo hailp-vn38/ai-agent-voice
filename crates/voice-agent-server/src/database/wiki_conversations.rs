@@ -404,6 +404,7 @@ fn map_retry_update_error(error: sqlx::Error) -> RetryTurnError {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn start_question(
     database: &Database,
     conversation_id: Option<&str>,
@@ -549,6 +550,7 @@ pub(crate) async fn history_before_question(
         .collect())
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn finish_answer(
     database: &Database,
     conversation_id: &str,
@@ -644,8 +646,7 @@ pub(crate) async fn get_conversation(
             role: row.role,
             content: row.content,
             content_truncated: row.content_truncated != 0,
-            status: if row.status == "running" && row.updated_at_ms < stale_running_cutoff(now_ms)
-            {
+            status: if row.status == "running" && row.updated_at_ms < stale_running_cutoff(now_ms) {
                 "interrupted".to_owned()
             } else {
                 row.status

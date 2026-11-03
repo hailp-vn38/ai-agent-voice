@@ -116,14 +116,11 @@ async fn a_conversation_stops_at_one_hundred_messages_without_writing_a_new_turn
         Err(wiki_conversations::StartTurnError::Full)
     ));
 
-    let saved = wiki_conversations::get_conversation(
-        &database,
-        conversation_id.as_deref().unwrap(),
-        0,
-    )
-    .await
-    .unwrap()
-    .expect("conversation remains available");
+    let saved =
+        wiki_conversations::get_conversation(&database, conversation_id.as_deref().unwrap(), 0)
+            .await
+            .unwrap()
+            .expect("conversation remains available");
     assert_eq!(saved.messages.len(), 100);
 
     drop(database);

@@ -192,12 +192,10 @@ impl HostTool for MuseTaskTool {
                     .result_json
                     .as_deref()
                     .and_then(|s| serde_json::from_str::<Value>(s).ok())
-                {
-                    if let (Some(code), Some(message)) =
+                    && let (Some(code), Some(message)) =
                         (saved["code"].as_str(), saved["message"].as_str())
-                    {
-                        return Err(error(code, message));
-                    }
+                {
+                    return Err(error(code, message));
                 }
                 return Err(if op.status == Status::Expired {
                     provider_error(AgentTaskError::Timeout { partial: None })

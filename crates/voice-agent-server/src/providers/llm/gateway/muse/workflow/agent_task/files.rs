@@ -19,10 +19,10 @@ pub(super) fn collect_file_paths(
         match value {
             Value::Object(object) => {
                 for (key, value) in object {
-                    if ["path", "file_path"].contains(&key.as_str()) {
-                        if let Some(path) = value.as_str() {
-                            add(path, paths);
-                        }
+                    if ["path", "file_path"].contains(&key.as_str())
+                        && let Some(path) = value.as_str()
+                    {
+                        add(path, paths);
                     }
                     scan(value, paths);
                 }

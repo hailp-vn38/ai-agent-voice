@@ -192,6 +192,8 @@ async fn run_tool_probe(
     )
     .await
 }
+
+#[allow(clippy::too_many_arguments)]
 async fn run_tool_lifecycle(
     args: Value,
     child: bool,
@@ -274,19 +276,19 @@ async fn run_tool_lifecycle(
             if let Some(out) = observed.lock().unwrap().clone() {
                 break out;
             }
-            if retry {
-                if let Some(waiting) = orch.waiting_descendant(&caller, &session).await.unwrap() {
-                    assert_eq!(waiting.error_code.as_deref(), Some("PROVIDER_UNAVAILABLE"));
-                    assert!(
-                        waiting
-                            .error_message
-                            .as_deref()
-                            .is_some_and(|message| message.contains("still running"))
-                    );
-                    orch.resume_waiting(&caller, &waiting.session_id)
-                        .await
-                        .unwrap();
-                }
+            if retry
+                && let Some(waiting) = orch.waiting_descendant(&caller, &session).await.unwrap()
+            {
+                assert_eq!(waiting.error_code.as_deref(), Some("PROVIDER_UNAVAILABLE"));
+                assert!(
+                    waiting
+                        .error_message
+                        .as_deref()
+                        .is_some_and(|message| message.contains("still running"))
+                );
+                orch.resume_waiting(&caller, &waiting.session_id)
+                    .await
+                    .unwrap();
             }
             tokio::time::sleep(Duration::from_millis(20)).await;
         }
@@ -658,8 +660,7 @@ impl HostTool for ReplayProbe {
                         .tool
                         .execute(ctx.clone(), args)
                         .await
-                        .err()
-                        .expect("failed invocation should replay its error");
+                        .expect_err("failed invocation should replay its error");
                     assert_eq!(replay.code, failure.code);
                     assert_eq!(replay.message, failure.message);
                 }
