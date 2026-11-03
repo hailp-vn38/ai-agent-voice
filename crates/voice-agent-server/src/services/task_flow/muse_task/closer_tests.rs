@@ -53,7 +53,7 @@ fn muse_task_closer_closes_completed_but_preserves_recoverable_children() {
 
 #[test]
 fn muse_task_closer_failure_policy_matches_pinned_library_contract() {
-    // Independent, fixed 0.6.0 contract, not generated from the server's classifier.
+    // Independent, fixed 0.7.0 contract, not generated from the server's classifier.
     for code in [
         "TOOL_OUTCOME_UNKNOWN",
         "RECOVERY_BLOCKED",
@@ -95,7 +95,7 @@ fn muse_task_closer_failure_policy_matches_pinned_library_contract() {
         .find(|p| p.lines().any(|l| l == "name = \"orchestrator-agent\""))
         .unwrap();
     assert!(
-        package.lines().any(|l| l == "version = \"0.6.0\""),
+        package.lines().any(|l| l == "version = \"0.7.0\""),
         "Review the private child_failure_is_retryable contract before upgrading orchestrator-agent"
     );
 }

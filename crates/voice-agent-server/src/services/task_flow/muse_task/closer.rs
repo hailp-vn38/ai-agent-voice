@@ -7,7 +7,7 @@ pub(crate) enum ClosureDecision {
     Close,
 }
 
-/// Mirror of orchestrator-agent 0.6.0 `subagent/outcome.rs::child_failure_is_retryable`.
+/// Mirror of orchestrator-agent 0.7.0 `subagent/outcome.rs::child_failure_is_retryable`.
 /// The lockfile-version test requires an explicit review when that dependency changes.
 fn child_failure_is_retryable(status: RunStatus, code: &str) -> bool {
     status != RunStatus::Cancelled

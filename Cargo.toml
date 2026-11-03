@@ -53,10 +53,6 @@ uuid = { version = "1.26", features = ["v4", "serde"] }
 unicode-normalization = "0.1"
 zeroize = "1.8"
 
-[patch.crates-io]
-orchestrator-agent = { path = "../libs/orchestrator_agent_rs-task-recipes-integration" }
-orchestrator-flow = { path = "../libs/orchestrator_task_rs-task-recipes-integration" }
-
 [profile.dev]
 debug = "line-tables-only"
 

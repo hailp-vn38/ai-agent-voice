@@ -2682,6 +2682,8 @@ dependencies = [
 [[package]]
 name = "orchestrator-agent"
 version = "0.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bfad0e4c88ae9383d96f098e9ce0014cd2f40e782a9e9de22864f7282c51c435"
 dependencies = [
  "async-trait",
  "futures",
@@ -2698,6 +2700,8 @@ dependencies = [
 [[package]]
 name = "orchestrator-flow"
 version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "82f09e37039ae2b038ed71267f956186abdac887c91bf87a399d98238d20263c"
 dependencies = [
  "anydoc",
  "async-trait",

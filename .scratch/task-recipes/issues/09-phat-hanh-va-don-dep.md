@@ -4,10 +4,14 @@
 
 **Blocked by:** 01, 02, 03, 04, 05, 06, 07, 08
 
-**Status:** ready-for-agent
+**Status:** resolved
 
-- [ ] Phát hành thư viện theo thứ tự trong `AGENTS.md`: `orchestrator-agent` (trộn provider), rồi `orchestrator-flow` (recipe). `llm-wiki-rs` chỉ phát hành nếu có thay đổi.
-- [ ] Bỏ `[patch.crates-io]` và dùng version đã phát hành. Test workspace pass qua `scripts/agent-test.sh`.
-- [ ] Xóa nhánh `spike/recipe-gateway` sau khi test của ticket 01 đã thay thế nó.
-- [ ] `GLOSSARY.md` có thuật ngữ **Task Recipe**. ADR 0140 chuyển sang Accepted. `docs/task-recipe-ui.md` khớp với UI đã làm.
-- [ ] Ghi số liệu nền về độ ổn định từ `tasks.db`: tỉ lệ hoàn tất của Task playlist, số lượt LLM mỗi Task, và tần suất `STEP_LIMIT_REACHED`.
+- [x] Phát hành thư viện theo thứ tự trong `AGENTS.md`: `orchestrator-agent` 0.7.0, rồi `orchestrator-flow` 0.4.0. `llm-wiki-rs` không đổi.
+- [x] Bỏ `[patch.crates-io]`, dùng version crates.io đã phát hành. `scripts/agent-test.sh full` pass.
+- [x] Xóa nhánh local `spike/recipe-gateway` sau khi test ticket 01 thay thế spike.
+- [x] `GLOSSARY.md` có thuật ngữ **Task Recipe**; ADR 0140 là Accepted; `docs/task-recipe-ui.md` mô tả UI hiện tại.
+- [x] Ghi baseline trong [`docs/task-recipes-baseline.md`](../../../docs/task-recipes-baseline.md): 5 Task khớp heuristic playlist/YouTube, 4 hoàn tất (80%), trung bình 2,20 lượt LLM/Task, 0/5 có `STEP_LIMIT_REACHED`.
+
+## Answer
+
+Đã phát hành `orchestrator-agent` 0.7.0 trước `orchestrator-flow` 0.4.0, bỏ patch local và chạy pass toàn bộ workspace qua `scripts/agent-test.sh full`. Test toàn bộ package `voice-agent-server` cũng pass tại checkout có cấu hình cục bộ. Nhánh spike đã xóa; worktree thư viện gốc được chuyển về `main` và giữ nguyên. Tài liệu thuật ngữ, ADR, giao diện và baseline đã cập nhật. Baseline nhận diện playlist bằng chuỗi trong title/prompt vì database chưa có recipe ID có cấu trúc.
