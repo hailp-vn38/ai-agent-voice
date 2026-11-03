@@ -417,6 +417,7 @@ onBeforeUnmount(() => {
               </td>
               <td class="max-w-sm px-4 py-4">
                 <button class="block w-full cursor-pointer truncate text-left font-medium hover:text-studio-violet" type="button" @click="openDetail(job.id)">{{ job.goal }}</button>
+                <span v-if="job.recipe" class="mt-1 block truncate text-xs text-muted-foreground">recipe · {{ job.recipe.title }} v{{ job.recipe.version }}</span>
                 <span v-if="job.execution_mode === 'knowledge_ingest_v3'" class="text-xs text-muted-foreground">{{ t('jobUi.knowledge') }}</span>
                 <p class="mt-1 truncate font-mono text-xs text-muted-foreground">{{ job.id }}</p>
               </td>

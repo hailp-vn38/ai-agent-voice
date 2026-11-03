@@ -251,9 +251,29 @@ impl TaskRecipe for PlaylistSourcesRecipe {
         let listed = Self::latest_list(transcript)
             .is_some_and(|result| !result.text.trim_start().starts_with("error "));
         let Some((_, status)) = Self::latest_status(transcript) else {
+            if let Some(failed) = Self::failed_list(transcript) {
+                return RecipeProgress {
+                    current_step: None,
+                    completed_steps: vec![],
+                    completed_items: None,
+                    total_items: None,
+                    summary: None,
+                    stop_reason: Some(
+                        failed
+                            .text
+                            .lines()
+                            .next()
+                            .unwrap_or("recipe tool failed")
+                            .to_owned(),
+                    ),
+                    failed_step: Some(0),
+                };
+            }
             return RecipeProgress {
                 current_step: Some(0),
                 completed_steps: vec![],
+                completed_items: None,
+                total_items: None,
                 summary: None,
                 stop_reason: None,
                 failed_step: None,
@@ -274,16 +294,54 @@ impl TaskRecipe for PlaylistSourcesRecipe {
         } else {
             None
         };
+        let total_items = status
+            .text
+            .split_once("TOTAL:")
+            .and_then(|(_, rest)| {
+                rest.trim_start()
+                    .split(|ch: char| !ch.is_ascii_digit())
+                    .next()
+            })
+            .and_then(|count| count.parse::<usize>().ok());
+        let (completed_items, current_total) = match current_step {
+            Some(1) => (Some(fetched.len()), total_items),
+            Some(2) => (Some(saved.len()), total_items),
+            _ => (total_items, total_items),
+        };
+        let stopped = Self::failed_list(transcript).or_else(|| {
+            Self::latest_status(transcript)
+                .map(|(_, result)| result)
+                .filter(|result| result.text.trim_start().starts_with("error "))
+        });
+        let failure = stopped.map(|result| {
+            let failed_step = if Self::failed_list(transcript).is_some() {
+                0
+            } else {
+                0
+            };
+            (
+                failed_step,
+                result.text.lines().next().unwrap_or("recipe tool failed"),
+            )
+        });
+        let completed_steps = if listed { vec![0] } else { vec![] };
+        let completed_steps = if current_step.is_none() && failure.is_none() {
+            vec![0, 1, 2]
+        } else {
+            completed_steps
+        };
         RecipeProgress {
             current_step,
-            completed_steps: if listed { vec![0] } else { vec![] },
+            completed_steps,
+            completed_items,
+            total_items: current_total,
             summary: Some(format!(
                 "Transcript {} · đã lưu {}",
                 fetched.len(),
                 saved.len()
             )),
-            stop_reason: None,
-            failed_step: None,
+            stop_reason: failure.map(|(_, reason)| reason.to_owned()),
+            failed_step: failure.map(|(step, _)| step),
         }
     }
 }
@@ -304,6 +362,90 @@ mod tests {
         assert!(outline[1].repeat);
         assert_eq!(outline[2].host_tools, ["add_to_sources"]);
         assert!(outline[2].repeat);
+    }
+
+    #[test]
+    fn playlist_progress_reports_repeated_items_and_completion_from_transcript() {
+        let recipe = PlaylistSourcesRecipe;
+        let params = json!({"url":"https://www.youtube.com/playlist?list=PL1"});
+        let list = ModelMessage::tool_result("list", "yt_list_playlist", "listed");
+        let status = ModelMessage::tool_result(
+            "status",
+            "collection_status",
+            "TOTAL: 2 | REMAINING: 2\nNEXT:\n1. video_id=v1 title=One",
+        );
+        let fetched = ModelMessage::tool_result("fetch-v1", "yt_fetch_transcript", "saved v1");
+        let running = vec![
+            ModelMessage::assistant_with_calls(
+                "",
+                vec![ModelToolCall {
+                    id: "fetch-v1".into(),
+                    name: "yt_fetch_transcript".into(),
+                    arguments: json!({"video_id":"v1"}),
+                }],
+            ),
+            list.clone(),
+            status,
+            fetched,
+        ];
+
+        let progress = recipe.progress(&params, &running);
+        assert_eq!(progress.current_step, Some(2));
+        assert_eq!(progress.completed_items, Some(0));
+        assert_eq!(progress.total_items, Some(2));
+        assert!(progress.stop_reason.is_none());
+
+        let completed_status = ModelMessage::tool_result(
+            "status-done",
+            "collection_status",
+            "TOTAL: 1 | REMAINING: 0\nNEXT:",
+        );
+        let completed = vec![
+            list,
+            completed_status,
+            ModelMessage::assistant_with_calls(
+                "",
+                vec![
+                    ModelToolCall {
+                        id: "fetch-one".into(),
+                        name: "yt_fetch_transcript".into(),
+                        arguments: json!({"video_id":"v1"}),
+                    },
+                    ModelToolCall {
+                        id: "save-one".into(),
+                        name: "add_to_sources".into(),
+                        arguments: json!({"video_id":"v1"}),
+                    },
+                ],
+            ),
+            ModelMessage::tool_result("fetch-one", "yt_fetch_transcript", "ok"),
+            ModelMessage::tool_result("save-one", "add_to_sources", "ok"),
+        ];
+        let progress = recipe.progress(&params, &completed);
+        assert_eq!(progress.current_step, None);
+        assert_eq!(progress.completed_steps, vec![0, 1, 2]);
+        assert_eq!(progress.completed_items, Some(1));
+        assert_eq!(progress.total_items, Some(1));
+        assert!(progress.stop_reason.is_none());
+    }
+
+    #[test]
+    fn playlist_progress_reports_stopped_step_and_reason() {
+        let recipe = PlaylistSourcesRecipe;
+        let params = json!({"url":"https://www.youtube.com/playlist?list=PL1"});
+        let transcript = vec![ModelMessage::tool_result(
+            "list",
+            "yt_list_playlist",
+            "error playlist is private",
+        )];
+
+        let progress = recipe.progress(&params, &transcript);
+        assert_eq!(progress.current_step, None);
+        assert_eq!(
+            progress.stop_reason.as_deref(),
+            Some("error playlist is private")
+        );
+        assert_eq!(progress.failed_step, Some(0));
     }
 
     #[test]

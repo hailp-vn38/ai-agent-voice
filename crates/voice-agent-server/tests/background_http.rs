@@ -133,6 +133,101 @@ prompts_dir = "{}"
     server.abort();
 }
 
+#[tokio::test]
+async fn recipe_job_http_projection_returns_the_recipe_progress_view() {
+    let temp_root =
+        std::env::temp_dir().join(format!("background-recipe-http-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&temp_root).unwrap();
+    let config: AppConfig = toml::from_str(&format!(
+        r#"
+[server]
+bind = "127.0.0.1:0"
+public_ws_url = "ws://127.0.0.1:0/voice/v1/"
+[provider_defaults]
+vad = "test"
+asr = "test"
+llm = "test"
+tts = "test"
+[database]
+url = "sqlite://{}"
+[api]
+enabled = true
+admin_token = "background-test-token"
+[orchestrator]
+enabled = true
+endpoint = "http://127.0.0.1:9/v1"
+api_key = "test-key"
+model = "test-model"
+store_dir = "{}"
+tasks_store_dir = "{}"
+reports_dir = "{}"
+work_dir = "{}"
+prompts_dir = "{}"
+skills_dir = "{}"
+[wiki]
+vault_dir = "{}"
+"#,
+        temp_root.join("voice-agent.db").display(),
+        temp_root.join("orch-store").display(),
+        temp_root.join("tasks-store").display(),
+        temp_root.join("reports").display(),
+        temp_root.join("work").display(),
+        temp_root.join("prompts").display(),
+        temp_root.join("skills").display(),
+        temp_root.join("wiki").display(),
+    ))
+    .unwrap();
+    let router = bootstrap_with_providers(config, Arc::new(ProviderSet::unavailable()))
+        .await
+        .unwrap();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base = format!("http://{}/api/admin", listener.local_addr().unwrap());
+    let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    let client = Client::new();
+
+    let created = client
+        .post(format!("{base}/jobs"))
+        .bearer_auth("background-test-token")
+        .json(&json!({
+            "recipe": {
+                "id": "playlist_sources",
+                "params": {"url":"https://www.youtube.com/playlist?list=PL1"}
+            }
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(created.status(), StatusCode::CREATED);
+    let created: Value = created.json().await.unwrap();
+    let expected_progress = created["recipe"]["progress"].clone();
+    assert_eq!(created["recipe"]["id"], "playlist_sources");
+    assert_eq!(created["recipe"]["version"], 1);
+    assert_eq!(
+        created["recipe"]["params"]["url"],
+        "https://www.youtube.com/playlist?list=PL1"
+    );
+    assert_eq!(expected_progress["current_step"], 0);
+
+    let list: Value = client
+        .get(format!("{base}/jobs"))
+        .bearer_auth("background-test-token")
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let item = list["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|item| item["id"] == created["id"])
+        .unwrap();
+    assert_eq!(item["recipe"]["progress"], expected_progress);
+
+    server.abort();
+}
+
 #[test]
 fn project_artifact_catalog_page_maps_task_context_and_download_url() {
     use orchestrator_flow_rs::{
@@ -247,6 +342,7 @@ fn project_task_events_preserves_subagent_sequence_numbers_when_root_continues()
         related_wiki_links: Vec::new(),
         error_code: None,
         error_message: None,
+        recipe: None,
         wait_reason: None,
         next_attempt_at: None,
         created_at: 1_700_000_000_000,
@@ -332,6 +428,7 @@ fn project_task_events_preserves_subagent_sequence_numbers_when_root_continues()
             recent_messages: Vec::new(),
         }),
         subagents: vec![child_session.clone()],
+        recipe: None,
         family_snapshot: None,
     };
 
@@ -395,6 +492,7 @@ fn project_task_events_preserves_subagent_sequence_numbers_when_root_continues()
             recent_messages: Vec::new(),
         }),
         subagents: vec![child_session],
+        recipe: None,
         family_snapshot: None,
     };
 

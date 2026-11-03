@@ -243,6 +243,19 @@ it('refreshes the Jobs list only on user request after the initial load', async 
   }
 })
 
+it('labels recipe Jobs beneath their goal with recipe name and version', async () => {
+  const job = await api.listJobs()
+  api.listJobs.mockClear().mockResolvedValue({
+    ...job,
+    items: [{ ...job.items[0], recipe: { id: 'playlist_sources', version: 1, title: 'Thu thập playlist', params: {}, outline: [], progress: { current_step: 0, completed_steps: [] } } }],
+  })
+  const wrapper = mount(JobsPage, { global: { stubs: { teleport: true } } })
+  try {
+    await flushPromises()
+    expect(wrapper.get('tbody').text()).toContain('recipe · Thu thập playlist v1')
+  } finally { wrapper.unmount() }
+})
+
 it('refreshes the Jobs detail on user request and relevant SSE hints, then stops on unmount', async () => {
   const event = (sequence: number) => ({
     sequence, event_type: 'step_finished',
@@ -285,6 +298,39 @@ it('refreshes the Jobs detail on user request and relevant SSE hints, then stops
   } finally {
     if (wrapper.exists()) wrapper.unmount()
   }
+})
+
+it('refreshes the displayed recipe progress after a Job Change Signal', async () => {
+  const recipe = (progress: Record<string, unknown>) => ({
+    id: 'playlist_sources', version: 1, title: 'Thu thập playlist vào sources',
+    params: { url: 'https://youtube.com/playlist?list=PL1' },
+    outline: [
+      { title: 'List', kind: 'tool', repeat: false },
+      { title: 'Fetch', kind: 'tool', repeat: true },
+      { title: 'Save', kind: 'tool', repeat: true },
+    ],
+    progress,
+  })
+  const job = await api.job()
+  api.job.mockClear()
+    .mockResolvedValueOnce({ ...job, recipe: recipe({ current_step: 1, completed_steps: [0], completed_items: 2, total_items: 5 }) })
+    .mockResolvedValueOnce({ ...job, recipe: recipe({ current_step: null, completed_steps: [0], stop_reason: 'Job budget exhausted', failed_step: 1 }) })
+
+  const wrapper = mount(JobDetailPage, { global: { stubs: { teleport: true } } })
+  try {
+    await flushPromises()
+    expect(wrapper.get('[data-recipe-step="1"]').attributes('data-state')).toBe('current')
+    expect(wrapper.get('[data-recipe-item-progress]').text()).toBe('2 / 5')
+
+    const [callbacks] = listenJobChanges.mock.calls[0] as [JobChangeCallbacks, AbortSignal]
+    callbacks.onReady()
+    callbacks.onChanged('job-1')
+    await vi.advanceTimersByTimeAsync(200)
+    await flushPromises()
+    expect(api.job).toHaveBeenCalledTimes(2)
+    expect(wrapper.get('[data-recipe-stop-reason]').text()).toContain('Job budget exhausted')
+    expect(wrapper.get('[data-recipe-step="1"]').attributes('data-state')).toBe('failed')
+  } finally { wrapper.unmount() }
 })
 
 it('shows a click cursor on both job detail buttons and opens the job', async () => {
