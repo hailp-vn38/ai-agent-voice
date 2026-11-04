@@ -12,7 +12,7 @@ Thuật ngữ thiết kế (module, interface, seam, adapter, depth) dùng theo 
 
 | Câu hỏi | Quyết định |
 |---|---|
-| Code quản lý browser đặt ở đâu? | Module `crate::browser` trong `voice-agent-server` |
+| Code quản lý browser đặt ở đâu? | Module `crate::browser` trong `vela-server` |
 | Chromium chạy ở đâu trên production? | Container riêng, không nằm trong image server |
 | Server điều khiển Chromium thế nào? | CDP qua Docker network nội bộ |
 | Máy dev chạy thế nào? | Server tự spawn Chromium cục bộ |
@@ -30,7 +30,7 @@ Thuật ngữ thiết kế (module, interface, seam, adapter, depth) dùng theo 
 
 ## 2. Hiện trạng
 
-Đường dẫn trong mục này tính từ `crates/voice-agent-server/src/`.
+Đường dẫn trong mục này tính từ `crates/vela-server/src/`.
 
 ### 2.1. Nơi đang dùng Chromium
 
@@ -106,7 +106,7 @@ flowchart LR
 Cấu trúc module:
 
 ```text
-crates/voice-agent-server/src/browser/
+crates/vela-server/src/browser/
 ├── mod.rs         # Interface: Browser, BrowserSession, kiểu dữ liệu, shared(), init()
 ├── runtime.rs     # BrowserRuntime: chọn adapter theo role, giới hạn session, shutdown
 ├── connected.rs   # Adapter: nối vào Chromium ngoài process (Docker)
@@ -235,7 +235,7 @@ Thêm `HostTool` mới tên `fetch_rendered_html`, không sửa `fetch_html`:
 2. Các tool `html_extract_*` dùng lại HTML đó theo cùng URL.
 3. Đăng ký bằng `builder.register_tool` ở `services/task_flow/mod.rs:246-250`.
 4. Thêm vào các danh sách tool trong `services/task_flow/agent_settings/specs.rs` (ví dụ `SOURCE_COLLECTOR_TOOLS`, dòng 64).
-5. Cập nhật `crates/voice-agent-server/builtin-skills/web-fetch-policy/SKILL.md`: chỉ dùng `fetch_rendered_html` khi `fetch_html` cho thấy trang rỗng do cần JavaScript, ví dụ `p_count` quá thấp.
+5. Cập nhật `crates/vela-server/builtin-skills/web-fetch-policy/SKILL.md`: chỉ dùng `fetch_rendered_html` khi `fetch_html` cho thấy trang rỗng do cần JavaScript, ví dụ `p_count` quá thấp.
 
 Agent chọn tool tường minh, không fallback ngầm, vì render tốn tài nguyên hơn `curl` nhiều.
 
@@ -347,7 +347,7 @@ services:
         ipv4_address: 172.30.51.2
 
   browser-crawl: &browser
-    image: voice-agent-browser:${IMAGE_TAG:-local}
+    image: vela-browser:${IMAGE_TAG:-local}
     build: { context: ., dockerfile: docker/browser.Dockerfile }
     restart: unless-stopped
     init: true

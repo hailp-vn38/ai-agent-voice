@@ -61,7 +61,7 @@ Streaming is always enabled through the installed OpenAI-compatible transport. M
 Run the optional live check through the actual Rust provider:
 
 ```bash
-cargo test -p voice-agent-server --lib live_space_bunny_streams_through_provider -- --ignored --nocapture
+cargo test -p vela-server --lib live_space_bunny_streams_through_provider -- --ignored --nocapture
 ```
 
 Run a separate end-to-end verification through Admin provider test, Template Agent chat and MCP tool execution. Watch for 401/403, 404/model_removed, 429/free quota, SSE differences, truncation and tool-call incompatibility. No network test is performed at server startup and no requests are retried automatically by this adapter.

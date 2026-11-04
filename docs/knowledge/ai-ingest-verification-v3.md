@@ -36,14 +36,14 @@ Stale decisions return 409; invalid Source evidence returns 422; unavailable pro
 Use the repository wrapper for every check:
 
 ```sh
-scripts/agent-test.sh run -- cargo test --quiet -p voice-agent-server --lib knowledge_
+scripts/agent-test.sh run -- cargo test --quiet -p vela-server --lib knowledge_
 scripts/agent-test.sh targeted services::knowledge
 scripts/agent-test.sh targeted services::background
 scripts/agent-test.sh targeted tools::core
 scripts/agent-test.sh check
 scripts/agent-test.sh run -- python3 scripts/check-sqlx-placement.py
 scripts/agent-test.sh run -- cargo fmt --all --check
-scripts/agent-test.sh run -- cargo clippy -p voice-agent-server --all-targets -- -D warnings
+scripts/agent-test.sh run -- cargo clippy -p vela-server --all-targets -- -D warnings
 scripts/agent-test.sh web typecheck
 scripts/agent-test.sh web test
 scripts/agent-test.sh web build

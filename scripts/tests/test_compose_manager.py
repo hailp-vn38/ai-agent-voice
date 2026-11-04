@@ -42,7 +42,7 @@ class ComposeManagerTests(unittest.TestCase):
         result, calls = self.invoke("prod", "logs", "server")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(calls, [[
-            "compose", "-p", "voice-agent-prod", "-f", "compose.yaml", "-f", "compose.prod.yaml",
+            "compose", "-p", "vela-prod", "-f", "compose.yaml", "-f", "compose.prod.yaml",
             "logs", "--follow", "--tail", "100", "server",
         ]])
 
@@ -69,7 +69,7 @@ class ComposeManagerTests(unittest.TestCase):
                     self.assertEqual(result.returncode, 0, result.stderr)
                     selection = [] if services == ("all",) else list(services)
                     self.assertEqual(calls, [[
-                        "compose", "-p", f"voice-agent-{environment}", *files,
+                        "compose", "-p", f"vela-{environment}", *files,
                         "down", *selection,
                     ]])
 
@@ -82,7 +82,7 @@ class ComposeManagerTests(unittest.TestCase):
             with self.subTest(prefix=prefix):
                 result, calls = self.invoke(*prefix, "build", "server", "web")
                 self.assertEqual(result.returncode, 0, result.stderr)
-                self.assertEqual(calls[-1][1:3], ["-p", f"voice-agent-{project}"])
+                self.assertEqual(calls[-1][1:3], ["-p", f"vela-{project}"])
                 self.assertEqual(calls[-1][-3:], ["build", "server", "web"])
                 self.assertIn("Application storage is under /mnt/storage", result.stdout)
 

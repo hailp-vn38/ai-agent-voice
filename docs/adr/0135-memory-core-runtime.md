@@ -3,7 +3,7 @@
 Status: Accepted, 2026-11-01.
 Extends: [ADR 0119](0119-memory-wiki-separated-ownership.md), [ADR 0127](0127-orchestrator-flow-task-and-wiki-runtime.md).
 
-Màn Memory hiện chỉ là tên khác của Wiki: Memory Fact nằm lẫn với Wiki Page, đọc được qua công cụ Wiki và Knowledge MCP, quên không để lại dấu vết, và Voice Session lẫn Background Task đều không dùng Memory. `voice-agent-server` dựng một module sâu `MemoryCore`, là đường duy nhất đọc và ghi Memory, với Memory Vault Markdown tách khỏi Wiki và phân vùng theo Device. Mọi thứ mặc định tắt (`[memory].enabled = false`, `devices.memory_mode = 'off'`), Device hiện có không đổi hành vi cho tới khi Admin bật từng Device.
+Màn Memory hiện chỉ là tên khác của Wiki: Memory Fact nằm lẫn với Wiki Page, đọc được qua công cụ Wiki và Knowledge MCP, quên không để lại dấu vết, và Voice Session lẫn Background Task đều không dùng Memory. `vela-server` dựng một module sâu `MemoryCore`, là đường duy nhất đọc và ghi Memory, với Memory Vault Markdown tách khỏi Wiki và phân vùng theo Device. Mọi thứ mặc định tắt (`[memory].enabled = false`, `devices.memory_mode = 'off'`), Device hiện có không đổi hành vi cho tới khi Admin bật từng Device.
 
 ADR này chốt quyết định ở mốc 1 của [spec](../../.scratch/memory-core/spec.md); code đến theo các mốc 2 đến 7. Trước mốc 4, màn Memory của Admin vẫn chạy trên Wiki.
 

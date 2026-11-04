@@ -17,28 +17,28 @@ COPY scripts scripts
 CMD ["bash", "-c", "cargo fmt --check && cargo clippy --locked --all-targets --all-features -- -D warnings && cargo test --locked --workspace && cargo test --locked --workspace --features qualification-providers"]
 
 FROM source AS release
-RUN --mount=type=cache,id=voice-agent-cargo,target=/usr/local/cargo/registry,sharing=locked \
-    --mount=type=cache,id=voice-agent-target,target=/mnt/storage/ai-agent-voice/target,sharing=locked \
-    cargo build --locked --release -p voice-agent-server --bin voice-agent-server \
-    && cp /mnt/storage/ai-agent-voice/target/release/voice-agent-server /voice-agent-server
+RUN --mount=type=cache,id=vela-cargo,target=/usr/local/cargo/registry,sharing=locked \
+    --mount=type=cache,id=vela-target,target=/mnt/storage/ai-agent-voice/target,sharing=locked \
+    cargo build --locked --release -p vela-server --bin vela-server \
+    && cp /mnt/storage/ai-agent-voice/target/release/vela-server /vela-server
 
 FROM source AS qualification-build
-RUN --mount=type=cache,id=voice-agent-cargo,target=/usr/local/cargo/registry,sharing=locked \
-    --mount=type=cache,id=voice-agent-target,target=/mnt/storage/ai-agent-voice/target,sharing=locked \
-    cargo build --locked -p voice-agent-server --bin voice-agent-server --features qualification-providers \
-    && cp /mnt/storage/ai-agent-voice/target/debug/voice-agent-server /voice-agent-server
+RUN --mount=type=cache,id=vela-cargo,target=/usr/local/cargo/registry,sharing=locked \
+    --mount=type=cache,id=vela-target,target=/mnt/storage/ai-agent-voice/target,sharing=locked \
+    cargo build --locked -p vela-server --bin vela-server --features qualification-providers \
+    && cp /mnt/storage/ai-agent-voice/target/debug/vela-server /vela-server
 
 FROM debian:bookworm-slim AS runtime
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl libstdc++6 libgomp1 xz-utils \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY assets/enrollment assets/enrollment
-ENV VOICE_AGENT_CONFIG=/app/config.toml
+ENV VELA_CONFIG=/app/config.toml
 EXPOSE 8000
-ENTRYPOINT ["/usr/local/bin/voice-agent-server"]
+ENTRYPOINT ["/usr/local/bin/vela-server"]
 
 FROM runtime AS qualification
-COPY --from=qualification-build /voice-agent-server /usr/local/bin/voice-agent-server
+COPY --from=qualification-build /vela-server /usr/local/bin/vela-server
 
 FROM runtime AS production
 ARG TARGETARCH
@@ -50,5 +50,5 @@ RUN case "$TARGETARCH" in amd64) ort_arch=x64 ;; arm64) ort_arch=aarch64 ;; *) e
     && tar -xzf /tmp/onnxruntime.tgz --strip-components=2 -C runtime/onnxruntime \
        "onnxruntime-linux-${ort_arch}-1.23.2/lib" \
     && rm /tmp/onnxruntime.tgz
-COPY --from=release /voice-agent-server /usr/local/bin/voice-agent-server
+COPY --from=release /vela-server /usr/local/bin/vela-server
 USER 1000:1000

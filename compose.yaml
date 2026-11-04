@@ -1,12 +1,12 @@
 services:
   server:
-    image: voice-agent-server:${IMAGE_TAG:-local}
+    image: vela-server:${IMAGE_TAG:-local}
     build:
       context: .
       dockerfile: docker/server.Dockerfile
       target: production
     environment:
-      VOICE_AGENT_CONFIG: /app/config.toml
+      VELA_CONFIG: /app/config.toml
     stop_grace_period: 30s
     healthcheck:
       test: [CMD, curl, --fail, --silent, --max-time, '5', 'http://127.0.0.1:8000/ready']
@@ -16,7 +16,7 @@ services:
       start_period: 30m
 
   web:
-    image: voice-agent-web:${IMAGE_TAG:-local}
+    image: vela-web:${IMAGE_TAG:-local}
     build:
       context: .
       dockerfile: docker/web.Dockerfile

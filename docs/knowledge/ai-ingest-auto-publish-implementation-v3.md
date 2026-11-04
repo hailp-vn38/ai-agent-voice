@@ -24,7 +24,7 @@ Non-goals for this slice:
 ## 2. Existing implementation to preserve
 
 Verified on the target branch:
-- `KnowledgeCore` in `crates/voice-agent-server/src/services/knowledge/` owns immutable Markdown Sources, `put_draft_at`, `publish(id, expected_revision, source_ref)`, canonical `verified` revisions, revision CAS, filesystem locking, provenance SHA checks and SearchIndex reconciliation.
+- `KnowledgeCore` in `crates/vela-server/src/services/knowledge/` owns immutable Markdown Sources, `put_draft_at`, `publish(id, expected_revision, source_ref)`, canonical `verified` revisions, revision CAS, filesystem locking, provenance SHA checks and SearchIndex reconciliation.
 - New Wiki drafts may be stored in `knowledge/wiki/` with `status: draft`; updates to previously verified Wiki use `knowledge/drafts/`. Do **not** assume the Review Queue is identical to the physical `drafts/` folder.
 - Source v1 is bounded UTF-8 Markdown (`MAX_SOURCE_BYTES = 256 KiB`) with immutable `src_<id>:1` reference. Editable Raw files are **not** automatically verified Source snapshots; `raw_import` is explicit.
 - Agent `knowledge.search` and `knowledge.read` expose only verified Wiki with trustworthy Source provenance. `core.memory` and Memory policies are unchanged.
@@ -219,7 +219,7 @@ Proposed settings:
 - `GET /api/admin/knowledge/settings` returns settings, revision, readiness and **eligible LLM options** filtered from the existing provider/runtime registry. Each option gives ref, display name, runtime readiness and structured-output qualification status.
 - `PUT /api/admin/knowledge/settings` uses expected revision/CAS. Reject enabling if no selected qualified structured provider, or policy `auto_publish` when capability qualification is absent.
 - At Job admission, resolve `analysis_provider_ref` via existing provider pin infrastructure and snapshot incarnation/revision/digest. Re-check runtime capability and authorization before the LLM turn. Missing/deleted/disabled/rotated provider fails closed, not silently falls back to another.
-- Existing global `orchestrator_llm_provider` / `worker_llm_provider` are **not** overwritten. Voice Agent/Template providers, Provider Test, and Root/Child pin semantics are untouched.
+- Existing global `orchestrator_llm_provider` / `worker_llm_provider` are **not** overwritten. Vela/Template providers, Provider Test, and Root/Child pin semantics are untouched.
 - Existing configuration has `supports_responses` / `supports_structured_outputs` hints for supported LLM adapters. A declared flag is **not sufficient**; actual adapter path must pass strict structured qualification tests (valid schema, refusal, truncation, unsupported mode, timeout). Provider option must be hidden/disabled for auto until qualified.
 - Optional independent verifier is **Phase 4**. If enabled later, pin its provider separately; no assumption that a second LLM independently proves factual truth.
 - Settings change applies to **new jobs**. Running jobs retain the provider/policy/Source snapshot; a later re-analysis explicitly takes new settings. Revocation still blocks the old pin at the existing authorization seam.
@@ -338,10 +338,10 @@ Release gates:
 ## 13. Code ownership checklist
 
 Proposed edit locations (not implemented by this document):
-- `crates/voice-agent-server/src/services/knowledge/` — `processing.rs`, private policy/assessment tests, narrow Wiki integration.
-- `crates/voice-agent-server/src/services/background/` — new `knowledge_ingest.rs` and mode-aware admission/eligibility/scheduler/execution, reuse `models.rs`.
-- `crates/voice-agent-server/src/database/jobs/` — mode-safe durable insert/pin/idempotency, reuse Job activity and events.
-- `crates/voice-agent-server/src/database/` — settings + proposal metadata, next available main SQLx migration.
-- `crates/voice-agent-server/src/app/admin/knowledge.rs` — new authenticated routes delegated into deep modules.
+- `crates/vela-server/src/services/knowledge/` — `processing.rs`, private policy/assessment tests, narrow Wiki integration.
+- `crates/vela-server/src/services/background/` — new `knowledge_ingest.rs` and mode-aware admission/eligibility/scheduler/execution, reuse `models.rs`.
+- `crates/vela-server/src/database/jobs/` — mode-safe durable insert/pin/idempotency, reuse Job activity and events.
+- `crates/vela-server/src/database/` — settings + proposal metadata, next available main SQLx migration.
+- `crates/vela-server/src/app/admin/knowledge.rs` — new authenticated routes delegated into deep modules.
 - `apps/admin-web/src/pages/knowledge/KnowledgePage.vue` — Review + Analyze, keeping Raw/Wiki/Drafts, Reading/Compose/Graph and existing editor; `KnowledgeSettingsPage.vue` — real controls on the existing `/knowledge/settings` route; i18n and tests.
 - `docs/flows/13-knowledge-v3.md`, `docs/flows/14-knowledge-graph-v3.md`, `docs/knowledge/verification-v3.md` and tests — update on implementation, not prematurely claim shipped. Preserve ADR 0124 and the Graph index v3 contract.

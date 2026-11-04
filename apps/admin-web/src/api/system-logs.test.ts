@@ -25,7 +25,7 @@ describe('systemLogsApi & listenSystemLogStream', () => {
           subsystem: 'voice.llm',
           event: 'llm_stream_completed',
           message: 'LLM stream completed',
-          target: 'voice_agent_server::workers::llm',
+          target: 'vela_server::workers::llm',
           session_id: 'sess-99',
           turn_id: 2,
           generation: 1,

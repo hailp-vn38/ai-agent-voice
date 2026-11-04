@@ -6,10 +6,10 @@ on:
   pull_request:
     paths:
       - 'docker/plugin-runtime.Dockerfile'
-      - 'crates/voice-agent-server/src/bin/plugin-runtime.rs'
-      - 'crates/voice-agent-server/src/services/background/**'
-      - 'crates/voice-agent-server/src/database/jobs/**'
-      - 'crates/voice-agent-server/migrations/0110_shared_plugin_installations.sql'
+      - 'crates/vela-server/src/bin/plugin-runtime.rs'
+      - 'crates/vela-server/src/services/background/**'
+      - 'crates/vela-server/src/database/jobs/**'
+      - 'crates/vela-server/migrations/0110_shared_plugin_installations.sql'
       - 'plugins/**'
       - '.github/workflows/shared-plugin-runtime.yml'
 jobs:
@@ -23,18 +23,18 @@ jobs:
       - name: Formatted Rust source handoff
         if: ${{ always() && !cancelled() }}
         run: |
-          rustfmt --edition 2024 --config skip_children=true crates/voice-agent-server/src/bin/plugin-runtime.rs crates/voice-agent-server/src/config/background.rs crates/voice-agent-server/src/services/background/plugins/archive.rs crates/voice-agent-server/src/services/background/plugins/builder.rs crates/voice-agent-server/src/services/background/plugins/contracts.rs crates/voice-agent-server/src/services/background/plugins/dispatch.rs crates/voice-agent-server/src/services/background/plugins/mod.rs crates/voice-agent-server/src/services/background/plugins/qualification.rs crates/voice-agent-server/src/services/background/plugins/reaper.rs crates/voice-agent-server/src/services/background/plugins/runner.rs crates/voice-agent-server/src/services/background/plugins/tests.rs crates/voice-agent-server/src/services/background/tests/execution.rs crates/voice-agent-server/src/database/jobs/execution.rs crates/voice-agent-server/src/database/jobs/orchestration.rs
-          for file in crates/voice-agent-server/src/bin/plugin-runtime.rs crates/voice-agent-server/src/config/background.rs crates/voice-agent-server/src/services/background/plugins/archive.rs crates/voice-agent-server/src/services/background/plugins/builder.rs crates/voice-agent-server/src/services/background/plugins/contracts.rs crates/voice-agent-server/src/services/background/plugins/dispatch.rs crates/voice-agent-server/src/services/background/plugins/mod.rs crates/voice-agent-server/src/services/background/plugins/qualification.rs crates/voice-agent-server/src/services/background/plugins/reaper.rs crates/voice-agent-server/src/services/background/plugins/runner.rs crates/voice-agent-server/src/services/background/plugins/tests.rs crates/voice-agent-server/src/services/background/tests/execution.rs crates/voice-agent-server/src/database/jobs/execution.rs crates/voice-agent-server/src/database/jobs/orchestration.rs; do
+          rustfmt --edition 2024 --config skip_children=true crates/vela-server/src/bin/plugin-runtime.rs crates/vela-server/src/config/background.rs crates/vela-server/src/services/background/plugins/archive.rs crates/vela-server/src/services/background/plugins/builder.rs crates/vela-server/src/services/background/plugins/contracts.rs crates/vela-server/src/services/background/plugins/dispatch.rs crates/vela-server/src/services/background/plugins/mod.rs crates/vela-server/src/services/background/plugins/qualification.rs crates/vela-server/src/services/background/plugins/reaper.rs crates/vela-server/src/services/background/plugins/runner.rs crates/vela-server/src/services/background/plugins/tests.rs crates/vela-server/src/services/background/tests/execution.rs crates/vela-server/src/database/jobs/execution.rs crates/vela-server/src/database/jobs/orchestration.rs
+          for file in crates/vela-server/src/bin/plugin-runtime.rs crates/vela-server/src/config/background.rs crates/vela-server/src/services/background/plugins/archive.rs crates/vela-server/src/services/background/plugins/builder.rs crates/vela-server/src/services/background/plugins/contracts.rs crates/vela-server/src/services/background/plugins/dispatch.rs crates/vela-server/src/services/background/plugins/mod.rs crates/vela-server/src/services/background/plugins/qualification.rs crates/vela-server/src/services/background/plugins/reaper.rs crates/vela-server/src/services/background/plugins/runner.rs crates/vela-server/src/services/background/plugins/tests.rs crates/vela-server/src/services/background/tests/execution.rs crates/vela-server/src/database/jobs/execution.rs crates/vela-server/src/database/jobs/orchestration.rs; do
             echo "__RUSTFMT_BEGIN__${file}"
             base64 -w0 "${file}"
             echo
             echo "__RUSTFMT_END__${file}"
           done
       - name: Shared runtime binary
-        run: cargo check --locked -p voice-agent-server --bin plugin-runtime
+        run: cargo check --locked -p vela-server --bin plugin-runtime
       - name: Plugin contract tests
         if: ${{ always() && !cancelled() }}
-        run: cargo test --locked -p voice-agent-server --lib services::background::plugins
+        run: cargo test --locked -p vela-server --lib services::background::plugins
       - name: Workspace formatting
         if: ${{ always() && !cancelled() }}
         run: cargo fmt --all --check

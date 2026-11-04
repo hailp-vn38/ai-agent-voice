@@ -92,7 +92,7 @@ def violations(root):
 
 
 if __name__ == '__main__':
-    root = Path(__file__).resolve().parents[1] / 'crates/voice-agent-server/src'
+    root = Path(__file__).resolve().parents[1] / 'crates/vela-server/src'
     errors = violations(root)
     print('\n'.join(errors) if errors else 'PASS: production SQLx queries belong to database/')
     sys.exit(bool(errors))

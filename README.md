@@ -1,6 +1,6 @@
-# voice-agent-server
+# vela-server
 
-Trợ lý giọng nói và tác vụ nền viết bằng Rust, phục vụ client phần mềm hoặc thiết bị tuân thủ **WebSocket Voice Protocol V1**. Server điều phối ASR → LLM → TTS, quản lý tác vụ bằng agent, Knowledge Wiki và Memory theo Device. **Voice Agent Studio** là giao diện quản trị Vue, kèm Studio Assistant để trò chuyện ngay trong trình duyệt.
+Trợ lý giọng nói và tác vụ nền viết bằng Rust, phục vụ client phần mềm hoặc thiết bị tuân thủ **WebSocket Voice Protocol V1**. Server điều phối ASR → LLM → TTS, quản lý tác vụ bằng agent, Knowledge Wiki và Memory theo Device. **Vela Studio** là giao diện quản trị Vue, kèm Studio Assistant để trò chuyện ngay trong trình duyệt.
 
 Firmware reference là nguồn đối chiếu tương thích đã pin, không phải loại client duy nhất. Dự án định nghĩa wire contract và hành vi riêng, không port reference implementation theo kiểu 1:1.
 
@@ -22,8 +22,8 @@ Speaker recognition chỉ hỗ trợ cá nhân hóa, không xác thực hay cấ
 
 | Đường dẫn | Vai trò |
 | --- | --- |
-| [`crates/voice-agent-server/`](crates/voice-agent-server/) | Rust server, provider adapters, workers, session actor và tests |
-| [`apps/admin-web/`](apps/admin-web/) | Voice Agent Studio: Vue 3, TypeScript, Vite, Pinia, Tailwind CSS |
+| [`crates/vela-server/`](crates/vela-server/) | Rust server, provider adapters, workers, session actor và tests |
+| [`apps/admin-web/`](apps/admin-web/) | Vela Studio: Vue 3, TypeScript, Vite, Pinia, Tailwind CSS |
 | [`config.example.toml`](config.example.toml) | Cấu hình deployment mẫu |
 | [`CONTEXT.md`](CONTEXT.md) | Thuật ngữ và domain model |
 | [`docs/`](docs/) | Flow, API, chiến lược test và ADR |
@@ -45,7 +45,7 @@ Speaker recognition chỉ hỗ trợ cá nhân hóa, không xác thực hay cấ
 - Node.js **22.12 trở lên** và npm nếu chạy Admin Web.
 - Python 3, `espeak-ng` và `ffmpeg` nếu tạo audio enrollment bằng script.
 
-Chạy các lệnh backend từ thư mục gốc repository. Root workspace chỉ gồm `voice-agent-server`; ba thư viện trong `vendor/` được dùng qua `[patch.crates-io]` và có workspace riêng. Giữ đầy đủ các thư mục này khi checkout/build. Nếu cần chọn thư mục build riêng:
+Chạy các lệnh backend từ thư mục gốc repository. Root workspace chỉ gồm `vela-server`; ba thư viện trong `vendor/` được dùng qua `[patch.crates-io]` và có workspace riêng. Giữ đầy đủ các thư mục này khi checkout/build. Nếu cần chọn thư mục build riêng:
 
 ```bash
 export CARGO_TARGET_DIR="$PWD/target"
@@ -71,15 +71,15 @@ Chỉnh `config.toml` trước khi chạy:
 - Mẫu bật `[orchestrator].enabled = true`: cấu hình `endpoint`, `api_key`, `model` cho tác vụ nền. Cấu hình LLM này độc lập với provider voice mặc định. Đặt `enabled = false` nếu chỉ chạy voice.
 - `[wiki]`, `[wiki.mcp]`, `[memory]` và `[system_mcp]` là các phần bật riêng; không bật tất cả chỉ để khởi động voice.
 
-SQLite mặc định nằm tại `data/voice-agent.db`. Server tự tạo thư mục cha và chạy migrations. SQLite V1 dành cho **một process trên filesystem local**; không dùng NFS/SMB hoặc nhiều process cùng ghi. Hai key cũ `database.enabled` và `database.devices.admission_enabled` không còn được chấp nhận.
+SQLite mặc định nằm tại `data/vela.db`. Server tự tạo thư mục cha và chạy migrations. SQLite V1 dành cho **một process trên filesystem local**; không dùng NFS/SMB hoặc nhiều process cùng ghi. Hai key cũ `database.enabled` và `database.devices.admission_enabled` không còn được chấp nhận.
 
 ### 2. Khởi động server
 
 ```bash
-VOICE_AGENT_CONFIG=config.toml cargo run --locked -p voice-agent-server --bin voice-agent-server
+VELA_CONFIG=config.toml cargo run --locked -p vela-server --bin vela-server
 ```
 
-Nếu không đặt `VOICE_AGENT_CONFIG`, binary đọc `config.toml`. Endpoint mặc định:
+Nếu không đặt `VELA_CONFIG`, binary đọc `config.toml`. Endpoint mặc định:
 
 | Endpoint | Mục đích |
 | --- | --- |
@@ -99,7 +99,7 @@ Startup chuẩn bị model của **mọi provider local khai báo trong TOML**, 
 
 Sau đó server dựng runtime của các provider mặc định, Vision khi bật và TTS có `preload = true`; Provider Runtime Manager hỗ trợ materialize provider khi cần nếu được cấu hình. Lần chạy đầu có thể tải model lớn và mất nhiều thời gian. Không cài được assets hoặc không dựng được runtime bắt buộc sẽ làm startup fail trước khi phục vụ request. Xem [quyết định về model assets](docs/adr/0076-provider-owned-model-assets.md).
 
-### 3. Chạy Voice Agent Studio và provision Device
+### 3. Chạy Vela Studio và provision Device
 
 Ở terminal khác:
 
@@ -204,7 +204,7 @@ Gateway dùng snapshot tài khoản trong RAM, làm mới token nền và failov
 
 | Dữ liệu | Nơi lưu |
 | --- | --- |
-| Agents, Devices, Providers, reminders, gateway accounts, transcript | `[database].url`, mẫu: `data/voice-agent.db` |
+| Agents, Devices, Providers, reminders, gateway accounts, transcript | `[database].url`, mẫu: `data/vela.db` |
 | TaskManager và khóa sở hữu process | `[orchestrator].tasks_store_dir`, gồm `tasks.db`, `tasks.owner.lock` |
 | Agent state/cấu hình, prompts, Skills, báo cáo và work files | Các đường dẫn `store_dir`, `prompts_dir`, `skills_dir`, `reports_dir`, `work_dir` trong `[orchestrator]` |
 | Wiki Markdown và index dẫn xuất | `[wiki].vault_dir` |
@@ -281,17 +281,17 @@ Lệnh này chạy checks và smoke tests trong môi trường test riêng, **x�
 `provider-bench-av` đo boundary ASR/VAD/LLM, dùng workload đã version control; warmup không tính vào số liệu. LLM đo TTFT tại `TextDelta` không rỗng đầu tiên, total latency và chunk/tool-call counts.
 
 ```bash
-scripts/agent-test.sh run -- cargo run --locked --release -p voice-agent-server --bin provider-bench-av -- \
+scripts/agent-test.sh run -- cargo run --locked --release -p vela-server --bin provider-bench-av -- \
   llm --config config.toml \
   --workload benchmarks/performance_tester/workloads/llm-v1.json \
   --warmup 1 --iterations 5 --output target/benchmarks/llm.json
 
-scripts/agent-test.sh run -- cargo run --locked --release -p voice-agent-server --bin provider-bench-av -- \
+scripts/agent-test.sh run -- cargo run --locked --release -p vela-server --bin provider-bench-av -- \
   asr --config config.toml \
   --workload benchmarks/performance_tester/workloads/asr-v1.json \
   --feed burst --warmup 1 --iterations 5
 
-scripts/agent-test.sh run -- cargo run --locked --release -p voice-agent-server --bin provider-bench-av -- \
+scripts/agent-test.sh run -- cargo run --locked --release -p vela-server --bin provider-bench-av -- \
   vad --config config.toml \
   --workload benchmarks/performance_tester/workloads/vad-v1.json \
   --warmup 1 --iterations 5
@@ -300,7 +300,7 @@ scripts/agent-test.sh run -- cargo run --locked --release -p voice-agent-server 
 TTS dùng `provider-bench`, với mode `provider` đo tới PCM hoặc `delivery` đo tới Opus packet sẵn sàng gửi:
 
 ```bash
-scripts/agent-test.sh run -- cargo run --locked --release -p voice-agent-server --bin provider-bench -- \
+scripts/agent-test.sh run -- cargo run --locked --release -p vela-server --bin provider-bench -- \
   tts provider --config config.toml --warmup-runs 1 --runs 5
 ```
 

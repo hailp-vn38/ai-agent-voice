@@ -81,8 +81,8 @@ Trước khi sửa, `wiki_query` 10 kết quả cho nội dung khoảng 19.500 �
 
 Nội dung là JSON nằm trong chuỗi, được cắt còn `max_chars - 256` byte, nhưng khi serialize lại, dấu `"` và xuống dòng bị escape làm dài thêm. Tổng vượt giới hạn nên hàm rơi vào nhánh cuối và bỏ hết nội dung.
 
-- [`bound_result_chars`](../../crates/voice-agent-server/src/tools/knowledge_mcp/staging.rs) giờ tính giới hạn theo kích thước sau khi escape, nên chỉ cắt phần đuôi. Knowledge MCP và tool wiki của voice session dùng chung hàm này.
-- [`ask.rs`](../../crates/voice-agent-server/src/app/admin/knowledge/ask.rs) gửi cho LLM danh sách gọn gồm đường dẫn, tiêu đề, điểm và đoạn trích, tối đa 800 ký tự mỗi kết quả.
+- [`bound_result_chars`](../../crates/vela-server/src/tools/knowledge_mcp/staging.rs) giờ tính giới hạn theo kích thước sau khi escape, nên chỉ cắt phần đuôi. Knowledge MCP và tool wiki của voice session dùng chung hàm này.
+- [`ask.rs`](../../crates/vela-server/src/app/admin/knowledge/ask.rs) gửi cho LLM danh sách gọn gồm đường dẫn, tiêu đề, điểm và đoạn trích, tối đa 800 ký tự mỗi kết quả.
 
 Phép thử: khi được yêu cầu gọi `wiki_query` với `limit` 10 rồi liệt kê kết quả, LLM liệt kê đủ cả 10 đường dẫn kèm điểm.
 

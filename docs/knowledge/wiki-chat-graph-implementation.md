@@ -26,11 +26,11 @@ Spec: [.scratch/wiki-chat-graph/spec.md](../../.scratch/wiki-chat-graph/spec.md)
 
 | File | Việc |
 | --- | --- |
-| `crates/voice-agent-server/src/app/admin/knowledge/answer_graph.rs` | Mới. `Evidence`, `answer_graph()` |
-| `crates/voice-agent-server/src/app/admin/knowledge/ask.rs` | Mới. Handler SSE, `run_ask()`, allowlist, prompt |
-| `crates/voice-agent-server/src/app/admin/knowledge/graph.rs` | Thêm nhánh `scope=query`, tách hàm gộp cạnh để dùng chung |
-| `crates/voice-agent-server/src/app/admin/knowledge/mod.rs` | Khai báo module, re-export handler |
-| `crates/voice-agent-server/src/app/admin/router.rs` | Thêm route `/knowledge/ask` |
+| `crates/vela-server/src/app/admin/knowledge/answer_graph.rs` | Mới. `Evidence`, `answer_graph()` |
+| `crates/vela-server/src/app/admin/knowledge/ask.rs` | Mới. Handler SSE, `run_ask()`, allowlist, prompt |
+| `crates/vela-server/src/app/admin/knowledge/graph.rs` | Thêm nhánh `scope=query`, tách hàm gộp cạnh để dùng chung |
+| `crates/vela-server/src/app/admin/knowledge/mod.rs` | Khai báo module, re-export handler |
+| `crates/vela-server/src/app/admin/router.rs` | Thêm route `/knowledge/ask` |
 | `apps/admin-web/src/api/sse.ts` | Mới. Tách `consumeSse` khỏi `job-updates.ts` |
 | `apps/admin-web/src/api/wiki-chat.ts` | Mới. `askWiki()` bằng `fetch` + `getReader` |
 | `apps/admin-web/src/pages/knowledge/useWikiChat.ts` | Mới. State hội thoại, đồ thị theo từng tin, hủy |
@@ -100,7 +100,7 @@ Giao được ngay và kiểm chứng phần khó nhất của Graph.
 | `KnowledgeGraph.test.ts`: scope query vẽ theo mức, Global và Local không đổi | H1, H10 |
 
 ```bash
-scripts/agent-test.sh targeted answer_graph voice-agent-server
+scripts/agent-test.sh targeted answer_graph vela-server
 ```
 
 ```bash
@@ -187,11 +187,11 @@ Provider giả phát sẵn kịch bản sự kiện, vault tạm trong thư mụ
 | `ask_requires_configured_provider` | `wiki_chat_not_configured` |
 
 ```bash
-scripts/agent-test.sh targeted knowledge::ask voice-agent-server
+scripts/agent-test.sh targeted knowledge::ask vela-server
 ```
 
 ```bash
-scripts/agent-test.sh check voice-agent-server
+scripts/agent-test.sh check vela-server
 ```
 
 **Xong khi:** các test trên qua và một lượt thật với provider thật chạy hết qua `curl`.
@@ -276,7 +276,7 @@ P1 phát hành được một mình. P2 không có UI vẫn kiểm tra được 
 ## Kiểm tra cuối
 
 ```bash
-scripts/agent-test.sh package voice-agent-server
+scripts/agent-test.sh package vela-server
 ```
 
 ```bash
@@ -341,7 +341,7 @@ Chạy qua `scripts/agent-test.sh` trên nhánh P6:
 
 | Gate | Kết quả | Ghi chú |
 | --- | --- | --- |
-| `package voice-agent-server` | `FAIL` (exit 101) | Hai lần trong worktree P6 và lần thứ ba sau khi tích hợp đều hết dung lượng (`ENOSPC`) khi linker tạo test binary (`speechoutput_tracer` và `docker_config`); lần thứ ba vẫn gặp lỗi dù chạy tuần tự với `CARGO_BUILD_JOBS=1`. Không tính là đạt. |
+| `package vela-server` | `FAIL` (exit 101) | Hai lần trong worktree P6 và lần thứ ba sau khi tích hợp đều hết dung lượng (`ENOSPC`) khi linker tạo test binary (`speechoutput_tracer` và `docker_config`); lần thứ ba vẫn gặp lỗi dù chạy tuần tự với `CARGO_BUILD_JOBS=1`. Không tính là đạt. |
 | `run -- cargo clippy --workspace --all-targets -- -D warnings` | `FAIL` (exit 101) | 11 cảnh báo bị nâng thành lỗi ở các tệp Muse/task-flow hiện có: 9 `collapsible_if`, một hàm có 9 đối số, và dùng `.err().expect()` trên `Result`. |
 | `web build` | `PASS` | Hoàn tất trong 9 giây sau khi tạm dùng liên kết tới dependencies `node_modules` đã cài ở checkout chính; liên kết tạm đã được gỡ bỏ. |
 

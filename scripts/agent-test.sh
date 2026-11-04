@@ -16,7 +16,7 @@ Usage:
 
 Examples:
   scripts/agent-test.sh targeted reminder
-  scripts/agent-test.sh targeted reminder voice-agent-server
+  scripts/agent-test.sh targeted reminder vela-server
   scripts/agent-test.sh package
   scripts/agent-test.sh full
   scripts/agent-test.sh check
@@ -45,7 +45,7 @@ valid_positive_int() {
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 repo_root="$(cd -- "$script_dir/.." && pwd -P)"
 web_root="$repo_root/apps/admin-web"
-default_crate="voice-agent-server"
+default_crate="vela-server"
 
 prune_stale_target_artifacts() {
   python3 "$script_dir/prune-target-artifacts.py" "$repo_root" "${1:-auto}"

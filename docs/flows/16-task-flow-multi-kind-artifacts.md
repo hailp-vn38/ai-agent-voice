@@ -4,7 +4,7 @@ Cập nhật: 2026-11-01. Quyết định nền tảng: [ADR 0127](../adr/0127-o
 
 ## Khởi tạo và thực thi
 
-`crates/voice-agent-server/src/services/task_flow/mod.rs` khởi tạo WikiEngine, Orchestrator và TaskManager. TaskManager được prepare trước để cung cấp HostTool, sau đó bind Orchestrator cùng WikiAutoFlowBinding và bắt đầu chạy. TaskManager sở hữu `tasks.db` và `tasks.owner.lock`; công việc tiếp tục độc lập với Voice Session hay request Admin đã tạo nó.
+`crates/vela-server/src/services/task_flow/mod.rs` khởi tạo WikiEngine, Orchestrator và TaskManager. TaskManager được prepare trước để cung cấp HostTool, sau đó bind Orchestrator cùng WikiAutoFlowBinding và bắt đầu chạy. TaskManager sở hữu `tasks.db` và `tasks.owner.lock`; công việc tiếp tục độc lập với Voice Session hay request Admin đã tạo nó.
 
 - `daily_root` nhận công việc người dùng và điều phối Sub-Agent theo catalog/cấu hình đang có.
 - `wiki_root` xử lý Wiki Auto-Flow khi có Markdown mới trong `sources/`.

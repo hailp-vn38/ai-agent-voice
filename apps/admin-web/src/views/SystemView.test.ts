@@ -296,7 +296,7 @@ describe('System Hub (Variant A) & Sub-pages', () => {
     vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {})
     vi.mocked(systemApi.exportBackup).mockResolvedValue({
       blob: new Blob(['{}'], { type: 'application/json' }),
-      filename: 'voice-agent-backup.json',
+      filename: 'vela-backup.json',
     })
     const sampleInspection = {
       detected_format: 'json' as const,
@@ -343,7 +343,7 @@ describe('System Hub (Variant A) & Sub-pages', () => {
     await flushPromises()
     expect(systemApi.exportBackup).toHaveBeenCalledWith('sqlite', 'config_only')
 
-    const file = new File(['{"format":"voice-agent-backup"}'], 'backup.json', {
+    const file = new File(['{"format":"vela-backup"}'], 'backup.json', {
       type: 'application/json',
     })
     const input = wrapper.get('[data-testid="backup-file-input"]')

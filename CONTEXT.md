@@ -1,6 +1,6 @@
-# voice-agent-server
+# vela-server
 
-A personal voice-agent server. This context coordinates a Voice Session between a Voice Protocol Client and AI providers.
+A personal vela server. This context coordinates a Voice Session between a Voice Protocol Client and AI providers.
 
 
 ## Language
@@ -49,7 +49,7 @@ A deterministic Provider Adapter compiled only into a qualification build, but p
 _Avoid_: injected ProviderSet, runtime fake switch, external smoke provider
 
 **Qualification Build**:
-A build of the production `voice-agent-server` entrypoint with compile-time Qualification Providers; it is not the default/release artifact and cannot be enabled through runtime configuration.
+A build of the production `vela-server` entrypoint with compile-time Qualification Providers; it is not the default/release artifact and cannot be enabled through runtime configuration.
 _Avoid_: deployed release binary, test-only server binary, runtime qualification mode
 
 **Integration Harness**:
@@ -477,7 +477,7 @@ Shared pre-deserialization protection for Admin mutation bodies: content encodin
 _Avoid_: handler-local body checks, decompression bypass, parser error/body logging
 
 **Single-owner SQLite Deployment**:
-Exactly one Voice Agent process owns the local SQLite database path in V1.
+Exactly one Vela process owns the local SQLite database path in V1.
 _Avoid_: active-active writer, NFS/SMB database, implicit migration leader election
 
 **Patch Field Intent**:

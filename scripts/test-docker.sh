@@ -2,7 +2,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 python3 scripts/check-docker-storage.py
-compose=(docker compose -p voice-agent-test -f compose.test.yaml --profile checks)
+compose=(docker compose -p vela-test -f compose.test.yaml --profile checks)
 "${compose[@]}" config --quiet
 trap '"${compose[@]}" down --volumes --remove-orphans' EXIT
 "${compose[@]}" build

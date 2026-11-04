@@ -1,4 +1,4 @@
-# Voice Agent Conversation Domain
+# Vela Conversation Domain
 
 Các khái niệm domain cho hội thoại qua Voice Session, thực thi công cụ, điều phối tác vụ nền (`orchestrator-flow` / `orchestrator-agent`) và kho tri thức LLM Wiki (`llm-wiki-rs`).
 
@@ -108,7 +108,7 @@ _Avoid_: Agent Template, Voice Profile, Plugin Value Settings
 
 **Agent Configuration**:
 Định nghĩa chuyên môn do server sở hữu cho từng Root Orchestrator (`daily_root`, `wiki_root`) và các Sub-Agent chuyên biệt (`source_collector`, `wiki_researcher`, `report_stager`, `media_creator`, `media_processor`, `reminder_planner`, `wiki_ingestor`, `wiki_curator`, `cloud_worker`), bao gồm chỉ dẫn hệ thống, giới hạn bước và tập công cụ/kỹ năng hợp lệ.
-_Avoid_: Agent Run, Voice Agent, requester-provided executable code
+_Avoid_: Agent Run, Vela, requester-provided executable code
 
 **Root Orchestrator**:
 Agent cấp gốc nhận mục tiêu của Background Task, điều phối các Sub-Agent chuyên biệt qua công cụ `subagent` và tổng hợp kết quả cuối cùng; chỉ Root Orchestrator dành cho người dùng (`daily_root`) mới nhận trực tiếp yêu cầu từ Voice Session.
@@ -116,7 +116,7 @@ _Avoid_: Worker, plugin runner, Sub-Agent
 
 **Sub-Agent**:
 Agent chuyên biệt cấp con được Root Orchestrator ủy quyền qua công cụ `subagent` để tự chủ thực hiện một phần nhiệm vụ bằng tập công cụ và kỹ năng trong phạm vi được cấp.
-_Avoid_: registered Voice Agent, Plugin Installation, Root Orchestrator
+_Avoid_: registered Vela, Plugin Installation, Root Orchestrator
 
 **Built-in Sub-Agent**:
 Sub-Agent chuyên biệt chuẩn do hệ thống cung cấp sẵn kèm phạm vi công cụ, kỹ năng và chỉ dẫn mặc định; Admin có thể bật/tắt, tùy chỉnh cấu hình hoặc khôi phục về mặc định nhưng không thể xóa bỏ.
@@ -136,7 +136,7 @@ _Avoid_: Agent Run, LLM Run, Voice Session
 
 **Agent Run**:
 Một lần thực thi có giới hạn bước của Root Orchestrator hoặc Sub-Agent trên một Agent Session để hoàn thành nhiệm vụ được giao hoặc một lượt Task Follow-up.
-_Avoid_: registered Voice Agent, Job Step, Voice Session
+_Avoid_: registered Vela, Job Step, Voice Session
 
 **Waiting Retry**:
 Trạng thái tạm dừng bền vững của một Agent Run khi gặp lỗi nhà cung cấp hoặc giới hạn tốc độ có thể phục hồi, lưu thời điểm thử lại kế tiếp và nhả slot thực thi mà không kết thúc lượt hiện tại.

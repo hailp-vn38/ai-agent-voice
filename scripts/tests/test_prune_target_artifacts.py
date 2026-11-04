@@ -24,7 +24,7 @@ class PruneTest(unittest.TestCase):
         self.target = Path(directory.name) / 'target'
         self.deps = self.target / 'debug' / 'deps'
         self.deps.mkdir(parents=True)
-        tests = self.root / 'crates' / 'voice-agent-server' / 'tests'
+        tests = self.root / 'crates' / 'vela-server' / 'tests'
         tests.mkdir(parents=True)
         (tests / 'admin_api.rs').write_text('')
 

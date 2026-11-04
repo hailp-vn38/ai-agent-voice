@@ -33,25 +33,25 @@ Mô tả của `cloud_worker` phải nói rõ subagent này chỉ dùng một l�
 
 | Thành phần | Vị trí | Dùng cho |
 | --- | --- | --- |
-| Gửi lượt, đọc history, đọc file trên VM | `/chat/stream`, `/chat/history`, `/fs/read` ([ops.rs](../crates/voice-agent-server/src/providers/llm/gateway/muse/client/ops.rs)) | Lõi của tool |
-| Kết nối theo tài khoản, ping 25s, cấp lại WSS | [connect.rs](../crates/voice-agent-server/src/providers/llm/gateway/muse/pool/connect.rs) | Nối lại kết nối |
-| Lease trên session có sẵn | `acquire_existing_session` ([pool/mod.rs:165](../crates/voice-agent-server/src/providers/llm/gateway/muse/pool/mod.rs:165)) | Gọi lại đúng session |
-| Registry khóa theo job, khôi phục sau restart, xóa có xác nhận | [job_sessions.rs](../crates/voice-agent-server/src/providers/llm/gateway/muse/pool/job_sessions.rs) | Giữ và đóng session |
+| Gửi lượt, đọc history, đọc file trên VM | `/chat/stream`, `/chat/history`, `/fs/read` ([ops.rs](../crates/vela-server/src/providers/llm/gateway/muse/client/ops.rs)) | Lõi của tool |
+| Kết nối theo tài khoản, ping 25s, cấp lại WSS | [connect.rs](../crates/vela-server/src/providers/llm/gateway/muse/pool/connect.rs) | Nối lại kết nối |
+| Lease trên session có sẵn | `acquire_existing_session` ([pool/mod.rs:165](../crates/vela-server/src/providers/llm/gateway/muse/pool/mod.rs:165)) | Gọi lại đúng session |
+| Registry khóa theo job, khôi phục sau restart, xóa có xác nhận | [job_sessions.rs](../crates/vela-server/src/providers/llm/gateway/muse/pool/job_sessions.rs) | Giữ và đóng session |
 | Journal `tool_operations`, đối soát `submitting` | `orchestrator_task_rs/src/tools/media_video.rs:531`, `count_remote_user_turns` | Chống gửi trùng khi restart |
-| Nhận biết lượt xong | `has_active_tool_task`, `is_last_assistant_completed` ([workflow/mod.rs:161](../crates/voice-agent-server/src/providers/llm/gateway/muse/workflow/mod.rs:161)) | Điều kiện hoàn tất |
+| Nhận biết lượt xong | `has_active_tool_task`, `is_last_assistant_completed` ([workflow/mod.rs:161](../crates/vela-server/src/providers/llm/gateway/muse/workflow/mod.rs:161)) | Điều kiện hoàn tất |
 | Trạng thái run và archive | `Orchestrator::list_runs`, `archive_session` (`orchestrator_agent_rs/src/orchestrator/`) | Phát hiện subagent xong và đóng |
-| VM giả cho test | [tests/harness.rs](../crates/voice-agent-server/src/providers/llm/gateway/muse/tests/harness.rs) | Test không tốn quota |
+| VM giả cho test | [tests/harness.rs](../crates/vela-server/src/providers/llm/gateway/muse/tests/harness.rs) | Test không tốn quota |
 
 ### Khoảng trống phải xử lý
 
 | # | Vấn đề | Hậu quả với yêu cầu này |
 | --- | --- | --- |
-| G1 | **Đã sửa** ở commit `4315248c` trên `main`: `fail_account` không còn xóa session khi lease đã `retain_session` ([lease.rs](../crates/voice-agent-server/src/providers/llm/gateway/muse/pool/lease.rs)) | Lỗi tài khoản giữa chừng không còn xóa session của subagent |
-| G2 | Lỗi `Transient` đóng WebSocket dùng chung của tài khoản ([account.rs:112](../crates/voice-agent-server/src/providers/llm/gateway/muse/pool/account.rs:112)) | Một session lỗi làm đứt mọi lượt đang chạy trên tài khoản đó |
-| G3 | Reaper hiện chỉ theo dõi Task gốc ([task_flow/mod.rs:341](../crates/voice-agent-server/src/services/task_flow/mod.rs:341)) | Không biết khi nào một subagent xong, phải thêm bước đóng |
+| G1 | **Đã sửa** ở commit `4315248c` trên `main`: `fail_account` không còn xóa session khi lease đã `retain_session` ([lease.rs](../crates/vela-server/src/providers/llm/gateway/muse/pool/lease.rs)) | Lỗi tài khoản giữa chừng không còn xóa session của subagent |
+| G2 | Lỗi `Transient` đóng WebSocket dùng chung của tài khoản ([account.rs:112](../crates/vela-server/src/providers/llm/gateway/muse/pool/account.rs:112)) | Một session lỗi làm đứt mọi lượt đang chạy trên tài khoản đó |
+| G3 | Reaper hiện chỉ theo dõi Task gốc ([task_flow/mod.rs:341](../crates/vela-server/src/services/task_flow/mod.rs:341)) | Không biết khi nào một subagent xong, phải thêm bước đóng |
 | G4 | `begin_operation` gán `continuation_key` bằng root ([tool_operation.rs:105](../../libs/orchestrator_agent_rs/src/store/tool_operation.rs)) | Phải ghi đè, nếu không sẽ đụng session của `video_create` |
-| G5 | Chỉ nhận đuôi ảnh và video ([candidates.rs:259](../crates/voice-agent-server/src/providers/llm/gateway/muse/workflow/media/candidates.rs:259)) | Không lấy được `.md`, `.pdf`, `.csv` |
-| G6 | Đường chat từ chối mọi approval ([chat/mod.rs:429](../crates/voice-agent-server/src/providers/llm/gateway/muse/workflow/chat/mod.rs:429)); đường media từ chối chuỗi có `bash`, `curl`, `wget` | Việc nghiên cứu cần công cụ có thể bị chặn hoặc treo |
+| G5 | Chỉ nhận đuôi ảnh và video ([candidates.rs:259](../crates/vela-server/src/providers/llm/gateway/muse/workflow/media/candidates.rs:259)) | Không lấy được `.md`, `.pdf`, `.csv` |
+| G6 | Đường chat từ chối mọi approval ([chat/mod.rs:429](../crates/vela-server/src/providers/llm/gateway/muse/workflow/chat/mod.rs:429)); đường media từ chối chuỗi có `bash`, `curl`, `wget` | Việc nghiên cứu cần công cụ có thể bị chặn hoặc treo |
 | G7 | Trong session dùng lại, history có thể còn là lượt trước khi lượt mới chưa ghi xong | Trả nhầm kết quả cũ. Phải so số lượt user với `user_turns_before + 1` |
 
 ## Vì sao đang bị timeout
@@ -61,15 +61,15 @@ Có năm tầng giới hạn độc lập. Một việc nghiên cứu chạm t�
 | Tầng | Giá trị | Khi chạm |
 | --- | --- | --- |
 | Tool mặc định | 300s (`orchestrator_agent_rs/src/config.rs:144`); `video_create` riêng 1800s | Còn operation mở: `TOOL_OUTCOME_UNKNOWN`, run `interrupted`, session chặn input mới tới khi đối soát |
-| Muse chat | `max_total + 30s`, profile thường 600s ([muse_ops.rs:110](../crates/voice-agent-server/src/providers/llm/gateway/provider/muse_ops.rs:110)) | Bỏ dở lượt, lease bị drop và session bị xóa |
+| Muse chat | `max_total + 30s`, profile thường 600s ([muse_ops.rs:110](../crates/vela-server/src/providers/llm/gateway/provider/muse_ops.rs:110)) | Bỏ dở lượt, lease bị drop và session bị xóa |
 | Video | 900s + 800s mỗi lô thêm | Operation `expired` |
 | Job Budget | Voice 5 phút; Chat/API 2 giờ chạy, 24 giờ tổng (`orchestrator_task_rs/src/runtime/dispatch_core.rs:18`) | Ép dừng. Chờ chặn trong tool có tính vào ngân sách |
 | Retry bền | 10 lần, chờ 60, 300, 900, rồi 1800s (`orchestrator_agent_rs/src/runtime/terminal.rs:11`) | `TOOL_RETRY_LATER` tiêu lượt này, nên không hợp để thăm dò đều đặn |
 
 Ngoài giá trị cấu hình, đọc code thấy ba lỗi làm mất thời gian mà không báo gì:
 
-- **Đứt WebSocket là chờ tới hết hạn.** Sau khi socket đóng, `send_request` trả lỗi ngay, nhưng vòng lặp bỏ qua lỗi bằng `if let Ok` và không nối lại ([chat/mod.rs:287](../crates/voice-agent-server/src/providers/llm/gateway/muse/workflow/chat/mod.rs:287), [media/mod.rs:782](../crates/voice-agent-server/src/providers/llm/gateway/muse/workflow/media/mod.rs:782)). Đây có thể là nguyên nhân của lỗi video 900s, nhưng mới là giả thuyết: câu hỏi 6 của spike chưa được đo.
-- **Chờ slot không có hạn.** Tài khoản đủ 8 thao tác thì `acquire_internal` chờ `notified()` vô hạn ([pool/mod.rs:319](../crates/voice-agent-server/src/providers/llm/gateway/muse/pool/mod.rs:319)).
+- **Đứt WebSocket là chờ tới hết hạn.** Sau khi socket đóng, `send_request` trả lỗi ngay, nhưng vòng lặp bỏ qua lỗi bằng `if let Ok` và không nối lại ([chat/mod.rs:287](../crates/vela-server/src/providers/llm/gateway/muse/workflow/chat/mod.rs:287), [media/mod.rs:782](../crates/vela-server/src/providers/llm/gateway/muse/workflow/media/mod.rs:782)). Đây có thể là nguyên nhân của lỗi video 900s, nhưng mới là giả thuyết: câu hỏi 6 của spike chưa được đo.
+- **Chờ slot không có hạn.** Tài khoản đủ 8 thao tác thì `acquire_internal` chờ `notified()` vô hạn ([pool/mod.rs:319](../crates/vela-server/src/providers/llm/gateway/muse/pool/mod.rs:319)).
 - **Thăm dò dày.** 400ms mỗi lần, tức khoảng 4.500 request trong 30 phút, mỗi lần đọc history của session.
 
 ## Phương án cho timeout
@@ -149,7 +149,7 @@ Quy tắc:
 
 ### Đóng phiên
 
-Thêm một vòng lặp 10 giây vào `spawn_job_session_reaper` ([task_flow/mod.rs:323](../crates/voice-agent-server/src/services/task_flow/mod.rs:323)). Với mỗi operation có tiền tố `muse_task:` và chưa có `remote_deleted_at`, nó đọc attempt mới nhất của subagent qua `list_runs`, rồi xử lý theo bảng:
+Thêm một vòng lặp 10 giây vào `spawn_job_session_reaper` ([task_flow/mod.rs:323](../crates/vela-server/src/services/task_flow/mod.rs:323)). Với mỗi operation có tiền tố `muse_task:` và chưa có `remote_deleted_at`, nó đọc attempt mới nhất của subagent qua `list_runs`, rồi xử lý theo bảng:
 
 | Trạng thái subagent | Hành động |
 | --- | --- |

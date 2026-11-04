@@ -51,7 +51,7 @@ export const systemApi = {
     )
     const disposition = response.headers.get('content-disposition') ?? ''
     const match = disposition.match(/filename="([^"]+)"/)
-    const fallbackName = `voice-agent-backup.${format === 'sqlite' ? 'db' : 'json'}`
+    const fallbackName = `vela-backup.${format === 'sqlite' ? 'db' : 'json'}`
     return {
       blob: await response.blob(),
       filename: match?.[1] ?? fallbackName,

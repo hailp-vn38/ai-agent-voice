@@ -1,6 +1,6 @@
 # Review Admin Web — 2026-10-09
 
-What this repo does: `apps/admin-web` là UI quản trị cho Voice Agent Server, cấu hình resource qua Admin API và xem runtime diagnostics. Browser không sở hữu Voice Session state. Workload giả định là một hoặc vài operator trong homelab, catalog nhỏ nhưng có thể vượt một page, và API vẫn phải bảo vệ revision khi hai tab/operator cùng sửa.
+What this repo does: `apps/admin-web` là UI quản trị cho Vela Server, cấu hình resource qua Admin API và xem runtime diagnostics. Browser không sở hữu Voice Session state. Workload giả định là một hoặc vài operator trong homelab, catalog nhỏ nhưng có thể vượt một page, và API vẫn phải bảo vệ revision khi hai tab/operator cùng sửa.
 
 Phạm vi: entry points, routes, config/dependencies, API clients, admin/auth/server stores, các trang chính, form/pipeline/diagnostics, Device claim, Speaker capture và tests liên quan. Đối chiếu ADR hiện tại và Rust Device handlers/lookup để xác nhận public identity. Đây là review implementation, không chỉ diff. Không sửa application code trong lần này.
 
@@ -30,7 +30,7 @@ Nguồn: [loadAll:316](../src/stores/admin.ts#L316), [updateDevice:858](../src/s
 
 ### 3. Store gửi DB primary key thay public Device Identity — P1
 
-Nguồn: [updateDevice:858](../src/stores/admin.ts#L858), [setDeviceTemplateOverride:884](../src/stores/admin.ts#L884), [deleteDevice:894](../src/stores/admin.ts#L894), [devices API](../src/api/devices.ts), [backend lookup](../../../crates/voice-agent-server/src/database/devices.rs#L23).
+Nguồn: [updateDevice:858](../src/stores/admin.ts#L858), [setDeviceTemplateOverride:884](../src/stores/admin.ts#L884), [deleteDevice:894](../src/stores/admin.ts#L894), [devices API](../src/api/devices.ts), [backend lookup](../../../crates/vela-server/src/database/devices.rs#L23).
 
 - **What this is:** View model giữ `id = String(DB id)` và `deviceId = public device_id`; store dùng ID nội bộ để tìm cache/revision.
 - **Problem:** Sau claim, store đã có revision nên gửi PATCH/DELETE tới `/api/admin/devices/7` cho Device `{ id: 7, device_id: 'esp32-demo' }`. Backend lookup dùng `WHERE d.device_id=?`, vì vậy trả 404 thay vì sửa/xóa thiết bị đó.

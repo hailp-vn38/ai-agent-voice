@@ -36,12 +36,12 @@ flowchart LR
 ```
 
 Toàn bộ quyết định trước 101 nằm trong
-[`admission::admit`](../../crates/voice-agent-server/src/app/transport/websocket/admission.rs):
+[`admission::admit`](../../crates/vela-server/src/app/transport/websocket/admission.rs):
 handler chỉ nhận `Admission` (Voice hoặc Enrollment) hoặc đúng một `Rejection`;
 mỗi `Rejection` tự mang HTTP response và log `ws_auth` (`reason_code`,
 `bearer_auth_result`, `device_admission_result`), nên mọi lần từ chối đều được
 log cùng một cách. WebSocket Writer nằm ở
-[`writer.rs`](../../crates/voice-agent-server/src/app/transport/websocket/writer.rs);
+[`writer.rs`](../../crates/vela-server/src/app/transport/websocket/writer.rs);
 phần trọng tài playback (`PlaybackArbiter`) không làm I/O và bảo đảm mỗi lệnh
 turn kết thúc bằng đúng một `TurnClosed`.
 

@@ -4,7 +4,7 @@
 
 Accepted, 2026-10-26 (Proposed, 2026-10-12).
 
-SQLite (`voice-agent.db`) là nguồn dữ liệu chính của Reminder, thuộc đúng một Device; Agent chỉ xác định phạm vi hiển thị và quyền. Chọn module persistence `DeviceNotifications` kết hợp tầng điều phối `ReminderCoordinator` dùng chung cho Admin API, builtin voice tools, WebSocket control plane và `reminder_scheduler` thay vì để mỗi adapter giữ lịch/SQL riêng hoặc đẩy nhắc việc từ `tasks.db`.
+SQLite (`vela.db`) là nguồn dữ liệu chính của Reminder, thuộc đúng một Device; Agent chỉ xác định phạm vi hiển thị và quyền. Chọn module persistence `DeviceNotifications` kết hợp tầng điều phối `ReminderCoordinator` dùng chung cho Admin API, builtin voice tools, WebSocket control plane và `reminder_scheduler` thay vì để mỗi adapter giữ lịch/SQL riêng hoặc đẩy nhắc việc từ `tasks.db`.
 
 - Device đổi Agent/Template không chuyển hay xóa Reminder; danh sách theo Agent join các Device hiện thuộc Agent và tính trạng thái đồng bộ (`acked` / `pending` / `out_of_window` / `unsupported`) cho từng mục. Thời điểm đến hạn do server tính khi giao dịch tạo/sửa, lưu UTC; thời gian nhập mơ hồ cần timezone rõ.
 - Create/update/cancel/completed/expired và tăng Schedule Revision trên Device phải cùng transaction; rollback, replay idempotent và attempt telemetry không tăng revision. PATCH/cancel dùng row revision CAS, độc lập với Schedule Revision.

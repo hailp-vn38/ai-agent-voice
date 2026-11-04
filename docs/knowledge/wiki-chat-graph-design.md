@@ -61,7 +61,7 @@ flowchart LR
     Store["useWikiChat"]
     Graph["KnowledgeGraph<br/>scope = answer"]
   end
-  subgraph Server["voice-agent-server"]
+  subgraph Server["vela-server"]
     Ask["POST /knowledge/ask"]
     Loop["Vòng lặp hỏi đáp"]
     Evidence["EvidenceSet"]

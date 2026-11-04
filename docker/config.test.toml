@@ -10,7 +10,7 @@ enabled = true
 admin_token = "docker-test-admin"
 
 [database]
-url = "sqlite://data/voice-agent.db"
+url = "sqlite://data/vela.db"
 
 [provider_defaults]
 vad = "test_vad"

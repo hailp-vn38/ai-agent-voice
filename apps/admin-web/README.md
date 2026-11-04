@@ -1,6 +1,6 @@
-# Voice Agent Studio — Admin Web
+# Vela Studio — Admin Web
 
-Ứng dụng Vue độc lập để quản lý `voice-agent-server`: Agents, Templates, Providers, Devices, Speakers và External MCP. Đây là control plane; browser không sở hữu Voice Session state và không đọc/ghi trực tiếp `config.toml` hay SQLite.
+Ứng dụng Vue độc lập để quản lý `vela-server`: Agents, Templates, Providers, Devices, Speakers và External MCP. Đây là control plane; browser không sở hữu Voice Session state và không đọc/ghi trực tiếp `config.toml` hay SQLite.
 
 ## Chạy local
 

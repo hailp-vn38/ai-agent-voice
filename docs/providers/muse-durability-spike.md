@@ -2,7 +2,7 @@
 
 Trả lời chín câu hỏi ở mục [Spike bắt buộc](../agent-job-durability-implementation-guide.md#spike-bắt-buộc) bằng tài khoản Muse thật. **Chưa chạy lần nào.** Lớp đọc lại session đã có test với VM giả (`spike_probe_reads_history_and_file_without_the_original_stream`), nhưng hành vi của Muse thật chưa được đo.
 
-Mã nguồn: `crates/voice-agent-server/src/providers/llm/gateway/muse/workflow/media/live_spike.rs`.
+Mã nguồn: `crates/vela-server/src/providers/llm/gateway/muse/workflow/media/live_spike.rs`.
 
 ## Chi phí và an toàn
 
@@ -22,20 +22,20 @@ export MUSE_SPIKE_CONFIRM=spend-quota
 export MUSE_SPIKE_OUTPUT="$PWD/muse-spike-abandon.json"
 
 # Khoảng 16 phút. Ghi quota trước và sau lần chạy (câu hỏi 5).
-RUST_LOG=info scripts/agent-test.sh run -- cargo test --quiet -p voice-agent-server --lib \
+RUST_LOG=info scripts/agent-test.sh run -- cargo test --quiet -p vela-server --lib \
   muse_durability_live_spike -- --ignored --nocapture
 
 # Câu hỏi 6: đợi hết 900s để giữ log của lượt thất bại nếu có; đặt mốc đọc ngắn.
 MUSE_SPIKE_ABANDON_AFTER_SECS=900 MUSE_SPIKE_CHECKPOINT_MINUTES=1 \
 MUSE_SPIKE_OUTPUT="$PWD/muse-spike-900s.json" \
-RUST_LOG=info scripts/agent-test.sh run -- cargo test --quiet -p voice-agent-server --lib \
+RUST_LOG=info scripts/agent-test.sh run -- cargo test --quiet -p vela-server --lib \
   muse_durability_live_spike -- --ignored --nocapture
 
 # Câu hỏi 7 và 8: tạo video dài, lưu MP4 để so bằng mắt.
 mkdir -p muse-spike-media
 MUSE_SPIKE_STAGES=clips MUSE_SPIKE_MEDIA_DIR="$PWD/muse-spike-media" \
 MUSE_SPIKE_OUTPUT="$PWD/muse-spike-clips.json" \
-RUST_LOG=info scripts/agent-test.sh run -- cargo test --quiet -p voice-agent-server --lib \
+RUST_LOG=info scripts/agent-test.sh run -- cargo test --quiet -p vela-server --lib \
   muse_durability_live_spike -- --ignored --nocapture
 ```
 

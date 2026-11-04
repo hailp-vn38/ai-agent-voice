@@ -208,7 +208,7 @@
   }
 }
 
-/* Voice Agent Studio primitives. Keep the existing semantic color tokens. */
+/* Vela Studio primitives. Keep the existing semantic color tokens. */
 @layer components {
   .studio-panel {
     @apply rounded-2xl border border-border/80 bg-card text-card-foreground shadow-sm;

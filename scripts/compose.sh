@@ -46,11 +46,11 @@ fi
 selection=()
 case "$environment" in
   prod)
-    compose=(docker compose -p voice-agent-prod -f compose.yaml -f compose.prod.yaml)
+    compose=(docker compose -p vela-prod -f compose.yaml -f compose.prod.yaml)
     wait_seconds=1800
     ;;
   test)
-    compose=(docker compose -p voice-agent-test -f compose.test.yaml)
+    compose=(docker compose -p vela-test -f compose.test.yaml)
     wait_seconds=120
     ;;
   *) usage >&2; exit 2 ;;

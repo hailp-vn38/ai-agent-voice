@@ -14,7 +14,7 @@ function applyTheme(value: boolean) {
 function initTheme() {
   if (initialized) return
   const stored = localStorage.getItem(STORAGE_KEY)
-  // Voice Agent Studio is dark-first; persisted operator choice always wins.
+  // Vela Studio is dark-first; persisted operator choice always wins.
   applyTheme(stored ? stored === 'dark' : true)
   initialized = true
 }

@@ -49,7 +49,7 @@ Orchestrator ◄──── SubagentMuseCloser (vòng 10 giây) ───► re
 
 ### `AgentTaskProvider`
 
-Thêm vào `crates/voice-agent-server/src/providers/llm/mod.rs`, cạnh `DurableMediaProvider`. Seam này tồn tại vì tool chỉ cầm `Box<dyn LlmProvider>`, và vì có hai adapter thật: gateway và bản giả cho test tool.
+Thêm vào `crates/vela-server/src/providers/llm/mod.rs`, cạnh `DurableMediaProvider`. Seam này tồn tại vì tool chỉ cầm `Box<dyn LlmProvider>`, và vì có hai adapter thật: gateway và bản giả cho test tool.
 
 ```rust
 pub const MUSE_TASK_KEY_PREFIX: &str = "muse_task:";
@@ -178,7 +178,7 @@ Dùng lại `extract_history_turn_events`, `has_active_tool_task`, `is_last_assi
 
 ### `lease.reconnect()`
 
-Thêm vào `crates/voice-agent-server/src/providers/llm/gateway/muse/pool/lease.rs`:
+Thêm vào `crates/vela-server/src/providers/llm/gateway/muse/pool/lease.rs`:
 
 ```rust
 pub async fn reconnect(&mut self) -> Result<broadcast::Receiver<VmStreamEvent>, (UpstreamFailureKind, String)>;
@@ -204,7 +204,7 @@ Khi `output=markdown` hoặc có `filename`, tool yêu cầu Muse ghi vào `task
 
 1. Mỗi file → `ctx.artifacts().put(...)`.
 2. `output=markdown` mà không có file → lưu `message` thành `.md`, `origin=message`.
-3. Message vượt `tool_output_cap_bytes` → lưu thành artifact, `content` chỉ giữ đoạn đầu và ID. Server tính giới hạn này từ `read_budget`, tối thiểu 24 KiB ([task_flow/mod.rs:249](../crates/voice-agent-server/src/services/task_flow/mod.rs:249)).
+3. Message vượt `tool_output_cap_bytes` → lưu thành artifact, `content` chỉ giữ đoạn đầu và ID. Server tính giới hạn này từ `read_budget`, tối thiểu 24 KiB ([task_flow/mod.rs:249](../crates/vela-server/src/services/task_flow/mod.rs:249)).
 4. Ghi ID và trạng thái vào `content`, vì model chỉ đọc trường này. Ghi `artifact_ids` vào `metadata`.
 5. Journal `Committed` với `artifact_ids_json`, `result_json`, `batch_index = turn`.
 
@@ -236,12 +236,12 @@ Một operation có `request_json` hỏng thì ghi log và bỏ qua, không làm
 
 Closer là nơi **duy nhất** xóa session của tool. Vì vậy phải loại key `muse_task:` khỏi hai đường dọn cũ:
 
-- Vòng `for summary in ops` ở [task_flow/mod.rs:381](../crates/voice-agent-server/src/services/task_flow/mod.rs:381). Nếu không, đường này xóa session mà không archive subagent.
-- `sweep_idle_job_sessions` ở [job_sessions.rs:125](../crates/voice-agent-server/src/providers/llm/gateway/muse/pool/job_sessions.rs:125).
+- Vòng `for summary in ops` ở [task_flow/mod.rs:381](../crates/vela-server/src/services/task_flow/mod.rs:381). Nếu không, đường này xóa session mà không archive subagent.
+- `sweep_idle_job_sessions` ở [job_sessions.rs:125](../crates/vela-server/src/providers/llm/gateway/muse/pool/job_sessions.rs:125).
 
 ## Bản đồ thay đổi
 
-| File (trong `crates/voice-agent-server/src/`) | Thay đổi |
+| File (trong `crates/vela-server/src/`) | Thay đổi |
 | --- | --- |
 | `providers/llm/mod.rs` | Port, kiểu dữ liệu, `LlmProvider::agent_task` |
 | `providers/llm/gateway/provider/mod.rs` | `agent_task()` trả `self` khi là Muse |
@@ -265,7 +265,7 @@ Closer là nơi **duy nhất** xóa session của tool. Vì vậy phải loại 
 Mỗi bước là một commit và viết test trước. Chạy test mục tiêu trước khi chạy cả workspace:
 
 ```bash
-scripts/agent-test.sh run -- cargo test --quiet -p voice-agent-server --lib agent_task
+scripts/agent-test.sh run -- cargo test --quiet -p vela-server --lib agent_task
 ```
 
 ### Bước 1. Các module thuần

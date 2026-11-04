@@ -2,7 +2,7 @@ services:
   server:
     # Keep optional built-in CAM++ unavailable without downloading real models.
     read_only: true
-    image: voice-agent-server:qualification
+    image: vela-server:qualification
     build:
       context: .
       dockerfile: docker/server.Dockerfile
@@ -21,7 +21,7 @@ services:
       retries: 30
 
   web:
-    image: voice-agent-web:test
+    image: vela-web:test
     build:
       context: .
       dockerfile: docker/web.Dockerfile
@@ -45,7 +45,7 @@ services:
 
   web-check:
     profiles: [checks]
-    image: voice-agent-web:checks
+    image: vela-web:checks
     build:
       context: .
       dockerfile: docker/web.Dockerfile
@@ -53,7 +53,7 @@ services:
 
   smoke:
     profiles: [checks]
-    image: voice-agent-web:checks
+    image: vela-web:checks
     build:
       context: .
       dockerfile: docker/web.Dockerfile

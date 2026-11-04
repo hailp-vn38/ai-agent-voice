@@ -4,7 +4,7 @@
 
 | Database | Canonical authority | Content | Migrator |
 |---|---|---|---|
-| Existing application `database.url` | SQLite | existing Agents, Providers, Plugins, Jobs, Job Events | existing `crates/voice-agent-server/migrations` |
+| Existing application `database.url` | SQLite | existing Agents, Providers, Plugins, Jobs, Job Events | existing `crates/vela-server/migrations` |
 | `<main database directory>/knowledge/knowledge_index.db` | Wiki Markdown and immutable Sources | `kb_documents`, `kb_fts`, `kb_chunks`, `kb_links`, `kb_index_state` | `migrations/knowledge` |
 | `<main database directory>/memory/memory_index.db` | Memory Fact Markdown | `mem_documents`, `mem_fts`, `mem_index_state` | `migrations/memory` |
 
@@ -31,8 +31,8 @@ Canonical atomic Markdown rename may succeed before FTS update: publication stan
 
 ## SQL migrations
 
-- [Knowledge index initialization](../../crates/voice-agent-server/migrations/knowledge/0001_index.sql)
-- [Memory index initialization](../../crates/voice-agent-server/migrations/memory/0001_index.sql)
+- [Knowledge index initialization](../../crates/vela-server/migrations/knowledge/0001_index.sql)
+- [Memory index initialization](../../crates/vela-server/migrations/memory/0001_index.sql)
 
 Avoid independent `knowledge_ingest_runs` status transitions. Job V3 alone owns run/retry/cancel outcomes; published Wiki and immutable Source version own canonical publication/provenance.
 

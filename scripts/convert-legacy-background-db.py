@@ -19,7 +19,7 @@ LEGACY = {
     107: "12aad24dfd9f9cdf0306313bf91d970c80689c2d379149e6047f22dfc0481d61f16fbac57bb928b7c79aca50aa1ae7f7",
     108: "6f1afcd4e2b61090b964049d8181a86cba5948ba4751c285d69f94e8ace7b7009df32d96c77fa8e027959af196092f5f",
 }
-MIGRATIONS = Path(__file__).resolve().parent.parent / "crates/voice-agent-server/migrations"
+MIGRATIONS = Path(__file__).resolve().parent.parent / "crates/vela-server/migrations"
 
 
 def rows(db, table):

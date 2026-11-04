@@ -21,7 +21,7 @@ Frozen JSON continues using `plugin_id: "core"`, `operation: "web.fetch"`, `kind
 
 | Seam | Implementation |
 |---|---|
-| Forward-only SQLite migration | `crates/voice-agent-server/migrations/0119_core_plugin_settings.sql` |
+| Forward-only SQLite migration | `crates/vela-server/migrations/0119_core_plugin_settings.sql` |
 | Settings CAS and durable read | `src/database/core_plugins.rs` |
 | Static group ownership, validation, tagged catalog | `src/tools/core/catalog.rs` |
 | Job admission transaction and Core enabled snapshot | `src/database/jobs/submission.rs` |
@@ -33,7 +33,7 @@ Frozen JSON continues using `plugin_id: "core"`, `operation: "web.fetch"`, `kind
 | Web Core section | `apps/admin-web/src/pages/plugins/PluginStorePage.vue` |
 | Domain and design | `GLOSSARY.md`, ADR 0115, Flow 11 |
 
-All paths under `src/` above are relative to `crates/voice-agent-server` unless otherwise qualified.
+All paths under `src/` above are relative to `crates/vela-server` unless otherwise qualified.
 
 ## Persistence and lifecycle
 

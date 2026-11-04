@@ -1,0 +1,120 @@
+use anyhow::Context;
+use std::sync::Arc;
+use vela_server::{
+    app::{new_lifecycle, startup_with_lifecycle, startup_with_lifecycle_and_secret_resolver},
+    config::AppConfig,
+    lifecycle::CONTROLLED_CLOSE_SETTLE,
+    startup_handshake::StartupHandshake,
+};
+
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    rustls::crypto::ring::default_provider()
+        .install_default()
+        .map_err(|_| anyhow::anyhow!("install Rustls ring CryptoProvider"))?;
+    vela_server::services::system_logs::init_tracing_subscriber(
+        vela_server::services::system_logs::SystemLogHub::global(),
+    );
+    let path = vela_server::config::env_var("VELA_CONFIG").unwrap_or_else(|| "config.toml".into());
+    let config = AppConfig::load(&path).with_context(|| format!("load {path}"))?;
+    // Built before startup so the listener, every admitted Voice Session and the shutdown sequence
+    // all hold the same admission gate and drain registry. Building it afterwards would leave the
+    // process briefly running with two lifecycles and no shared decision between them.
+    let lifecycle = new_lifecycle(&config);
+    let app = if let Some(path) = &config.deployment.credential_keys_file {
+        let cipher = vela_server::database::credentials::CredentialCipher::from_file(path)
+            .map_err(|_| {
+                anyhow::anyhow!("load credential encryption keys from {}", path.display())
+            })?;
+        startup_with_lifecycle_and_secret_resolver(
+            config.clone(),
+            lifecycle.clone(),
+            Arc::new(cipher),
+        )
+        .await
+    } else {
+        startup_with_lifecycle(config.clone(), lifecycle.clone()).await
+    }
+    .context("initialize database and local providers")?;
+    let handshake = StartupHandshake::from_env()?;
+    let bind_address = handshake
+        .as_ref()
+        .map_or(config.server.bind, StartupHandshake::bind_address);
+    let listener = tokio::net::TcpListener::bind(bind_address).await?;
+    let address = listener.local_addr()?;
+    if let Some(handshake) = &handshake
+        && let Err(error) = handshake.publish(address)
+    {
+        drop(listener);
+        return Err(error);
+    }
+    tracing::info!(
+        subsystem = "system",
+        event = "server_listening",
+        address = %address,
+        "voice protocol server listening"
+    );
+    let listening = lifecycle.listening().clone();
+    let mut server = tokio::spawn(async move {
+        axum::serve(listener, app)
+            .with_graceful_shutdown(listening.cancelled_owned())
+            .await
+    });
+    shutdown_signal().await;
+    // The ordered shutdown: close the admission gate so nothing new starts, drain the sessions this
+    // process already admitted, controlled-close whatever is still open at the deadline, and flush
+    // the archival writer inside that same deadline.
+    let report = lifecycle.shutdown().await;
+    tracing::info!(
+        subsystem = "system",
+        event = "voice_session_drain_completed",
+        outcome = ?report.outcome,
+        controlled_closes = report.controlled_closes,
+        history_flushed = report.history_flushed,
+        provider_resources_drained = ?report.provider_resources_drained,
+        "Voice Sessions drained"
+    );
+    // Every session has been asked to close, so this only waits for the closes to land. It is
+    // bounded rather than open-ended, and it is the last thing that may end a process abruptly:
+    // a session that has already stopped answering its controlled close is not something a longer
+    // wait fixes.
+    match tokio::time::timeout(CONTROLLED_CLOSE_SETTLE, &mut server).await {
+        Ok(result) => result.context("join server shutdown")??,
+        Err(_) => {
+            tracing::warn!(
+                subsystem = "system",
+                event = "voice_session_close_timeout",
+                ?CONTROLLED_CLOSE_SETTLE,
+                "Voice Sessions did not finish their controlled close in time; abandoning them"
+            );
+            server.abort();
+            let _ = server.await;
+        }
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+async fn shutdown_signal() {
+    let mut terminate = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+        .expect("install SIGTERM handler");
+    tokio::select! {
+        _ = tokio::signal::ctrl_c() => {}
+        _ = terminate.recv() => {}
+    }
+    tracing::info!(
+        subsystem = "system",
+        event = "shutdown_signal_received",
+        "shutdown signal received"
+    );
+}
+
+#[cfg(not(unix))]
+async fn shutdown_signal() {
+    let _ = tokio::signal::ctrl_c().await;
+    tracing::info!(
+        subsystem = "system",
+        event = "shutdown_signal_received",
+        "shutdown signal received"
+    );
+}

@@ -11,14 +11,14 @@ Dùng cùng [báo cáo validation](muse-task-validation-2026-11-02.md). Mỗi l�
 
 ## Probe provider giai đoạn 0
 
-Test ignored `muse_task_live_stage0_probe` ở `crates/voice-agent-server/src/providers/llm/gateway/muse/tests/live_task.rs` dùng credential đã cấu hình của installation; không yêu cầu chép credential vào biến môi trường. Sau khi mã probe đã được tích hợp, chạy qua wrapper từ checkout kiểm thử:
+Test ignored `muse_task_live_stage0_probe` ở `crates/vela-server/src/providers/llm/gateway/muse/tests/live_task.rs` dùng credential đã cấu hình của installation; không yêu cầu chép credential vào biến môi trường. Sau khi mã probe đã được tích hợp, chạy qua wrapper từ checkout kiểm thử:
 
 ```bash
 MUSE_TASK_SPIKE_CONFIRM=spend-quota \
 MUSE_TASK_SPIKE_REPO=/absolute/path/to/authorized-test-installation \
 MUSE_TASK_SPIKE_ACCOUNT=authorized-account-key \
 MUSE_TASK_SPIKE_OUTPUT_DIR=/absolute/path/outside-repo/evidence \
-scripts/agent-test.sh run -- cargo test --quiet -p voice-agent-server --lib \
+scripts/agent-test.sh run -- cargo test --quiet -p vela-server --lib \
   muse_task_live_stage0_probe -- --ignored --nocapture
 ```
 

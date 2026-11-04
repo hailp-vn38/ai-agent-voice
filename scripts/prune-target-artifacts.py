@@ -25,8 +25,8 @@ from pathlib import Path
 ORPHAN_MIN_AGE_SECONDS = 3600
 
 _PROJECT_ARTIFACTS = {
-    "voice_agent_server",
-    "libvoice_agent_server",
+    "vela_server",
+    "libvela_server",
     "provider_bench",
     "provider_bench_av",
     "provider_runtime_bench",
@@ -153,7 +153,7 @@ def prune(root, target, mode, build_running=build_running):
     _prune_incremental(debug, keep, report)
     deps = debug / "deps"
     if deps.is_dir():
-        test_dir = Path(root) / "crates" / "voice-agent-server" / "tests"
+        test_dir = Path(root) / "crates" / "vela-server" / "tests"
         test_stems = (
             {path.stem.replace("-", "_") for path in test_dir.glob("*.rs")} if test_dir.is_dir() else set()
         )

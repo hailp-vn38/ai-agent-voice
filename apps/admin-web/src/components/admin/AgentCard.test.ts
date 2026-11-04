@@ -7,7 +7,7 @@ import type { Agent } from '@/domain/admin'
 const agent: Agent = {
   id: 'home',
   name: 'Home Assistant',
-  description: 'Voice Agent',
+  description: 'Vela',
   defaultTemplateId: '',
   deviceIds: [],
   createdAt: '',

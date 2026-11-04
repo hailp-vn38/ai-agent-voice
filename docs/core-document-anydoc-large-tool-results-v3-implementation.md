@@ -33,7 +33,7 @@ Verified against the named branch (source paths are relative to repository root)
 
 | Existing location | Observed contract / issue |
 | --- | --- |
-| `src/tools/core/catalog.rs` (under `crates/voice-agent-server`) | Six static groups including `core.document`; enable/disable stored in `core_plugin_settings`. |
+| `src/tools/core/catalog.rs` (under `crates/vela-server`) | Six static groups including `core.document`; enable/disable stored in `core_plugin_settings`. |
 | `src/tools/core/contracts.rs` | Static `OPERATIONS` (12 operations); `REVISION = "1"`; immutable frozen Core choices use `plugin_id="core"`. |
 | `src/tools/core/expanded/document.rs` | `document.extract` and `document.inspect` currently accept only TXT/Markdown/JSON by `artifact::read_owned_text`. |
 | `src/tools/core/expanded/artifact.rs` | Current helper bounds text input at **1 MiB**; existing artifact ownership verification must be retained. |
@@ -343,7 +343,7 @@ Paths below are relative to repository root.
 
 | Phase | File / area | Concrete change |
 | --- | --- | --- |
-| P0 | `crates/voice-agent-server/src/config/background.rs` | Reuse `[background.job_output]` `JobOutputLimits` with changed defaults/validation; preserve pinned historical policy. |
+| P0 | `crates/vela-server/src/config/background.rs` | Reuse `[background.job_output]` `JobOutputLimits` with changed defaults/validation; preserve pinned historical policy. |
 | P0 | `src/database/jobs/execution.rs` | Remove hard-coded 64 KiB Step cap in favor of bounded policy; keep transactional quota/authorization. |
 | P0 | `src/tools/core/execution.rs` | Remove global 64 KiB Core-only truncation as a storage rule; keep explicit pagination semantics for old tools. |
 | P0 | `src/services/background/plugins/protocol.rs` | Increase JSONL stdout cap to 1 MiB while retaining one-line and schema validation. |
@@ -353,7 +353,7 @@ Paths below are relative to repository root.
 | P1 | `src/services/background/models.rs` | Separate request-byte limit from provider token budget; cap tool schemas separately. |
 | P1 | `src/services/background/agent_loop/results.rs` | Extend existing `plugin_tool_result` with bounded structured observation; no new module. |
 | P1 | `src/services/background/coverage.rs` | Keep authoritative source evidence checks; bound terminal summary rather than serializing all full Step results. |
-| P2 | `crates/voice-agent-server/Cargo.toml` | Add pinned AnyDoc dependency; validate lockfile and MSRV. |
+| P2 | `crates/vela-server/Cargo.toml` | Add pinned AnyDoc dependency; validate lockfile and MSRV. |
 | P2 | `src/services/document_conversion.rs` (or grouped module) | Internal pure AnyDoc conversion to Markdown/format; existing artifacts own hashing. |
 | P2 | `src/tools/core/contracts.rs`, `catalog.rs`, `expanded.rs` | Register `document.convert` and `document.read` with typed schemas and coverage metadata. |
 | P2 | `src/tools/core/expanded/document.rs` | New Core operations, validated artifact reads and pagination; keep old functions unchanged. |
@@ -364,7 +364,7 @@ Paths below are relative to repository root.
 | Follow-up | Knowledge Source import | Separate, explicitly authorized work under ADR 0117; not a requirement for P2. |
 | P2 | Admin Web Job Detail existing Artifact Gallery | Verify `converted.md` preview/download; **no redesign**. |
 
-`src/...` abbreviates `crates/voice-agent-server/src/...` in this table.
+`src/...` abbreviates `crates/vela-server/src/...` in this table.
 
 **Database migrations:** None expected. Reuse `job_steps.result_json`, `job_artifacts` and the existing transactional Session byte SUM. Do not create an AnyDoc table or a speculative Session byte-counter migration.
 
@@ -425,9 +425,9 @@ Paths below are relative to repository root.
 
 ```bash
 cargo fmt --all --check
-cargo check -p voice-agent-server
-cargo clippy -p voice-agent-server --all-targets -- -D warnings
-cargo test -p voice-agent-server --lib
+cargo check -p vela-server
+cargo clippy -p vela-server --all-targets -- -D warnings
+cargo test -p vela-server --lib
 # External SDK/package tests must run in their independent workspaces:
 cd plugins/rust-plugin-sdk && cargo test
 ```

@@ -68,7 +68,7 @@ The generated Step output metadata is `filename=speech.wav`, `media_type=audio/w
 
 This branch is a code change, not evidence of successful operation on native TTS hardware. Before merge or deploy:
 
-1. Run `cargo fmt --all -- --check`, `cargo check -p voice-agent-server`, then `cargo test -p voice-agent-server` (confirm package name from workspace manifest).
+1. Run `cargo fmt --all -- --check`, `cargo check -p vela-server`, then `cargo test -p vela-server` (confirm package name from workspace manifest).
 2. Apply all migrations to a populated copy of an existing SQLite DB and run `PRAGMA foreign_key_check`; verify all four original Core enablement rows unchanged and `core.tts` initially disabled.
 3. Configure and enable a TTS provider with strictly more total slots than reserved Voice capacity; verify one Admin Manual Run synthesizes a valid WAV with actual sample rate and appears in Job Detail.
 4. Verify `hierarchical_v3` Child tool call and `submit_result` evidence ownership, no extra ToolCall protocol or Agent Session.

@@ -8,8 +8,8 @@ Cập nhật: 2026-11-01. Runtime theo [ADR 0127](../adr/0127-orchestrator-flow-
 
 Nguồn triển khai:
 
-- `crates/voice-agent-server/src/app/admin/background/jobs.rs`: REST và SSE.
-- `crates/voice-agent-server/src/services/task_flow/projections.rs`: ánh xạ Task và dựng events.
+- `crates/vela-server/src/app/admin/background/jobs.rs`: REST và SSE.
+- `crates/vela-server/src/services/task_flow/projections.rs`: ánh xạ Task và dựng events.
 - `apps/admin-web/src/pages/jobs/JobDetailPage.vue`: đọc dữ liệu và reconcile.
 - `apps/admin-web/src/domain/jobs/{unified-activity,llm-activity}.ts`: dựng timeline phía Web.
 
