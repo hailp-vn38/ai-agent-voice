@@ -9,6 +9,7 @@ Usage: ./scripts/compose.sh <prod|test> <command> [server|web]
        ./scripts/compose.sh <prod|test> down [server web|all]
 
   build     Build images (checks /mnt/storage first)
+  pull      Pull images from the registry set by VELA_SERVER_IMAGE/VELA_WEB_IMAGE
   up        Start the stack and wait for readiness (checks storage first)
   down      Remove containers/networks; keep data
   restart   Restart existing containers
@@ -20,7 +21,7 @@ Usage: ./scripts/compose.sh <prod|test> <command> [server|web]
 
 Build defaults to prod; omit services or use all to build all images.
 Build and down accept multiple services; down without services or with all removes the whole stack.
-Optional server/web selection: up, restart, logs, status.
+Optional server/web selection: up, pull, restart, logs, status.
 Production setup: docs/docker.md
 EOF
 }
@@ -69,7 +70,7 @@ case "$action" in
       done
     fi
     ;;
-  up|restart|logs|status)
+  up|pull|restart|logs|status)
     if (( $# == 3 )); then
       case "$3" in
         server|web) selection=("$3") ;;
@@ -104,6 +105,7 @@ export APP_UID=${APP_UID:-} APP_GID=${APP_GID:-}
 
 case "$action" in
   build) exec "${compose[@]}" build ${selection[@]+"${selection[@]}"} ;;
+  pull) exec "${compose[@]}" pull ${selection[@]+"${selection[@]}"} ;;
   up) exec "${compose[@]}" up --detach --wait --wait-timeout "$wait_seconds" ${selection[@]+"${selection[@]}"} ;;
   down) exec "${compose[@]}" down ${selection[@]+"${selection[@]}"} ;;
   restart) exec "${compose[@]}" restart ${selection[@]+"${selection[@]}"} ;;

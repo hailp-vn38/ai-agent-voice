@@ -72,6 +72,11 @@ class ComposeManagerTests(unittest.TestCase):
             "logs", "--follow", "--tail", "100", "server",
         ]])
 
+    def test_pull_selects_service(self):
+        result, calls = self.invoke("prod", "pull", "web")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(calls[-1][-2:], ["pull", "web"])
+
     def test_up_checks_storage_before_starting(self):
         result, calls = self.invoke("test", "up", "web")
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -128,7 +133,7 @@ class ComposeManagerTests(unittest.TestCase):
     def test_rejects_invalid_commands_before_docker(self):
         for args in [
             ("prod", "run"), ("prod", "down", "--volumes"),
-            ("prod", "logs", "unknown"), ("staging", "up"),
+            ("prod", "logs", "unknown"), ("prod", "pull", "unknown"), ("staging", "up"),
             ("build", "unknown"), ("build", "all", "server"),
             ("build", "server", "--no-cache"), ("prod", "up", "server", "web"),
             ("prod", "down", "unknown"), ("prod", "down", "all", "server"),

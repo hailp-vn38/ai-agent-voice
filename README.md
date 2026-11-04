@@ -260,7 +260,7 @@ bash scripts/compose.sh prod up
 ./scripts/compose.sh prod down all         # Remove the whole stack; keep data
 ```
 
-Trước khi chạy production, tạo `docker/config.prod.toml` và `docker/secrets.env` từ [config mẫu](docker/config.prod.example.toml) và [env mẫu](docker/secrets.env.example), chỉnh provider credentials, bind và runtime library. Chuẩn bị thư mục data/models và quyền ghi theo [`compose.prod.yaml`](compose.prod.yaml); web mặc định ở `http://127.0.0.1:8080`.
+Trước khi chạy production, chạy `./scripts/prod-init.sh` hoặc tự tạo `docker/config.prod.toml` và `docker/secrets.env` từ [config mẫu](docker/config.prod.example.toml) và [env mẫu](docker/secrets.env.example), chỉnh provider credentials, bind và runtime library. Chuẩn bị thư mục data/models và quyền ghi theo [`compose.prod.yaml`](compose.prod.yaml); web mặc định ở `http://127.0.0.1:8080`.
 
 Compose production mount chỉ đọc `docker/credential-keys.json` và `runtime/kokoro-vi`; cần chuẩn bị các đường dẫn này trước khi chạy. Kokoro cần Python env tương thích Linux trong container. Nếu cổng 8080 đã được dùng, chạy `WEB_PORT=8082 bash scripts/compose.sh prod up` và dùng cùng `WEB_PORT` cho các lần `up` tiếp theo.
 
@@ -279,7 +279,7 @@ docker save vela-server:local vela-web:local | gzip > images.tar.gz
 
 Image không chứa secret: `.dockerignore` loại `config.toml`, `docker/config.prod.toml`, `docker/secrets.env` và `docker/credential-keys.json`; các file này được mount lúc chạy.
 
-Thay vì chép `images.tar.gz`, có thể push lên registry private (ví dụ Docker Hub) và đặt `image:` trong Compose theo tag đó. Máy chạy cần `docker login` nếu repo là private:
+Thay vì chép `images.tar.gz`, có thể push lên registry private (ví dụ Docker Hub); server chọn image qua `VELA_SERVER_IMAGE`/`VELA_WEB_IMAGE` trong `.env` (xem phần dưới). Máy chạy cần `docker login` nếu repo là private:
 
 ```bash
 docker tag vela-server:local <namespace>/vela-server:<tag>
@@ -290,16 +290,35 @@ docker push <namespace>/vela-web:<tag>
 
 ### Chạy trên server
 
-Chép image, `compose.yaml`, `compose.prod.yaml`, `docker/` (config, secrets, credential keys) và `runtime/kokoro-vi` lên server; chép `models/` vào `VOICE_PROD_MODELS_DIR`. Rồi load image và khởi động với project `vela-prod`:
+Cách nhanh nhất: clone repo, kéo image đã push sẵn rồi chạy. [`scripts/prod-init.sh`](scripts/prod-init.sh) tạo các file còn thiếu và không ghi đè file đã có: `docker/config.prod.toml` với token ngẫu nhiên, `docker/secrets.env`, `docker/credential-keys.json` với khóa AES ngẫu nhiên (cần backup), `runtime/kokoro-vi`, thư mục data/models, và `.env` trỏ tới image trên registry.
+
+```bash
+git clone https://github.com/hailp-vn38/ai-agent-voice.git && cd ai-agent-voice
+./scripts/prod-init.sh --registry hailp        # thêm --tag <tag> để ghim phiên bản
+# Sửa docker/config.prod.toml: provider API key, server.public_ws_url
+docker login                                   # image private
+./scripts/compose.sh prod pull
+./scripts/compose.sh prod up
+```
+
+Để cập nhật:
+
+```bash
+git pull && ./scripts/compose.sh prod pull && ./scripts/compose.sh prod up
+```
+
+Image lấy từ `VELA_SERVER_IMAGE` và `VELA_WEB_IMAGE` trong `.env`; không đặt thì dùng `vela-server:local` và `vela-web:local`. Muốn build trên server, bỏ `--registry` rồi chạy `./scripts/compose.sh prod build`. Model chép vào `VOICE_PROD_MODELS_DIR`.
+
+Cũng có thể không dùng registry: chép `images.tar.gz` cùng các file trên lên server, rồi chạy:
 
 ```bash
 gunzip -c images.tar.gz | docker load
-docker compose -p vela-prod -f compose.yaml -f compose.prod.yaml up --detach --no-build --wait
+./scripts/compose.sh prod up
 ```
 
 - **Docker rootless:** UID trong container được ánh xạ sang subuid, nên container chạy UID 1000 không đọc được file `600` của user host; root trong container rootless chính là user host. `scripts/compose.sh prod up|restart` tự nhận biết: rootless chạy `0:0`, rootful chạy `$(id -u):$(id -g)`. Đặt `APP_UID`/`APP_GID` để ghi đè. Gọi `docker compose` trực tiếp thì phải tự đặt hai biến này.
 - **Quyền file:** sau khi giải nén archive tạo trên macOS, chạy `chown -R $(id -u):$(id -g) .` để file thuộc user trên server.
-- Xem log: `docker compose -p vela-prod -f compose.yaml -f compose.prod.yaml logs -f --tail 100`.
+- Xem log: `./scripts/compose.sh prod logs`.
 
 ### Truy cập Studio qua LAN, Tailscale hoặc HTTPS
 
