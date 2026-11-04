@@ -742,3 +742,60 @@ async fn knowledge_raw_create_places_root_and_folder_files_in_their_folder() {
     handle.abort();
     let _ = std::fs::remove_dir_all(&temp_root);
 }
+
+#[tokio::test]
+async fn knowledge_raw_batch_creates_nested_folder_files_and_skips_existing() {
+    let (base, temp_root, handle) = fixture_server().await;
+    let client = reqwest::Client::new();
+    let resp = client
+        .post(format!("{base}/knowledge/raw/batch"))
+        .bearer_auth("knowledge-test-token")
+        .json(&serde_json::json!({
+            "folder_path": "raw/handbook",
+            "files": [
+                { "path": "intro.md", "body": "# Intro\n" },
+                { "path": "guide/setup.md", "body": "# Setup\n" },
+                { "path": "../escape.md", "body": "nope" },
+                { "path": "image.png", "body": "nope" },
+            ]
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(
+        body["created"],
+        serde_json::json!(["raw/handbook/intro.md", "raw/handbook/guide/setup.md"])
+    );
+    assert_eq!(body["failed"].as_array().unwrap().len(), 2);
+    assert!(
+        temp_root
+            .join("vault/sources/handbook/guide/setup.md")
+            .exists()
+    );
+    assert!(!temp_root.join("vault/sources/escape.md").exists());
+
+    let again: Value = client
+        .post(format!("{base}/knowledge/raw/batch"))
+        .bearer_auth("knowledge-test-token")
+        .json(&serde_json::json!({
+            "folder_path": "raw/handbook",
+            "files": [{ "path": "intro.md", "body": "overwrite" }]
+        }))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(
+        again["skipped"],
+        serde_json::json!(["raw/handbook/intro.md"])
+    );
+    let kept = std::fs::read_to_string(temp_root.join("vault/sources/handbook/intro.md")).unwrap();
+    assert_eq!(kept, "# Intro\n");
+
+    handle.abort();
+    let _ = std::fs::remove_dir_all(&temp_root);
+}

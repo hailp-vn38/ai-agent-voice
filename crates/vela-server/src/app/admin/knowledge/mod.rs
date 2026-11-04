@@ -28,8 +28,9 @@ pub(super) use pages::{
     knowledge_create, knowledge_publish, knowledge_read, knowledge_search, knowledge_update,
 };
 pub(super) use raw::{
-    knowledge_folder_create, knowledge_page_move, knowledge_raw_create, knowledge_raw_import,
-    knowledge_raw_move, knowledge_raw_read, knowledge_raw_update, knowledge_tree,
+    MAX_RAW_BATCH_BODY, knowledge_folder_create, knowledge_page_move, knowledge_raw_batch_create,
+    knowledge_raw_create, knowledge_raw_import, knowledge_raw_move, knowledge_raw_read,
+    knowledge_raw_update, knowledge_tree,
 };
 pub(super) use sources::{
     knowledge_chart_read, knowledge_import_source, knowledge_read_source, knowledge_sources,

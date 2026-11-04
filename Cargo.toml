@@ -25,7 +25,7 @@ http = "1.0"
 hound = "3.5"
 opus2 = { version = "0.4", default-features = false, features = ["backend-libopus", "bundled", "static"] }
 orchestrator-agent = "0.7.0"
-orchestrator-flow = "0.4.0"
+orchestrator-flow = "0.5.0"
 ort = { version = "=2.0.0-rc.13", default-features = false, features = ["load-dynamic"] }
 reqwest = { version = "0.13", default-features = false, features = ["blocking", "json", "multipart", "rustls", "stream", "gzip", "brotli", "deflate"] }
 rustls = { version = "0.23", default-features = false, features = ["ring"] }

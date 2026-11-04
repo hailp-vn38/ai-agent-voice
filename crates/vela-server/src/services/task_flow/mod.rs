@@ -9,6 +9,7 @@ mod projections;
 mod recipe_agents;
 mod recipe_start;
 mod recipes;
+mod sources_watch;
 #[cfg(test)]
 pub(crate) use recipes::{
     PLAYLIST_COMPLETION_TOOL, PLAYLIST_DOMAIN_SELECTOR, PLAYLIST_RECIPE_ROOT,
@@ -442,14 +443,15 @@ async fn init_orchestrator_and_task_manager(
     let task_manager = task_init
         .with_orchestrator(orchestrator.clone())
         .with_wiki_autoflow(WikiAutoFlowBinding::for_agent(
-            engine,
-            autoflow_notify,
+            engine.clone(),
+            autoflow_notify.clone(),
             "wiki_root",
         ))
         .start()
         .await?;
     let _ = recipe_start_manager.set(task_manager.clone());
     spawn_job_session_reaper(&task_manager, &orchestrator);
+    sources_watch::spawn_sources_disk_sync(engine, autoflow_notify);
     muse_task::closer::SubagentMuseCloser::spawn(&orchestrator);
 
     Ok((orchestrator, task_manager))
