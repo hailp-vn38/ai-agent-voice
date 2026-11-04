@@ -2699,9 +2699,9 @@ dependencies = [
 
 [[package]]
 name = "orchestrator-flow"
-version = "0.4.0"
+version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "82f09e37039ae2b038ed71267f956186abdac887c91bf87a399d98238d20263c"
+checksum = "24b3886c84b36808c96e97090c76b7ba45cab46284494bc0a1691b6d8cd3997f"
 dependencies = [
  "anydoc",
  "async-trait",
