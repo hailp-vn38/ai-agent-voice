@@ -173,7 +173,7 @@ Device chưa đăng ký có Enrollment Session riêng để hiển thị và ph�
 `[orchestrator]` cấp cấu hình cho `TaskManager` và agent runtime. Trong Studio, dùng **Jobs** để tạo tác vụ, theo dõi cây thực thi, gửi follow-up, xem báo cáo/artifacts và quản lý cấu hình providers, agents, Skills.
 
 - `daily_root` điều phối tác vụ tương tác, thu thập nguồn và báo cáo; `wiki_root` phụ trách biên soạn/duy trì Wiki từ nguồn local.
-- WorkspaceToolKit cung cấp công cụ Wiki, báo cáo Markdown, HTML/PDF/YouTube, media và reminders theo quyền từng agent. Backend ảnh/video, ASR/TTS và CLI ngoài cần được chuẩn bị cho công cụ tương ứng; chẳng hạn YouTube cần `yt-dlp` trên `PATH`.
+- WorkspaceToolKit cung cấp công cụ Wiki, báo cáo Markdown, HTML/PDF/YouTube, media và reminders theo quyền từng agent. Backend ảnh/video, ASR/TTS và CLI ngoài cần được chuẩn bị cho công cụ tương ứng; chẳng hạn YouTube cần `yt-dlp` trên `PATH` (image Docker production đã có sẵn yt-dlp, FFmpeg và Deno).
 - Runtime có trạng thái chờ retry/chờ người dùng và ngân sách mỗi lượt; tác vụ có side effect không rõ kết quả không được tự động chạy lại như một yêu cầu mới. Chi tiết: [ADR 0133](docs/adr/0133-durable-waiting-retry-and-job-budgets.md), [ADR 0134](docs/adr/0134-resumable-tool-operations-and-job-muse-sessions.md).
 
 `cloud_worker` của `daily_root` cung cấp `muse_task` cho công việc cloud dài, mặc định **tắt**. Admin chọn Muse provider cho tool rồi bật agent; xem [hướng dẫn nâng cấp settings](docs/muse-task-settings-upgrade.md). Mỗi Sub-Agent dùng một phiên Muse riêng xuyên nhiều lượt `send`/`collect`; hoàn tất thì archive con và giữ phiên trên Muse, còn Job Artifact đã lưu vẫn dành cho cha. Phiên chỉ bị xóa khi người dùng yêu cầu rõ (`delete_session_on_finish=true`). Follow-up sau khi con kết thúc cần con mới. Không giao công việc này cho Task nguồn Voice có ngân sách năm phút. Nội dung gửi sang Muse là dữ liệu chuyển ra dịch vụ bên thứ ba; không tự đính kèm Memory/Wiki.
@@ -316,6 +316,7 @@ gunzip -c images.tar.gz | docker load
 ./scripts/compose.sh prod up
 ```
 
+- **yt-dlp, FFmpeg, Deno:** image production có sẵn `ffmpeg`/`ffprobe` (Debian), `yt-dlp` và `deno` ghim phiên bản, kiểm tra SHA-256 lúc build (`YTDLP_VERSION`, `DENO_VERSION` trong [server.Dockerfile](docker/server.Dockerfile)). `PATH` ưu tiên `/app/data/bin`, nên khi YouTube đổi và yt-dlp lỗi, chạy `./scripts/compose.sh prod tools-update` để tải yt-dlp mới nhất (kiểm tra checksum) vào volume data mà không cần build lại image. Xóa `data/bin/yt-dlp` để quay về bản trong image.
 - **Docker rootless:** UID trong container được ánh xạ sang subuid, nên container chạy UID 1000 không đọc được file `600` của user host; root trong container rootless chính là user host. `scripts/compose.sh prod up|restart` tự nhận biết: rootless chạy `0:0`, rootful chạy `$(id -u):$(id -g)`. Đặt `APP_UID`/`APP_GID` để ghi đè. Gọi `docker compose` trực tiếp thì phải tự đặt hai biến này.
 - **Quyền file:** sau khi giải nén archive tạo trên macOS, chạy `chown -R $(id -u):$(id -g) .` để file thuộc user trên server.
 - Xem log: `./scripts/compose.sh prod logs`.

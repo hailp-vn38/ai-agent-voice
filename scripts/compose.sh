@@ -13,6 +13,7 @@ Usage: ./scripts/compose.sh <prod|test> <command> [server|web]
   up        Start the stack and wait for readiness (checks storage first)
   down      Remove containers/networks; keep data
   restart   Restart existing containers
+  tools-update  Install the latest yt-dlp into data/bin (prod; server must be running)
   logs      Follow the last 100 log lines
   status    Show containers, including stopped ones
   config    Validate Compose without printing secrets
@@ -81,6 +82,9 @@ case "$action" in
   config|check)
     if (( $# == 3 )); then usage >&2; exit 2; fi
     ;;
+  tools-update)
+    if [[ $environment != prod ]] || (( $# == 3 )); then usage >&2; exit 2; fi
+    ;;
   run)
     if [[ $environment != test ]] || (( $# == 3 )); then usage >&2; exit 2; fi
     exec bash scripts/test-docker.sh
@@ -113,4 +117,17 @@ case "$action" in
   status) exec "${compose[@]}" ps --all ${selection[@]+"${selection[@]}"} ;;
   config) exec "${compose[@]}" config --quiet ;;
   check) exit 0 ;;
+  tools-update)
+    # Overrides the image's pinned yt-dlp via /app/data/bin, which is first on PATH.
+    exec "${compose[@]}" exec -T server sh -euc '
+      case "$(uname -m)" in x86_64) asset=yt-dlp_linux ;; aarch64) asset=yt-dlp_linux_aarch64 ;; *) exit 1 ;; esac
+      base=https://github.com/yt-dlp/yt-dlp/releases/latest/download
+      mkdir -p /app/data/bin && cd /app/data/bin
+      curl --fail --silent --show-error --location --retry 3 --output yt-dlp.new "$base/$asset"
+      curl --fail --silent --show-error --location --retry 3 "$base/SHA2-256SUMS" \
+        | awk -v a="$asset" "\$2 == a { print \$1 \"  yt-dlp.new\" }" | sha256sum -c -
+      chmod 755 yt-dlp.new
+      ./yt-dlp.new --version
+      mv yt-dlp.new yt-dlp
+      echo "yt-dlp on PATH: $(command -v yt-dlp) $(yt-dlp --version)"' ;;
 esac
