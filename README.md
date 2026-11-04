@@ -268,6 +268,59 @@ Compose production mount chỉ đọc `docker/credential-keys.json` và `runtime
 
 Compose mặc định lấy data/models production tại `/mnt/storage/ai-agent-voice/docker/prod/`; có thể đổi bằng `VOICE_PROD_DATA_DIR` và `VOICE_PROD_MODELS_DIR`. [Storage checker](scripts/check-docker-storage.py) kiểm tra đường dẫn Cargo build nếu có `.cargo/config.toml` và thư mục storage tương ứng. Docker/containerd dùng storage mặc định; image, volume và cache của Docker build nằm trong storage của Docker, kể cả cache mount có đường dẫn `/mnt/storage` bên trong container. Khi dùng máy khác, chuẩn bị volume paths có quyền ghi và đặt `APP_UID`/`APP_GID` phù hợp. Backend production không publish cổng trực tiếp ra host.
 
+### Build image cho máy khác kiến trúc
+
+Từ máy Apple Silicon, build image `linux/amd64` cho server Linux rồi đóng gói hoặc push:
+
+```bash
+DOCKER_DEFAULT_PLATFORM=linux/amd64 docker compose -f compose.yaml build server web
+docker save vela-server:local vela-web:local | gzip > images.tar.gz
+```
+
+Image không chứa secret: `.dockerignore` loại `config.toml`, `docker/config.prod.toml`, `docker/secrets.env` và `docker/credential-keys.json`; các file này được mount lúc chạy.
+
+Thay vì chép `images.tar.gz`, có thể push lên registry private (ví dụ Docker Hub) và đặt `image:` trong Compose theo tag đó. Máy chạy cần `docker login` nếu repo là private:
+
+```bash
+docker tag vela-server:local <namespace>/vela-server:<tag>
+docker tag vela-web:local <namespace>/vela-web:<tag>
+docker push <namespace>/vela-server:<tag>
+docker push <namespace>/vela-web:<tag>
+```
+
+### Chạy trên server
+
+Chép image, `compose.yaml`, `compose.prod.yaml`, `docker/` (config, secrets, credential keys) và `runtime/kokoro-vi` lên server; chép `models/` vào `VOICE_PROD_MODELS_DIR`. Rồi load image và khởi động với project `vela-prod`:
+
+```bash
+gunzip -c images.tar.gz | docker load
+docker compose -p vela-prod -f compose.yaml -f compose.prod.yaml up --detach --no-build --wait
+```
+
+- **Docker rootless:** UID trong container được ánh xạ sang subuid, nên container chạy UID 1000 không đọc được file `600` của user host. Chạy với `APP_UID=0 APP_GID=0`; root trong container rootless chính là user host.
+- **Quyền file:** sau khi giải nén archive tạo trên macOS, chạy `chown -R $(id -u):$(id -g) .` để file thuộc user trên server.
+- Xem log: `docker compose -p vela-prod -f compose.yaml -f compose.prod.yaml logs -f --tail 100`.
+
+### Truy cập Studio qua LAN, Tailscale hoặc HTTPS
+
+Server tin origin của trình duyệt khi origin là local/IP private, trùng địa chỉ request đi tới (`Host` + `X-Forwarded-Proto`, do nginx chuyển tiếp), hoặc nằm trong `server.trusted_origins`. Vì vậy Studio mở được qua LAN (`http://<lan-ip>:8080`), IP Tailscale (`http://100.x.y.z:8080`) hay một proxy TLS mà không cần sửa config; chỉ thêm `trusted_origins` khi Studio gọi API từ host khác.
+
+Trình duyệt chỉ cấp microphone trên HTTPS. Với Tailscale, chạy trên server:
+
+```bash
+sudo tailscale serve --bg --https=10443 http://127.0.0.1:8080
+```
+
+rồi mở `https://<máy>.<tailnet>.ts.net:10443`. Tailnet policy phải cho phép thiết bị của bạn kết nối tới server; nếu `tailscale ping` thông mà TCP timeout, kiểm tra ACL/grants.
+
+`server.public_ws_url` là URL **thiết bị** nhận qua OTA, không ảnh hưởng tới Studio. Giữ nó ở địa chỉ thiết bị truy cập được (thường là LAN, ví dụ `ws://<lan-ip>:8080/voice/v1/`); ESP32 không vào được Tailscale.
+
+### Nâng cấp từ tên cũ `voice-agent`
+
+`VELA_CONFIG` và `VELA_LOG_FORMAT` vẫn đọc tên cũ `VOICE_AGENT_CONFIG`/`VOICE_AGENT_LOG_FORMAT`. Khi không đặt `[database].url`, server dùng `data/voice-agent.db` nếu chỉ có file cũ. Dừng stack cũ bằng `docker compose -p voice-agent-prod ... down` trước khi `up` project `vela-prod`; data trong `VOICE_PROD_DATA_DIR` được giữ nguyên.
+
+### Kiểm thử Docker
+
 Chạy kiểm thử Docker qua wrapper để giới hạn log:
 
 ```bash
