@@ -93,6 +93,12 @@ fn knowledge_routes() -> Router<AppState> {
                 .put(knowledge::knowledge_raw_update),
         )
         .route(
+            "/knowledge/raw/batch",
+            axum::routing::post(knowledge::knowledge_raw_batch_create).layer(
+                axum::extract::DefaultBodyLimit::max(knowledge::MAX_RAW_BATCH_BODY),
+            ),
+        )
+        .route(
             "/knowledge/raw/import-source",
             axum::routing::post(knowledge::knowledge_raw_import),
         )

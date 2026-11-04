@@ -442,17 +442,47 @@ async fn init_orchestrator_and_task_manager(
     let task_manager = task_init
         .with_orchestrator(orchestrator.clone())
         .with_wiki_autoflow(WikiAutoFlowBinding::for_agent(
-            engine,
-            autoflow_notify,
+            engine.clone(),
+            autoflow_notify.clone(),
             "wiki_root",
         ))
         .start()
         .await?;
     let _ = recipe_start_manager.set(task_manager.clone());
     spawn_job_session_reaper(&task_manager, &orchestrator);
+    spawn_sources_disk_sync(engine, autoflow_notify);
     muse_task::closer::SubagentMuseCloser::spawn(&orchestrator);
 
     Ok((orchestrator, task_manager))
+}
+
+/// Chu kỳ quét `sources/` trên đĩa để nhận file chép thẳng vào vault.
+const SOURCES_DISK_SYNC_INTERVAL: Duration = Duration::from_secs(30);
+
+/// Đồng bộ index với đĩa: Auto-Flow chỉ đọc nguồn từ index, nên file chép thẳng vào
+/// `sources/` (cả folder) sẽ bị bỏ qua nếu không có vòng này. Báo Auto-Flow khi có thay đổi.
+fn spawn_sources_disk_sync(engine: Arc<WikiEngine>, autoflow_notify: Arc<Notify>) {
+    tokio::spawn(async move {
+        let mut ticker = tokio::time::interval(SOURCES_DISK_SYNC_INTERVAL);
+        ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        ticker.tick().await;
+        loop {
+            ticker.tick().await;
+            let engine = engine.clone();
+            let changed = tokio::task::spawn_blocking(move || {
+                engine
+                    .sync_index()
+                    .map(|stats| stats.indexed_new + stats.updated + stats.removed > 0)
+            })
+            .await;
+            match changed {
+                Ok(Ok(true)) => autoflow_notify.notify_one(),
+                Ok(Ok(false)) => {}
+                Ok(Err(err)) => tracing::warn!(error = %err, "wiki sources disk sync failed"),
+                Err(err) => tracing::warn!(error = %err, "wiki sources disk sync task panicked"),
+            }
+        }
+    });
 }
 
 const TERMINAL_RELEASE_INTERVAL: Duration = Duration::from_secs(2);

@@ -3,7 +3,9 @@
 use super::{resolve_wiki_scoped_path, sha256_hex, trigger_source_analysis, wiki, wiki_error};
 use crate::app::{
     AppState,
-    admin::{Json, Path, Query, Request, Response, State, StatusCode, error, json},
+    admin::{
+        Json, Path, Query, Request, Response, State, StatusCode, error, json, json_with_limit,
+    },
 };
 use axum::response::IntoResponse;
 use llm_wiki::{
@@ -262,6 +264,103 @@ pub(in crate::app::admin) async fn knowledge_raw_create(
         }
         Err(err) => wiki_error(&req, err),
     }
+}
+
+/// Tổng dung lượng tối đa của một request upload nhiều file (UI tự chia nhỏ theo ngưỡng này).
+pub(in crate::app::admin) const MAX_RAW_BATCH_BODY: usize = 8 * 1024 * 1024;
+const MAX_RAW_BATCH_FILES: usize = 200;
+
+#[derive(Deserialize)]
+struct RawBatchFile {
+    /// Đường dẫn tương đối trong folder đích, có thể lồng nhau (`guide/setup.md`).
+    path: String,
+    body: String,
+}
+
+#[derive(Deserialize)]
+struct RawBatchPayload {
+    folder_path: String,
+    files: Vec<RawBatchFile>,
+}
+
+/// Chuẩn hóa đường dẫn tương đối của một file upload; từ chối `..`, đường dẫn rỗng và file
+/// không phải Markdown.
+fn batch_rel_path(folder: &str, path: &str) -> Option<String> {
+    let segments: Vec<&str> = path
+        .split(['/', '\\'])
+        .map(str::trim)
+        .filter(|s| !s.is_empty() && *s != ".")
+        .collect();
+    if segments.is_empty() || segments.iter().any(|s| *s == ".." || s.starts_with('.')) {
+        return None;
+    }
+    let joined = segments.join("/");
+    if !joined.to_lowercase().ends_with(".md") {
+        return None;
+    }
+    Some(if folder.is_empty() {
+        joined
+    } else {
+        format!("{folder}/{joined}")
+    })
+}
+
+/// Tạo nhiều file nguồn một lần (upload cả folder). File đã tồn tại được bỏ qua, không ghi đè;
+/// Auto-Flow chỉ được báo một lần cho cả lô.
+pub(in crate::app::admin) async fn knowledge_raw_batch_create(
+    State(state): State<AppState>,
+    req: Request,
+) -> Response {
+    let (req, input): (_, RawBatchPayload) = match json_with_limit(req, MAX_RAW_BATCH_BODY).await {
+        Ok(v) => v,
+        Err(resp) => return resp,
+    };
+    let engine = match wiki(&state, &req) {
+        Ok(engine) => engine,
+        Err(resp) => return resp,
+    };
+    if input.files.is_empty() || input.files.len() > MAX_RAW_BATCH_FILES {
+        return error(&req, StatusCode::BAD_REQUEST, "invalid_arguments");
+    }
+    let folder = space_relative(&input.folder_path);
+    let mut created = Vec::new();
+    let mut skipped = Vec::new();
+    let mut failed = Vec::new();
+    for file in &input.files {
+        let Some(rel_path) = batch_rel_path(folder, &file.path) else {
+            failed.push(serde_json::json!({ "path": file.path, "error": "invalid_path" }));
+            continue;
+        };
+        if engine.config().sources_dir().join(&rel_path).exists() {
+            skipped.push(format!("raw/{rel_path}"));
+            continue;
+        }
+        match engine.write_source_file(&rel_path, &file.body) {
+            Ok(info) => created.push(info.rel_path.replacen("sources/", "raw/", 1)),
+            Err(err) => {
+                failed.push(serde_json::json!({ "path": file.path, "error": err.to_string() }))
+            }
+        }
+    }
+    if !created.is_empty()
+        && let Some(ref notify) = state.autoflow_notify
+    {
+        notify.notify_one();
+    }
+    let status = if created.is_empty() {
+        StatusCode::OK
+    } else {
+        StatusCode::CREATED
+    };
+    (
+        status,
+        Json(serde_json::json!({
+            "created": created,
+            "skipped": skipped,
+            "failed": failed,
+        })),
+    )
+        .into_response()
 }
 
 pub(in crate::app::admin) async fn knowledge_raw_read(

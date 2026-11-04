@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { Network, Link2, Copy, Download, FileText, Folder, FolderOpen, FolderPlus, FilePlus2, Pencil, ChevronsUp, BookOpen, ArrowUpRight, ChevronDown, ChevronRight, Search, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, Columns2, SquarePlus, X } from '@lucide/vue'
+import { Network, Link2, Copy, Download, FileText, Folder, FolderOpen, FolderPlus, FolderUp, FilePlus2, Pencil, ChevronsUp, BookOpen, ArrowUpRight, ChevronDown, ChevronRight, Search, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, Columns2, SquarePlus, X } from '@lucide/vue'
 import { renderMarkdown, markdownOutline } from '@/lib/markdown'
 import { renderMermaidBlocks } from './mermaidRenderer'
 import { renderTradingChartBlocks } from './tradingChartRenderer'
@@ -623,8 +623,149 @@ async function onFileDrop(event: DragEvent, targetFolderPath?: string) {
   isDraggingFile.value = false
   dropTargetFolder.value = null
   if (busy.value) return
-  const files = Array.from(event.dataTransfer?.files ?? [])
-  if (files.length === 0) return
+  const items = await collectDroppedFiles(event.dataTransfer)
+  if (items.length === 0) return
+  const hasFolder = items.some(item => item.relPath.includes('/'))
+  if (!hasFolder) {
+    await uploadSingleFiles(items.map(item => item.file), targetFolderPath)
+    return
+  }
+  await uploadRawBatch(items, targetFolderPath)
+}
+
+type UploadItem = { file: File; relPath: string }
+
+/** Đọc file và folder được kéo vào, giữ đường dẫn tương đối bên trong folder. */
+async function collectDroppedFiles(transfer: DataTransfer | null): Promise<UploadItem[]> {
+  if (!transfer) return []
+  const entries = Array.from(transfer.items ?? [])
+    .map(item => (typeof item.webkitGetAsEntry === 'function' ? item.webkitGetAsEntry() : null))
+    .filter((entry): entry is FileSystemEntry => !!entry)
+  if (entries.length === 0) {
+    return Array.from(transfer.files ?? []).map(file => ({ file, relPath: file.name }))
+  }
+  const out: UploadItem[] = []
+  const walk = async (entry: FileSystemEntry, prefix: string): Promise<void> => {
+    if (entry.isFile) {
+      const file = await new Promise<File>((resolve, reject) =>
+        (entry as FileSystemFileEntry).file(resolve, reject))
+      out.push({ file, relPath: prefix + entry.name })
+    } else if (entry.isDirectory) {
+      const reader = (entry as FileSystemDirectoryEntry).createReader()
+      for (;;) {
+        const batch = await new Promise<FileSystemEntry[]>((resolve, reject) =>
+          reader.readEntries(resolve, reject))
+        if (batch.length === 0) break
+        for (const child of batch) await walk(child, prefix + entry.name + '/')
+      }
+    }
+  }
+  for (const entry of entries) await walk(entry, '')
+  return out
+}
+
+const folderInput = ref<HTMLInputElement | null>(null)
+const uploadNotice = ref('')
+
+function pickFolderUpload() {
+  if (busy.value) return
+  folderInput.value?.click()
+}
+
+async function onFolderPicked(event: Event) {
+  const input = event.target as HTMLInputElement
+  const items = Array.from(input.files ?? []).map(file => ({
+    file,
+    relPath: file.webkitRelativePath || file.name,
+  }))
+  input.value = ''
+  if (items.length > 0) await uploadRawBatch(items)
+}
+
+function resolveUploadFolder(targetFolderPath?: string): string {
+  const candidateFolder = targetFolderPath
+    ?? (currentFolder.value.startsWith('raw') && activeTree.value?.editable !== false
+      ? currentFolder.value
+      : 'raw')
+  return candidateFolder === 'raw' || tree.value.some(
+    node => node.path === candidateFolder && node.type === 'folder' && node.space === 'raw' && node.editable,
+  ) ? candidateFolder : 'raw'
+}
+
+const RAW_BATCH_MAX_FILES = 100
+const RAW_BATCH_MAX_BYTES = 4 * 1024 * 1024
+
+/** Upload cả folder Markdown qua `/raw/batch`: bỏ qua file ẩn và file không phải `.md`,
+ *  không ghi đè file đã có, chia request theo số file và dung lượng. */
+async function uploadRawBatch(items: UploadItem[], targetFolderPath?: string) {
+  if (busy.value) return
+  const markdown = items.filter(item => {
+    const parts = item.relPath.split('/')
+    return item.relPath.toLowerCase().endsWith('.md') && !parts.some(part => part.startsWith('.'))
+  })
+  const ignored = items.length - markdown.length
+  if (markdown.length === 0) {
+    error.value = t('knowledgeV3.folderUploadEmpty')
+    return
+  }
+  if (viewMode.value === 'compose' && editorDirty.value
+      && !window.confirm(t('knowledgeV3.discardChanges'))) return
+  busy.value = true
+  error.value = ''
+  uploadNotice.value = ''
+  try {
+    if (activeSpace.value !== 'raw') {
+      cancelInlineNote()
+      resetExplorer('raw')
+      composeOpen.value = false
+      await refreshTree()
+    }
+    const folder = resolveUploadFolder(targetFolderPath)
+    let created = 0
+    let skipped = 0
+    const failed: string[] = []
+    let chunk: Array<{ path: string; body: string }> = []
+    let chunkBytes = 0
+    const flush = async () => {
+      if (chunk.length === 0) return
+      const result = await requestJson<{ created: string[]; skipped: string[]; failed: Array<{ path: string }> }>(
+        '/api/admin/knowledge/raw/batch', jsonRequest('POST', { folder_path: folder, files: chunk }))
+      created += result.created.length
+      skipped += result.skipped.length
+      failed.push(...result.failed.map(item => item.path))
+      chunk = []
+      chunkBytes = 0
+    }
+    for (const item of markdown) {
+      const content = await readFileText(item.file)
+      const size = new Blob([content]).size + item.relPath.length + 32
+      if (chunk.length >= RAW_BATCH_MAX_FILES || (chunk.length > 0 && chunkBytes + size > RAW_BATCH_MAX_BYTES)) {
+        await flush()
+      }
+      chunk.push({ path: item.relPath, body: content })
+      chunkBytes += size
+    }
+    await flush()
+    const topFolders = new Set(markdown
+      .map(item => item.relPath.split('/').slice(0, -1))
+      .filter(parts => parts.length > 0)
+      .flatMap(parts => parts.map((_, index) => folder + '/' + parts.slice(0, index + 1).join('/'))))
+    openFolders.value = new Set([...openFolders.value, folder, ...topFolders])
+    uploadNotice.value = t('knowledgeV3.folderUploadResult')
+      .replace('{created}', String(created))
+      .replace('{skipped}', String(skipped))
+      .replace('{ignored}', String(ignored))
+    if (failed.length > 0) error.value = t('knowledgeV3.folderUploadFailed') + ' ' + failed.join(', ')
+    await refreshTree()
+    await refreshHealth()
+  } catch (cause) {
+    error.value = formatApiError(cause)
+  } finally {
+    busy.value = false
+  }
+}
+
+async function uploadSingleFiles(files: File[], targetFolderPath?: string) {
   const prepared: Array<{ file: File; fileName: string }> = []
   for (const file of files) {
     const rawName = file.name.trim()
@@ -647,6 +788,7 @@ async function onFileDrop(event: DragEvent, targetFolderPath?: string) {
       && !window.confirm(t('knowledgeV3.discardChanges'))) return
   busy.value = true
   error.value = ''
+  uploadNotice.value = ''
   try {
     if (activeSpace.value !== 'raw') {
       cancelInlineNote()
@@ -654,13 +796,7 @@ async function onFileDrop(event: DragEvent, targetFolderPath?: string) {
       composeOpen.value = false
       await refreshTree()
     }
-    const candidateFolder = targetFolderPath
-      ?? (currentFolder.value.startsWith('raw') && activeTree.value?.editable !== false
-        ? currentFolder.value
-        : 'raw')
-    const folder = candidateFolder === 'raw' || tree.value.some(
-      node => node.path === candidateFolder && node.type === 'folder' && node.space === 'raw' && node.editable,
-    ) ? candidateFolder : 'raw'
+    const folder = resolveUploadFolder(targetFolderPath)
     const seen = new Set<string>()
     for (const item of prepared) {
       const path = (folder + '/' + item.fileName).toLowerCase()
@@ -1900,7 +2036,7 @@ onMounted(() => {
     'is-graph-view': viewMode === 'graph',
   }" aria-label="Knowledge Vault"
     @dragenter.prevent="onPageDragEnter" @dragover.prevent="onPageDragOver"
-    @dragleave="onPageDragLeave" @drop.prevent="onFileDrop($event)">
+    @dragleave="onPageDragLeave" @drop.prevent="onFileDrop($event, 'raw')">
     <div v-if="isDraggingFile" class="a-drop-banner" role="status">{{ t('knowledgeV3.dropMarkdownHint') }}</div>
     <aside id="knowledge-explorer-panel" class="a-explorer"
       :class="{ 'is-collapsed': explorerCollapsed }" :style="panelStyle('explorer', explorerCollapsed)" :aria-hidden="explorerCollapsed">
@@ -1920,6 +2056,10 @@ onMounted(() => {
               :disabled="busy" @click="newFolder"><FolderPlus :size="17" /></button>
             <button type="button" class="icon-button" aria-label="Add file" :title="t('knowledgeV3.createNote')"
               :disabled="busy" @click="startNewFile"><FilePlus2 :size="17" /></button>
+            <button type="button" class="icon-button" :aria-label="t('knowledgeV3.uploadFolder')"
+              :title="t('knowledgeV3.uploadFolder')" :disabled="busy" @click="pickFolderUpload"><FolderUp :size="17" /></button>
+            <input ref="folderInput" type="file" class="hidden" webkitdirectory multiple
+              @change="onFolderPicked" />
           </template>
           <button class="icon-button" :class="{ active: searchOpen }" type="button"
             :title="t('knowledgeV3.search')" :aria-label="t('knowledgeV3.search')"
@@ -2065,6 +2205,7 @@ onMounted(() => {
       @keydown.left.prevent="nudgePanel('explorer', -16)" @keydown.right.prevent="nudgePanel('explorer', 16)"></div>
     <section class="a-workspace">
       <p v-if="error" class="a-error" role="alert">{{ error }}</p>
+      <p v-else-if="uploadNotice" class="text-sm text-muted-foreground" role="status">{{ uploadNotice }}</p>
       <div ref="panesEl" class="a-panes">
         <template v-for="(pane, paneIndex) in panes" :key="pane.id">
           <div v-if="paneIndex > 0" class="a-pane-resizer" role="separator" aria-orientation="vertical"

@@ -253,6 +253,11 @@ pub(in crate::app::admin) async fn knowledge_rebuild(
     };
     let embed = engine.embed_pending(false).unwrap_or_default();
     let _ = engine.rebuild_or_sync_index_md();
+    if sync.indexed_new + sync.updated + sync.removed > 0
+        && let Some(ref notify) = state.autoflow_notify
+    {
+        notify.notify_one();
+    }
     let indexed = sync.indexed_new + sync.updated + sync.unchanged;
     Json(serde_json::json!({
         "indexed": indexed,

@@ -707,8 +707,51 @@ it('creates nested folders through Explorer in the File tab without writing a fi
     expect(creates).toEqual([
       { space: 'raw', parent_path: 'raw', name: 'docs/flow' },
     ])
-    expect(wrapper.find('input').exists()).toBe(false)
+    expect(wrapper.find('input:not([type="file"])').exists()).toBe(false)
   } finally { prompt.mockRestore(); wrapper.unmount() }
+})
+
+it('uploads a picked Markdown folder through the raw batch endpoint', async () => {
+  const fallback = requestJsonMock.getMockImplementation()!
+  const batches: unknown[] = []
+  requestJsonMock.mockImplementation(async (url: string, options?: {method?: string;body?: unknown}) => {
+    if (url === '/api/admin/knowledge/raw/batch' && options?.method === 'POST') {
+      batches.push(typeof options.body === 'string' ? JSON.parse(options.body) : options.body)
+      return { created: ['raw/handbook/intro.md', 'raw/handbook/guide/setup.md'], skipped: [], failed: [] }
+    }
+    return fallback(url)
+  })
+  const wrapper = mount(KnowledgePage)
+  try {
+    await flushPromises()
+    const fileTab = wrapper.findAll('[role="tablist"][aria-label="Knowledge source"] [role="tab"]')
+      .find(tab => tab.attributes('aria-label') === 'File')!
+    await fileTab.trigger('click')
+    await flushPromises()
+    const withPath = (body: string, name: string, rel: string) => {
+      const file = new File([body], name, { type: 'text/markdown' })
+      Object.defineProperty(file, 'webkitRelativePath', { value: rel })
+      return file
+    }
+    const files = [
+      withPath('# Intro', 'intro.md', 'handbook/intro.md'),
+      withPath('# Setup', 'setup.md', 'handbook/guide/setup.md'),
+      withPath('png', 'logo.png', 'handbook/logo.png'),
+      withPath('x', '.hidden.md', 'handbook/.hidden.md'),
+    ]
+    const input = wrapper.get('input[type="file"][webkitdirectory]')
+    Object.defineProperty(input.element, 'files', { value: files, configurable: true })
+    await input.trigger('change')
+    await flushPromises()
+    expect(batches).toEqual([{
+      folder_path: 'raw',
+      files: [
+        { path: 'handbook/intro.md', body: '# Intro' },
+        { path: 'handbook/guide/setup.md', body: '# Setup' },
+      ],
+    }])
+    expect(wrapper.text()).toMatch(/(Uploaded|Đã tải lên) 2 /)
+  } finally { wrapper.unmount() }
 })
 
 it('remembers the expanded Knowledge folders and selected note on reload', async () => {
@@ -833,6 +876,11 @@ it('uploads a dropped Markdown file into the File space and displays its content
       items: [
         { type: 'folder', space: 'raw', path: 'raw', name: 'raw', editable: true },
         { type: 'folder', space: 'raw', path: 'raw/notes', name: 'notes', editable: true },
+        ...writes.map(write => ({
+          type: 'file', space: 'raw', editable: true,
+          path: String(write.options?.body?.folder_path) + '/' + String(write.options?.body?.file_name),
+          name: String(write.options?.body?.file_name),
+        })),
       ],
     }
     if (url === '/api/admin/knowledge/raw/files' && options?.method === 'POST') {
@@ -884,6 +932,14 @@ it('uploads a dropped Markdown file into the File space and displays its content
         body: { folder_path: 'raw/notes', file_name: 'Inside.md', body: 'Folder note body' },
       },
     })
+
+    // Đang mở note raw/notes/Inside.md, thả ra ngoài cây thì vẫn phải vào root.
+    const rootFile = new File(['Root note body'], 'Root.md', { type: 'text/markdown' })
+    await wrapper.get('.knowledge-a').trigger('drop', {
+      dataTransfer: { types: ['Files'], files: [rootFile] },
+    })
+    await flushPromises()
+    expect((writes[2]?.options?.body as Record<string, unknown>)?.folder_path).toBe('raw')
   } finally {
     wrapper.unmount()
   }
