@@ -973,6 +973,10 @@ pub struct ServerConfig {
     pub public_ws_url: Url,
     #[serde(default = "default_hello_timeout_ms")]
     pub hello_timeout_ms: u64,
+    /// Extra browser origins allowed to call admin and assistant APIs from another host.
+    /// Same-origin and local origins are always trusted.
+    #[serde(default)]
+    pub trusted_origins: Vec<Url>,
 }
 
 /// Required local SQLite control plane. A single process owns each configured path.

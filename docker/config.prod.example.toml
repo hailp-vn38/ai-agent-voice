@@ -2,6 +2,9 @@
 [server]
 bind = "0.0.0.0:8000"
 public_ws_url = "ws://127.0.0.1:8080/voice/v1/"
+# Studio is trusted on whatever address serves it (same origin), so LAN, Tailscale and
+# TLS proxies need no entry. List only origins that call the API from another host.
+# trusted_origins = ["https://studio.example"]
 
 [auth]
 token = "REPLACE_WITH_VOICE_TOKEN"

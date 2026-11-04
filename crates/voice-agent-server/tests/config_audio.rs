@@ -46,6 +46,7 @@ fn valid_config() -> AppConfig {
             bind: "127.0.0.1:8000".parse::<SocketAddr>().unwrap(),
             public_ws_url: Url::parse("ws://127.0.0.1:8000/voice/v1/").unwrap(),
             hello_timeout_ms: 5_000,
+            trusted_origins: Vec::new(),
         },
         auth: AuthConfig::default(),
         audio: AudioConfig::default(),

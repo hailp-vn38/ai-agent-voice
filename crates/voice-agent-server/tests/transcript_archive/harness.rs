@@ -253,6 +253,7 @@ pub fn config(url: String, history: DatabaseHistoryConfig) -> AppConfig {
             bind: "127.0.0.1:0".parse().unwrap(),
             public_ws_url: Url::parse("ws://127.0.0.1:0/voice/v1/").unwrap(),
             hello_timeout_ms: 500,
+            trusted_origins: Vec::new(),
         },
         auth: AuthConfig::default(),
         audio: AudioConfig::default(),

@@ -72,6 +72,7 @@ async fn start_with_state(
             bind: address,
             public_ws_url: Url::parse(&format!("ws://{address}/voice/v1/")).unwrap(),
             hello_timeout_ms: 500,
+            trusted_origins: Vec::new(),
         },
         auth: AuthConfig { token },
         audio: AudioConfig::default(),

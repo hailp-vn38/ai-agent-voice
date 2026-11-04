@@ -238,22 +238,9 @@ pub(crate) fn trusted_origin(
     state: &super::AppState,
     headers: &axum::http::HeaderMap,
 ) -> Option<String> {
-    if headers.get_all("origin").iter().count() != 1 {
-        return None;
-    }
-    let origin = headers.get("origin")?;
-    let text = origin.to_str().ok()?;
-    if super::transport::cors::is_local_origin(origin) {
-        return Some(text.to_owned());
-    }
-    let mut public = state.config.server.public_ws_url.clone();
-    let scheme = if public.scheme() == "wss" {
-        "https"
-    } else {
-        "http"
-    };
-    public.set_scheme(scheme).ok()?;
-    (scheme == "https" && public.origin().ascii_serialization() == text).then(|| text.to_owned())
+    super::transport::cors::is_trusted_origin(headers, &state.config.server.trusted_origins)
+        .then(|| headers.get("origin")?.to_str().ok().map(str::to_owned))
+        .flatten()
 }
 
 #[cfg(test)]

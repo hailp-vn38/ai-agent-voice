@@ -386,6 +386,16 @@ fn validate_transport(config: &AppConfig) -> Result<(), ConfigError> {
             "server.public_ws_url must use ws or wss".into(),
         ));
     }
+    if let Some(origin) = config.server.trusted_origins.iter().find(|url| {
+        !matches!(url.scheme(), "http" | "https")
+            || url.path() != "/"
+            || url.query().is_some()
+            || url.fragment().is_some()
+    }) {
+        return Err(ConfigError::Validation(format!(
+            "server.trusted_origins entry {origin} must be an http(s) origin without a path"
+        )));
+    }
     if config.server.hello_timeout_ms == 0
         || !(4_000..=1_048_576).contains(&config.websocket.max_frame_bytes)
     {
