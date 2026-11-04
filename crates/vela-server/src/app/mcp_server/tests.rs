@@ -623,3 +623,61 @@ async fn admin_web_can_configure_knowledge_mcp_and_create_revoke_tokens_live() {
     task.abort();
     let _ = std::fs::remove_dir_all(&vault_path);
 }
+
+#[tokio::test]
+async fn knowledge_mcp_accepts_authenticated_requests_from_remote_hosts() {
+    let vault_path = std::env::temp_dir().join(format!(
+        "vela-mcp-server-knowledge-host-{}",
+        uuid::Uuid::new_v4()
+    ));
+    std::fs::create_dir_all(&vault_path).expect("create temp vault dir");
+    let (mut state, _, _) = fixture().await;
+    {
+        let cfg = Arc::make_mut(&mut state.config);
+        cfg.system_mcp.http.enabled = false;
+        cfg.wiki.enabled = true;
+        cfg.wiki.vault_dir = vault_path.clone();
+        cfg.orchestrator.store_dir = vault_path.join("store");
+        cfg.wiki.mcp.enabled = true;
+        cfg.wiki.mcp.path = "/mcp/knowledge".to_string();
+        cfg.wiki.mcp.read_token = "knowledge-read-secret-123456".to_string();
+    }
+    let (base, task) = serve(crate::app::router_with_state(state)).await;
+    let url = format!("{base}/mcp/knowledge");
+    let initialize = json!({
+        "jsonrpc": "2.0", "id": 1, "method": "initialize",
+        "params": {
+            "protocolVersion": "2025-06-18",
+            "capabilities": {},
+            "clientInfo": { "name": "remote", "version": "0" }
+        }
+    });
+    let http = reqwest::Client::new();
+    // Behind the web proxy over Tailscale/LAN, Host is the homelab address, not localhost.
+    for host in ["100.95.32.71:8080", "homelab.tailnet.ts.net"] {
+        let status = http
+            .post(&url)
+            .header("Host", host)
+            .header("Accept", "application/json, text/event-stream")
+            .bearer_auth("knowledge-read-secret-123456")
+            .json(&initialize)
+            .send()
+            .await
+            .unwrap()
+            .status();
+        assert_eq!(status, StatusCode::OK, "host {host}");
+    }
+    // The token still gates every remote request.
+    let status = http
+        .post(&url)
+        .header("Host", "100.95.32.71:8080")
+        .header("Accept", "application/json, text/event-stream")
+        .json(&initialize)
+        .send()
+        .await
+        .unwrap()
+        .status();
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    task.abort();
+    let _ = std::fs::remove_dir_all(&vault_path);
+}

@@ -49,11 +49,15 @@ struct KnowledgeAuthState {
 
 pub(super) fn router(state: &AppState) -> Router<AppState> {
     let mcp_cfg = &state.config.wiki.mcp;
+    // rmcp only accepts loopback Host headers by default, which blocks every client reaching
+    // the server over LAN/Tailscale. `authenticate` requires a valid bearer token before rmcp
+    // sees the request, and a DNS-rebinding page cannot present that token.
     let config = StreamableHttpServerConfig::default()
         .with_legacy_session_mode(false)
         .with_json_response(true)
         .with_max_request_body_bytes(256 * 1024)
-        .with_cancellation_token(state.lifecycle.stopping().clone());
+        .with_cancellation_token(state.lifecycle.stopping().clone())
+        .disable_allowed_hosts();
 
     let adapter_state = state.clone();
     let service = StreamableHttpService::new(
