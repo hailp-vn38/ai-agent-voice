@@ -297,7 +297,7 @@ gunzip -c images.tar.gz | docker load
 docker compose -p vela-prod -f compose.yaml -f compose.prod.yaml up --detach --no-build --wait
 ```
 
-- **Docker rootless:** UID trong container được ánh xạ sang subuid, nên container chạy UID 1000 không đọc được file `600` của user host. Chạy với `APP_UID=0 APP_GID=0`; root trong container rootless chính là user host.
+- **Docker rootless:** UID trong container được ánh xạ sang subuid, nên container chạy UID 1000 không đọc được file `600` của user host; root trong container rootless chính là user host. `scripts/compose.sh prod up|restart` tự nhận biết: rootless chạy `0:0`, rootful chạy `$(id -u):$(id -g)`. Đặt `APP_UID`/`APP_GID` để ghi đè. Gọi `docker compose` trực tiếp thì phải tự đặt hai biến này.
 - **Quyền file:** sau khi giải nén archive tạo trên macOS, chạy `chown -R $(id -u):$(id -g) .` để file thuộc user trên server.
 - Xem log: `docker compose -p vela-prod -f compose.yaml -f compose.prod.yaml logs -f --tail 100`.
 

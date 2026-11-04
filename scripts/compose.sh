@@ -91,6 +91,17 @@ case "$action" in
   build|up|check) python3 scripts/check-docker-storage.py ;;
 esac
 
+# Rootless Docker maps container root to the invoking host user, so bind-mounted files the
+# host user owns are only readable as container root. Rootful Docker runs as the host user.
+if [[ $environment == prod && ( $action == up || $action == restart ) && -z ${APP_UID:-} ]]; then
+  if docker info --format '{{.SecurityOptions}}' 2>/dev/null | grep -q rootless; then
+    APP_UID=0 APP_GID=0
+  else
+    APP_UID=$(id -u) APP_GID=$(id -g)
+  fi
+fi
+export APP_UID=${APP_UID:-} APP_GID=${APP_GID:-}
+
 case "$action" in
   build) exec "${compose[@]}" build ${selection[@]+"${selection[@]}"} ;;
   up) exec "${compose[@]}" up --detach --wait --wait-timeout "$wait_seconds" ${selection[@]+"${selection[@]}"} ;;

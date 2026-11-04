@@ -13,9 +13,13 @@ with open(os.environ['DOCKER_CALLS'], 'a') as output:
     output.write(json.dumps(sys.argv[1:]) + '\\n')
 if sys.argv[1] == 'context':
     print('unix:///var/run/docker.sock')
+elif sys.argv[1] == 'info' and '{{.SecurityOptions}}' in sys.argv:
+    print(os.environ.get('FAKE_SECURITY_OPTIONS', '[name=seccomp,profile=builtin]'))
 elif sys.argv[1] == 'info':
     print(json.dumps({'DockerRootDir': os.environ.get('FAKE_DOCKER_ROOT', '/var/lib/docker')}))
 else:
+    with open(os.environ['DOCKER_CALLS'] + '.user', 'w') as output:
+        output.write(f"{os.environ.get('APP_UID', '')}:{os.environ.get('APP_GID', '')}")
     sys.exit(int(os.environ.get('FAKE_COMPOSE_EXIT', '0')))
 """
 
@@ -36,7 +40,29 @@ class ComposeManagerTests(unittest.TestCase):
                 text=True, capture_output=True,
             )
             calls = [json.loads(line) for line in calls_file.read_text().splitlines()] if calls_file.exists() else []
+            user_file = Path(f"{calls_file}.user")
+            self.compose_user = user_file.read_text() if user_file.exists() else None
             return result, calls
+
+    def test_prod_up_runs_as_container_root_on_rootless_docker(self):
+        result, _ = self.invoke(
+            "prod", "up", FAKE_SECURITY_OPTIONS="[name=seccomp,profile=builtin name=rootless]",
+            APP_UID="", APP_GID="",
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.compose_user, "0:0")
+
+    def test_prod_up_runs_as_invoking_user_on_rootful_docker(self):
+        result, _ = self.invoke("prod", "up", APP_UID="", APP_GID="")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.compose_user, f"{os.getuid()}:{os.getgid()}")
+
+    def test_prod_up_keeps_explicit_user(self):
+        result, _ = self.invoke(
+            "prod", "up", FAKE_SECURITY_OPTIONS="[name=rootless]", APP_UID="1234", APP_GID="5678",
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.compose_user, "1234:5678")
 
     def test_prod_routes_from_another_working_directory(self):
         result, calls = self.invoke("prod", "logs", "server")
