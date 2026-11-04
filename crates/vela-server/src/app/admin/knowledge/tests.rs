@@ -744,6 +744,27 @@ async fn knowledge_raw_create_places_root_and_folder_files_in_their_folder() {
 }
 
 #[tokio::test]
+async fn knowledge_raw_batch_accepts_body_above_default_admin_limit() {
+    let (base, temp_root, handle) = fixture_server().await;
+    let big = "a".repeat(450 * 1024);
+    let resp = reqwest::Client::new()
+        .post(format!("{base}/knowledge/raw/batch"))
+        .bearer_auth("knowledge-test-token")
+        .json(&serde_json::json!({
+            "folder_path": "raw/big",
+            "files": [{ "path": "big.md", "body": big }]
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    assert!(temp_root.join("vault/sources/big/big.md").exists());
+
+    handle.abort();
+    let _ = std::fs::remove_dir_all(&temp_root);
+}
+
+#[tokio::test]
 async fn knowledge_raw_batch_creates_nested_folder_files_and_skips_existing() {
     let (base, temp_root, handle) = fixture_server().await;
     let client = reqwest::Client::new();
