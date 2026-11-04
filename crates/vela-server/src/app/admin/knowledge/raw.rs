@@ -267,7 +267,7 @@ pub(in crate::app::admin) async fn knowledge_raw_create(
 }
 
 /// Tổng dung lượng tối đa của một request upload nhiều file (UI tự chia nhỏ theo ngưỡng này).
-pub(in crate::app::admin) const MAX_RAW_BATCH_BODY: usize = 8 * 1024 * 1024;
+pub(in crate::app::admin) const MAX_RAW_BATCH_BODY: usize = 16 * 1024 * 1024;
 const MAX_RAW_BATCH_FILES: usize = 200;
 
 #[derive(Deserialize)]
@@ -377,6 +377,11 @@ pub(in crate::app::admin) async fn knowledge_raw_read(
         .trim()
         .trim_start_matches('/')
         .replacen("raw/", "sources/", 1);
+    // A folder (or the Raw root) is not a note: report it as missing instead of a server error.
+    let rel = normalized.strip_prefix("sources").unwrap_or(&normalized).trim_matches('/');
+    if rel.is_empty() || engine.config().sources_dir().join(rel).is_dir() {
+        return error(&req, StatusCode::NOT_FOUND, "not_found");
+    }
     match engine.get_document(&normalized, GetOptions::default()) {
         Ok(doc) => Json(serde_json::json!({
             "path": doc.info.rel_path.replacen("sources/", "raw/", 1),

@@ -693,7 +693,8 @@ function resolveUploadFolder(targetFolderPath?: string): string {
 }
 
 const RAW_BATCH_MAX_FILES = 100
-const RAW_BATCH_MAX_BYTES = 4 * 1024 * 1024
+const RAW_BATCH_MAX_BYTES = 6 * 1024 * 1024
+const RAW_BATCH_MAX_FILE_BYTES = 12 * 1024 * 1024
 
 /** Upload cả folder Markdown qua `/raw/batch`: bỏ qua file ẩn và file không phải `.md`,
  *  không ghi đè file đã có, chia request theo số file và dung lượng. */
@@ -738,7 +739,9 @@ async function uploadRawBatch(items: UploadItem[], targetFolderPath?: string) {
     }
     for (const item of markdown) {
       const content = await readFileText(item.file)
-      const size = new Blob([content]).size + item.relPath.length + 32
+      // Size the JSON-encoded form: escaping can make the request larger than the raw text.
+      const size = new Blob([JSON.stringify({ path: item.relPath, body: content })]).size + 2
+      if (size > RAW_BATCH_MAX_FILE_BYTES) { failed.push(item.relPath); continue }
       if (chunk.length >= RAW_BATCH_MAX_FILES || (chunk.length > 0 && chunkBytes + size > RAW_BATCH_MAX_BYTES)) {
         await flush()
       }
@@ -1098,6 +1101,7 @@ async function showBoundTab() {
   if (!tab.doc && tab.ref && tab === boundTab.value) await openTabRef(tab.ref)
 }
 async function openTabRef(target: TabRef) {
+  if (target.path === target.space) { boundTab.value.ref = null; return }
   const node = tree.value.find(item => item.space === target.space && item.type === 'file'
     && (item.path === target.path || (!!target.id && item.id === target.id)))
   if (node) await chooseNode(node)
