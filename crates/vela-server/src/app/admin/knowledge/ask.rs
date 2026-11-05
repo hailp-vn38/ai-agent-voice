@@ -561,7 +561,7 @@ async fn run_ask(
     cancellation: CancellationToken,
     events: mpsc::Sender<AskEvent>,
 ) -> AskOutcome {
-    use super::answer_graph::Evidence;
+    use super::answer_graph::{Evidence, EvidenceTier};
 
     let deadline = tokio::time::Instant::now() + limits.max_total_time;
     let tool_definitions = engine
@@ -574,7 +574,11 @@ async fn run_ask(
             parameters: without_filter_parameter(tool.parameters),
         })
         .collect::<Vec<_>>();
+    // `evidence` gathers every page this answer touched, so citations can name any of them.
+    // `call_evidence` holds only the latest tool call: Graph shows that call alone instead
+    // of piling every round of the answer onto one picture.
     let mut evidence = Evidence::default();
+    let mut call_evidence = Evidence::default();
     let mut answer = String::new();
     let mut tool_steps = Vec::new();
     let mut graph_revision = 0u64;
@@ -655,7 +659,7 @@ async fn run_ask(
         if step == last_step {
             let graph = match make_graph_snapshot(
                 Arc::clone(&engine),
-                evidence.clone(),
+                call_evidence.clone(),
                 limits.max_graph_nodes,
                 graph_revision,
                 cancellation.clone(),
@@ -727,7 +731,12 @@ async fn run_ask(
             .await;
             match tool_result {
                 Ok(outcome) => {
-                    let changed = record_evidence(&mut evidence, &call.name, &outcome.metadata);
+                    record_evidence(&mut evidence, &call.name, &outcome.metadata);
+                    let mut this_call = Evidence::default();
+                    let changed = record_evidence(&mut this_call, &call.name, &outcome.metadata);
+                    if changed {
+                        call_evidence = this_call;
+                    }
                     let pages = evidence_paths(&call.name, &outcome.metadata);
                     let bounded = tool_result_for_llm(&call.name, outcome, limits.max_result_chars);
                     let content = serde_json::to_string(&bounded)
@@ -749,7 +758,7 @@ async fn run_ask(
                         graph_revision += 1;
                         match make_graph_snapshot(
                             Arc::clone(&engine),
-                            evidence.clone(),
+                            call_evidence.clone(),
                             limits.max_graph_nodes,
                             graph_revision,
                             cancellation.clone(),
@@ -819,12 +828,19 @@ async fn run_ask(
     )
     .await;
     match cited {
-        Ok((citations, changed)) => {
+        Ok((citations, _)) => {
+            // Citations are marked only on the pages the shown graph already holds.
+            let mut changed = false;
+            for path in &citations {
+                if call_evidence.contains(path) {
+                    changed |= call_evidence.record(path, EvidenceTier::Cited, None);
+                }
+            }
             if changed {
                 graph_revision += 1;
                 match make_graph_snapshot(
                     Arc::clone(&engine),
-                    evidence.clone(),
+                    call_evidence.clone(),
                     limits.max_graph_nodes,
                     graph_revision,
                     cancellation.clone(),
@@ -842,7 +858,7 @@ async fn run_ask(
                 Some(graph) => graph,
                 None => match make_graph_snapshot(
                     engine,
-                    evidence,
+                    call_evidence,
                     limits.max_graph_nodes,
                     graph_revision,
                     cancellation.clone(),

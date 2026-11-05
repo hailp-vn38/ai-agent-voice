@@ -2350,6 +2350,7 @@ onMounted(() => {
                 <div class="graph-stage">
                   <KnowledgeGraph :ref="setGraphControls" :center-id="selected?.id ?? null" :reload-token="graphReloadToken"
                     :answer-graph="activeAnswerGraph" :inactive="!paneShowsGraph(pane)"
+                    :hide-sources="activeSpace === 'wiki'"
                     @open="openGraphWiki" @open-side="openGraphWikiSide" @rebuild="rebuild" @node-hover="onKnowledgeGraphNodeHover" />
                 </div>
               </div>

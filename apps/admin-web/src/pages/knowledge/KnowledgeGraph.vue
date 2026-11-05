@@ -49,6 +49,8 @@ const props = defineProps<{
   focusMode?: boolean
   answerGraph?: GraphSnapshot | null
   inactive?: boolean
+  /** Leave Source nodes out, so the graph shows only the wiki pages. */
+  hideSources?: boolean
 }>()
 const emit = defineEmits<{
   open: [id: string]
@@ -179,8 +181,11 @@ function compactNodeLabel(title: string, maxChars = 24): string {
 }
 
 const visibleGraph = computed<{ nodes: GraphNode[]; edges: GraphEdge[] }>(() => {
-  const snapshot = graph.value
-  if (!snapshot) return { nodes: [], edges: [] }
+  const fullSnapshot = graph.value
+  if (!fullSnapshot) return { nodes: [], edges: [] }
+  const snapshot = props.hideSources
+    ? { ...fullSnapshot, nodes: fullSnapshot.nodes.filter(n => classifyNodeGroup(n) !== 'source') }
+    : fullSnapshot
   const allNodeIds = new Set(snapshot.nodes.map(n => n.id))
   const merged = new Map<string, GraphEdge>()
   for (const edge of snapshot.edges) {

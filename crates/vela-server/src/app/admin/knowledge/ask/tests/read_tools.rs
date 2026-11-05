@@ -278,3 +278,56 @@ fn query_tool_result_lists_every_hit_within_the_bound() {
         assert!(content.contains(&format!("\"evidence {index}\"")));
     }
 }
+
+#[tokio::test]
+async fn ask_graph_shows_only_the_latest_tool_call() {
+    let get = |id: &str, file: &str| LlmEvent::ToolCall(ToolCall {
+        id: id.into(),
+        name: "wiki_get".into(),
+        arguments: serde_json::json!({ "file": file }),
+    });
+    let (base, temp_root, server) = wiki_fixture(
+        vec![
+            vec![get("read-a", "concepts/related-a.md"), LlmEvent::Finished],
+            vec![get("read-b", "concepts/related-b.md"), LlmEvent::Finished],
+            vec![
+                LlmEvent::TextDelta("See [[concepts/related-a.md]] and [[concepts/related-b.md]].".into()),
+                LlmEvent::Finished,
+            ],
+        ],
+        "Known evidence from the wiki.",
+    )
+    .await;
+    let response = reqwest::Client::new()
+        .post(format!("{base}/knowledge/ask"))
+        .bearer_auth("wiki-chat-test-token")
+        .json(&serde_json::json!({ "question": "Read both" }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = response.text().await.unwrap();
+    let graphs = sse_payloads(&body, "graph");
+    let evidence_of = |graph: &Value| -> Vec<String> {
+        graph["nodes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|node| node["tier"] != "context")
+            .filter_map(|node| node["id"].as_str().map(str::to_owned))
+            .collect()
+    };
+    assert_eq!(evidence_of(&graphs[0]), ["wiki/concepts/related-a.md"]);
+    assert_eq!(evidence_of(&graphs[1]), ["wiki/concepts/related-b.md"]);
+    let last = graphs.last().unwrap();
+    assert_eq!(evidence_of(last), ["wiki/concepts/related-b.md"]);
+    assert_eq!(last["nodes"][0]["tier"], "cited");
+    // Citations still reach pages from earlier calls.
+    let done = sse_payloads(&body, "done");
+    assert_eq!(
+        done[0]["citations"],
+        serde_json::json!(["wiki/concepts/related-a.md", "wiki/concepts/related-b.md"])
+    );
+    server.abort();
+    let _ = std::fs::remove_dir_all(temp_root);
+}
