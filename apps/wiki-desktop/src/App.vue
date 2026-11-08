@@ -1,15 +1,38 @@
 <script setup lang="ts">
 import { onMounted, onBeforeUnmount, ref } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
+import { listen } from '@tauri-apps/api/event'
 import { WebviewWindow } from '@tauri-apps/api/webviewWindow'
 import KnowledgePage from '@vela/knowledge-ui/components/KnowledgePage.vue'
-import { VaultError } from '@vela/knowledge-ui'
+import { VaultError, type VaultEvent } from '@vela/knowledge-ui'
+
+type McpInfo = {
+  port: number
+  allowWrite: boolean
+  readUrl: string
+  writeUrl: string
+  readConfig: string
+  writeConfig: string
+  stdioConfig: string
+  status: { connectedClients: number; lastCallAt: number | null }
+}
+type ClaudePreview = { path: string; before: string; after: string }
 
 const current = ref<string | null>(null)
 const recent = ref<string[]>([])
 const error = ref<VaultError | null>(null)
 const loading = ref(false)
+const mcpOpen = ref(false)
+const mcpInfo = ref<McpInfo | null>(null)
+const mcpError = ref('')
+const mcpToast = ref('')
+const claudePreview = ref<ClaudePreview | null>(null)
+const claudeInstalled = ref(false)
+const requestedMcpPort = ref<number | null>(null)
 let windowNumber = 1
+let removeMcpStatus: (() => void) | undefined
+let removeVaultEvents: (() => void) | undefined
+let toastTimer: ReturnType<typeof setTimeout> | undefined
 
 async function refreshVaults() {
   recent.value = await invoke<string[]>('vault_recent')
@@ -21,6 +44,7 @@ async function openVault(path: string) {
   try {
     current.value = await invoke<string>('vault_open', { path })
     await refreshVaults()
+    await refreshMcp()
   } catch (cause) {
     const value = cause && typeof cause === 'object' ? cause as { kind?: VaultError['kind']; message?: string; current?: string } : {}
     error.value = new VaultError(value.kind ?? 'io', value.message ?? String(cause), value.current)
@@ -31,11 +55,77 @@ async function pickVault() {
   error.value = null
   try {
     const picked = await invoke<string | null>('vault_pick')
-    if (picked) { current.value = picked; await refreshVaults() }
+    if (picked) { current.value = picked; await refreshVaults(); await refreshMcp() }
   } catch (cause) {
     const value = cause && typeof cause === 'object' ? cause as { kind?: VaultError['kind']; message?: string; current?: string } : {}
     error.value = new VaultError(value.kind ?? 'io', value.message ?? String(cause), value.current)
   } finally { loading.value = false }
+}
+async function refreshMcp() {
+  try {
+    mcpInfo.value = await invoke<McpInfo>('mcp_info')
+    requestedMcpPort.value = mcpInfo.value.port
+    mcpError.value = ''
+  } catch (cause) {
+    mcpInfo.value = null
+    mcpError.value = cause instanceof Error ? cause.message : String(cause)
+  }
+}
+async function saveMcpPort() {
+  if (!requestedMcpPort.value) return
+  try {
+    mcpInfo.value = await invoke<McpInfo>('mcp_set_port', { port: requestedMcpPort.value })
+    requestedMcpPort.value = mcpInfo.value.port
+    mcpError.value = ''
+  } catch (cause) {
+    mcpError.value = cause instanceof Error ? cause.message : String(cause)
+    await refreshMcp()
+  }
+}
+async function toggleMcpWrite(event: Event) {
+  const allowWrite = (event.target as HTMLInputElement).checked
+  try {
+    mcpInfo.value = await invoke<McpInfo>('mcp_set_allow_write', { allowWrite })
+    mcpError.value = ''
+  } catch (cause) {
+    mcpError.value = cause instanceof Error ? cause.message : String(cause)
+    await refreshMcp()
+  }
+}
+async function copyMcp(value: string) {
+  try {
+    await navigator.clipboard.writeText(value)
+    mcpError.value = ''
+  } catch (cause) {
+    mcpError.value = `Không thể sao chép: ${String(cause)}`
+  }
+}
+async function rotateMcpToken(access: 'read' | 'write') {
+  try {
+    mcpInfo.value = await invoke<McpInfo>('mcp_rotate_token', { access })
+    mcpError.value = ''
+  } catch (cause) {
+    mcpError.value = cause instanceof Error ? cause.message : String(cause)
+  }
+}
+async function previewClaudeConfig() {
+  try {
+    claudePreview.value = await invoke<ClaudePreview>('mcp_claude_config_preview')
+    claudeInstalled.value = false
+    mcpError.value = ''
+  } catch (cause) {
+    mcpError.value = cause instanceof Error ? cause.message : String(cause)
+  }
+}
+async function installClaudeConfig() {
+  if (!claudePreview.value) return
+  try {
+    await invoke('mcp_claude_config_install')
+    claudeInstalled.value = true
+    mcpError.value = ''
+  } catch (cause) {
+    mcpError.value = cause instanceof Error ? cause.message : String(cause)
+  }
 }
 async function onShortcut(event: KeyboardEvent) {
   if (!event.metaKey && !event.ctrlKey) return
@@ -59,9 +149,27 @@ async function onShortcut(event: KeyboardEvent) {
 
 onMounted(async () => {
   try { await refreshVaults() } catch { /* WebView is launched by the bundled Tauri shell. */ }
+  try {
+    removeMcpStatus = await listen<McpInfo['status']>('mcp://status', event => {
+      if (mcpInfo.value) mcpInfo.value.status = event.payload
+    })
+    removeVaultEvents = await listen<VaultEvent>('vault://changed', event => {
+      if (event.payload.type !== 'changed' || event.payload.origin !== 'mcp') return
+      const changedPath = event.payload.paths?.[0] ?? 'Wiki'
+      mcpToast.value = `Agent đã cập nhật ${changedPath}`
+      if (toastTimer) clearTimeout(toastTimer)
+      toastTimer = setTimeout(() => { mcpToast.value = '' }, 3000)
+    })
+  } catch { /* Native event API is available only inside the packaged Tauri shell. */ }
+  if (current.value) await refreshMcp()
   window.addEventListener('keydown', onShortcut)
 })
-onBeforeUnmount(() => window.removeEventListener('keydown', onShortcut))
+onBeforeUnmount(() => {
+  window.removeEventListener('keydown', onShortcut)
+  removeMcpStatus?.()
+  removeVaultEvents?.()
+  if (toastTimer) clearTimeout(toastTimer)
+})
 </script>
 
 <template>
@@ -70,6 +178,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onShortcut))
       <span class="app-mark" aria-hidden="true">W</span>
       <strong>Wiki</strong>
       <span v-if="current" class="vault-location" :title="current">{{ current.split('/').at(-1) }}</span>
+      <button v-if="current" class="mcp-open" type="button" @click="mcpOpen = true; refreshMcp()">MCP</button>
       <button class="open-vault" type="button" @click="pickVault">Mở kho ⌘O</button>
     </header>
     <p v-if="error" class="error-banner" role="alert">
@@ -78,6 +187,48 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onShortcut))
     <section v-if="current" class="knowledge-frame" aria-label="Knowledge vault">
       <KnowledgePage />
     </section>
+    <footer v-if="current" class="mcp-footer" aria-label="MCP status">
+      <button type="button" @click="mcpOpen = true; refreshMcp()">MCP · {{ mcpInfo?.status.connectedClients ?? 0 }} client</button>
+      <span v-if="mcpInfo?.status.lastCallAt">Gọi gần nhất {{ new Date(mcpInfo.status.lastCallAt).toLocaleTimeString() }}</span>
+    </footer>
+    <div v-if="mcpToast" class="mcp-toast" role="status">{{ mcpToast }}</div>
+    <div v-if="mcpOpen" class="mcp-overlay" role="presentation" @click.self="mcpOpen = false">
+      <section class="mcp-settings" role="dialog" aria-modal="true" aria-labelledby="mcp-title">
+        <header><div><p class="eyebrow">Kết nối agent</p><h1 id="mcp-title">MCP</h1></div>
+          <button type="button" aria-label="Đóng MCP settings" @click="mcpOpen = false">×</button></header>
+        <p v-if="mcpError" class="mcp-error" role="alert">{{ mcpError }}</p>
+        <template v-if="mcpInfo">
+          <label class="mcp-port-field">Port HTTP
+            <input v-model.number="requestedMcpPort" type="number" min="1" max="65535" aria-label="MCP HTTP port">
+            <button type="button" @click="saveMcpPort">Lưu port</button>
+          </label>
+          <p class="mcp-endpoint">HTTP MCP · <code>127.0.0.1:{{ mcpInfo.port }}/mcp</code></p>
+          <label class="mcp-write-toggle"><input type="checkbox" :checked="mcpInfo.allowWrite" @change="toggleMcpWrite"> Cho phép agent ghi vào Wiki</label>
+          <div class="mcp-token-row">
+            <div><strong>Quyền đọc</strong><small>Token riêng, chỉ gọi được tool đọc.</small></div>
+            <button type="button" @click="copyMcp(mcpInfo.readConfig)">Sao chép URL và token đọc</button>
+            <button type="button" @click="rotateMcpToken('read')">Đổi token</button>
+          </div>
+          <div class="mcp-token-row">
+            <div><strong>Quyền ghi</strong><small>Chỉ hoạt động khi bật quyền ghi.</small></div>
+            <button type="button" :disabled="!mcpInfo.allowWrite" @click="copyMcp(mcpInfo.writeConfig)">Sao chép URL và token ghi</button>
+            <button type="button" @click="rotateMcpToken('write')">Đổi token</button>
+          </div>
+          <div class="mcp-token-row">
+            <div><strong>Claude Desktop · stdio</strong><small>Chuyển tiếp qua app khi đang chạy.</small></div>
+            <button type="button" @click="copyMcp(mcpInfo.stdioConfig)">Sao chép cấu hình</button>
+          </div>
+          <button class="claude-install" type="button" @click="previewClaudeConfig">Cài vào Claude Desktop</button>
+        </template>
+        <p v-else class="mcp-empty">{{ mcpError || 'Đang kết nối MCP…' }}</p>
+        <section v-if="claudePreview" class="claude-preview" aria-label="Claude Desktop config diff">
+          <h2>{{ claudeInstalled ? 'Đã cập nhật cấu hình' : 'Xem thay đổi trước khi cài' }}</h2>
+          <p>{{ claudePreview.path }}</p>
+          <div class="config-diff"><div><strong>Hiện tại</strong><pre>{{ claudePreview.before }}</pre></div><div><strong>Sau khi cài</strong><pre>{{ claudePreview.after }}</pre></div></div>
+          <button v-if="!claudeInstalled" type="button" @click="installClaudeConfig">Xác nhận và ghi cấu hình</button>
+        </section>
+      </section>
+    </div>
     <section v-else class="welcome" aria-labelledby="welcome-title">
       <div class="welcome-card">
         <span class="welcome-mark" aria-hidden="true">W</span>
