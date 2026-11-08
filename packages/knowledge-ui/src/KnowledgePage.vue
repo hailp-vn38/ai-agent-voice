@@ -18,7 +18,7 @@ import KnowledgeNoteView, { noteIntroduction } from './KnowledgeNoteView.vue'
 import KnowledgeMarkdownEditor from './KnowledgeMarkdownEditor.vue'
 import { useKnowledgeWorkspace, type NoteDoc, type Page, type RawFile, type TabRef, type TreeSpace, type WorkspacePane, type WorkspaceTab } from './useKnowledgeWorkspace'
 import { useKnowledgeBackend, useOptionalAdminKnowledgeBackend, VaultError } from './knowledgeBackend'
-import { docPath, type Scope, type VaultTreeNode } from './knowledgeBackend'
+import { docPath, type DocPath, type Scope, type VaultTreeNode } from './knowledgeBackend'
 
 type SearchMode = 'hybrid' | 'lex' | 'vec'
 type Hit = {
@@ -783,6 +783,27 @@ function resolveUploadFolder(targetFolderPath?: string): string {
   ) ? candidateFolder : 'raw'
 }
 
+type RawImportResult = { created: string[]; skipped: string[]; failed: Array<{ path: string }> }
+/** Admin Web keeps its `/raw/batch` route; other hosts import through the Vault contract,
+ *  skipping files the tree already lists so an upload never overwrites a source. */
+async function importRawChunk(folder: string, files: Array<{ path: string; body: string }>): Promise<RawImportResult> {
+  if (adminBackend) return await adminBackend.apply({ type: 'import_raw', folder, files }) as RawImportResult
+  const result: RawImportResult = { created: [], skipped: [], failed: [] }
+  const existing = new Set(tree.value.filter(node => node.space === 'raw' && node.type === 'file').map(node => node.path))
+  const fresh: Array<{ path: DocPath; content: string }> = []
+  for (const file of files) {
+    const path = `${folder}/${file.path}`
+    if (existing.has(path)) { result.skipped.push(path); continue }
+    try { fresh.push({ path: toDocPath(path, 'raw'), content: file.body }) }
+    catch { result.failed.push({ path }) }
+  }
+  if (fresh.length > 0) {
+    const applied = await knowledgeBackend.apply({ type: 'import_raw', files: fresh })
+    result.created.push(...applied.paths)
+  }
+  return result
+}
+
 const RAW_BATCH_MAX_FILES = 100
 const RAW_BATCH_MAX_BYTES = 6 * 1024 * 1024
 const RAW_BATCH_MAX_FILE_BYTES = 12 * 1024 * 1024
@@ -820,9 +841,7 @@ async function uploadRawBatch(items: UploadItem[], targetFolderPath?: string) {
     let chunkBytes = 0
     const flush = async () => {
       if (chunk.length === 0) return
-      const result = await adminBackend!.apply({ type: 'import_raw', folder, files: chunk }) as {
-        created: string[]; skipped: string[]; failed: Array<{ path: string }>
-      }
+      const result = await importRawChunk(folder, chunk)
       created += result.created.length
       skipped += result.skipped.length
       failed.push(...result.failed.map(item => item.path))
@@ -1944,7 +1963,8 @@ async function importRawAsSource() {
   if (!rawFile.value || busy.value) return
   busy.value = true
   try {
-    const imported = await adminBackend!.apply({ type: 'ingest_source', path: rawFile.value.path,
+    if (!adminBackend) throw new Error('Source registry is available in Admin Web only')
+    const imported = await adminBackend.apply({ type: 'ingest_source', path: rawFile.value.path,
       expect: rawFile.value.sha256, name: sourceName.value.trim() || rawFile.value.path.split('/').pop(),
       provenance: sourceProvenance.value.trim() || 'admin:manual' }) as Source
     sourceRef.value = imported.id + ':' + imported.version

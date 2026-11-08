@@ -80,8 +80,7 @@ fn document_paths_reject_traversal_absolute_paths_and_escaping_symlinks() {
     let escaping = DocPath::parse(Scope::Wiki, "external/secret.md").unwrap();
     assert!(vault.read(&escaping, Default::default()).is_err());
     assert!(
-        serde_json::from_str::<DocPath>(r#"{"scope":"wiki","relative":"../secret.md"}"#)
-            .is_err()
+        serde_json::from_str::<DocPath>(r#"{"scope":"wiki","relative":"../secret.md"}"#).is_err()
     );
 }
 
@@ -391,6 +390,105 @@ fn a_second_vault_is_read_only_until_the_current_writer_releases_the_lock() {
         events.try_recv().unwrap(),
         super::VaultEvent::Lock { writable: true }
     ));
+}
+
+#[test]
+fn a_reader_vault_leaves_the_shared_index_and_scaffold_untouched() {
+    let temp = tempdir().unwrap();
+    let writer = Vault::open(VaultConfig::new(temp.path())).unwrap();
+    let path = DocPath::parse(Scope::Wiki, "concepts/shared.md").unwrap();
+    writer
+        .apply(Change::Write {
+            path: path.clone(),
+            content: "# Shared\n\nVisible to readers.".into(),
+            expect: None,
+        })
+        .unwrap();
+    let watched = [
+        "wiki/index.md",
+        "wiki/log.md",
+        "SCHEMA.md",
+        ".wiki/index.sqlite",
+    ];
+    let before: Vec<_> = watched
+        .iter()
+        .map(|file| {
+            fs::metadata(temp.path().join(file))
+                .unwrap()
+                .modified()
+                .unwrap()
+        })
+        .collect();
+    fs::write(temp.path().join("wiki/concepts/on-disk.md"), "# On disk\n").unwrap();
+
+    let reader = Vault::open(VaultConfig::new(temp.path())).unwrap();
+
+    assert!(!reader.is_writable());
+    assert!(
+        reader
+            .read(&path, Default::default())
+            .unwrap()
+            .content
+            .contains("Visible to readers.")
+    );
+    let after: Vec<_> = watched
+        .iter()
+        .map(|file| {
+            fs::metadata(temp.path().join(file))
+                .unwrap()
+                .modified()
+                .unwrap()
+        })
+        .collect();
+    assert_eq!(before, after);
+    drop(writer);
+    assert!(reader.try_acquire_write().unwrap());
+    reader
+        .apply(Change::Write {
+            path: DocPath::parse(Scope::Wiki, "concepts/after-handoff.md").unwrap(),
+            content: "# After handoff\n".into(),
+            expect: None,
+        })
+        .unwrap();
+}
+
+#[test]
+fn a_reader_refuses_an_uninitialized_locked_vault() {
+    let temp = tempdir().unwrap();
+    let _lock = Vault::open(VaultConfig::new(temp.path())).unwrap();
+    fs::remove_file(temp.path().join("SCHEMA.md")).unwrap();
+
+    assert!(Vault::open(VaultConfig::new(temp.path())).is_err());
+    assert!(!temp.path().join("SCHEMA.md").exists());
+}
+
+#[test]
+fn move_refuses_to_overwrite_an_existing_page() {
+    let temp = tempdir().unwrap();
+    let vault = Vault::open(VaultConfig::new(temp.path())).unwrap();
+    let from = DocPath::parse(Scope::Wiki, "concepts/from.md").unwrap();
+    let to = DocPath::parse(Scope::Wiki, "concepts/to.md").unwrap();
+    for (path, content) in [(&from, "# From\n"), (&to, "# To\n")] {
+        vault
+            .apply(Change::Write {
+                path: path.clone(),
+                content: content.into(),
+                expect: None,
+            })
+            .unwrap();
+    }
+
+    assert!(matches!(
+        vault.apply(Change::Move {
+            from,
+            to: to.clone()
+        }),
+        Err(super::VaultError::InvalidPath(_))
+    ));
+    assert_eq!(
+        fs::read_to_string(temp.path().join("wiki/concepts/to.md")).unwrap(),
+        "# To\n"
+    );
 }
 
 #[test]

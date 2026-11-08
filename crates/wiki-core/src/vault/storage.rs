@@ -166,7 +166,7 @@ impl Vault {
                     .map_err(|error| VaultError::Io(error.to_string()))?;
             }
         }
-        self.engine.sync_index()?;
+        self.engine()?.sync_index()?;
         let mut directories = snapshots.directories;
         directories.sort_by_key(|entry| std::cmp::Reverse(entry.relative.components().count()));
         for directory in directories.into_iter().filter(|entry| !entry.existed) {

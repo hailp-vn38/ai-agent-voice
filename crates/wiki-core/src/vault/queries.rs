@@ -14,7 +14,9 @@ impl Vault {
             Scope::Wiki => TreeScope::Wiki,
             Scope::All => TreeScope::All,
         };
-        let tree = self.engine.get_tree(TreeOptions::for_scope(engine_scope))?;
+        let tree = self
+            .engine()?
+            .get_tree(TreeOptions::for_scope(engine_scope))?;
         fn convert(node: llm_wiki::FileTreeNode) -> TreeNode {
             TreeNode {
                 name: node.name,
@@ -49,7 +51,7 @@ impl Vault {
             ));
         }
 
-        let result = self.engine.get_document(
+        let result = self.engine()?.get_document(
             &path.vault_relative().to_string_lossy(),
             GetOptions {
                 from_line: window.from_line,
@@ -69,7 +71,7 @@ impl Vault {
     }
 
     pub fn search(&self, query: &str) -> Result<Vec<Hit>, VaultError> {
-        let results = self.engine.search_lex(
+        let results = self.engine()?.search_lex(
             query,
             SearchOptions {
                 collections: vec![CollectionScope::Sources, CollectionScope::Wiki],
@@ -90,7 +92,7 @@ impl Vault {
     }
 
     pub fn graph(&self, focus: Option<&DocPath>) -> Result<Graph, VaultError> {
-        let graph = self.engine.get_graph(None)?;
+        let graph = self.engine()?.get_graph(None)?;
         let mut graph = Graph {
             nodes: graph
                 .nodes
@@ -141,7 +143,7 @@ impl Vault {
     }
 
     pub fn status(&self) -> Result<VaultStatus, VaultError> {
-        let status = self.engine.status()?;
+        let status = self.engine()?.status()?;
         Ok(VaultStatus {
             raw_documents: status.sources_count,
             wiki_pages: status.wiki_count,
@@ -170,7 +172,7 @@ impl Vault {
             compact_index_max_chars: max_result_chars.saturating_sub(1024).max(1024),
         };
         let outcome = self
-            .engine
+            .engine()?
             .execute_llm_tool_with_budget(name, arguments, budget)?;
         Ok(serde_json::json!({
             "tool": name,
@@ -181,7 +183,7 @@ impl Vault {
 
     /// Return the library's canonical document metadata for a file in this vault.
     pub fn document_metadata(&self, path: &DocPath) -> Result<serde_json::Value, VaultError> {
-        let document = self.engine.get_document(
+        let document = self.engine()?.get_document(
             &path.vault_relative().to_string_lossy(),
             GetOptions::default(),
         )?;

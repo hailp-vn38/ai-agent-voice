@@ -53,8 +53,8 @@ impl Vault {
         if external.is_empty() {
             return Ok(false);
         }
-        self.engine.sync_index()?;
-        self.engine.rebuild_or_sync_index_md()?;
+        self.engine()?.sync_index()?;
+        self.engine()?.rebuild_or_sync_index_md()?;
         let _ = self.record_self_writes(&["wiki/index.md".into()]);
         let external: Vec<String> = external
             .iter()
@@ -82,8 +82,10 @@ impl Vault {
     }
 
     pub(super) fn publish_reindexed(&self, stats: SyncStats) {
-        let status = self.engine.status();
-        if let Ok(status) = status {
+        let Ok(engine) = self.engine() else {
+            return;
+        };
+        if let Ok(status) = engine.status() {
             let _ = self.events.send(VaultEvent::Reindexed {
                 stats: ReindexStats {
                     raw_documents: status.sources_count,

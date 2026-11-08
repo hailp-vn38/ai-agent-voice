@@ -150,9 +150,15 @@ impl Vault {
                         from.vault_relative().display().to_string(),
                     ));
                 }
+                if from != to && self.root.join(to.vault_relative()).exists() {
+                    return Err(VaultError::InvalidPath(format!(
+                        "move target already exists: {}",
+                        to.vault_relative().display()
+                    )));
+                }
                 if to.scope() == Scope::Wiki
                     && self
-                        .engine
+                        .engine()?
                         .get_backlinks(&from.vault_relative().to_string_lossy())?
                         .iter()
                         .any(|edge| {
@@ -210,7 +216,7 @@ impl Vault {
                     plan.paths.push(target.vault_relative());
                 } else {
                     let source_rel = source.vault_relative().to_string_lossy().into_owned();
-                    let wiki_rel = self.engine.resolve_wiki_path_for_source(&source_rel)?.0;
+                    let wiki_rel = self.engine()?.resolve_wiki_path_for_source(&source_rel)?.0;
                     plan.paths.push(PathBuf::from(wiki_rel));
                 }
             }
@@ -274,7 +280,7 @@ impl Vault {
                     Scope::Wiki => CollectionScope::Wiki,
                     Scope::All => unreachable!(),
                 };
-                self.engine
+                self.engine()?
                     .delete_file(scope, &path.relative().to_string_lossy())?;
                 paths.push(path.vault_relative().display().to_string());
             }
@@ -314,33 +320,33 @@ impl Vault {
                     }
                 };
                 let result = self
-                    .engine
+                    .engine()?
                     .ingest_source_to_wiki(IngestSourceRequest { ..request })?;
                 paths.extend([result.source_rel_path, result.wiki_rel_path]);
             }
             Change::FileSynthesis { path, details } => {
-                let result = self
-                    .engine
-                    .file_query_synthesis(llm_wiki::FileSynthesisRequest {
-                        rel_path: path.relative().to_string_lossy().into_owned(),
-                        query: details.query,
-                        title: details.title,
-                        one_line_summary: details.one_line_summary,
-                        markdown_body: details.markdown_body,
-                        tags: details.tags,
-                    })?;
+                let result =
+                    self.engine()?
+                        .file_query_synthesis(llm_wiki::FileSynthesisRequest {
+                            rel_path: path.relative().to_string_lossy().into_owned(),
+                            query: details.query,
+                            title: details.title,
+                            one_line_summary: details.one_line_summary,
+                            markdown_body: details.markdown_body,
+                            tags: details.tags,
+                        })?;
                 paths.push(result.rel_path);
             }
             Change::Reindex { force: _ } => {
-                let stats = self.engine.sync_index()?;
-                self.engine.rebuild_or_sync_index_md()?;
+                let stats = self.engine()?.sync_index()?;
+                self.engine()?.rebuild_or_sync_index_md()?;
                 self.publish_reindexed(stats);
             }
         }
         if !plan.paths.is_empty() && !specialized_indexing {
-            self.engine.sync_index()?;
-            self.engine.rebuild_or_sync_index_md()?;
-            self.engine
+            self.engine()?.sync_index()?;
+            self.engine()?.rebuild_or_sync_index_md()?;
+            self.engine()?
                 .append_log(LogAction::Custom, "Vault updated", &paths)?;
         }
         Ok((paths, revision))

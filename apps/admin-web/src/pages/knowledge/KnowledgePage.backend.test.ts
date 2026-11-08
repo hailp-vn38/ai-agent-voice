@@ -133,3 +133,34 @@ it('saves an edited Wiki Page through the common Vault Change contract', async (
     expect(fetchSpy).not.toHaveBeenCalled()
   } finally { wrapper.unmount(); fetchSpy.mockRestore() }
 })
+
+it('imports a picked folder through the common backend without overwriting existing sources', async () => {
+  window.localStorage.setItem('voice-agent-knowledge-vault-space', 'raw')
+  const memory = new MemoryKnowledgeBackend({ rawFiles: [
+    { path: 'raw/trip/existing.md', body: '# Existing\n\nKeep me.', sha256: 'raw-rev-1' },
+  ] })
+  const backend = commonOnly(memory)
+  const mounted = mount(KnowledgePage, { global: { provide: { [KNOWLEDGE_BACKEND_KEY as symbol]: backend } } })
+  try {
+    await flushPromises()
+    const picked = (name: string, body: string) => {
+      const file = new File([body], name.split('/').pop()!, { type: 'text/markdown' })
+      Object.defineProperty(file, 'webkitRelativePath', { value: name })
+      return file
+    }
+    const input = mounted.get('input[type="file"][webkitdirectory]')
+    Object.defineProperty(input.element, 'files', { value: [
+      // The opened source makes raw/trip the upload folder.
+      picked('existing.md', '# Replaced'),
+      picked('new.md', '# New\n\nImported.'),
+    ] })
+    await input.trigger('change')
+    await flushPromises()
+
+    expect((await backend.read(docPath('raw', 'trip/new.md'))).content).toContain('Imported.')
+    expect((await backend.read(docPath('raw', 'trip/existing.md'))).content).toContain('Keep me.')
+    expect(mounted.text()).toContain('Uploaded 1 files, skipped 1 existing')
+  } finally {
+    mounted.unmount()
+  }
+})
