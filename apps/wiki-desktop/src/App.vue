@@ -14,7 +14,7 @@ type McpInfo = {
   readConfig: string
   writeConfig: string
   stdioConfig: string
-  status: { connectedClients: number; lastCallAt: number | null }
+  status: { activeRequests: number; lastCallAt: number | null }
 }
 type ClaudePreview = { path: string; before: string; after: string }
 
@@ -187,8 +187,8 @@ onBeforeUnmount(() => {
     <section v-if="current" class="knowledge-frame" aria-label="Knowledge vault">
       <KnowledgePage />
     </section>
-    <footer v-if="current" class="mcp-footer" aria-label="MCP status">
-      <button type="button" @click="mcpOpen = true; refreshMcp()">MCP · {{ mcpInfo?.status.connectedClients ?? 0 }} client</button>
+    <footer v-if="current" class="mcp-footer" aria-label="MCP request status">
+      <button type="button" @click="mcpOpen = true; refreshMcp()">MCP · {{ mcpInfo?.status.activeRequests ?? 0 }} request đang xử lý</button>
       <span v-if="mcpInfo?.status.lastCallAt">Gọi gần nhất {{ new Date(mcpInfo.status.lastCallAt).toLocaleTimeString() }}</span>
     </footer>
     <div v-if="mcpToast" class="mcp-toast" role="status">{{ mcpToast }}</div>

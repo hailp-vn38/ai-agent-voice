@@ -39,7 +39,7 @@ const MCP_PATH: &str = "/mcp";
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct McpStatus {
-    pub connected_clients: usize,
+    pub active_requests: usize,
     pub last_call_at: Option<u64>,
 }
 
@@ -74,14 +74,14 @@ struct ServerState {
     write_token: std::sync::RwLock<String>,
     allow_write: AtomicBool,
     port: u16,
-    active_clients: AtomicUsize,
+    active_requests: AtomicUsize,
     last_call_at: std::sync::RwLock<Option<u64>>,
 }
 
 impl ServerState {
     fn status(&self) -> McpStatus {
         McpStatus {
-            connected_clients: self.active_clients.load(Ordering::Acquire),
+            active_requests: self.active_requests.load(Ordering::Acquire),
             last_call_at: *self.last_call_at.read().expect("MCP status lock"),
         }
     }
@@ -277,7 +277,7 @@ async fn start_with_tokens(
         write_token: std::sync::RwLock::new(write_token),
         allow_write: AtomicBool::new(allow_write),
         port,
-        active_clients: AtomicUsize::new(0),
+        active_requests: AtomicUsize::new(0),
         last_call_at: std::sync::RwLock::new(None),
     });
     state.refresh_runtime_file(&runtime_file)?;
@@ -367,7 +367,7 @@ async fn authenticate(
         return StatusCode::UNAUTHORIZED.into_response();
     };
     request.extensions_mut().insert(AuthenticatedAccess(access));
-    state.active_clients.fetch_add(1, Ordering::AcqRel);
+    state.active_requests.fetch_add(1, Ordering::AcqRel);
     *state.last_call_at.write().expect("MCP status lock") = Some(
         SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -376,7 +376,7 @@ async fn authenticate(
     );
     state.publish_status();
     let response = next.run(request).await;
-    state.active_clients.fetch_sub(1, Ordering::AcqRel);
+    state.active_requests.fetch_sub(1, Ordering::AcqRel);
     state.publish_status();
     response
 }
