@@ -538,6 +538,8 @@ const newNoteName = ref('')
 const newNodeKind = ref<'note' | 'folder'>('note')
 const treeHolder = ref<HTMLElement | null>(null)
 const editorSavedBody = ref('')
+const editorExpectedRevision = ref<string | number | null>(null)
+const editConflict = ref<{ path: DocPath; current: string; mine: string } | null>(null)
 // A note named in the Explorer exists only in the editor until its first save creates the file.
 const pendingRawFile = ref<{ folder: string; fileName: string; path: string } | null>(null)
 const editorDirty = computed(() => viewMode.value === 'compose'
@@ -701,10 +703,11 @@ function onPageDragLeave(event: DragEvent) {
   }
 }
 function onFolderDragOver(event: DragEvent, targetPath: string) {
-  if (busy.value || activeSpace.value !== 'raw' || !hasDraggedFiles(event)) return
+  const internal = Array.from(event.dataTransfer?.types ?? []).includes('application/x-knowledge-path')
+  if (busy.value || (!internal && (activeSpace.value !== 'raw' || !hasDraggedFiles(event)))) return
   isDraggingFile.value = true
   dropTargetFolder.value = targetPath
-  if (event.dataTransfer) event.dataTransfer.dropEffect = 'copy'
+  if (event.dataTransfer) event.dataTransfer.dropEffect = internal ? 'move' : 'copy'
 }
 function onFolderDragLeave(targetPath: string) {
   if (dropTargetFolder.value === targetPath) dropTargetFolder.value = null
@@ -714,6 +717,16 @@ async function onFileDrop(event: DragEvent, targetFolderPath?: string) {
   isDraggingFile.value = false
   dropTargetFolder.value = null
   if (busy.value) return
+  const internalPath = event.dataTransfer?.getData('application/x-knowledge-path')
+  if (internalPath) {
+    try {
+      const source = JSON.parse(internalPath) as { path?: unknown; space?: unknown }
+      if (typeof source.path === 'string' && (source.space === 'raw' || source.space === 'wiki')) {
+        await moveDraggedFile(source.space, source.path, targetFolderPath ?? source.space)
+      }
+    } catch (cause) { error.value = formatApiError(cause) }
+    return
+  }
   const items = await collectDroppedFiles(event.dataTransfer)
   if (items.length === 0) return
   const hasFolder = items.some(item => item.relPath.includes('/'))
@@ -964,6 +977,8 @@ function startEditNote() {
   newFileName.value = activeTree.value?.name ?? selectedPath.value.split('/').at(-1) ?? ''
   composeBaseFolder.value = currentFolder.value
   editorSavedBody.value = body.value
+  editorExpectedRevision.value = rawFile.value?.sha256 ?? selected.value?.revision ?? null
+  editConflict.value = null
   composeOpen.value = true
   viewMode.value = 'compose'
   void nextTick(() => document.getElementById('knowledge-note-body')?.focus())
@@ -975,9 +990,9 @@ async function saveNote() {
     if (!error.value) editorSavedBody.value = body.value
     return
   }
-  if (!rawFile.value && !selected.value) return
+  if (!rawFile.value && !selected.value && !newFileName.value) return
   await save()
-  if (error.value) return
+  if (error.value || editConflict.value) return
   editorSavedBody.value = body.value
   // Other tabs on this file show the saved text, and later saves use its new revision.
   const doc = liveDoc.value
@@ -994,6 +1009,7 @@ async function closeEditor() {
   if (viewMode.value === 'compose' && body.value !== editorSavedBody.value
       && !window.confirm(t('knowledgeV3.discardChanges'))) return
   composeOpen.value = false
+  editConflict.value = null
   preview.value = false
   viewMode.value = 'read'
   const node = tree.value.find(item => item.path === selectedPath.value)
@@ -1514,16 +1530,25 @@ async function restoreWorkspace() {
 }
 
 function newDraft() {
+  const draftTitle = window.prompt(t('knowledgeV3.title'), 'Untitled')?.trim()
+  if (!draftTitle) return
   rawFile.value = null
   readOnlySource.value = false
   folderPath.value = currentFolder.value.startsWith('wiki') ? currentFolder.value : 'wiki'
   selectedPath.value = folderPath.value
-  newFileName.value = ''
+  newFileName.value = draftTitle.replace(/[\\/:*?"<>|]/g, '-').replace(/\s+/g, '-') + '.md'
   selected.value = null
-  title.value = ''
+  title.value = draftTitle
   body.value = ''
   sourceRef.value = ''
   error.value = ''
+  editorSavedBody.value = ''
+  editorExpectedRevision.value = null
+  editConflict.value = null
+  composeBaseFolder.value = folderPath.value
+  composeOpen.value = true
+  viewMode.value = 'compose'
+  void nextTick(() => document.getElementById('knowledge-note-body')?.focus())
 }
 async function refreshSources() {
   try {
@@ -1704,16 +1729,27 @@ async function openPage(id: string, nodePath?: string) {
     }
   }
 }
+function captureEditConflict(cause: unknown, path: DocPath): boolean {
+  if (!(cause instanceof VaultError) || cause.kind !== 'conflict' || cause.current == null) return false
+  editConflict.value = { path, current: String(cause.current), mine: body.value }
+  error.value = ''
+  return true
+}
 async function save() {
   if (busy.value) return
   if (rawFile.value) {
+    const rawPath = toDocPath(rawFile.value.path, 'raw')
+    const rawFilePath = rawFile.value.path
     busy.value = true
     error.value = ''
     try {
-      await knowledgeBackend.apply({ type: 'write', path: toDocPath(rawFile.value.path, 'raw'),
-        content: body.value, expect: rawFile.value.sha256 })
-      rawFile.value = await readKnowledge(rawFile.value.path, 'raw') as RawFile
-    } catch (cause) { error.value = formatApiError(cause) }
+      await knowledgeBackend.apply({ type: 'write', path: rawPath,
+        content: body.value, expect: editorExpectedRevision.value == null ? rawFile.value.sha256 : String(editorExpectedRevision.value) })
+      rawFile.value = await readKnowledge(rawFilePath, 'raw') as RawFile
+      editorExpectedRevision.value = rawFile.value.sha256
+    } catch (cause) {
+      if (!captureEditConflict(cause, rawPath)) error.value = formatApiError(cause)
+    }
     finally { busy.value = false }
     return
   }
@@ -1727,15 +1763,20 @@ async function save() {
     let page: Page
     if (isEdit) {
       await knowledgeBackend.apply({ type: 'write', path: toDocPath(pagePath, 'wiki'), content: body.value,
-        expect: selected.value?.revision == null ? undefined : String(selected.value.revision) })
+        expect: editorExpectedRevision.value == null ? undefined : String(editorExpectedRevision.value) })
       page = await readKnowledge(pagePath, 'wiki') as Page
     } else {
-      if (!adminBackend) throw new Error('Creating Wiki pages is available in Admin Web only')
-      page = await adminBackend.apply({ type: 'write', path: pagePath, folderPath: folderPath.value,
-        fileName: newFileName.value.trim() || undefined, title: title.value, body: body.value,
-        sourceRef: sourceRef.value.trim() || null }) as Page
+      if (adminBackend) {
+        page = await adminBackend.apply({ type: 'write', path: pagePath, folderPath: folderPath.value,
+          fileName: newFileName.value.trim() || undefined, title: title.value, body: body.value,
+          sourceRef: sourceRef.value.trim() || null }) as Page
+      } else {
+        await knowledgeBackend.apply({ type: 'write', path: toDocPath(pagePath, 'wiki'), content: body.value })
+        page = await readKnowledge(pagePath, 'wiki') as Page
+      }
     }
     selected.value = page
+    editorExpectedRevision.value = page.revision
     newFileName.value = ''
     await refreshTree()
     const physical = tree.value.find(n => n.space === 'wiki' && n.id === page.id)
@@ -1744,8 +1785,46 @@ async function save() {
     await refreshHealth()
     if (q.value.trim()) await search()
     else await listPages()
-  } catch (cause) { error.value = formatApiError(cause) }
+  } catch (cause) {
+    if (!captureEditConflict(cause, toDocPath(selectedPath.value, 'wiki'))) error.value = formatApiError(cause)
+  }
   finally { busy.value = false }
+}
+async function resolveEditConflict(choice: 'keep' | 'reload') {
+  const pending = editConflict.value
+  if (!pending || busy.value) return
+  busy.value = true
+  error.value = ''
+  try {
+    if (choice === 'keep') {
+      await knowledgeBackend.apply({ type: 'write', path: pending.path, content: pending.mine, expect: pending.current })
+    }
+    const latest = await knowledgeBackend.read(pending.path)
+    if (pending.path.scope === 'raw') {
+      rawFile.value = rawFromVault(latest)
+      selected.value = null
+      title.value = latest.title.replace(/\.md$/i, '')
+    } else {
+      selected.value = pageFromVault(latest)
+      rawFile.value = null
+      title.value = latest.title
+    }
+    body.value = latest.content
+    editorSavedBody.value = latest.content
+    editorExpectedRevision.value = latest.revision
+    editConflict.value = null
+    selectedPath.value = latest.path.replace(/^sources\//, 'raw/')
+    await refreshTree()
+    await refreshHealth()
+    refreshGraph()
+  } catch (cause) {
+    if (cause instanceof VaultError && cause.kind === 'conflict' && cause.current != null) {
+      editConflict.value = { ...pending, current: String(cause.current) }
+    } else {
+      editConflict.value = null
+      error.value = formatApiError(cause)
+    }
+  } finally { busy.value = false }
 }
 async function rebuild() {
   busy.value = true
@@ -1963,13 +2042,25 @@ async function importRawAsSource() {
   if (!rawFile.value || busy.value) return
   busy.value = true
   try {
-    if (!adminBackend) throw new Error('Source registry is available in Admin Web only')
-    const imported = await adminBackend.apply({ type: 'ingest_source', path: rawFile.value.path,
-      expect: rawFile.value.sha256, name: sourceName.value.trim() || rawFile.value.path.split('/').pop(),
-      provenance: sourceProvenance.value.trim() || 'admin:manual' }) as Source
-    sourceRef.value = imported.id + ':' + imported.version
-    await refreshSources()
-    await refreshTree()
+    if (adminBackend) {
+      const imported = await adminBackend.apply({ type: 'ingest_source', path: rawFile.value.path,
+        expect: rawFile.value.sha256, name: sourceName.value.trim() || rawFile.value.path.split('/').pop(),
+        provenance: sourceProvenance.value.trim() || 'admin:manual' }) as Source
+      sourceRef.value = imported.id + ':' + imported.version
+      await refreshSources()
+      await refreshTree()
+    } else {
+      const applied = await knowledgeBackend.apply({ type: 'ingest_source', source: toDocPath(rawFile.value.path, 'raw') })
+      const target = applied.paths.find(path => path.startsWith('wiki/') && path.endsWith('.md'))
+      await refreshTree()
+      if (target) {
+        resetExplorer('wiki')
+        await refreshTree()
+        const node = tree.value.find(item => item.path === target)
+        if (node) await chooseNode(node)
+        else await openPage(target, target)
+      }
+    }
   } catch (cause) { error.value = formatApiError(cause) }
   finally { busy.value = false }
 }
@@ -2004,6 +2095,58 @@ async function moveSelected() {
   finally { busy.value = false }
 }
 
+function startDraggingVaultFile(event: DragEvent, node: TreeNode) {
+  if (!event.dataTransfer || !node.editable || node.type !== 'file' || (node.space !== 'raw' && node.space !== 'wiki')) return
+  event.dataTransfer.setData('application/x-knowledge-path', JSON.stringify({ path: node.path, space: node.space }))
+  event.dataTransfer.effectAllowed = 'move'
+}
+
+async function moveDraggedFile(space: 'raw' | 'wiki', source: string, folder: string) {
+  if (busy.value || !folder.startsWith(space)) return
+  const fileName = source.split('/').at(-1)
+  if (!fileName) return
+  const renamed = window.prompt(t('knowledgeV3.fileName'), fileName)
+  if (!renamed) return
+  busy.value = true
+  error.value = ''
+  try {
+    const destination = `${folder}/${renamed}`
+    if (destination === source) return
+    await knowledgeBackend.apply({ type: 'move', from: toDocPath(source, space), to: toDocPath(destination, space) })
+    selectedPath.value = destination
+    await refreshTree()
+    const moved = tree.value.find(node => node.path === destination && node.type === 'file')
+    if (moved) await chooseNode(moved)
+    await refreshHealth()
+    refreshGraph()
+  } catch (cause) { error.value = formatApiError(cause) }
+  finally { busy.value = false }
+}
+
+async function deletePaneNote(pane: WorkspacePane) {
+  const tab = workspace.activeTab(pane)
+  const doc = tab.doc
+  if (!doc || doc.readOnly || busy.value || (doc.space !== 'raw' && doc.space !== 'wiki')) return
+  if (!window.confirm(t('knowledgeV3.confirmDelete'))) return
+  busy.value = true
+  error.value = ''
+  try {
+    await knowledgeBackend.apply({ type: 'delete', path: toDocPath(doc.path, doc.space) })
+    workspace.closeTab(pane, tab.id)
+    if (pane.id === focusedPaneId.value) {
+      selected.value = null
+      rawFile.value = null
+      body.value = ''
+      title.value = ''
+      viewMode.value = 'graph'
+    }
+    await refreshTree()
+    await refreshHealth()
+    refreshGraph()
+  } catch (cause) { error.value = formatApiError(cause) }
+  finally { busy.value = false }
+}
+
 
 const outlineLinks = computed(() => markdownOutline(noteIntroduction(body.value, title.value).rest))
 const activeHeading = ref('')
@@ -2022,7 +2165,10 @@ function treeTitle(node: TreeNode) {
   const hit = node.id ? pageCatalog.value.find(item => item.id === node.id) : null
   return hit?.title || node.name.replace(/\.md$/i, '')
 }
-function startNewFile() { beginInlineNote() }
+function startNewFile() {
+  if (activeSpace.value === 'raw') beginInlineNote()
+  else if (activeSpace.value === 'wiki' && knowledgeBackend.capabilities.write !== false) newDraft()
+}
 async function showGraph() {
   if (!focusPane(workspace.graphPane.value)) return
   if (viewMode.value === 'compose') {
@@ -2121,18 +2267,27 @@ async function openJobLink() {
   }
 }
 watch(() => [route.query.source, route.query.wiki], () => { void openJobLink() })
+function onKnowledgeShortcut(event: KeyboardEvent) {
+  if (!(event.metaKey || event.ctrlKey) || event.shiftKey || event.key.toLowerCase() !== 'n') return
+  event.preventDefault()
+  startNewFile()
+}
+
 onMounted(() => {
   // Only a first visit opens a default note; someone who closed every file stays on Graph.
   // Read before the tree loads, because that load rewrites the in-memory preferences.
   const closedEveryFile = explorerPreferences[activeSpace.value]?.selectedPath === activeSpace.value
   void refreshHealth()
+  window.addEventListener('keydown', onKnowledgeShortcut)
   stopListeningForKnowledgeChanges = knowledgeBackend.onChange(event => {
     if (event.type === 'changed' || event.type === 'external' || event.type === 'reindexed') {
       void refreshTree()
       void refreshHealth()
       refreshGraph()
-      if (selected.value) void openPage(selected.value.id, selectedPath.value)
-      else if (rawFile.value) void openRawNote(rawFile.value.path, title.value)
+      if (viewMode.value !== 'compose') {
+        if (selected.value) void openPage(selected.value.id, selectedPath.value)
+        else if (rawFile.value) void openRawNote(rawFile.value.path, title.value)
+      }
     }
   })
   void refreshSources()
@@ -2146,7 +2301,10 @@ onMounted(() => {
   }).catch(cause => { error.value = formatApiError(cause) })
     .finally(() => { workspaceReady.value = true })
 })
-onBeforeUnmount(() => stopListeningForKnowledgeChanges?.())
+onBeforeUnmount(() => {
+  window.removeEventListener('keydown', onKnowledgeShortcut)
+  stopListeningForKnowledgeChanges?.()
+})
 </script>
 
 <template>
@@ -2191,6 +2349,13 @@ onBeforeUnmount(() => stopListeningForKnowledgeChanges?.())
           :title="t('knowledgeV3.uploadFolder')" :disabled="busy" @click="pickFolderUpload"><FolderUp :size="16" /></button>
         <input ref="folderInput" type="file" class="hidden" webkitdirectory multiple
           @change="onFolderPicked" />
+      </div>
+      <div v-else-if="activeSpace === 'wiki' && knowledgeBackend.capabilities.write !== false"
+        class="a-explorer-toolbar" role="toolbar" :aria-label="t('knowledgeV3.explorer')">
+        <button type="button" class="a-explorer-new" aria-label="Create Wiki page"
+          :title="t('knowledgeV3.new')" :disabled="busy" @click="startNewFile">
+          <FilePlus2 :size="15" /><span>{{ t('knowledgeV3.new') }}</span>
+        </button>
       </div>
       <form v-if="searchOpen" class="a-search-panel" @submit.prevent="search">
         <div class="a-search-row">
@@ -2271,8 +2436,10 @@ onBeforeUnmount(() => stopListeningForKnowledgeChanges?.())
           <div v-else class="tree-leaf-row">
             <button type="button" role="treeitem"
               class="tree-leaf" :class="{ active: selectedPath === node.path }"
+              :draggable="node.editable"
               :style="{ paddingLeft: (23 + Math.max(0, node.path.split('/').length - 2) * 13) + 'px' }"
               :title="node.path" :aria-selected="selectedPath === node.path"
+              @dragstart="startDraggingVaultFile($event, node)"
               @click="openTreeFile($event, node)" @auxclick.prevent="openTreeFile($event, node)">
               <FileText />
               <span class="file-name">{{ treeTitle(node) }}</span>
@@ -2423,6 +2590,10 @@ onBeforeUnmount(() => stopListeningForKnowledgeChanges?.())
                   <MenuItem :disabled="!workspace.activeTab(pane).doc" @select="copyPaneNoteContent(pane)">
                     <Copy class="size-4 shrink-0" aria-hidden="true" /> {{ t('knowledgeV3.copyNoteContent') }}
                   </MenuItem>
+                  <MenuItem :disabled="!workspace.activeTab(pane).doc || workspace.activeTab(pane).doc?.readOnly || busy"
+                    @select="deletePaneNote(pane)">
+                    <X class="size-4 shrink-0" aria-hidden="true" /> {{ t('knowledgeV3.deleteNote') }}
+                  </MenuItem>
                 </ActionMenu>
               </div>
             </div>
@@ -2510,5 +2681,18 @@ onBeforeUnmount(() => stopListeningForKnowledgeChanges?.())
         </template>
       </div>
     </aside>
+    <div v-if="editConflict" class="knowledge-conflict-backdrop">
+      <section class="knowledge-conflict-dialog" role="dialog" aria-modal="true"
+        :aria-label="t('knowledgeV3.conflictTitle')">
+        <h2>{{ t('knowledgeV3.conflictTitle') }}</h2>
+        <p>{{ t('knowledgeV3.conflictMessage') }}</p>
+        <div class="knowledge-conflict-actions">
+          <button type="button" :aria-label="t('knowledgeV3.loadLatest')" :disabled="busy"
+            @click="resolveEditConflict('reload')">{{ t('knowledgeV3.loadLatest') }}</button>
+          <button type="button" class="primary-button" :aria-label="t('knowledgeV3.keepMine')" :disabled="busy"
+            @click="resolveEditConflict('keep')">{{ t('knowledgeV3.keepMine') }}</button>
+        </div>
+      </section>
+    </div>
   </section>
 </template>

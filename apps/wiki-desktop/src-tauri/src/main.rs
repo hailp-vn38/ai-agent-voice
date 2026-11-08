@@ -3,10 +3,11 @@ use std::{
     path::PathBuf,
     sync::{Arc, Mutex},
 };
-use tauri::{Manager, State};
+use tauri::{Emitter, Manager, State};
 use tauri_plugin_dialog::DialogExt;
 use wiki_core::{
-    DocPath, Graph, Page, ReadWindow, Scope, TreeNode, Vault, VaultConfig, VaultError, VaultStatus,
+    Applied, Change, DocPath, Graph, Origin, Page, ReadWindow, Scope, TreeNode, Vault, VaultConfig,
+    VaultError, VaultStatus,
 };
 
 #[derive(Default, Serialize, Deserialize)]
@@ -19,6 +20,7 @@ struct DesktopState {
     vault: Mutex<Option<Arc<Vault>>>,
     settings: Mutex<Settings>,
     settings_file: PathBuf,
+    event_cancel: Mutex<Option<tokio::sync::watch::Sender<bool>>>,
 }
 
 #[derive(Debug, Serialize)]
@@ -117,9 +119,51 @@ fn open_vault(state: &DesktopState, path: String) -> Result<String, CommandError
     Ok(root.to_string_lossy().into_owned())
 }
 
+fn forward_vault_events(app: tauri::AppHandle, state: &DesktopState) -> Result<(), CommandError> {
+    let vault = state.active_vault()?;
+    let events = vault.subscribe();
+    let (cancel, mut cancelled) = tokio::sync::watch::channel(false);
+    if let Some(previous) = state
+        .event_cancel
+        .lock()
+        .map_err(|_| CommandError::Io {
+            message: "event forwarding lock poisoned".into(),
+        })?
+        .replace(cancel)
+    {
+        let _ = previous.send(true);
+    }
+    tauri::async_runtime::spawn(async move {
+        let mut events = events;
+        loop {
+            tokio::select! {
+                changed = cancelled.changed() => {
+                    if changed.is_err() || *cancelled.borrow() {
+                        break;
+                    }
+                }
+                event = events.recv() => match event {
+                    Ok(event) => {
+                        if app.emit("vault://changed", &event).is_err() { break; }
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                }
+            }
+        }
+    });
+    Ok(())
+}
+
 #[tauri::command]
-fn vault_open(state: State<'_, DesktopState>, path: String) -> Result<String, CommandError> {
-    open_vault(&state, path)
+fn vault_open(
+    app: tauri::AppHandle,
+    state: State<'_, DesktopState>,
+    path: String,
+) -> Result<String, CommandError> {
+    let result = open_vault(&state, path)?;
+    forward_vault_events(app, &state)?;
+    Ok(result)
 }
 
 #[tauri::command]
@@ -138,7 +182,9 @@ fn vault_pick(
     let path = path.into_path().map_err(|error| CommandError::Io {
         message: error.to_string(),
     })?;
-    open_vault(&state, path.to_string_lossy().into_owned()).map(Some)
+    let result = open_vault(&state, path.to_string_lossy().into_owned())?;
+    forward_vault_events(app, &state)?;
+    Ok(Some(result))
 }
 
 #[tauri::command]
@@ -198,6 +244,11 @@ fn vault_status(state: State<'_, DesktopState>) -> Result<VaultStatus, CommandEr
     Ok(state.active_vault()?.status()?)
 }
 
+#[tauri::command]
+fn vault_apply(state: State<'_, DesktopState>, change: Change) -> Result<Applied, CommandError> {
+    Ok(state.active_vault()?.apply_from(Origin::Ui, change)?)
+}
+
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
@@ -213,6 +264,7 @@ fn main() {
                 vault: Mutex::new(None),
                 settings: Mutex::new(settings),
                 settings_file,
+                event_cancel: Mutex::new(None),
             };
             if let Some(current) = state
                 .settings
@@ -224,6 +276,8 @@ fn main() {
                     if let Ok(mut settings) = state.settings.lock() {
                         settings.current_vault = None;
                     }
+                } else {
+                    let _ = forward_vault_events(app.handle().clone(), &state);
                 }
             }
             app.manage(state);
@@ -238,7 +292,8 @@ fn main() {
             vault_read,
             vault_search,
             vault_graph,
-            vault_status
+            vault_status,
+            vault_apply
         ])
         .run(tauri::generate_context!())
         .expect("error while running Wiki desktop app");

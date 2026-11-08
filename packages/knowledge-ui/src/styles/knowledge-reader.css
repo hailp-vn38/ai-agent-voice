@@ -1687,3 +1687,17 @@
   color: var(--studio-violet); background: var(--sidebar-accent);
 }
 .knowledge-a .a-explorer-new:disabled { opacity: .5; cursor: not-allowed; }
+
+.knowledge-conflict-backdrop {
+  position: fixed; inset: 0; z-index: 100; display: grid; place-items: center;
+  padding: 20px; background: rgb(15 23 42 / 45%);
+}
+.knowledge-conflict-dialog {
+  width: min(440px, 100%); padding: 22px; border: 1px solid var(--border);
+  border-radius: 14px; background: var(--surface); color: var(--foreground);
+  box-shadow: 0 24px 80px rgb(0 0 0 / 25%);
+}
+.knowledge-conflict-dialog h2 { margin: 0 0 10px; font-size: 17px; font-weight: 700; }
+.knowledge-conflict-dialog p { margin: 0; color: var(--muted-foreground); font-size: 13px; line-height: 1.5; }
+.knowledge-conflict-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 20px; }
+.knowledge-conflict-actions button { min-height: 34px; padding: 0 11px; border: 1px solid var(--border); border-radius: 7px; }

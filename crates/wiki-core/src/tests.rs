@@ -1,7 +1,23 @@
-use super::{Change, DocPath, Origin, RawFile, Revision, Scope, TextEdit, Vault, VaultConfig};
+use super::{Change, DocPath, Origin, RawFile, Revision, Scope, TextEdit, Vault, VaultConfig, VaultEvent};
 use llm_wiki::{CollectionScope, WikiEngine};
 use std::fs;
 use tempfile::tempdir;
+
+#[test]
+fn vault_events_serialize_as_lowercase_tagged_payloads() {
+    let event = VaultEvent::Changed {
+        paths: vec!["wiki/note.md".into()],
+        origin: Origin::Ui,
+    };
+    assert_eq!(
+        serde_json::to_value(event).unwrap(),
+        serde_json::json!({
+            "type": "changed",
+            "paths": ["wiki/note.md"],
+            "origin": "ui"
+        })
+    );
+}
 
 #[test]
 fn opening_an_empty_vault_creates_the_standard_tree() {

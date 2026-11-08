@@ -268,6 +268,7 @@ pub struct Applied {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
 pub enum VaultEvent {
     Changed { paths: Vec<String>, origin: Origin },
     External { paths: Vec<String> },

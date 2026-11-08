@@ -17,13 +17,13 @@ async function call<T>(command: string, args?: Record<string, unknown>): Promise
 }
 
 export class TauriKnowledgeBackend implements KnowledgeBackend {
-  readonly capabilities = { chat: false, write: false } as const
+  readonly capabilities = { chat: false, write: true } as const
   async tree(scope: Scope): Promise<VaultTreeNode> { return call('vault_tree', { scope }) }
   async read(path: DocPath, window?: ReadWindow): Promise<VaultPage> { return call('vault_read', { path, window }) }
   async search(query: string): Promise<VaultHit[]> { return call('vault_search', { query }) }
   async graph(focus?: DocPath): Promise<VaultGraph> { return call('vault_graph', { focus }) }
   async status(): Promise<VaultStatus> { return call('vault_status') }
-  async apply(_change: VaultChange): Promise<Applied> { throw new VaultError('read_only', 'This Wiki window is read-only') }
+  async apply(change: VaultChange): Promise<Applied> { return call('vault_apply', { change }) }
   onChange(listener: (event: VaultEvent) => void): () => void {
     let unlisten: (() => void) | undefined
     void listen<VaultEvent>('vault://changed', event => listener(event.payload)).then(stop => { unlisten = stop })
