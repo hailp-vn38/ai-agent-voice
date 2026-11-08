@@ -10,31 +10,33 @@ use wiki_core::{
     VaultError, VaultStatus,
 };
 
+mod mcp_commands;
 mod mcp_server;
 mod watcher;
 
 #[derive(Default, Serialize, Deserialize)]
-struct Settings {
-    recent_vaults: Vec<String>,
-    current_vault: Option<String>,
+pub(crate) struct Settings {
+    pub(crate) recent_vaults: Vec<String>,
+    pub(crate) current_vault: Option<String>,
     #[serde(default)]
-    mcp_port: Option<u16>,
+    pub(crate) mcp_port: Option<u16>,
     #[serde(default)]
-    mcp_allow_write: bool,
+    pub(crate) mcp_allow_write: bool,
 }
 
-struct DesktopState {
-    vault: Mutex<Option<Arc<Vault>>>,
-    settings: Mutex<Settings>,
-    settings_file: PathBuf,
+pub(crate) struct DesktopState {
+    pub(crate) vault: Mutex<Option<Arc<Vault>>>,
+    pub(crate) settings: Mutex<Settings>,
+    pub(crate) settings_file: PathBuf,
     event_cancel: Mutex<Option<tokio::sync::watch::Sender<bool>>>,
-    mcp_server: Mutex<Option<mcp_server::McpServerRuntime>>,
+    pub(crate) mcp_server: Mutex<Option<mcp_server::McpServerRuntime>>,
     watcher: Mutex<Option<watcher::WatchHandle>>,
+    lock_retry_cancel: Mutex<Option<tokio::sync::watch::Sender<bool>>>,
 }
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "snake_case", tag = "kind")]
-enum CommandError {
+pub(crate) enum CommandError {
     NotFound { message: String },
     InvalidPath { message: String },
     Conflict { message: String, current: String },
@@ -91,7 +93,7 @@ impl DesktopState {
     }
 }
 
-fn open_vault(state: &DesktopState, path: String) -> Result<String, CommandError> {
+fn open_vault_state(state: &DesktopState, path: String) -> Result<String, CommandError> {
     let root = PathBuf::from(&path)
         .canonicalize()
         .map_err(|error| CommandError::Io {
@@ -161,6 +163,68 @@ fn restart_watcher(state: &DesktopState) -> Result<(), CommandError> {
     Ok(())
 }
 
+fn restart_lock_retry(app: &tauri::AppHandle, state: &DesktopState) -> Result<(), CommandError> {
+    if let Some(previous) = state
+        .lock_retry_cancel
+        .lock()
+        .map_err(|_| CommandError::Io {
+            message: "vault lock retry handle poisoned".into(),
+        })?
+        .take()
+    {
+        let _ = previous.send(true);
+    }
+    let vault = state.active_vault()?;
+    let _ = app.emit(
+        "vault://lock",
+        serde_json::json!({"writable": vault.is_writable()}),
+    );
+    if vault.is_writable() {
+        return Ok(());
+    }
+    let (cancel, mut cancelled) = tokio::sync::watch::channel(false);
+    *state
+        .lock_retry_cancel
+        .lock()
+        .map_err(|_| CommandError::Io {
+            message: "vault lock retry handle poisoned".into(),
+        })? = Some(cancel);
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(1));
+        interval.tick().await;
+        loop {
+            tokio::select! {
+                changed = cancelled.changed() => {
+                    if changed.is_err() || *cancelled.borrow() { break; }
+                }
+                _ = interval.tick() => match vault.try_acquire_write() {
+                    Ok(true) => {
+                        let _ = app.emit("vault://lock", serde_json::json!({"writable": true}));
+                        break;
+                    }
+                    Ok(false) => {}
+                    Err(error) => eprintln!("wiki vault lock retry failed: {error}"),
+                }
+            }
+        }
+    });
+    Ok(())
+}
+
+fn activate_vault(
+    app: tauri::AppHandle,
+    state: &DesktopState,
+    path: String,
+) -> Result<String, CommandError> {
+    let result = open_vault_state(state, path)?;
+    forward_vault_events(&app, state)?;
+    start_mcp_server(app.clone(), state)?;
+    restart_watcher(state)?;
+    restart_lock_retry(&app, state)?;
+    Ok(result)
+}
+
 fn forward_vault_events(app: &tauri::AppHandle, state: &DesktopState) -> Result<(), CommandError> {
     let vault = state.active_vault()?;
     let events = vault.subscribe();
@@ -187,7 +251,9 @@ fn forward_vault_events(app: &tauri::AppHandle, state: &DesktopState) -> Result<
                 }
                 event = events.recv() => match event {
                     Ok(event) => {
-                        if app.emit("vault://changed", &event).is_err() { break; }
+                        if let wiki_core::VaultEvent::Lock { writable } = event {
+                            if app.emit("vault://lock", serde_json::json!({"writable": writable})).is_err() { break; }
+                        } else if app.emit("vault://changed", &event).is_err() { break; }
                     }
                     Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
                     Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
@@ -254,11 +320,7 @@ fn vault_open(
     state: State<'_, DesktopState>,
     path: String,
 ) -> Result<String, CommandError> {
-    let result = open_vault(&state, path)?;
-    forward_vault_events(&app, &state)?;
-    start_mcp_server(app, &state)?;
-    restart_watcher(&state)?;
-    Ok(result)
+    activate_vault(app, &state, path)
 }
 
 #[tauri::command]
@@ -277,11 +339,11 @@ fn vault_pick(
     let path = path.into_path().map_err(|error| CommandError::Io {
         message: error.to_string(),
     })?;
-    let result = open_vault(&state, path.to_string_lossy().into_owned())?;
-    forward_vault_events(&app, &state)?;
-    start_mcp_server(app, &state)?;
-    restart_watcher(&state)?;
-    Ok(Some(result))
+    Ok(Some(activate_vault(
+        app,
+        &state,
+        path.to_string_lossy().into_owned(),
+    )?))
 }
 
 #[tauri::command]
@@ -342,232 +404,13 @@ fn vault_status(state: State<'_, DesktopState>) -> Result<VaultStatus, CommandEr
 }
 
 #[tauri::command]
+fn vault_is_writable(state: State<'_, DesktopState>) -> Result<bool, CommandError> {
+    Ok(state.active_vault()?.is_writable())
+}
+
+#[tauri::command]
 fn vault_apply(state: State<'_, DesktopState>, change: Change) -> Result<Applied, CommandError> {
     Ok(state.active_vault()?.apply_from(Origin::Ui, change)?)
-}
-
-fn mcp_server<'a>(
-    state: &'a DesktopState,
-) -> Result<std::sync::MutexGuard<'a, Option<mcp_server::McpServerRuntime>>, CommandError> {
-    state.mcp_server.lock().map_err(|_| CommandError::Io {
-        message: "MCP server lock poisoned".into(),
-    })
-}
-
-#[tauri::command]
-fn mcp_info(state: State<'_, DesktopState>) -> Result<mcp_server::McpInfo, CommandError> {
-    mcp_server(&state)?
-        .as_ref()
-        .ok_or_else(|| CommandError::NotFound {
-            message: "Open a vault before enabling MCP".into(),
-        })?
-        .info()
-        .map_err(|message| CommandError::Io { message })
-}
-
-#[tauri::command]
-fn mcp_set_allow_write(
-    state: State<'_, DesktopState>,
-    allow_write: bool,
-) -> Result<mcp_server::McpInfo, CommandError> {
-    let mut server = mcp_server(&state)?;
-    let server = server.as_mut().ok_or_else(|| CommandError::NotFound {
-        message: "Open a vault before enabling MCP".into(),
-    })?;
-    server
-        .set_allow_write(allow_write)
-        .map_err(|message| CommandError::Io { message })?;
-    state
-        .settings
-        .lock()
-        .map_err(|_| CommandError::Io {
-            message: "settings lock poisoned".into(),
-        })?
-        .mcp_allow_write = allow_write;
-    state.persist()?;
-    server
-        .info()
-        .map_err(|message| CommandError::Io { message })
-}
-
-#[tauri::command]
-fn mcp_set_port(
-    app: tauri::AppHandle,
-    state: State<'_, DesktopState>,
-    port: u16,
-) -> Result<mcp_server::McpInfo, CommandError> {
-    if port == 0 {
-        return Err(CommandError::InvalidPath {
-            message: "port must be between 1 and 65535".into(),
-        });
-    }
-    let current = mcp_server(&state)?
-        .as_ref()
-        .ok_or_else(|| CommandError::NotFound {
-            message: "Open a vault before enabling MCP".into(),
-        })?
-        .info()
-        .map_err(|message| CommandError::Io { message })?;
-    if current.port == port {
-        return Ok(current);
-    }
-    let old_port = {
-        let mut settings = state.settings.lock().map_err(|_| CommandError::Io {
-            message: "settings lock poisoned".into(),
-        })?;
-        let previous = settings.mcp_port;
-        settings.mcp_port = Some(port);
-        previous
-    };
-    state.persist()?;
-    if let Err(error) = start_mcp_server(app.clone(), &state) {
-        if let Ok(mut settings) = state.settings.lock() {
-            settings.mcp_port = old_port;
-        }
-        let _ = state.persist();
-        let _ = start_mcp_server(app, &state);
-        return Err(error);
-    }
-    mcp_server(&state)?
-        .as_ref()
-        .ok_or_else(|| CommandError::NotFound {
-            message: "MCP server did not start".into(),
-        })?
-        .info()
-        .map_err(|message| CommandError::Io { message })
-}
-
-#[tauri::command]
-fn mcp_rotate_token(
-    state: State<'_, DesktopState>,
-    access: String,
-) -> Result<mcp_server::McpInfo, CommandError> {
-    let server = mcp_server(&state)?;
-    let server = server.as_ref().ok_or_else(|| CommandError::NotFound {
-        message: "Open a vault before enabling MCP".into(),
-    })?;
-    let write = match access.as_str() {
-        "read" => false,
-        "write" => true,
-        _ => {
-            return Err(CommandError::InvalidPath {
-                message: "access must be read or write".into(),
-            });
-        }
-    };
-    server
-        .rotate_token(write)
-        .map_err(|message| CommandError::Io { message })?;
-    server
-        .info()
-        .map_err(|message| CommandError::Io { message })
-}
-
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-struct ClaudeConfigPreview {
-    path: String,
-    before: String,
-    after: String,
-}
-
-fn claude_config(
-    app: &tauri::AppHandle,
-    state: &DesktopState,
-) -> Result<(PathBuf, serde_json::Value), CommandError> {
-    let path = app
-        .path()
-        .home_dir()
-        .map_err(|error| CommandError::Io {
-            message: error.to_string(),
-        })?
-        .join("Library/Application Support/Claude/claude_desktop_config.json");
-    let current = if path.exists() {
-        serde_json::from_slice(&std::fs::read(&path).map_err(|error| CommandError::Io {
-            message: error.to_string(),
-        })?)
-        .map_err(|error| CommandError::Io {
-            message: format!("Claude config is not valid JSON: {error}"),
-        })?
-    } else {
-        serde_json::json!({})
-    };
-    let mcp = mcp_server(state)?
-        .as_ref()
-        .ok_or_else(|| CommandError::NotFound {
-            message: "Open a vault before enabling MCP".into(),
-        })?
-        .info()
-        .map_err(|message| CommandError::Io { message })?;
-    let snippet: serde_json::Value =
-        serde_json::from_str(&mcp.stdio_config).map_err(|error| CommandError::Io {
-            message: error.to_string(),
-        })?;
-    let mut updated = current;
-    let root = updated.as_object_mut().ok_or_else(|| CommandError::Io {
-        message: "Claude config must contain a JSON object".into(),
-    })?;
-    if !root
-        .get("mcpServers")
-        .is_some_and(serde_json::Value::is_object)
-    {
-        root.insert("mcpServers".into(), serde_json::json!({}));
-    }
-    root.get_mut("mcpServers")
-        .and_then(serde_json::Value::as_object_mut)
-        .ok_or_else(|| CommandError::Io {
-            message: "Claude mcpServers must be a JSON object".into(),
-        })?
-        .insert("wiki".into(), snippet["mcpServers"]["wiki"].clone());
-    Ok((path, updated))
-}
-
-#[tauri::command]
-fn mcp_claude_config_preview(
-    app: tauri::AppHandle,
-    state: State<'_, DesktopState>,
-) -> Result<ClaudeConfigPreview, CommandError> {
-    let (path, updated) = claude_config(&app, &state)?;
-    let before = if path.exists() {
-        std::fs::read_to_string(&path).map_err(|error| CommandError::Io {
-            message: error.to_string(),
-        })?
-    } else {
-        "(file does not exist yet)".into()
-    };
-    let after = serde_json::to_string_pretty(&updated).map_err(|error| CommandError::Io {
-        message: error.to_string(),
-    })?;
-    Ok(ClaudeConfigPreview {
-        path: path.to_string_lossy().into_owned(),
-        before,
-        after,
-    })
-}
-
-#[tauri::command]
-fn mcp_claude_config_install(
-    app: tauri::AppHandle,
-    state: State<'_, DesktopState>,
-) -> Result<(), CommandError> {
-    let (path, updated) = claude_config(&app, &state)?;
-    let bytes = serde_json::to_vec_pretty(&updated).map_err(|error| CommandError::Io {
-        message: error.to_string(),
-    })?;
-    let parent = path.parent().ok_or_else(|| CommandError::Io {
-        message: "Claude config has no parent directory".into(),
-    })?;
-    std::fs::create_dir_all(parent).map_err(|error| CommandError::Io {
-        message: error.to_string(),
-    })?;
-    let temporary = path.with_extension("json.tmp");
-    std::fs::write(&temporary, bytes).map_err(|error| CommandError::Io {
-        message: error.to_string(),
-    })?;
-    std::fs::rename(temporary, path).map_err(|error| CommandError::Io {
-        message: error.to_string(),
-    })?;
-    Ok(())
 }
 
 fn main() {
@@ -588,6 +431,7 @@ fn main() {
                 event_cancel: Mutex::new(None),
                 mcp_server: Mutex::new(None),
                 watcher: Mutex::new(None),
+                lock_retry_cancel: Mutex::new(None),
             };
             if let Some(current) = state
                 .settings
@@ -595,15 +439,9 @@ fn main() {
                 .ok()
                 .and_then(|settings| settings.current_vault.clone())
             {
-                if open_vault(&state, current).is_err() {
+                if activate_vault(app.handle().clone(), &state, current).is_err() {
                     if let Ok(mut settings) = state.settings.lock() {
                         settings.current_vault = None;
-                    }
-                } else {
-                    let _ = forward_vault_events(app.handle(), &state);
-                    let _ = start_mcp_server(app.handle().clone(), &state);
-                    if let Err(error) = restart_watcher(&state) {
-                        eprintln!("wiki watcher could not start: {error:?}");
                     }
                 }
             }
@@ -620,13 +458,14 @@ fn main() {
             vault_search,
             vault_graph,
             vault_status,
+            vault_is_writable,
             vault_apply,
-            mcp_info,
-            mcp_set_allow_write,
-            mcp_set_port,
-            mcp_rotate_token,
-            mcp_claude_config_preview,
-            mcp_claude_config_install
+            mcp_commands::mcp_info,
+            mcp_commands::mcp_set_allow_write,
+            mcp_commands::mcp_set_port,
+            mcp_commands::mcp_rotate_token,
+            mcp_commands::mcp_claude_config_preview,
+            mcp_commands::mcp_claude_config_install
         ])
         .build(tauri::generate_context!())
         .expect("error while building Wiki desktop app")

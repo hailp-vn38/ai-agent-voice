@@ -717,7 +717,9 @@ async function onFileDrop(event: DragEvent, targetFolderPath?: string) {
   isDraggingFile.value = false
   dropTargetFolder.value = null
   if (busy.value) return
-  const internalPath = event.dataTransfer?.getData('application/x-knowledge-path')
+  const internalPath = typeof event.dataTransfer?.getData === 'function'
+    ? event.dataTransfer.getData('application/x-knowledge-path')
+    : ''
   if (internalPath) {
     try {
       const source = JSON.parse(internalPath) as { path?: unknown; space?: unknown }

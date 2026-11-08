@@ -13,9 +13,8 @@ apps/wiki-desktop/
    ├─ tauri.conf.json
    ├─ capabilities/default.json
    └─ src/
-      ├─ main.rs           # setup: mở Vault; các phần MCP và watcher ở tickets tiếp theo
-      ├─ commands.rs       # #[tauri::command] → Vault
-      ├─ events.rs         # VaultEvent → emit("vault://changed")
+      ├─ main.rs           # setup, kích hoạt Vault, chuyển tiếp event, watcher và lock retry
+      ├─ mcp_commands.rs   # lệnh MCP và preview/cài cấu hình Claude Desktop
       ├─ mcp_server.rs     # rmcp HTTP + runtime.json
       └─ watcher.rs        # notify → Vault::notice_external
 ```
@@ -33,15 +32,15 @@ Chỉ có đúng sáu command, tương ứng với interface `Vault`:
 | `vault_status()` | `Vault::status` | — |
 | `vault_apply(change)` | `Vault::apply_from(Origin::Ui, …)` | `PUT/POST/DELETE pages`, `/raw/batch`, `/raw/move`, `/raw/import-source`, `/index/rebuild` |
 
-Thêm vài command của riêng shell: `vault_open(dir)` / `vault_pick()` (hộp thoại chọn thư mục), `mcp_info()` (port, trạng thái, đoạn cấu hình client), `mcp_rotate_token()`.
+Thêm command của riêng shell: `vault_open(dir)` / `vault_pick()` (hộp thoại chọn thư mục), `vault_is_writable()`, `mcp_info()` (port, trạng thái, đoạn cấu hình client), `mcp_set_allow_write()`, `mcp_set_port()`, `mcp_rotate_token()`, `mcp_claude_config_preview()` và `mcp_claude_config_install()`.
 
 `Change` và `VaultError` derive `serde`, nên frontend nhận lỗi có kiểu (`{ kind: "Conflict", current }`) thay vì chuỗi văn bản.
 
 ## Events (Rust → WebView)
 
 - `vault://changed`: `VaultEvent` đã serialize. UI tải lại cây thư mục hoặc trang đang mở. Nếu `origin = Mcp` thì hiện toast "Agent đã cập nhật …".
-- `vault://lock`: `{ writable: bool }`, dùng khi `wiki-mcp` direct đang giữ lock.
-- `mcp://status`: số client đang kết nối và lần gọi gần nhất. Hiện trong footer.
+- `vault://lock`: `{ writable: bool }`, báo quyền ghi hiện tại. Nếu `wiki-mcp` direct giữ lock, app vào chế độ chỉ đọc, hiện banner và thử giành lại lock mỗi giây. UI cũng đọc `vault_is_writable()` lúc mở để không bỏ lỡ event phát trong startup.
+- `mcp://status`: số phiên MCP đang kết nối và lần gọi gần nhất. Phiên được đếm theo `Mcp-Session-Id` từ handshake đến request `DELETE`; footer không dùng số request đang xử lý làm số client.
 
 ## File watcher <a id="file-watcher"></a>
 

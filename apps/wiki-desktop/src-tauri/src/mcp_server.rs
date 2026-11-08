@@ -19,6 +19,7 @@ use rmcp::{
 };
 use serde::{Deserialize, Serialize};
 use std::{
+    collections::HashSet,
     net::{IpAddr, Ipv4Addr, SocketAddr},
     path::{Path, PathBuf},
     sync::{
@@ -39,6 +40,7 @@ const MCP_PATH: &str = "/mcp";
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct McpStatus {
+    pub connected_clients: usize,
     pub active_requests: usize,
     pub last_call_at: Option<u64>,
 }
@@ -75,12 +77,14 @@ struct ServerState {
     allow_write: AtomicBool,
     port: u16,
     active_requests: AtomicUsize,
+    sessions: std::sync::Mutex<HashSet<String>>,
     last_call_at: std::sync::RwLock<Option<u64>>,
 }
 
 impl ServerState {
     fn status(&self) -> McpStatus {
         McpStatus {
+            connected_clients: self.sessions.lock().expect("MCP sessions lock").len(),
             active_requests: self.active_requests.load(Ordering::Acquire),
             last_call_at: *self.last_call_at.read().expect("MCP status lock"),
         }
@@ -282,13 +286,13 @@ async fn start_with_tokens(
         allow_write: AtomicBool::new(allow_write),
         port,
         active_requests: AtomicUsize::new(0),
+        sessions: std::sync::Mutex::new(HashSet::new()),
         last_call_at: std::sync::RwLock::new(None),
     });
     state.refresh_runtime_file(&runtime_file)?;
 
     let cancellation = CancellationToken::new();
     let mcp_config = StreamableHttpServerConfig::default()
-        .with_legacy_session_mode(false)
         .with_json_response(true)
         .with_max_request_body_bytes(256 * 1024)
         .with_cancellation_token(cancellation.clone())
@@ -380,9 +384,38 @@ async fn authenticate(
             .as_millis() as u64,
     );
     state.publish_status();
+    let session_id = request
+        .headers()
+        .get("mcp-session-id")
+        .and_then(|value| value.to_str().ok())
+        .map(str::to_owned);
+    let ending_session = request.method() == axum::http::Method::DELETE;
     let response = next.run(request).await;
+    let response_session = response
+        .headers()
+        .get("mcp-session-id")
+        .and_then(|value| value.to_str().ok())
+        .map(str::to_owned);
+    let mut sessions_changed = false;
+    if ending_session {
+        if let Some(session_id) = session_id.as_deref() {
+            sessions_changed = state
+                .sessions
+                .lock()
+                .expect("MCP sessions lock")
+                .remove(session_id);
+        }
+    } else if let Some(session_id) = response_session {
+        sessions_changed = state
+            .sessions
+            .lock()
+            .expect("MCP sessions lock")
+            .insert(session_id);
+    }
     state.active_requests.fetch_sub(1, Ordering::AcqRel);
-    state.publish_status();
+    if sessions_changed || state.active_requests.load(Ordering::Acquire) == 0 {
+        state.publish_status();
+    }
     response
 }
 
@@ -586,6 +619,7 @@ mod tests {
             StreamableHttpClientTransportConfig::with_uri(uri).auth_header("read-test-token"),
         );
         let mcp = ClientConfig::default().serve(transport).await.unwrap();
+        assert_eq!(runtime.state.status().connected_clients, 1);
         let tools = mcp.list_all_tools().await.unwrap();
         assert!(tools.iter().any(|tool| tool.name == "wiki_status"));
         assert!(!tools.iter().any(|tool| tool.name == "wiki_write_file"));
@@ -602,6 +636,7 @@ mod tests {
             .unwrap();
         assert!(write.is_error.unwrap_or(false));
         mcp.cancel().await.unwrap();
+        assert_eq!(runtime.state.status().connected_clients, 0);
 
         runtime.state.set_allow_write(false);
         let write_token_client = StreamableHttpClientTransport::from_config(

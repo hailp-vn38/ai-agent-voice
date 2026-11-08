@@ -26,6 +26,7 @@ body { color: #242424; background: transparent; }
 .recent-item:hover { background: color-mix(in srgb, currentColor 8%, transparent); }
 .recent-item small { opacity: .55; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .error-banner { margin: 8px 12px; display: flex; gap: 9px; padding: 9px 12px; border: 1px solid #e4a2a2; border-radius: 8px; color: #a32222; background: #fff2f2; font-size: 13px; }
+.lock-banner { margin: 8px 12px; padding: 9px 12px; border: 1px solid #d6a83f; border-radius: 8px; color: #684c0b; background: #fff8df; font-size: 13px; }
 .mcp-open { margin-left: auto; }
 .mcp-footer { position: fixed; z-index: 2; right: 0; bottom: 0; left: 248px; height: 28px; display: flex; align-items: center; justify-content: flex-end; gap: 18px; padding: 0 18px; border-top: 1px solid color-mix(in srgb, currentColor 10%, transparent); background: color-mix(in srgb, Canvas 85%, transparent); color: color-mix(in srgb, CanvasText 60%, transparent); font-size: 11px; }
 .mcp-footer button { border: 0; background: none; color: inherit; cursor: pointer; }

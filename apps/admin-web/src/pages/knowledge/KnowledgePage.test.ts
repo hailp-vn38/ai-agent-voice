@@ -267,7 +267,9 @@ it('offers Markdown download, link and content copying in the note menu with an 
     await menu.trigger('click')
     await flushPromises()
     const items = Array.from(document.querySelectorAll<HTMLButtonElement>('[role="menuitem"]'))
-    expect(items.map(item => item.textContent?.trim())).toEqual(['Download', 'Copy note link', 'Copy Markdown content'])
+    expect(items.map(item => item.textContent?.trim())).toEqual([
+      'Download', 'Copy note link', 'Copy Markdown content', 'Delete document',
+    ])
     items[0]!.click()
     await flushPromises()
     expect(filename).toBe('wiki-file.md')

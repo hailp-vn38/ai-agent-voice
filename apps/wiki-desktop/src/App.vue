@@ -14,7 +14,7 @@ type McpInfo = {
   readConfig: string
   writeConfig: string
   stdioConfig: string
-  status: { activeRequests: number; lastCallAt: number | null }
+  status: { connectedClients: number; activeRequests: number; lastCallAt: number | null }
 }
 type ClaudePreview = { path: string; before: string; after: string }
 
@@ -26,23 +26,27 @@ const mcpOpen = ref(false)
 const mcpInfo = ref<McpInfo | null>(null)
 const mcpError = ref('')
 const mcpToast = ref('')
+const vaultWritable = ref(true)
 const claudePreview = ref<ClaudePreview | null>(null)
 const claudeInstalled = ref(false)
 const requestedMcpPort = ref<number | null>(null)
 let windowNumber = 1
 let removeMcpStatus: (() => void) | undefined
 let removeVaultEvents: (() => void) | undefined
+let removeVaultLock: (() => void) | undefined
 let toastTimer: ReturnType<typeof setTimeout> | undefined
 
 async function refreshVaults() {
   recent.value = await invoke<string[]>('vault_recent')
   current.value = await invoke<string | null>('vault_current')
+  if (current.value) vaultWritable.value = await invoke<boolean>('vault_is_writable')
 }
 async function openVault(path: string) {
   loading.value = true
   error.value = null
   try {
     current.value = await invoke<string>('vault_open', { path })
+    vaultWritable.value = await invoke<boolean>('vault_is_writable')
     await refreshVaults()
     await refreshMcp()
   } catch (cause) {
@@ -160,6 +164,9 @@ onMounted(async () => {
       if (toastTimer) clearTimeout(toastTimer)
       toastTimer = setTimeout(() => { mcpToast.value = '' }, 3000)
     })
+    removeVaultLock = await listen<{ writable: boolean }>('vault://lock', event => {
+      vaultWritable.value = event.payload.writable
+    })
   } catch { /* Native event API is available only inside the packaged Tauri shell. */ }
   if (current.value) await refreshMcp()
   window.addEventListener('keydown', onShortcut)
@@ -168,6 +175,7 @@ onBeforeUnmount(() => {
   window.removeEventListener('keydown', onShortcut)
   removeMcpStatus?.()
   removeVaultEvents?.()
+  removeVaultLock?.()
   if (toastTimer) clearTimeout(toastTimer)
 })
 </script>
@@ -184,11 +192,14 @@ onBeforeUnmount(() => {
     <p v-if="error" class="error-banner" role="alert">
       <strong>{{ error.kind }}</strong><span>{{ error.message }}</span>
     </p>
+    <p v-if="current && !vaultWritable" class="lock-banner" role="status">
+      Kho đang được một tiến trình khác ghi. Wiki đang ở chế độ chỉ đọc và sẽ thử lấy lại quyền ghi.
+    </p>
     <section v-if="current" class="knowledge-frame" aria-label="Knowledge vault">
       <KnowledgePage />
     </section>
-    <footer v-if="current" class="mcp-footer" aria-label="MCP request status">
-      <button type="button" @click="mcpOpen = true; refreshMcp()">MCP · {{ mcpInfo?.status.activeRequests ?? 0 }} request đang xử lý</button>
+    <footer v-if="current" class="mcp-footer" aria-label="MCP connection status">
+      <button type="button" @click="mcpOpen = true; refreshMcp()">MCP · {{ mcpInfo?.status.connectedClients ?? 0 }} client đang kết nối</button>
       <span v-if="mcpInfo?.status.lastCallAt">Gọi gần nhất {{ new Date(mcpInfo.status.lastCallAt).toLocaleTimeString() }}</span>
     </footer>
     <div v-if="mcpToast" class="mcp-toast" role="status">{{ mcpToast }}</div>
