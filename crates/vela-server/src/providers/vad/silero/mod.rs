@@ -6,4 +6,4 @@ pub(crate) mod provider;
 
 pub use descriptor::{DESCRIPTOR, REGISTRATION};
 pub use provider::verify_onnx_runtime;
-pub(crate) use provider::{LoadedSileroVad, UnavailableVad, initialize_ort};
+pub(crate) use provider::{LoadedSileroVad, UnavailableVad, initialize_ort, onnx_session_builder};

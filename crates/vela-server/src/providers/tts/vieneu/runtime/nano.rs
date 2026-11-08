@@ -58,7 +58,7 @@ fn load_nano_session(
     expected_inputs: &[(&str, TensorElementType, usize)],
     expected_output_rank: std::ops::RangeInclusive<usize>,
 ) -> Result<Session, TtsError> {
-    let session = Session::builder()
+    let session = crate::providers::vad::silero::onnx_session_builder()
         .map_err(failure)?
         .with_intra_threads(threads)
         .map_err(failure)?

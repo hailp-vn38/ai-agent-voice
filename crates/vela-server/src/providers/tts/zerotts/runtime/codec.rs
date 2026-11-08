@@ -501,7 +501,7 @@ pub(super) fn load_codec_graph(
     expected_inputs: &[String],
     expected_outputs: &[String],
 ) -> Result<Session, TtsError> {
-    let session = Session::builder()
+    let session = crate::providers::vad::silero::onnx_session_builder()
         .map_err(contract_error)?
         .with_intra_threads(threads)
         .map_err(contract_error)?

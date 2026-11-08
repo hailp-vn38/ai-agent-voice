@@ -14,7 +14,7 @@ pub(super) fn load(
     acoustic: bool,
     prefill: bool,
 ) -> Result<Session, TtsError> {
-    let session = Session::builder()
+    let session = crate::providers::vad::silero::onnx_session_builder()
         .map_err(failure)?
         .with_intra_threads(threads)
         .map_err(failure)?
