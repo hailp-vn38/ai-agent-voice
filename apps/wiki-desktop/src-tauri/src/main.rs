@@ -328,21 +328,25 @@ fn vault_open(
     activate_vault(app, &state, path)
 }
 
+/// Async so it runs off the main thread: the native folder dialog needs the
+/// main thread, and a sync command blocking it there deadlocks the app.
 #[tauri::command]
-fn vault_pick(
-    app: tauri::AppHandle,
-    state: State<'_, DesktopState>,
-) -> Result<Option<String>, CommandError> {
-    let Some(path) = app
-        .dialog()
-        .file()
-        .set_title("Choose a Wiki vault")
-        .blocking_pick_folder()
-    else {
-        return Ok(None);
-    };
-    let path = path.into_path().map_err(CommandError::io)?;
-    activate_vault(app, &state, path.to_string_lossy().into_owned()).map(Some)
+async fn vault_pick(app: tauri::AppHandle) -> Result<Option<String>, CommandError> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let Some(path) = app
+            .dialog()
+            .file()
+            .set_title("Choose a Wiki vault")
+            .blocking_pick_folder()
+        else {
+            return Ok(None);
+        };
+        let path = path.into_path().map_err(CommandError::io)?;
+        let state = app.state::<DesktopState>();
+        activate_vault(app.clone(), &state, path.to_string_lossy().into_owned()).map(Some)
+    })
+    .await
+    .map_err(CommandError::io)?
 }
 
 #[derive(Serialize)]

@@ -1,12 +1,19 @@
 @import 'tailwindcss';
+@import '@vela/knowledge-ui/styles/theme.css';
 @import '@vela/knowledge-ui/styles/knowledge-reader.css';
 
-:root { color-scheme: light dark; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+:root { color-scheme: light; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
 * { box-sizing: border-box; }
 html, body, #app { width: 100%; height: 100%; margin: 0; }
-body { color: #242424; background: transparent; }
-@media (prefers-color-scheme: dark) { body { color: #eee; background: transparent; } }
-.app-shell { height: 100%; display: flex; flex-direction: column; background: color-mix(in srgb, Canvas 90%, transparent); }
+/* A desktop window never scrolls or rubber-bands as a page; panels scroll inside. */
+html, body { overflow: hidden; overscroll-behavior: none; }
+html.dark { color-scheme: dark; }
+body { color: var(--foreground); background: transparent; }
+* { border-color: var(--border); }
+.app-shell { height: 100%; overflow: hidden; display: flex; flex-direction: column; background: color-mix(in oklab, var(--background) 94%, transparent); }
+/* The title bar keeps the window vibrancy; panels below are opaque surfaces. */
+.titlebar { background: color-mix(in oklab, var(--sidebar) 70%, transparent); }
+.knowledge-frame { background: var(--background); }
 .titlebar { height: 52px; flex: none; display: flex; align-items: center; gap: 10px; padding: 0 18px 0 82px; border-bottom: 1px solid color-mix(in srgb, currentColor 10%, transparent); user-select: none; }
 .app-mark, .welcome-mark { display: grid; place-items: center; border-radius: 10px; color: white; background: #6c6de8; font-weight: 700; }
 .app-mark { width: 24px; height: 24px; font-size: 14px; }
