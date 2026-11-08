@@ -14,6 +14,14 @@ export const KNOWLEDGE_NAVIGATION_KEY: InjectionKey<{
 export const KNOWLEDGE_CHAT_PROVIDER_KEY: InjectionKey<() => any> = Symbol('KnowledgeChatProvider')
 export const KNOWLEDGE_CHAT_PANEL_KEY: InjectionKey<Component> = Symbol('KnowledgeChatPanel')
 
+export function isKnowledgeChatAvailable(
+  capabilities: { chat: boolean },
+  provider: unknown,
+  panel: unknown,
+): boolean {
+  return capabilities.chat && Boolean(provider && panel)
+}
+
 
 
 export function useKnowledgeI18n() {

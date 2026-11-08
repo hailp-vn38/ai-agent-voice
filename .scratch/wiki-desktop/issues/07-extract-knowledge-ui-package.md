@@ -25,4 +25,4 @@ Chuyển UI Knowledge thành một workspace package mà cả Admin Web và app 
 
 - 2026-11-08: Tạo npm workspace `@vela/knowledge-ui`; chuyển KnowledgePage, Graph/reader/editor/tabs, workspace composable, drag reorder, Markdown/Mermaid/chart renderer và CSS dùng chung. Admin Web tiếp tục sở hữu HTTP adapter; wrapper của Admin cung cấp route, chat, backend, i18n, theme và chart qua injection.
 - 2026-11-08: Catalog `knowledgeV3.*` và `knowledgeEditor.*` chuyển vào package; `VaultKnowledgeBackend` và `MemoryKnowledgeBackend` dùng chung một implementation trong package. Contract test Memory và boundary test của package được thêm.
-- 2026-11-08: `scripts/agent-test.sh web typecheck`, `web test` (97 files/552 tests), `web build`, `web e2e` đều PASS.
+- 2026-11-08: `scripts/agent-test.sh web typecheck`, `web test` (98 files/553 tests), `web build`, `web e2e` đều PASS.

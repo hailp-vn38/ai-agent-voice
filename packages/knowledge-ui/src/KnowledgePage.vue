@@ -10,7 +10,7 @@ import KnowledgeGraph from './KnowledgeGraph.vue'
 import { formatApiError, isApiError } from './lib/errors'
 import { Button } from './ui/button'
 import { ActionMenu, MenuItem } from './ui/action-menu'
-import { KNOWLEDGE_CHAT_PANEL_KEY, useI18n, useKnowledgeNavigation } from './integration'
+import { KNOWLEDGE_CHAT_PANEL_KEY, KNOWLEDGE_CHAT_PROVIDER_KEY, isKnowledgeChatAvailable, useI18n, useKnowledgeNavigation } from './integration'
 import { useWikiChat, type WikiChatFile } from './useWikiChat'
 import RightPanelTabs, { type RightTab } from './RightPanelTabs.vue'
 import { movedOrder, useDragReorder } from './useDragReorder'
@@ -60,9 +60,11 @@ function rawFromVault(page: { path: string; title: string; content: string; revi
 
 const { t } = useI18n()
 const WikiChatPanelComponent = inject(KNOWLEDGE_CHAT_PANEL_KEY, null)
+const chatProvider = inject(KNOWLEDGE_CHAT_PROVIDER_KEY, null)
 const { dark } = useTheme()
 const { route, router } = useKnowledgeNavigation()
 const knowledgeBackend = useKnowledgeBackend()
+const chatAvailable = computed(() => isKnowledgeChatAvailable(knowledgeBackend.capabilities, chatProvider, WikiChatPanelComponent))
 const adminBackend = useOptionalAdminKnowledgeBackend()
 async function readKnowledge(path: string, space: TreeSpace): Promise<Page | RawFile> {
   if (space === 'drafts') {
@@ -333,6 +335,7 @@ function reorderRightTabs(order: RightTab[]) {
   } catch { /* Storage can be disabled; keep the order for this visit. */ }
 }
 function selectRightTab(tab: RightTab) {
+  if (tab === 'chat' && !chatAvailable.value) return
   readingRightTab.value = tab
   if (tab === 'chat') chatMounted.value = true
 }
@@ -522,7 +525,7 @@ watch(viewMode, mode => {
   if (focusedPaneId.value === graphPaneId.value) focusedPane.value.graphActive = mode === 'graph'
 }, { flush: 'sync' })
 // Graph has no note of its own to outline, so its right panel is always the chat.
-const rightPanel = computed<RightTab>(() => viewMode.value === 'graph' && knowledgeBackend.capabilities.chat ? 'chat' : readingRightTab.value)
+const rightPanel = computed<RightTab>(() => viewMode.value === 'graph' && chatAvailable.value ? 'chat' : readingRightTab.value)
 watch(rightPanel, panel => { if (panel === 'chat') chatMounted.value = true }, { immediate: true, flush: 'sync' })
 function paneShowsGraph(pane: WorkspacePane): boolean {
   return pane.id === graphPaneId.value && pane.graphActive
@@ -2434,7 +2437,7 @@ onBeforeUnmount(() => stopListeningForKnowledgeChanges?.())
       aria-orientation="vertical" :aria-label="t('knowledgeV3.resizeRightPanel')"
       @pointerdown="startPanelResize($event, 'right')"
       @keydown.left.prevent="nudgePanel('right', -16)" @keydown.right.prevent="nudgePanel('right', 16)"></div>
-    <component :is="WikiChatPanelComponent" v-if="WikiChatPanelComponent && knowledgeBackend.capabilities.chat && chatMounted" v-show="rightPanel === 'chat'" :messages="wikiChatMessages" :busy="wikiChatBusy"
+    <component :is="WikiChatPanelComponent" v-if="WikiChatPanelComponent && chatAvailable && chatMounted" v-show="rightPanel === 'chat'" :messages="wikiChatMessages" :busy="wikiChatBusy"
       :loading-conversation="wikiChatLoadingConversation"
       :conversations="wikiChatConversations" :conversation-id="wikiChatConversationId"
       :loading-conversations="wikiChatLoadingConversations" :conversation-list-error="wikiChatConversationListError"
@@ -2452,10 +2455,10 @@ onBeforeUnmount(() => stopListeningForKnowledgeChanges?.())
       @reset="resetWikiChat" @refresh-conversation="refreshWikiConversation"
       @focus-citation="openCitation" @highlight-citation="highlightChatCitation">
       <template v-if="viewMode !== 'graph'" #title>
-        <RightPanelTabs active="chat" :order="rightTabOrder" :capabilities="knowledgeBackend.capabilities" @select="selectRightTab" @reorder="reorderRightTabs" />
+        <RightPanelTabs active="chat" :order="rightTabOrder" :capabilities="{ chat: chatAvailable }" @select="selectRightTab" @reorder="reorderRightTabs" />
       </template>
     </component>
-    <button v-if="knowledgeBackend.capabilities.chat" type="button" class="wiki-chat-drawer-toggle"
+    <button v-if="chatAvailable" type="button" class="wiki-chat-drawer-toggle"
       :aria-label="chatDrawerOpen ? t('knowledgeV3.chatCloseDrawer') : t('knowledgeV3.chatOpenDrawer')"
       :aria-expanded="chatDrawerOpen" aria-controls="wiki-chat-panel" @click="toggleChatDrawer">
       {{ chatDrawerOpen ? t('knowledgeV3.chatCloseDrawer') : t('knowledgeV3.chatOpenDrawer') }}
@@ -2463,7 +2466,7 @@ onBeforeUnmount(() => stopListeningForKnowledgeChanges?.())
     <aside v-if="rightPanel === 'outline'" id="knowledge-outline-panel" class="a-outline"
       :class="{ 'is-collapsed': rightPanelCollapsed }" :aria-hidden="rightPanelCollapsed">
       <div class="a-outline-top">
-        <RightPanelTabs active="outline" :order="rightTabOrder" :capabilities="knowledgeBackend.capabilities" @select="selectRightTab" @reorder="reorderRightTabs" />
+        <RightPanelTabs active="outline" :order="rightTabOrder" :capabilities="{ chat: chatAvailable }" @select="selectRightTab" @reorder="reorderRightTabs" />
       </div>
       <div class="aside-scroll">
         <div class="a-aside-label">On this page</div>

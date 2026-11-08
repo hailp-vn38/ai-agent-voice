@@ -110,6 +110,7 @@ function mountMemoryKnowledgePage(seed: MemoryKnowledgeSeed = {}, options: { att
     ],
     ...seed,
   })
+  Object.defineProperty(memory, 'capabilities', { value: { chat: true } })
   const httpAdmin = new HttpKnowledgeBackend().admin
   const backend: KnowledgeBackend & { admin: typeof httpAdmin } = {
     capabilities: { chat: true },
