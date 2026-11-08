@@ -70,3 +70,10 @@ it('moves the focused tab with Alt and an arrow key', async () => {
   await wrapper.get('[data-tab="chat"]').trigger('keydown', { key: 'ArrowLeft', altKey: true })
   expect(wrapper.emitted('reorder')).toEqual([[['chat', 'outline']]])
 })
+
+it('hides the Chat tab when the backend does not support chat', () => {
+  const wrapper = mount(RightPanelTabs, {
+    props: { active: 'outline', order: ['outline', 'chat'], capabilities: { chat: false } },
+  })
+  expect(wrapper.findAll('[role="tab"]').map(tab => tab.attributes('data-tab'))).toEqual(['outline'])
+})
