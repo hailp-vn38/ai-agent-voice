@@ -436,6 +436,113 @@ admin_token = "knowledge-test-token"
 }
 
 #[tokio::test]
+async fn knowledge_health_is_stable_while_the_vault_is_unchanged() {
+    let (base, temp_root, handle) = fixture_server().await;
+    let client = reqwest::Client::new();
+    let mut bodies = Vec::new();
+    for _ in 0..2 {
+        let resp = client
+            .get(format!("{base}/knowledge/index"))
+            .bearer_auth("knowledge-test-token")
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        bodies.push(resp.json::<Value>().await.unwrap());
+        // Cross a second boundary so a timestamp in the body would differ.
+        tokio::time::sleep(std::time::Duration::from_millis(1_100)).await;
+    }
+    // Admin clients poll this endpoint and reload the workspace when the body changes.
+    assert_eq!(bodies[0], bodies[1]);
+    assert!(bodies[0]["last_complete_scan_at"].is_null());
+
+    handle.abort();
+    let _ = std::fs::remove_dir_all(temp_root);
+}
+
+/// Reads SSE text until a frame with `event` arrives, returning that frame's data.
+async fn next_sse_event(resp: &mut reqwest::Response, buffer: &mut String, event: &str) -> String {
+    let marker = format!("event: {event}\n");
+    loop {
+        if let Some(start) = buffer.find(&marker)
+            && let Some(len) = buffer[start..].find("\n\n")
+        {
+            let frame = buffer[start..start + len].to_string();
+            buffer.drain(..start + len + 2);
+            return frame
+                .lines()
+                .filter_map(|line| line.strip_prefix("data: "))
+                .collect::<Vec<_>>()
+                .join("\n");
+        }
+        let chunk = tokio::time::timeout(std::time::Duration::from_secs(10), resp.chunk())
+            .await
+            .expect("timed out waiting for SSE event")
+            .unwrap()
+            .expect("SSE stream ended");
+        buffer.push_str(&String::from_utf8_lossy(&chunk));
+    }
+}
+
+#[tokio::test]
+async fn knowledge_events_pushes_a_change_after_a_page_is_created() {
+    let (base, temp_root, handle) = fixture_server().await;
+    let client = reqwest::Client::new();
+    let mut events = client
+        .get(format!("{base}/knowledge/events"))
+        .bearer_auth("knowledge-test-token")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(events.status(), StatusCode::OK);
+    assert!(
+        events.headers()[reqwest::header::CONTENT_TYPE]
+            .to_str()
+            .unwrap()
+            .starts_with("text/event-stream")
+    );
+    let mut buffer = String::new();
+    next_sse_event(&mut events, &mut buffer, "ready").await;
+
+    let resp = client
+        .post(format!("{base}/knowledge/pages"))
+        .bearer_auth("knowledge-test-token")
+        .json(&serde_json::json!({
+            "folder_path": "wiki/concepts",
+            "file_name": "pushed",
+            "title": "Pushed",
+            "body": "Created while a client listens.\n",
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert!(
+        resp.status().is_success(),
+        "create failed: {}",
+        resp.status()
+    );
+
+    let data: Value =
+        serde_json::from_str(&next_sse_event(&mut events, &mut buffer, "knowledge_changed").await)
+            .unwrap();
+    let paths: Vec<&str> = data["paths"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(Value::as_str)
+        .collect();
+    assert!(
+        paths
+            .iter()
+            .any(|path| path.starts_with("wiki/") && path.ends_with("pushed.md")),
+        "unexpected paths: {paths:?}"
+    );
+
+    handle.abort();
+    let _ = std::fs::remove_dir_all(temp_root);
+}
+
+#[tokio::test]
 async fn knowledge_graph_filters_dangling_edges_aggregates_lines_and_bounds_local_neighborhood() {
     let (base, temp_root, handle) = fixture_server().await;
     let client = reqwest::Client::new();

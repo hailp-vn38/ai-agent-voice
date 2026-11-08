@@ -1,5 +1,6 @@
 import { inject, type InjectionKey } from 'vue'
 import { jsonRequest, requestJson, withQuery } from '@/api/client'
+import { listenKnowledgeChanges, type ListenKnowledgeChanges } from '@/api/knowledge-updates'
 import { adminPath, VaultKnowledgeBackend, KNOWLEDGE_BACKEND_KEY as SHARED_KNOWLEDGE_BACKEND_KEY } from '@vela/knowledge-ui'
 import type {
   AdminKnowledgeBackend, Change, DocPath, KnowledgeChangeEvent, KnowledgeGraph,
@@ -15,7 +16,10 @@ type HttpRequestJson = <T>(path: string, init?: RequestInit) => Promise<T>
 class HttpAdminKnowledgeBackend implements AdminKnowledgeBackend {
   readonly capabilities = { chat: true } as const
   private readonly lastTrees = new Map<KnowledgeSpace, KnowledgeTreeNode[]>()
-  constructor(private readonly request: HttpRequestJson = requestJson, private readonly pollIntervalMs = 2_000) {}
+  constructor(
+    private readonly request: HttpRequestJson = requestJson,
+    private readonly listen: ListenKnowledgeChanges = listenKnowledgeChanges,
+  ) {}
 
   tree(space: KnowledgeSpace) {
     return this.request<{ items: KnowledgeTreeNode[] }>(withQuery('/api/admin/knowledge/tree', { space }))
@@ -135,30 +139,23 @@ class HttpAdminKnowledgeBackend implements AdminKnowledgeBackend {
     return this.request<unknown>(`/api/admin/knowledge/charts/${encodeURIComponent(fileName)}`)
   }
 
+  /** The server pushes vault changes over SSE; every change reloads from REST. */
   onChange(listener: (event: KnowledgeChangeEvent) => void) {
-    let stopped = false
-    let previous: string | null = null
-    let timer: ReturnType<typeof setInterval> | undefined
-    const poll = async () => {
-      try {
-        const status = await this.status()
-        const next = JSON.stringify(status)
-        if (previous !== null && previous !== next) listener({ type: 'external', origin: 'server', status })
-        previous = next
-      } catch { /* A transient network error is retried on the next poll. */ }
-    }
-    timer = setInterval(() => { if (!stopped) void poll() }, this.pollIntervalMs)
-    return () => {
-      stopped = true
-      if (timer) clearInterval(timer)
-    }
+    const abort = new AbortController()
+    void this.listen({
+      onChanged: paths => listener({ type: 'external', origin: 'server', paths }),
+      onResync: () => listener({ type: 'external', origin: 'server', paths: [] }),
+    }, abort.signal)
+    return () => abort.abort()
   }
 }
 
 
 export class HttpKnowledgeBackend extends VaultKnowledgeBackend {
   readonly capabilities = { chat: true } as const
-  constructor(request: HttpRequestJson = requestJson, pollIntervalMs = 2_000) { super(new HttpAdminKnowledgeBackend(request, pollIntervalMs)) }
+  constructor(request: HttpRequestJson = requestJson, listen: ListenKnowledgeChanges = listenKnowledgeChanges) {
+    super(new HttpAdminKnowledgeBackend(request, listen))
+  }
   protected override adminReadPath(path: DocPath) {
     const vaultPath = adminPath(path)
     return path.scope === 'wiki' ? this.documentIdsByVaultPath.get(vaultPath) ?? vaultPath : vaultPath

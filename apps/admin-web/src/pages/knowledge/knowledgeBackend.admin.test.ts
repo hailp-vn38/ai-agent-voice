@@ -40,7 +40,7 @@ function makeHttpServer(): AdminKnowledgeBackend {
     }
     throw new Error(`Unexpected fake server request: ${method} ${path}`)
   }
-  return new HttpKnowledgeBackend(request, 60_000).admin!
+  return new HttpKnowledgeBackend(request, async () => {}).admin!
 }
 
 const adapters: Array<[string, () => AdminKnowledgeBackend]> = [
@@ -74,6 +74,27 @@ describe('MemoryKnowledgeBackend', () => {
     expect((await backend.tree('wiki')).items.filter(item => item.type === 'file').map(item => item.path)).toEqual(['wiki/gardening.md'])
     expect((await backend.read('wiki/gardening.md')).body).toContain('cà chua')
     expect((await backend.search('ca chua')).items.map(item => item.path)).toEqual(['wiki/gardening.md'])
+  })
+
+  it('turns pushed server changes into external events and stops listening on unsubscribe', async () => {
+    let callbacks: import('@/api/knowledge-updates').KnowledgeChangeCallbacks | undefined
+    let signal: AbortSignal | undefined
+    const backend = new HttpKnowledgeBackend(async <T>() => ({}) as T, async (next, nextSignal) => {
+      callbacks = next
+      signal = nextSignal
+    }).admin!
+    const events: unknown[] = []
+    const stop = backend.onChange(event => events.push(event))
+
+    callbacks!.onChanged(['wiki/gardening.md'])
+    callbacks!.onResync()
+    stop()
+
+    expect(events).toEqual([
+      { type: 'external', origin: 'server', paths: ['wiki/gardening.md'] },
+      { type: 'external', origin: 'server', paths: [] },
+    ])
+    expect(signal!.aborted).toBe(true)
   })
 
   it('publishes a change after apply and returns a typed conflict for a stale revision', async () => {

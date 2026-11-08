@@ -27,6 +27,8 @@ vi.mock('@/api/client', () => ({
       Object.entries(query).map(([key, value]) => [key, String(value)]),
     ).toString(),
 }))
+// These tests stub `fetch` for chat streams; keep the vault change feed off the network.
+vi.mock('@/api/knowledge-updates', () => ({ listenKnowledgeChanges: async () => {} }))
 vi.mock('vue-router', () => ({
   useRoute: () => ({ query: routeQuery }),
   useRouter: () => ({ replace: routerReplaceMock }),

@@ -131,6 +131,7 @@ fn knowledge_routes() -> Router<AppState> {
             get(knowledge::knowledge_read_source),
         )
         .route("/knowledge/index", get(knowledge::knowledge_health))
+        .route("/knowledge/events", get(knowledge::knowledge_events))
         .route(
             "/knowledge/index/rebuild",
             axum::routing::post(knowledge::knowledge_rebuild),

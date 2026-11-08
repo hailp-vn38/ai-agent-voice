@@ -4,6 +4,7 @@
 mod answer_graph;
 mod ask;
 mod conversations;
+mod events;
 mod graph;
 mod memory;
 mod pages;
@@ -18,6 +19,7 @@ pub(super) use conversations::{
     delete_knowledge_conversation, knowledge_conversation, knowledge_conversations,
     rename_knowledge_conversation,
 };
+pub(super) use events::knowledge_events;
 pub(super) use graph::{knowledge_graph, knowledge_health, knowledge_rebuild};
 pub(super) use memory::{
     DeviceVaultPurge, memory_create, memory_discard, memory_forget, memory_health, memory_pin,
