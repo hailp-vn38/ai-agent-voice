@@ -1,6 +1,6 @@
 # 02: Vault: ghi trọn vẹn, Knowledge Revision và sự kiện
 
-Status: ready-for-agent
+Status: resolved
 Blocked by: 01
 Spec: ../spec.md (user stories 8, 22–30, 41)
 
@@ -20,8 +20,13 @@ Thêm hàm ghi duy nhất `apply(change)` / `apply_from(origin, change)` và `su
 
 ## Tiêu chí xong
 
-- [ ] Mỗi loại `Change` có test: ghi xong thì `read`/`search` thấy kết quả và subscriber nhận đúng `Changed` với đúng `origin`.
-- [ ] `expect` sai revision → `Conflict`, nội dung trên đĩa không đổi.
-- [ ] Hai `apply` chạy đồng thời trên cùng file đều kết thúc nhất quán: một cái thành công, cái còn lại thành công hoặc trả `Conflict`.
-- [ ] Mô phỏng lỗi giữa chừng (ví dụ đường dẫn đích không ghi được) không để lại file tạm hay index lệch.
-- [ ] Các test ghi lấy từ test knowledge MCP hiện có pass trên `Vault`.
+- [x] Mỗi loại `Change` có test: ghi xong thì `read`/`search` thấy kết quả và subscriber nhận đúng `Changed` với đúng `origin`.
+- [x] `expect` sai revision → `Conflict`, nội dung trên đĩa không đổi.
+- [x] Hai `apply` chạy đồng thời trên cùng file đều kết thúc nhất quán: một cái thành công, cái còn lại thành công hoặc trả `Conflict`.
+- [x] Mô phỏng lỗi giữa chừng (ví dụ đường dẫn đích không ghi được) không để lại file tạm hay index lệch.
+- [x] Các test ghi lấy từ test knowledge MCP hiện có pass trên `Vault`.
+
+## Comments
+
+- Implemented all `Change` variants behind `Vault::apply`/`apply_from`, SHA-256 revisions, optimistic conflict detection, serialized writes, rollback snapshots, generated index/log updates and broadcast events.
+- `scripts/agent-test.sh run -- cargo test --quiet --locked -p wiki-core` passes all 9 Vault seam tests; locked clippy and check pass.
