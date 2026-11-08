@@ -9,6 +9,7 @@
   "scripts": {
     "dev": "vite",
     "test": "vitest run",
+    "test:e2e": "playwright test",
     "test:watch": "vitest",
     "typecheck": "vue-tsc -p tsconfig.app.json --noEmit",
     "build": "npm run typecheck && vite build",
@@ -26,6 +27,7 @@
     "cytoscape": "3.30.4"
   },
   "devDependencies": {
+    "@playwright/test": "1.65.0",
     "@tailwindcss/vite": "4.3.3",
     "@vitejs/plugin-vue": "6.0.9",
     "@vue/test-utils": "2.4.6",

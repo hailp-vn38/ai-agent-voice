@@ -7,6 +7,7 @@ export type Scope = 'raw' | 'wiki' | 'all'
 export type DocumentScope = Exclude<Scope, 'all'>
 export type DocPath = { scope: DocumentScope; relative: string }
 export type ReadWindow = { from_line?: number; max_lines?: number }
+export type VaultSearchOptions = { scope?: Scope; mode?: 'hybrid' | 'lex' | 'vec'; limit?: number }
 export type VaultTreeNode = { name: string; path: string; is_directory: boolean; children: VaultTreeNode[] }
 export type VaultPage = { path: string; title: string; content: string; revision: string }
 export type VaultHit = { path: string; title: string; score: number; line: number; snippet: string }
@@ -110,7 +111,7 @@ export interface KnowledgeBackend {
   readonly capabilities: { chat: boolean }
   tree(scope: Scope): Promise<VaultTreeNode>
   read(path: DocPath, window?: ReadWindow): Promise<VaultPage>
-  search(query: string): Promise<VaultHit[]>
+  search(query: string, options?: VaultSearchOptions): Promise<VaultHit[]>
   graph(focus?: DocPath): Promise<VaultGraph>
   status(): Promise<VaultStatus>
   apply(change: VaultChange): Promise<Applied>
@@ -353,11 +354,17 @@ class MemoryAdminKnowledgeBackend implements AdminKnowledgeBackend {
     }).slice(0, options.limit ?? 20).map(file => {
       const page = file as KnowledgePage
       const path = typeof file.path === 'string' ? file.path : page.id
+      const pathTitle = path.split('/').at(-1)?.replace(/\.md$/i, '').replace(/[-_]+/g, ' ')
+        .replace(/\b\p{L}/gu, value => value.toLocaleUpperCase()) ?? path
+      const line = file.body.split('\n').findIndex(value => value.normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '').toLocaleLowerCase().includes(normalized))
       return {
         id: typeof page.id === 'string' ? page.id : path,
-        title: typeof page.title === 'string' ? page.title : path,
+        title: typeof page.title === 'string' ? page.title : pathTitle,
         revision: typeof page.revision === 'number' ? page.revision : 1,
         excerpt: file.body.slice(0, 180), path, space: options.space ?? 'wiki',
+        match_line: line < 0 ? 0 : line + 1,
+        score: 1,
       } satisfies KnowledgeHit
     })
     return { items, next_cursor: null }
@@ -526,23 +533,32 @@ async function editContent(content: string, edits: TextEdit[]) {
 abstract class VaultKnowledgeBackend implements KnowledgeBackend, AdminKnowledgeExtension {
   abstract readonly capabilities: { chat: boolean }
   readonly admin: AdminKnowledgeBackend
+  protected readonly documentIdsByVaultPath = new Map<string, string>()
   protected constructor(admin: AdminKnowledgeBackend) { this.admin = admin }
 
   async tree(scope: Scope) {
     const spaces: KnowledgeSpace[] = scope === 'all' ? ['raw', 'wiki'] : [scope]
     const items = (await Promise.all(spaces.map(async space => (await this.admin.tree(space)).items))).flat()
+    for (const item of items) {
+      if (item.space === 'wiki' && item.id) this.documentIdsByVaultPath.set(item.path, item.id)
+    }
     return treeFromAdmin(items, scope)
   }
   async read(path: DocPath, window: ReadWindow = {}) {
-    const page = await this.admin.read(adminPath(path), path.scope)
+    const page = await this.admin.read(this.adminReadPath(path), path.scope)
     const body = 'body' in page ? page.body : ''
     const start = Math.max(0, window.from_line ?? 0)
     const content = body.split('\n').slice(start, window.max_lines === undefined ? undefined : start + window.max_lines).join('\n')
     return { path: vaultPath(path), title: 'title' in page ? String(page.title) : path.relative.split('/').at(-1) ?? path.relative,
       content, revision: String('revision' in page ? page.revision : page.sha256) }
   }
-  async search(query: string) {
-    const result = await this.admin.search(query)
+  protected adminReadPath(path: DocPath) { return adminPath(path) }
+  async search(query: string, options: VaultSearchOptions = {}) {
+    const result = await this.admin.search(query, {
+      ...(options.scope === 'raw' || options.scope === 'wiki' ? { space: options.scope } : {}),
+      ...(options.mode ? { mode: options.mode } : {}),
+      ...(options.limit ? { limit: options.limit } : {}),
+    })
     return result.items.map(hit => ({ path: (hit.path ?? hit.id).replace(/^raw\//, 'sources/'), title: hit.title, score: Number(hit.score ?? 0),
       line: Number(hit.match_line ?? 0), snippet: hit.excerpt ?? '' }))
   }
@@ -611,6 +627,10 @@ abstract class VaultKnowledgeBackend implements KnowledgeBackend, AdminKnowledge
 export class HttpKnowledgeBackend extends VaultKnowledgeBackend {
   readonly capabilities = { chat: true } as const
   constructor(request: RequestJson = requestJson, pollIntervalMs = 2_000) { super(new HttpAdminKnowledgeBackend(request, pollIntervalMs)) }
+  protected override adminReadPath(path: DocPath) {
+    const vaultPath = adminPath(path)
+    return path.scope === 'wiki' ? this.documentIdsByVaultPath.get(vaultPath) ?? vaultPath : vaultPath
+  }
 }
 
 export class MemoryKnowledgeBackend extends VaultKnowledgeBackend {

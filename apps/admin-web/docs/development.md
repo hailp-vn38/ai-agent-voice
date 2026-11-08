@@ -15,12 +15,13 @@ npm run dev
 | --- | --- |
 | `npm run dev` | Vite ở port 5173, host 0.0.0.0 |
 | `npm test` | Vitest run, jsdom, `src/**/*.test.ts` |
+| `npm run test:e2e` | Playwright Chromium, tự bật Vite ở port 5178; Admin API được mock trong browser |
 | `npm run test:watch` | Vitest watch |
 | `npm run typecheck` | vue-tsc strict, không emit |
 | `npm run build` | typecheck rồi Vite production build vào `dist/` |
 | `npm run preview` | Phục vụ local bản build; không development proxy |
 
-Chưa có script lint/E2E trong package. Không dùng lệnh root/backend thay cho test riêng của ứng dụng này.
+Các test E2E chạy qua `scripts/agent-test.sh web e2e` để lưu log và giới hạn đầu ra. Không dùng lệnh root/backend thay cho test riêng của ứng dụng này.
 
 ## Environment và proxy
 

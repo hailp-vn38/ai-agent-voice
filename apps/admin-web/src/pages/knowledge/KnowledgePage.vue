@@ -20,7 +20,7 @@ import { movedOrder, useDragReorder } from './useDragReorder'
 import KnowledgeNoteView, { noteIntroduction } from './KnowledgeNoteView.vue'
 import KnowledgeMarkdownEditor from './KnowledgeMarkdownEditor.vue'
 import { useKnowledgeWorkspace, type NoteDoc, type Page, type RawFile, type TabRef, type TreeSpace, type WorkspacePane, type WorkspaceTab } from './useKnowledgeWorkspace'
-import { useKnowledgeBackend, useOptionalAdminKnowledgeBackend } from './knowledgeBackend'
+import { useKnowledgeBackend, useOptionalAdminKnowledgeBackend, VaultError } from './knowledgeBackend'
 import { docPath, type Scope, type VaultTreeNode } from './knowledgeBackend'
 
 type SearchMode = 'hybrid' | 'lex' | 'vec'
@@ -54,8 +54,8 @@ function fromVaultTree(node: VaultTreeNode, space: 'raw' | 'wiki'): TreeNode[] {
     return [current, ...fromVaultTree(child, space)]
   })
 }
-function pageFromVault(page: { path: string; title: string; content: string; revision: string }): Page {
-  return { id: page.path, title: page.title, body: page.content, revision: page.revision, status: '', source_ref: null }
+function pageFromVault(page: { path: string; title: string; content: string; revision: string }, id = page.path): Page {
+  return { id, title: page.title, body: page.content, revision: page.revision, status: '', source_ref: null }
 }
 function rawFromVault(page: { path: string; title: string; content: string; revision: string }): RawFile {
   return { path: page.path.replace(/^sources\//, 'raw/'), body: page.content, sha256: page.revision }
@@ -72,13 +72,14 @@ async function readKnowledge(path: string, space: TreeSpace): Promise<Page | Raw
     if (!adminBackend) throw new Error('Drafts are available in Admin Web only')
     return await adminBackend.read(path, space) as Page
   }
-  try {
-    const page = await knowledgeBackend.read(toDocPath(path, space), { from_line: 0 })
-    return space === 'raw' ? rawFromVault(page) : pageFromVault(page)
-  } catch (cause) {
-    if (adminBackend && !path.endsWith('.md')) return await adminBackend.read(path, space) as Page
-    throw cause
+  const node = space === 'wiki' ? tree.value.find(item => item.space === 'wiki' && item.id === path) : undefined
+  const vaultPath = node?.path ?? path
+  if (vaultPath.endsWith('.md')) {
+    const page = await knowledgeBackend.read(toDocPath(vaultPath, space), { from_line: 0 })
+    return space === 'raw' ? rawFromVault(page) : pageFromVault(page, node?.id ?? page.path)
   }
+  if (adminBackend) return await adminBackend.read(path, space) as Page
+  throw new VaultError('not_found', `Knowledge file not found: ${path}`)
 }
 const {
   messages: wikiChatMessages,
@@ -1059,6 +1060,10 @@ async function answerPageMissing(id: string): Promise<boolean> {
     await readKnowledge(id, 'wiki')
     return false
   } catch (cause) {
+    if (cause instanceof VaultError && cause.kind === 'not_found') {
+      error.value = t('knowledgeV3.chatPageMissing')
+      return true
+    }
     if (!isApiError(cause) || cause.status !== 404) throw cause
     error.value = t('knowledgeV3.chatPageMissing')
     return true
@@ -1624,12 +1629,15 @@ async function search() {
   error.value = ''
   try {
     const spaceParam = activeSpace.value === 'raw' ? 'raw' : 'wiki'
-    // Space/mode/limit are Admin search options; Vault search remains the common fallback.
-    const hits = adminBackend
-      ? (await adminBackend.search(query, { space: spaceParam, mode: searchMode.value, limit: 20 })).items as Hit[]
-      : await knowledgeBackend.search(query)
-    searchHits.value = hits.map(hit => 'excerpt' in hit ? hit as Hit : {
-      id: hit.path, path: hit.path, title: hit.title, revision: 0, excerpt: hit.snippet, space: spaceParam,
+    const hits = await knowledgeBackend.search(query, {
+      scope: spaceParam,
+      mode: searchMode.value,
+      limit: 20,
+    })
+    searchHits.value = hits.map(hit => {
+      const path = spaceParam === 'raw' ? hit.path.replace(/^sources\//, 'raw/') : hit.path
+      return { id: path, path, title: hit.title, revision: 0, excerpt: hit.snippet,
+        match_line: hit.line, score: hit.score, space: spaceParam }
     })
     searchExecuted.value = true
   } catch (cause) { error.value = formatApiError(cause) }

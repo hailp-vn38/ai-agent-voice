@@ -68,3 +68,22 @@ it('rejects paths outside the vault scope before any adapter call', async () => 
   expect(() => docPath('wiki', '../secret.md')).toThrow()
   expect(() => docPath('wiki', '/absolute.md')).toThrow()
 })
+
+it('translates Vault paths back to legacy Admin page ids for reads', async () => {
+  const pageRoutes: string[] = []
+  const backend = new HttpKnowledgeBackend(async <T>(path: string): Promise<T> => {
+    const url = new URL(path, 'http://wiki.test')
+    if (url.pathname === '/api/admin/knowledge/tree') return { items: [
+      { type: 'file', space: 'wiki', path: 'wiki/garden/tomatoes.md', name: 'tomatoes.md', id: 'tomatoes', revision: 1, editable: true },
+    ] } as T
+    if (url.pathname.startsWith('/api/admin/knowledge/pages/')) {
+      pageRoutes.push(url.pathname)
+      return { id: 'tomatoes', title: 'Tomatoes', body: '# Tomatoes', revision: 1 } as T
+    }
+    throw new Error(`Unexpected fake server request: ${path}`)
+  })
+
+  await backend.tree('wiki')
+  expect((await backend.read(docPath('wiki', 'garden/tomatoes.md'))).title).toBe('Tomatoes')
+  expect(pageRoutes).toEqual(['/api/admin/knowledge/pages/tomatoes'])
+})

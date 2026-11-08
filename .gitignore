@@ -19,6 +19,7 @@ models/
 /apps/admin-web/.env
 /apps/admin-web/.vite/
 /apps/admin-web/*.tsbuildinfo
+/apps/admin-web/test-results/
 
 # Python bytecode cache.
 __pycache__/
