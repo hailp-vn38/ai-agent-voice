@@ -1,0 +1,19 @@
+[package]
+name = "wiki-mcp"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+llm-wiki-rs.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tokio-util = { workspace = true, features = ["rt"] }
+wiki-core = { path = "../wiki-core" }
+rmcp = { workspace = true, features = ["server", "transport-io"] }
+
+[dev-dependencies]
+rmcp = { workspace = true, features = ["client", "transport-child-process"] }
+tempfile = "3.25"

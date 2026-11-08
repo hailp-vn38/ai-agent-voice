@@ -213,6 +213,27 @@ pub struct RawFile {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct IngestSourceDetails {
+    pub target_wiki_path: Option<String>,
+    pub raw_source_content: Option<String>,
+    pub title: String,
+    pub one_line_summary: String,
+    pub wiki_markdown_body: String,
+    pub tags: Vec<String>,
+    pub related_entities: Vec<String>,
+    pub related_concepts: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SynthesisDetails {
+    pub query: String,
+    pub title: String,
+    pub one_line_summary: String,
+    pub markdown_body: String,
+    pub tags: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Change {
     Write {
@@ -237,6 +258,11 @@ pub enum Change {
     },
     IngestSource {
         source: DocPath,
+        details: Option<IngestSourceDetails>,
+    },
+    FileSynthesis {
+        path: DocPath,
+        details: SynthesisDetails,
     },
     Reindex {
         force: bool,
@@ -689,7 +715,7 @@ impl Vault {
                     plan.paths.push(file.path.vault_relative());
                 }
             }
-            Change::IngestSource { source } => {
+            Change::IngestSource { source, details } => {
                 if source.scope() != Scope::Raw {
                     return Err(VaultError::InvalidPath(
                         "IngestSource requires a raw path".into(),
@@ -697,15 +723,33 @@ impl Vault {
                 }
                 self.validate_target(source)?;
                 let source_path = self.root.join(source.vault_relative());
-                if !source_path.is_file() {
+                if !source_path.is_file()
+                    && !details
+                        .as_ref()
+                        .is_some_and(|details| details.raw_source_content.is_some())
+                {
                     return Err(VaultError::NotFound(
                         source.vault_relative().display().to_string(),
                     ));
                 }
                 plan.paths.push(source.vault_relative());
-                let source_rel = source.vault_relative().to_string_lossy().into_owned();
-                let wiki_rel = self.engine.resolve_wiki_path_for_source(&source_rel)?.0;
-                plan.paths.push(PathBuf::from(wiki_rel));
+                if let Some(target) = details
+                    .as_ref()
+                    .and_then(|details| details.target_wiki_path.as_deref())
+                {
+                    let target = target.trim_start_matches("wiki/");
+                    let target = DocPath::parse(Scope::Wiki, target)?;
+                    self.validate_target(&target)?;
+                    plan.paths.push(target.vault_relative());
+                } else {
+                    let source_rel = source.vault_relative().to_string_lossy().into_owned();
+                    let wiki_rel = self.engine.resolve_wiki_path_for_source(&source_rel)?.0;
+                    plan.paths.push(PathBuf::from(wiki_rel));
+                }
+            }
+            Change::FileSynthesis { path, .. } => {
+                self.validate_target(path)?;
+                plan.paths.push(path.vault_relative());
             }
             Change::Reindex { .. } => {}
         }
@@ -723,6 +767,10 @@ impl Vault {
     ) -> Result<(Vec<String>, Option<Revision>), VaultError> {
         let mut paths = Vec::new();
         let mut revision = None;
+        let specialized_indexing = matches!(
+            &change,
+            Change::IngestSource { .. } | Change::FileSynthesis { .. }
+        );
         match change {
             Change::Write { path, content, .. } => {
                 self.atomic_write(&path, content.as_bytes())?;
@@ -754,11 +802,13 @@ impl Vault {
                 ]);
             }
             Change::Delete { path } => {
-                let target = self.root.join(path.vault_relative());
-                if target.exists() {
-                    std::fs::remove_file(target)
-                        .map_err(|error| VaultError::Io(error.to_string()))?;
-                }
+                let scope = match path.scope() {
+                    Scope::Raw => CollectionScope::Sources,
+                    Scope::Wiki => CollectionScope::Wiki,
+                    Scope::All => unreachable!(),
+                };
+                self.engine
+                    .delete_file(scope, &path.relative().to_string_lossy())?;
                 paths.push(path.vault_relative().display().to_string());
             }
             Change::ImportRaw { files } => {
@@ -767,22 +817,52 @@ impl Vault {
                     paths.push(file.path.vault_relative().display().to_string());
                 }
             }
-            Change::IngestSource { source } => {
-                let content = std::fs::read_to_string(self.root.join(source.vault_relative()))
-                    .map_err(|error| VaultError::Io(error.to_string()))?;
-                let (title, summary) = source_title_summary(&content, &source);
-                let result = self.engine.ingest_source_to_wiki(IngestSourceRequest {
-                    source_rel_path: source.vault_relative().to_string_lossy().into_owned(),
-                    target_wiki_path: None,
-                    raw_source_content: None,
-                    title,
-                    one_line_summary: summary,
-                    wiki_markdown_body: content,
-                    tags: Vec::new(),
-                    related_entities: Vec::new(),
-                    related_concepts: Vec::new(),
-                })?;
+            Change::IngestSource { source, details } => {
+                let request = if let Some(details) = details {
+                    IngestSourceRequest {
+                        source_rel_path: source.vault_relative().to_string_lossy().into_owned(),
+                        target_wiki_path: details.target_wiki_path,
+                        raw_source_content: details.raw_source_content,
+                        title: details.title,
+                        one_line_summary: details.one_line_summary,
+                        wiki_markdown_body: details.wiki_markdown_body,
+                        tags: details.tags,
+                        related_entities: details.related_entities,
+                        related_concepts: details.related_concepts,
+                    }
+                } else {
+                    let content = std::fs::read_to_string(self.root.join(source.vault_relative()))
+                        .map_err(|error| VaultError::Io(error.to_string()))?;
+                    let (title, summary) = source_title_summary(&content, &source);
+                    IngestSourceRequest {
+                        source_rel_path: source.vault_relative().to_string_lossy().into_owned(),
+                        target_wiki_path: None,
+                        raw_source_content: None,
+                        title,
+                        one_line_summary: summary,
+                        wiki_markdown_body: content,
+                        tags: Vec::new(),
+                        related_entities: Vec::new(),
+                        related_concepts: Vec::new(),
+                    }
+                };
+                let result = self
+                    .engine
+                    .ingest_source_to_wiki(IngestSourceRequest { ..request })?;
                 paths.extend([result.source_rel_path, result.wiki_rel_path]);
+            }
+            Change::FileSynthesis { path, details } => {
+                let result = self
+                    .engine
+                    .file_query_synthesis(llm_wiki::FileSynthesisRequest {
+                        rel_path: path.relative().to_string_lossy().into_owned(),
+                        query: details.query,
+                        title: details.title,
+                        one_line_summary: details.one_line_summary,
+                        markdown_body: details.markdown_body,
+                        tags: details.tags,
+                    })?;
+                paths.push(result.rel_path);
             }
             Change::Reindex { force: _ } => {
                 let stats = self.engine.sync_index()?;
@@ -790,7 +870,7 @@ impl Vault {
                 self.publish_reindexed(stats);
             }
         }
-        if !matches!(plan.paths.as_slice(), []) {
+        if !plan.paths.is_empty() && !specialized_indexing {
             self.engine.sync_index()?;
             self.engine.rebuild_or_sync_index_md()?;
             self.engine
@@ -1083,6 +1163,43 @@ impl Vault {
             unresolved_links: status.unresolved_graph_links,
         })
     }
+
+    /// Run one of the library's read-only Wiki MCP tools without exposing its engine types.
+    /// Tool names are checked against the upstream read-only allowlist before dispatch.
+    pub fn read_tool(
+        &self,
+        name: &str,
+        arguments: serde_json::Value,
+        max_result_chars: usize,
+    ) -> Result<serde_json::Value, VaultError> {
+        if !llm_wiki::is_read_only_wiki_tool(name) {
+            return Err(VaultError::InvalidPath(format!(
+                "not a read-only tool: {name}"
+            )));
+        }
+        let budget = llm_wiki::AdaptiveReadBudget {
+            default_lines: 160,
+            max_window_chars: max_result_chars.saturating_sub(1024).max(1024),
+            compact_index_max_chars: max_result_chars.saturating_sub(1024).max(1024),
+        };
+        let outcome = self
+            .engine
+            .execute_llm_tool_with_budget(name, arguments, budget)?;
+        Ok(serde_json::json!({
+            "tool": name,
+            "content": outcome.content,
+            "metadata": outcome.metadata,
+        }))
+    }
+
+    /// Return the library's canonical document metadata for a file in this vault.
+    pub fn document_metadata(&self, path: &DocPath) -> Result<serde_json::Value, VaultError> {
+        let document = self.engine.get_document(
+            &path.vault_relative().to_string_lossy(),
+            GetOptions::default(),
+        )?;
+        serde_json::to_value(document.info).map_err(|error| VaultError::Index(error.to_string()))
+    }
 }
 
 #[cfg(test)]
@@ -1303,6 +1420,7 @@ mod tests {
         vault
             .apply(Change::IngestSource {
                 source: source.clone(),
+                details: None,
             })
             .unwrap();
         assert!(

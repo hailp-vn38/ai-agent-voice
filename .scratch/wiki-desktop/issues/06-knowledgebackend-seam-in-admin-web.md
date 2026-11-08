@@ -22,7 +22,12 @@ Gom mọi lệnh gọi dữ liệu của trang Knowledge về sau một interfac
 - [x] Một bộ contract test chạy cho cả `MemoryBackend` và `HttpBackend` (với server giả) cho thấy hai adapter hành xử giống nhau.
 - [ ] E2E trang Knowledge pass, giao diện không đổi.
 
+## Cập nhật tiến độ
+
+- 2026-11-08: Hợp đồng common dùng `Scope`, validated `DocPath { scope, relative }`, `ReadWindow`, cây lồng nhau, `Page { content, revision }`, `Hit[]`, `VaultStatus`, các `VaultChange` của wiki-core và `Applied`. HTTP DTO được chuyển đổi ở adapter; DTO/routes riêng của Admin nằm trong `AdminKnowledgeBackend` extension.
+- 2026-11-08: `knowledgeBackend.vault.test.ts` chạy contract chung trên Memory và Http (server giả) cho tree, read window, search, status, graph và write. `knowledgeBackend.admin.test.ts` giữ contract route/DTO Admin. `KnowledgePage.backend.test.ts` kiểm tra mở Wiki, Raw, search, sửa Wiki và chạy Page không có Admin extension.
+- Chưa hoàn tất: chuyển hết các luồng Vault trong `KnowledgePage.test.ts` khỏi HTTP route mocks, đồng thời chạy E2E Knowledge. Ticket vẫn `ready-for-agent`.
+
 ## Comments
 
-- 2026-11-08: Tiêu chí chuyển test vẫn mở. `KnowledgeGraph.test.ts` và `KnowledgePage.backend.test.ts` inject `MemoryKnowledgeBackend`; Page memory suite bao phủ mở Wiki Page, Raw Working Note, tìm kiếm, sửa Wiki Page, và mount/browse chỉ với common interface khi không có Admin extension. `KnowledgePage.test.ts` còn là suite lớn dùng HTTP route mocks; phần chat/SSE và khẳng định endpoint là kiểm thử Admin/server-specific, còn các luồng Vault khác vẫn cần chuyển. `RightPanelTabs.test.ts` không gọi backend; `useWikiChat.test.ts` kiểm tra API/SSE phía Admin nên không chuyển qua MemoryBackend.
-- 2026-11-08: Hợp đồng chung đã được chuẩn hóa theo `wiki-core::Vault`: `Scope`, validated `DocPath { scope, relative }`, `ReadWindow`, cây lồng nhau, `Page { content, revision }`, `Hit[]`, `VaultStatus`, `VaultChange` variants và `Applied`. `AdminKnowledgeBackend` là extension riêng cho DTO/route của Admin. `knowledgeBackend.vault.test.ts` chạy chung các ca cây, đọc theo window, tìm kiếm, status, graph và write trên Memory/Http (server giả); `knowledgeBackend.admin.test.ts` giữ contract route/DTO Admin. Ticket vẫn mở do test component cũ chưa chuyển hết và E2E chưa chạy.
+- 2026-11-08: `KnowledgeGraph.test.ts` dùng MemoryKnowledgeBackend cho global/focused graph; query graph còn đi qua Admin extension. `RightPanelTabs.test.ts` không gọi backend; `useWikiChat.test.ts` kiểm tra API/SSE Admin nên vẫn giữ server-specific.

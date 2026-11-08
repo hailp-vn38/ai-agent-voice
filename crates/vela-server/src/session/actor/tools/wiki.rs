@@ -158,5 +158,6 @@ fn error_code(error: KnowledgeToolError) -> &'static str {
         KnowledgeToolError::Unavailable => "wiki_unavailable",
         KnowledgeToolError::Cancelled => "wiki_cancelled",
         KnowledgeToolError::Timeout => "wiki_timeout",
+        KnowledgeToolError::ReadOnly => "wiki_read_only",
     }
 }
