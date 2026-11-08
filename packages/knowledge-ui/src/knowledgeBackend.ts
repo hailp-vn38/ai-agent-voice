@@ -106,7 +106,7 @@ export type KnowledgeGraphOptions = { scope?: 'global' | 'local' | 'query'; cent
 
 /** Public data seam shared by Admin Web and the desktop shell. */
 export interface KnowledgeBackend {
-  readonly capabilities: { chat: boolean }
+  readonly capabilities: { chat: boolean; write?: boolean }
   tree(scope: Scope): Promise<VaultTreeNode>
   read(path: DocPath, window?: ReadWindow): Promise<VaultPage>
   search(query: string, options?: VaultSearchOptions): Promise<VaultHit[]>

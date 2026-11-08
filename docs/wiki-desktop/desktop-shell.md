@@ -9,11 +9,11 @@ apps/wiki-desktop/
 ├─ package.json            # Vite + Vue 3, import knowledge UI (xem ui-reuse.md)
 ├─ src/                    # main.ts, TauriBackend adapter, Settings view
 └─ src-tauri/
-   ├─ Cargo.toml           # member của workspace; deps: tauri 2, wiki-core, wiki-mcp, notify
+   ├─ Cargo.toml           # crate độc lập, bị exclude khỏi workspace gốc; có Cargo.lock riêng
    ├─ tauri.conf.json
    ├─ capabilities/default.json
    └─ src/
-      ├─ main.rs           # setup: mở Vault, start MCP, start watcher
+      ├─ main.rs           # setup: mở Vault; các phần MCP và watcher ở tickets tiếp theo
       ├─ commands.rs       # #[tauri::command] → Vault
       ├─ events.rs         # VaultEvent → emit("vault://changed")
       ├─ mcp_server.rs     # rmcp HTTP + runtime.json

@@ -16,6 +16,9 @@ models/
 # Vue Admin local build and development state.
 /apps/admin-web/node_modules/
 /apps/admin-web/dist/
+/apps/wiki-desktop/dist/
+/apps/wiki-desktop/src-tauri/target/
+/apps/wiki-desktop/src-tauri/gen/schemas/
 /apps/admin-web/.env
 /apps/admin-web/.vite/
 /apps/admin-web/*.tsbuildinfo

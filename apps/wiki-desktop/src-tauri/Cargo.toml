@@ -1,0 +1,19 @@
+[package]
+name = "wiki-desktop"
+version = "0.1.0"
+description = "Wiki knowledge vault desktop app"
+authors = ["Vela"]
+edition = "2024"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tauri = { version = "2", features = ["macos-private-api"] }
+tauri-plugin-dialog = "2"
+wiki-core = { path = "../../../crates/wiki-core" }
+
+[features]
+custom-protocol = ["tauri/custom-protocol"]

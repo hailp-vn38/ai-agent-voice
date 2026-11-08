@@ -1,5 +1,6 @@
 [workspace]
 members = ["crates/vela-server", "crates/wiki-core", "crates/wiki-mcp"]
+exclude = ["apps/wiki-desktop/src-tauri"]
 resolver = "2"
 
 [workspace.package]

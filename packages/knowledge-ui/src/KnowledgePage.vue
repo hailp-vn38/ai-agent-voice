@@ -47,7 +47,7 @@ function fromVaultTree(node: VaultTreeNode, space: 'raw' | 'wiki'): TreeNode[] {
   return node.children.flatMap(child => {
     const path = space === 'raw' ? child.path.replace(/^sources\//, 'raw/') : child.path
     const current: TreeNode = { type: child.is_directory ? 'folder' : 'file', space, path,
-      name: child.name, editable: true, ...(!child.is_directory ? { id: path } : {}) }
+      name: child.name, editable: knowledgeBackend.capabilities.write !== false, ...(!child.is_directory ? { id: path } : {}) }
     return [current, ...fromVaultTree(child, space)]
   })
 }
