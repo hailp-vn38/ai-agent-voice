@@ -12,6 +12,8 @@ thiserror.workspace = true
 tokio.workspace = true
 tokio-util = { workspace = true, features = ["rt"] }
 wiki-core = { path = "../wiki-core" }
+rmcp = { workspace = true, features = ["server", "transport-io"] }
 
 [dev-dependencies]
+rmcp = { workspace = true, features = ["client", "transport-child-process"] }
 tempfile = "3.25"
