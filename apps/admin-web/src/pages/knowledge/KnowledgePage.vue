@@ -19,6 +19,7 @@ import WikiChatPanel from './WikiChatPanel.vue'
 import RightPanelTabs, { type RightTab } from './RightPanelTabs.vue'
 import { movedOrder, useDragReorder } from './useDragReorder'
 import KnowledgeNoteView, { noteIntroduction } from './KnowledgeNoteView.vue'
+import KnowledgeMarkdownEditor from './KnowledgeMarkdownEditor.vue'
 import { useKnowledgeWorkspace, type NoteDoc, type Page, type RawFile, type TabRef, type TreeSpace, type WorkspacePane, type WorkspaceTab } from './useKnowledgeWorkspace'
 
 type SearchMode = 'hybrid' | 'lex' | 'vec'
@@ -483,6 +484,8 @@ const composeOpen = ref(false)
 const composeBaseFolder = ref('raw')
 const newNoteFolder = ref<string | null>(null)
 const newNoteName = ref('')
+/** What the inline Explorer row creates: a Markdown note, or a folder. */
+const newNodeKind = ref<'note' | 'folder'>('note')
 const treeHolder = ref<HTMLElement | null>(null)
 const editorSavedBody = ref('')
 // A note named in the Explorer exists only in the editor until its first save creates the file.
@@ -502,22 +505,60 @@ function suggestedNoteName(folder: string): string {
 function cancelInlineNote() {
   newNoteFolder.value = null
   newNoteName.value = ''
+  newNodeKind.value = 'note'
 }
-function beginInlineNote(folderPath?: string) {
-  if (busy.value || activeSpace.value !== 'raw') return
-  const folder = folderPath ?? (currentFolder.value.startsWith(activeSpace.value)
-    && activeTree.value?.editable !== false ? currentFolder.value : activeSpace.value)
-  if (folder !== activeSpace.value &&
-      !tree.value.some(node => node.path === folder && node.type === 'folder' && node.editable)) return
+function inlineParentFolder(): string {
+  return currentFolder.value.startsWith(activeSpace.value) && activeTree.value?.editable !== false
+    ? currentFolder.value : activeSpace.value
+}
+/** Shows the inline name row under `folder`: the tree, the folder and its ancestors are all opened first. */
+function showInlineRow(folder: string, kind: 'note' | 'folder', name: string) {
   cancelInlineNote()
+  if (searchOpen.value) closeSearch()
+  newNodeKind.value = kind
   newNoteFolder.value = folder
-  newNoteName.value = suggestedNoteName(folder)
-  openFolders.value = new Set([...openFolders.value, folder])
+  newNoteName.value = name
+  const parts = folder.split('/')
+  openFolders.value = new Set([...openFolders.value, ...parts.map((_, index) => parts.slice(0, index + 1).join('/'))])
   void nextTick(() => {
     const input = treeHolder.value?.querySelector<HTMLInputElement>('#knowledge-new-note-name')
+    input?.scrollIntoView?.({ block: 'nearest' })
     input?.focus()
     input?.select()
   })
+}
+function confirmInlineRow() {
+  return newNodeKind.value === 'folder' ? confirmInlineFolder() : confirmInlineNote()
+}
+function beginInlineFolder() {
+  if (busy.value || activeSpace.value !== 'raw') return
+  showInlineRow(inlineParentFolder(), 'folder', '')
+}
+async function confirmInlineFolder() {
+  const base = newNoteFolder.value
+  if (!base || busy.value || activeSpace.value !== 'raw') return
+  const value = newNoteName.value.trim()
+  if (!value) { cancelInlineNote(); return }
+  busy.value = true
+  error.value = ''
+  try {
+    const parts = segmentsOfPath(value, false)
+    const created = await requestJson<{ path: string }>('/api/admin/knowledge/folders',
+      jsonRequest('POST', { space: 'raw', parent_path: base, name: parts.join('/') }))
+    openFolders.value = new Set([...openFolders.value, ...parts.map((_, index) =>
+      base + '/' + parts.slice(0, index + 1).join('/')), base])
+    cancelInlineNote()
+    await refreshTree()
+    selectedPath.value = created.path
+  } catch (cause) { error.value = formatApiError(cause) }
+  finally { busy.value = false }
+}
+function beginInlineNote(folderPath?: string) {
+  if (busy.value || activeSpace.value !== 'raw') return
+  const folder = folderPath ?? inlineParentFolder()
+  if (folder !== activeSpace.value &&
+      !tree.value.some(node => node.path === folder && node.type === 'folder' && node.editable)) return
+  showInlineRow(folder, 'note', suggestedNoteName(folder))
 }
 async function confirmInlineNote() {
   const folder = newNoteFolder.value
@@ -1818,27 +1859,7 @@ function segmentsOfPath(value: string, file: boolean): string[] {
   return parts
 }
 
-async function newFolder() {
-  if (busy.value || activeSpace.value !== 'raw') return
-  const space = 'raw'
-  const base = currentFolder.value.startsWith(space)
-    && activeTree.value?.editable !== false ? currentFolder.value : space
-  const value = window.prompt(t('knowledgeV3.folderName'), 'docs/flow')
-  if (value === null) return
-  busy.value = true
-  error.value = ''
-  try {
-    const parts = segmentsOfPath(value, false)
-    const created = await requestJson<{ path: string }>('/api/admin/knowledge/folders',
-      jsonRequest('POST', { space, parent_path: base, name: parts.join('/') }))
-    const resultPath = created.path
-    openFolders.value = new Set([...openFolders.value, ...parts.map((_, index) =>
-      base + '/' + parts.slice(0, index + 1).join('/')), base])
-    await refreshTree()
-    selectedPath.value = resultPath
-  } catch (cause) { error.value = formatApiError(cause) }
-  finally { busy.value = false }
-}
+function newFolder() { beginInlineFolder() }
 
 async function importRawAsSource() {
   if (!rawFile.value || busy.value) return
@@ -1894,15 +1915,10 @@ const activeHeading = ref('')
 const linkedNotes = ref<{ id: string; title: string }[]>([])
 let linkedRequestVersion = 0
 
-const composePreviewViewport = ref<HTMLElement | null>(null)
-watch([() => body.value, viewMode, preview, dark], () => {
-  if (viewMode.value === 'compose' && preview.value) {
-    void nextTick(() => {
-      void renderMermaidBlocks(composePreviewViewport.value, dark.value)
-      void renderTradingChartBlocks(composePreviewViewport.value, dark.value)
-    })
-  }
-}, { flush: 'post' })
+const editorLinkTargets = computed(() => wikiTargets.value.map(node => ({
+  path: node.path.replace(/^wiki\//, '').replace(/\.md$/, ''),
+  title: treeTitle(node),
+})))
 
 const readableNodes = computed(() => visibleTree.value.filter(node => node.path !== activeSpace.value))
 function treeTitle(node: TreeNode) {
@@ -2054,23 +2070,23 @@ onMounted(() => {
             <component :is="space.icon" :size="18" aria-hidden="true" />
           </button>
         </div>
-        <div class="flex shrink-0 items-center gap-1">
-          <template v-if="activeSpace === 'raw'">
-            <button type="button" class="icon-button" aria-label="Add folder" title="Add folder"
-              :disabled="busy" @click="newFolder"><FolderPlus :size="17" /></button>
-            <button type="button" class="icon-button" aria-label="Add file" :title="t('knowledgeV3.createNote')"
-              :disabled="busy" @click="startNewFile"><FilePlus2 :size="17" /></button>
-            <button type="button" class="icon-button" :aria-label="t('knowledgeV3.uploadFolder')"
-              :title="t('knowledgeV3.uploadFolder')" :disabled="busy" @click="pickFolderUpload"><FolderUp :size="17" /></button>
-            <input ref="folderInput" type="file" class="hidden" webkitdirectory multiple
-              @change="onFolderPicked" />
-          </template>
+        <div class="a-pane-heading-actions">
           <button class="icon-button" :class="{ active: searchOpen }" type="button"
             :title="t('knowledgeV3.search')" :aria-label="t('knowledgeV3.search')"
-            :aria-pressed="searchOpen" :disabled="busy" @click="toggleSearch"><Search :size="17" /></button>
+            :aria-pressed="searchOpen" :disabled="busy" @click="toggleSearch"><Search :size="16" /></button>
           <button class="icon-button" type="button" title="Collapse folders" aria-label="Collapse folders"
-            @click="openFolders = new Set([activeSpace])"><ChevronsUp :size="17" /></button>
+            @click="openFolders = new Set([activeSpace])"><ChevronsUp :size="16" /></button>
         </div>
+      </div>
+      <div v-if="activeSpace === 'raw'" class="a-explorer-toolbar" role="toolbar" :aria-label="t('knowledgeV3.explorer')">
+        <button type="button" class="a-explorer-new" aria-label="Add file" :title="t('knowledgeV3.createNote')"
+          :disabled="busy" @click="startNewFile"><FilePlus2 :size="15" /><span>{{ t('knowledgeV3.createNote') }}</span></button>
+        <button type="button" class="icon-button" aria-label="Add folder" title="Add folder"
+          :disabled="busy" @click="newFolder"><FolderPlus :size="16" /></button>
+        <button type="button" class="icon-button" :aria-label="t('knowledgeV3.uploadFolder')"
+          :title="t('knowledgeV3.uploadFolder')" :disabled="busy" @click="pickFolderUpload"><FolderUp :size="16" /></button>
+        <input ref="folderInput" type="file" class="hidden" webkitdirectory multiple
+          @change="onFolderPicked" />
       </div>
       <form v-if="searchOpen" class="a-search-panel" @submit.prevent="search">
         <div class="a-search-row">
@@ -2137,13 +2153,15 @@ onMounted(() => {
             </div>
             <form v-if="newNoteFolder === node.path" class="tree-new-note"
               :style="{ paddingLeft: (31 + Math.max(0, node.path.split('/').length - 2) * 13) + 'px' }"
-              @submit.prevent="confirmInlineNote">
-              <FileText :size="14" class="shrink-0" />
+              @submit.prevent="confirmInlineRow">
+              <FolderPlus v-if="newNodeKind === 'folder'" :size="14" class="shrink-0" />
+              <FileText v-else :size="14" class="shrink-0" />
               <input id="knowledge-new-note-name" v-model="newNoteName"
-                aria-label="New note name" autocomplete="off" spellcheck="false"
-                :disabled="busy" @keydown.enter.prevent="confirmInlineNote" @keydown.esc.prevent="cancelInlineNote"
+                :aria-label="newNodeKind === 'folder' ? 'New folder name' : 'New note name'"
+                :placeholder="newNodeKind === 'folder' ? t('knowledgeV3.folderName') : ''" autocomplete="off" spellcheck="false"
+                :disabled="busy" @keydown.enter.prevent="confirmInlineRow" @keydown.esc.prevent="cancelInlineNote"
                 @click.stop />
-              <span class="tree-new-note-extension">{{ newNoteName.toLowerCase().endsWith('.md') ? '' : '.md' }}</span>
+              <span v-if="newNodeKind === 'note'" class="tree-new-note-extension">{{ newNoteName.toLowerCase().endsWith('.md') ? '' : '.md' }}</span>
             </form>
           </template>
           <div v-else class="tree-leaf-row">
@@ -2165,12 +2183,14 @@ onMounted(() => {
           </div>
         </template>
         <form v-if="newNoteFolder === activeSpace" class="tree-new-note tree-new-note-root"
-          @submit.prevent="confirmInlineNote">
-          <FileText :size="14" class="shrink-0" />
+          @submit.prevent="confirmInlineRow">
+          <FolderPlus v-if="newNodeKind === 'folder'" :size="14" class="shrink-0" />
+          <FileText v-else :size="14" class="shrink-0" />
           <input id="knowledge-new-note-name" v-model="newNoteName"
-            aria-label="New note name" autocomplete="off" spellcheck="false"
-            :disabled="busy" @keydown.enter.prevent="confirmInlineNote" @keydown.esc.prevent="cancelInlineNote" />
-          <span class="tree-new-note-extension">{{ newNoteName.toLowerCase().endsWith('.md') ? '' : '.md' }}</span>
+            :aria-label="newNodeKind === 'folder' ? 'New folder name' : 'New note name'"
+            :placeholder="newNodeKind === 'folder' ? t('knowledgeV3.folderName') : ''" autocomplete="off" spellcheck="false"
+            :disabled="busy" @keydown.enter.prevent="confirmInlineRow" @keydown.esc.prevent="cancelInlineNote" />
+          <span v-if="newNodeKind === 'note'" class="tree-new-note-extension">{{ newNoteName.toLowerCase().endsWith('.md') ? '' : '.md' }}</span>
         </form>
         </template>
       </div>
@@ -2303,42 +2323,11 @@ onMounted(() => {
               </div>
             </div>
             <main v-if="pane.id === focusedPaneId && viewMode === 'compose'" class="a-reader-viewport knowledge-edit-viewport">
-              <form class="knowledge-note-editor" @submit.prevent="saveNote">
-                <div class="knowledge-edit-toolbar">
-                  <div class="knowledge-edit-breadcrumb">
-                    <FileText :size="15" class="shrink-0" />
-                    <span>{{ composeBaseFolder }}/</span>
-                    <strong>{{ newFileName }}</strong>
-                    <span v-if="selected?.status === 'draft'" class="knowledge-draft-pill">{{ t('knowledgeV3.draftStatus') }}</span>
-                  </div>
-                  <div class="knowledge-edit-actions">
-                    <span class="knowledge-edit-save-state">
-                      {{ editorDirty ? t('knowledgeV3.unsaved') : t('knowledgeV3.savedStatus') }}
-                    </span>
-                    <button type="button" class="knowledge-secondary-button" :aria-pressed="preview"
-                      @click="preview = !preview">{{ preview ? t('knowledgeV3.hidePreview') : t('knowledgeV3.preview') }}</button>
-                    <button type="submit" class="knowledge-save-button" :disabled="editorSaving">
-                      {{ activeSpace === 'wiki' ? t('knowledgeV3.save') : t('knowledgeV3.saveRaw') }}
-                    </button>
-                    <button type="button" class="knowledge-close-editor" :aria-label="t('knowledgeV3.closeEditor')"
-                      @click="closeEditor">×</button>
-                  </div>
-                </div>
-                <div class="knowledge-edit-content">
-                  <div class="knowledge-edit-note">
-                    <h1>{{ title }}</h1>
-                    <textarea id="knowledge-note-body" v-model="body" :disabled="busy"
-                      :placeholder="t('knowledgeV3.startWriting')" spellcheck="true"
-                      aria-label="Markdown editor"
-                      @keydown.ctrl.s.prevent="saveNote" @keydown.meta.s.prevent="saveNote"></textarea>
-                  </div>
-                  <div v-if="preview" ref="composePreviewViewport" class="knowledge-edit-preview markdown-body"
-                    v-html="renderMarkdown(body)" @click="onMarkdownClick"></div>
-                </div>
-                <p v-if="activeSpace === 'wiki'" class="knowledge-edit-footnote">
-                  {{ t('knowledgeV3.draftNotice') }}
-                </p>
-              </form>
+              <KnowledgeMarkdownEditor v-model="body" :title="title" :folder="composeBaseFolder" :file-name="newFileName"
+                :is-draft="selected?.status === 'draft'" :busy="busy" :dirty="editorDirty" :save-disabled="editorSaving"
+                :save-label="activeSpace === 'wiki' ? t('knowledgeV3.save') : t('knowledgeV3.saveRaw')"
+                :footnote="activeSpace === 'wiki' ? t('knowledgeV3.draftNotice') : ''"
+                :link-targets="editorLinkTargets" @save="saveNote" @close="closeEditor" @markdown-click="onMarkdownClick" />
             </main>
             <KnowledgeNoteView v-else-if="!paneShowsGraph(pane)" :key="workspace.activeTab(pane).id"
               :tab="workspace.activeTab(pane)" :doc="workspace.activeTab(pane).doc"
