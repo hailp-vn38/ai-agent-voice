@@ -140,6 +140,7 @@ pub struct McpServerRuntime {
     state: Arc<ServerState>,
     cancellation: CancellationToken,
     runtime_file: PathBuf,
+    vault_path: PathBuf,
 }
 
 impl McpServerRuntime {
@@ -164,7 +165,7 @@ impl McpServerRuntime {
             "mcpServers": {
                 "wiki": {
                     "command": sidecar,
-                    "args": []
+                    "args": ["--vault", self.vault_path]
                 }
             }
         })
@@ -227,6 +228,7 @@ pub async fn start(
     requested_port: Option<u16>,
     allow_write: bool,
     runtime_file: PathBuf,
+    vault_path: PathBuf,
 ) -> Result<McpServerRuntime, String> {
     let emit_app = app.clone();
     let emit_status = Arc::new(move |status| {
@@ -237,6 +239,7 @@ pub async fn start(
         requested_port,
         allow_write,
         runtime_file,
+        vault_path,
         load_or_create_token("read")?,
         load_or_create_token("write")?,
         emit_status,
@@ -249,6 +252,7 @@ async fn start_with_tokens(
     requested_port: Option<u16>,
     allow_write: bool,
     runtime_file: PathBuf,
+    vault_path: PathBuf,
     read_token: String,
     write_token: String,
     emit_status: Arc<dyn Fn(McpStatus) + Send + Sync>,
@@ -316,6 +320,7 @@ async fn start_with_tokens(
         state,
         cancellation,
         runtime_file,
+        vault_path,
     })
 }
 
@@ -525,6 +530,7 @@ mod tests {
             None,
             true,
             runtime_path.clone(),
+            vault_dir.path().to_path_buf(),
             "read-test-token".into(),
             "write-test-token".into(),
             Arc::new(|_| {}),
@@ -532,6 +538,11 @@ mod tests {
         .await
         .unwrap();
         let info = runtime.info().unwrap();
+        let stdio_config: serde_json::Value = serde_json::from_str(&info.stdio_config).unwrap();
+        assert_eq!(
+            stdio_config["mcpServers"]["wiki"]["args"],
+            json!(["--vault", vault_dir.path().to_string_lossy()])
+        );
         let uri = format!("http://127.0.0.1:{}/mcp", info.port);
         let client = reqwest::Client::new();
 

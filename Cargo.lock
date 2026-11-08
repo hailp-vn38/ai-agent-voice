@@ -3466,6 +3466,7 @@ dependencies = [
  "pin-project-lite",
  "process-wrap",
  "rand 0.10.3",
+ "reqwest 0.13.5",
  "schemars",
  "serde",
  "serde_json",
@@ -5320,7 +5321,9 @@ dependencies = [
 name = "wiki-mcp"
 version = "0.1.0"
 dependencies = [
+ "axum",
  "llm-wiki-rs",
+ "reqwest 0.13.5",
  "rmcp",
  "serde",
  "serde_json",

@@ -209,11 +209,18 @@ fn start_mcp_server(app: tauri::AppHandle, state: &DesktopState) -> Result<(), C
     {
         previous.shutdown();
     }
-    let (port, allow_write) = {
+    let (port, allow_write, vault_path) = {
         let settings = state.settings.lock().map_err(|_| CommandError::Io {
             message: "settings lock poisoned".into(),
         })?;
-        (settings.mcp_port, settings.mcp_allow_write)
+        let vault_path = settings
+            .current_vault
+            .as_ref()
+            .map(PathBuf::from)
+            .ok_or_else(|| CommandError::NotFound {
+                message: "No knowledge vault is open".into(),
+            })?;
+        (settings.mcp_port, settings.mcp_allow_write, vault_path)
     };
     let runtime_file = state.settings_file.with_file_name("runtime.json");
     let runtime = tauri::async_runtime::block_on(mcp_server::start(
@@ -222,6 +229,7 @@ fn start_mcp_server(app: tauri::AppHandle, state: &DesktopState) -> Result<(), C
         port,
         allow_write,
         runtime_file,
+        vault_path,
     ))
     .map_err(|message| CommandError::Io { message })?;
     let info = runtime

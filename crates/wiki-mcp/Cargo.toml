@@ -11,9 +11,11 @@ serde_json.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 tokio-util = { workspace = true, features = ["rt"] }
+reqwest.workspace = true
 wiki-core = { path = "../wiki-core" }
-rmcp = { workspace = true, features = ["server", "transport-io"] }
+rmcp = { workspace = true, features = ["client", "server", "transport-io", "transport-streamable-http-client-reqwest", "transport-streamable-http-server"] }
 
 [dev-dependencies]
+axum.workspace = true
 rmcp = { workspace = true, features = ["client", "transport-child-process"] }
 tempfile = "3.25"
