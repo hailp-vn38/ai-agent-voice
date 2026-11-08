@@ -8,7 +8,9 @@ use std::sync::{
 use std::time::Duration;
 use thiserror::Error;
 use tokio_util::sync::CancellationToken;
-use wiki_core::{Change, DocPath, IngestSourceDetails, Origin, ReadWindow, Scope, Vault};
+use wiki_core::{
+    Change, DocPath, IngestSourceDetails, Origin, ReadWindow, Scope, SynthesisDetails, Vault,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -556,14 +558,23 @@ fn call_sync(vault: &Vault, name: &str, args: Value, max_chars: usize) -> Result
             } else {
                 format!("syntheses/{rel_path}")
             };
+            let rel_path = if rel_path.ends_with(".md") {
+                rel_path
+            } else {
+                format!("{rel_path}.md")
+            };
             let path = DocPath::parse(Scope::Wiki, &rel_path)?;
-            let content = llm_wiki::wiki::ingest::render_synthesis_markdown(&req);
             vault.apply_from(
                 Origin::Mcp,
-                Change::Write {
+                Change::FileSynthesis {
                     path: path.clone(),
-                    content,
-                    expect: None,
+                    details: SynthesisDetails {
+                        query: req.query,
+                        title: req.title,
+                        one_line_summary: req.one_line_summary,
+                        markdown_body: req.markdown_body,
+                        tags: req.tags,
+                    },
                 },
             )?;
             let info = vault.document_metadata(&path)?;
@@ -576,16 +587,14 @@ fn call_sync(vault: &Vault, name: &str, args: Value, max_chars: usize) -> Result
                 .and_then(Value::as_str)
                 .filter(|path| !path.trim().is_empty())
                 .ok_or_else(|| ToolError::InvalidArguments("missing rel_path".into()))?;
-            let (space, path) = scoped_doc_path_with_scope(scope, rel)?;
+            let (_space, path) = scoped_doc_path_with_scope(scope, rel)?;
             let deleted = match vault.read(&path, ReadWindow::default()) {
                 Ok(_) => true,
                 Err(wiki_core::VaultError::NotFound(_)) => false,
                 Err(error) => return Err(error.into()),
             };
-            if deleted {
-                vault.apply_from(Origin::Mcp, Change::Delete { path: path.clone() })?;
-            }
-            json!({"tool": name, "content": format!("deleted={deleted} path={}", path.vault_relative().display()), "metadata": {"deleted": deleted, "rel_path": path.vault_relative(), "scope": space}})
+            vault.apply_from(Origin::Mcp, Change::Delete { path: path.clone() })?;
+            json!({"tool": name, "content": format!("deleted={deleted} path={rel}"), "metadata": {"deleted": deleted, "rel_path": rel}})
         }
         _ => return Err(ToolError::Unavailable),
     };
@@ -812,13 +821,37 @@ mod tests {
         let wiki_path = ingested["metadata"]["wiki_rel_path"].as_str().unwrap();
         assert!(dir.path().join(wiki_path).exists());
 
-        host.call(
-            context(Access::ReadWrite),
-            "wiki_delete_file",
-            json!({"scope":"wiki","rel_path":"concepts/patch.md"}),
-        )
-        .await
-        .unwrap();
+        let synthesis = host
+            .call(
+                context(Access::ReadWrite),
+                "wiki_file_synthesis",
+                json!({
+                    "rel_path":"answer-without-extension",
+                    "query":"Which approach should we use?",
+                    "title":"Approach comparison",
+                    "one_line_summary":"A focused comparison summary.",
+                    "markdown_body":"## Recommendation\n\nUse the simpler approach.",
+                    "tags":["architecture"]
+                }),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            synthesis["metadata"]["rel_path"],
+            "wiki/syntheses/answer-without-extension.md"
+        );
+        assert!(dir.path().join("wiki/log.md").exists());
+
+        let deleted = host
+            .call(
+                context(Access::ReadWrite),
+                "wiki_delete_file",
+                json!({"scope":"wiki","rel_path":"concepts/patch.md"}),
+            )
+            .await
+            .unwrap();
+        assert_eq!(deleted["metadata"]["rel_path"], "concepts/patch.md");
+        assert_eq!(deleted["metadata"]["deleted"], true);
         assert!(!dir.path().join("wiki/concepts/patch.md").exists());
     }
 

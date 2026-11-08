@@ -225,6 +225,15 @@ pub struct IngestSourceDetails {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SynthesisDetails {
+    pub query: String,
+    pub title: String,
+    pub one_line_summary: String,
+    pub markdown_body: String,
+    pub tags: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Change {
     Write {
@@ -250,6 +259,10 @@ pub enum Change {
     IngestSource {
         source: DocPath,
         details: Option<IngestSourceDetails>,
+    },
+    FileSynthesis {
+        path: DocPath,
+        details: SynthesisDetails,
     },
     Reindex {
         force: bool,
@@ -734,6 +747,10 @@ impl Vault {
                     plan.paths.push(PathBuf::from(wiki_rel));
                 }
             }
+            Change::FileSynthesis { path, .. } => {
+                self.validate_target(path)?;
+                plan.paths.push(path.vault_relative());
+            }
             Change::Reindex { .. } => {}
         }
         if !matches!(change, Change::Reindex { .. }) {
@@ -750,6 +767,10 @@ impl Vault {
     ) -> Result<(Vec<String>, Option<Revision>), VaultError> {
         let mut paths = Vec::new();
         let mut revision = None;
+        let specialized_indexing = matches!(
+            &change,
+            Change::IngestSource { .. } | Change::FileSynthesis { .. }
+        );
         match change {
             Change::Write { path, content, .. } => {
                 self.atomic_write(&path, content.as_bytes())?;
@@ -781,11 +802,13 @@ impl Vault {
                 ]);
             }
             Change::Delete { path } => {
-                let target = self.root.join(path.vault_relative());
-                if target.exists() {
-                    std::fs::remove_file(target)
-                        .map_err(|error| VaultError::Io(error.to_string()))?;
-                }
+                let scope = match path.scope() {
+                    Scope::Raw => CollectionScope::Sources,
+                    Scope::Wiki => CollectionScope::Wiki,
+                    Scope::All => unreachable!(),
+                };
+                self.engine
+                    .delete_file(scope, &path.relative().to_string_lossy())?;
                 paths.push(path.vault_relative().display().to_string());
             }
             Change::ImportRaw { files } => {
@@ -828,13 +851,26 @@ impl Vault {
                     .ingest_source_to_wiki(IngestSourceRequest { ..request })?;
                 paths.extend([result.source_rel_path, result.wiki_rel_path]);
             }
+            Change::FileSynthesis { path, details } => {
+                let result = self
+                    .engine
+                    .file_query_synthesis(llm_wiki::FileSynthesisRequest {
+                        rel_path: path.relative().to_string_lossy().into_owned(),
+                        query: details.query,
+                        title: details.title,
+                        one_line_summary: details.one_line_summary,
+                        markdown_body: details.markdown_body,
+                        tags: details.tags,
+                    })?;
+                paths.push(result.rel_path);
+            }
             Change::Reindex { force: _ } => {
                 let stats = self.engine.sync_index()?;
                 self.engine.rebuild_or_sync_index_md()?;
                 self.publish_reindexed(stats);
             }
         }
-        if !matches!(plan.paths.as_slice(), []) {
+        if !plan.paths.is_empty() && !specialized_indexing {
             self.engine.sync_index()?;
             self.engine.rebuild_or_sync_index_md()?;
             self.engine
