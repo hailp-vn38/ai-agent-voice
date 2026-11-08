@@ -1,6 +1,6 @@
 # 11: MCP HTTP trong app và màn Settings MCP
 
-Status: ready-for-agent
+Status: ready-for-human
 Blocked by: 04, 09
 Spec: ../spec.md (user stories 35–42, 46)
 
@@ -26,3 +26,9 @@ Khi app đang mở, agent kết nối được vào kho qua streamable HTTP. UI 
 - [ ] Test tích hợp: `rmcp` client gọi server trên port ngẫu nhiên. Thiếu token thì bị 401, `Origin` lạ thì bị từ chối, token đọc không gọi được tool ghi.
 - [ ] Smoke test thủ công: agent gọi `wiki_write_file` thì toast hiện trong vòng 1 giây và trang mở sẵn tự cập nhật.
 - [ ] File runtime có quyền 0600 và bị xóa khi app thoát bình thường.
+
+## Cập nhật tiến độ
+
+- Đã thêm HTTP MCP loopback, bearer token riêng, Host/Origin validation, Keychain, runtime file 0600, chọn port, token rotation, Claude config preview/confirmation, toast và trạng thái session.
+- PASS: RMCP integration test (401/403/read-only/write-disabled/session lifecycle/runtime permissions); Tauri `cargo check`/test/format và Vite build.
+- NOT_RUN: app smoke, agent write toast trên UI thật, hộp thoại cài Claude và runtime cleanup qua đóng app thật.

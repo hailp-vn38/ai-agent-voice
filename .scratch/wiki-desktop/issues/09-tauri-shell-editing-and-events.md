@@ -1,6 +1,6 @@
 # 09: Tauri shell: soạn, xung đột và sự kiện
 
-Status: ready-for-agent
+Status: ready-for-human
 Blocked by: 02, 08
 Spec: ../spec.md (user stories 8, 22–30)
 
@@ -20,3 +20,9 @@ Cho phép ghi từ app qua `vault_apply`, và UI cập nhật theo sự kiện c
 
 - [ ] Test của package (trên `MemoryBackend`) cho luồng xung đột: lưu bị `Conflict` thì hiện lựa chọn, và chọn mỗi phương án cho ra đúng kết quả.
 - [ ] Smoke test thủ công cho từng loại `Change` trên app thật.
+
+## Cập nhật tiến độ
+
+- Đã nối `vault_apply`/`Origin::Ui`, event relay, tạo/sửa trang, xung đột với hai lựa chọn, xóa, ingest, rebuild và kéo thả.
+- PASS: test conflict/keep/reload và tạo Wiki Page qua MemoryBackend; wiki-core 17 tests; desktop `cargo check`/format/build.
+- NOT_RUN: smoke test thủ công từng loại `Change` và đồng bộ giữa hai cửa sổ trên app thật.

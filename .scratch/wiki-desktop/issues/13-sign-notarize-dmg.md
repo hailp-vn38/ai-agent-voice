@@ -23,3 +23,9 @@ Cần Apple Developer ID certificate, App Store Connect API key cho `notarytool`
 
 - [ ] `spctl --assess` pass cho app và cho `wiki-mcp`.
 - [ ] Cài DMG trên một máy sạch: mở app không có cảnh báo Gatekeeper, Claude Desktop gọi được `wiki-mcp` trong bundle.
+
+## Cập nhật tiến độ
+
+- Đã chuẩn bị script universal arm64/x86_64, Tauri externalBin sidecar, Developer ID/hardened runtime signing, notarytool/stapler, Gatekeeper checks và runbook release owner.
+- PASS: kiểm tra shell syntax, JSON/Tauri config, plist và diff.
+- NOT_RUN: cần release owner xác nhận bundle identifier, cung cấp Developer ID identity và notarytool Keychain profile; chưa chạy build/sign/notarize, `spctl` hay cài thử trên máy sạch.
