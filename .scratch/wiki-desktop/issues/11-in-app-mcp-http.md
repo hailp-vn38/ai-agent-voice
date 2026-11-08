@@ -32,3 +32,4 @@ Khi app đang mở, agent kết nối được vào kho qua streamable HTTP. UI 
 - Đã thêm HTTP MCP loopback, bearer token riêng, Host/Origin validation, Keychain, runtime file 0600, chọn port, token rotation, Claude config preview/confirmation, toast và trạng thái session.
 - PASS: RMCP integration test (401/403/read-only/write-disabled/session lifecycle/runtime permissions); Tauri `cargo check`/test/format và Vite build.
 - NOT_RUN: app smoke, agent write toast trên UI thật, hộp thoại cài Claude và runtime cleanup qua đóng app thật.
+- Ticket 04 vẫn `ready-for-agent`: full test `vela-server` còn lỗi fixture local `vieneu_default`; giữ blocker này cho tới khi lượt kiểm tra đó pass.
