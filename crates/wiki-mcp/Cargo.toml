@@ -1,0 +1,17 @@
+[package]
+name = "wiki-mcp"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+llm-wiki-rs.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tokio-util = { workspace = true, features = ["rt"] }
+wiki-core = { path = "../wiki-core" }
+
+[dev-dependencies]
+tempfile = "3.25"

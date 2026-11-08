@@ -33,6 +33,8 @@ jsonschema = { version = "0.33", default-features = false }
 libc = "0.2"
 llm.workspace = true
 llm-wiki-rs.workspace = true
+wiki-core = { path = "../wiki-core" }
+wiki-mcp = { path = "../wiki-mcp" }
 ndarray.workspace = true
 ndarray-npy.workspace = true
 http.workspace = true

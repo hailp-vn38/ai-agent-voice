@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/vela-server", "crates/wiki-core"]
+members = ["crates/vela-server", "crates/wiki-core", "crates/wiki-mcp"]
 resolver = "2"
 
 [workspace.package]
