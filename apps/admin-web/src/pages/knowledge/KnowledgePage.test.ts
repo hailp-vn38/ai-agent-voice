@@ -505,8 +505,9 @@ it('links only evidenced citations, highlights graph sources, restores an old an
     await citation.trigger('mouseover')
     expect(highlightNodeMock).toHaveBeenCalledWith('wiki/concepts/known.md')
     await citation.trigger('click')
-    expect(focusNodeMock).toHaveBeenCalledWith('wiki/concepts/known.md', false)
     await flushPromises()
+    expect(wrapper.find('.mock-knowledge-graph').exists()).toBe(true)
+    expect(focusNodeMock).toHaveBeenCalledWith('wiki/concepts/known.md', false)
     expect(wrapper.get('.doc h1').text()).toBe('Known')
     expect((wrapper.get('.wiki-chat-panel').element as HTMLElement).style.display).not.toBe('none')
     expect(wrapper.get('.wiki-chat-answer').text()).toContain('Made up')
@@ -612,6 +613,10 @@ it('creates a Raw note only when its first save sends the content, then saves ed
     if (url === '/api/admin/knowledge/raw/files' && options?.method === 'PUT') {
       writes.push({url,options})
       return {path:'raw/notes/Meeting.md',body:options.body?.body,sha256:'updated-sha'}
+    }
+    if (url.startsWith('/api/admin/knowledge/raw/files?')) {
+      const path = new URL(url, 'http://localhost').searchParams.get('path')
+      if (path === 'raw/notes/Meeting.md') return {path, body:String(writes[0]?.options?.body?.body ?? ''), sha256:'created-sha'}
     }
     return original(url, options)
   })
@@ -896,6 +901,11 @@ it('uploads a dropped Markdown file into the File space and displays its content
         body: String(options.body?.body ?? ''),
         sha256: 'dropped-sha',
       }
+    }
+    if (url.startsWith('/api/admin/knowledge/raw/files?')) {
+      const path = new URL(url, 'http://localhost').searchParams.get('path')
+      const write = writes.find(item => String(item.options?.body?.folder_path) + '/' + String(item.options?.body?.file_name) === path)
+      if (write) return { path, body: String(write.options?.body?.body ?? ''), sha256: 'dropped-sha' }
     }
     return original(url, options)
   })

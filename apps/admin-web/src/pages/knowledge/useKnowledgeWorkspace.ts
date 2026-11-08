@@ -2,7 +2,7 @@ import { computed, ref } from 'vue'
 
 export type TreeSpace = 'raw' | 'wiki' | 'drafts'
 export type RawFile = { path: string; body: string; sha256: string }
-export type Page = { id: string; title: string; body: string; revision: number; status: string; source_ref: string | null }
+export type Page = { id: string; title: string; body: string; revision: number | string; status: string; source_ref: string | null }
 export type NoteDoc = {
   space: TreeSpace
   path: string

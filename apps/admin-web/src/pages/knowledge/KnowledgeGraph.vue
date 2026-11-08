@@ -17,7 +17,7 @@ import { Button } from '@/components/ui/button'
 import { useI18n } from '@/composables/useI18n'
 import { useTheme } from '@/composables/useTheme'
 import './knowledge-reader.css'
-import { useKnowledgeBackend } from './knowledgeBackend'
+import { docPath, useKnowledgeBackend, useOptionalAdminKnowledgeBackend, type VaultGraph } from './knowledgeBackend'
 
 type GraphNode = {
   id: string
@@ -63,6 +63,17 @@ const emit = defineEmits<{
 const { t } = useI18n()
 const { dark } = useTheme()
 const knowledgeBackend = useKnowledgeBackend()
+const adminBackend = useOptionalAdminKnowledgeBackend()
+
+function graphSnapshotFromVault(value: VaultGraph): GraphSnapshot {
+  return {
+    nodes: value.nodes.map(node => ({ id: node.path, path: node.path, title: node.title, status: 'verified', revision: 0 })),
+    edges: value.edges.map(edge => ({ source_id: edge.source, target_id: edge.target ?? edge.raw_target, kind: 'wikilink',
+      lines: [edge.line], references: [{ line: edge.line, raw_target: edge.raw_target }] })),
+    unresolved: value.unresolved.map(raw_target => ({ source_id: '', source_line: 0, raw_target, reason: 'unresolved' })),
+    truncated: false,
+  }
+}
 
 const localFocusMode = ref(Boolean(props.focusMode))
 watch(() => props.focusMode, value => {
@@ -1063,12 +1074,15 @@ async function loadGraph() {
   error.value = ''
   isStale.value = false
   try {
-    const result = await knowledgeBackend.graph({
-      scope: scope.value,
-      limit: 500,
-      ...(scope.value === 'local' ? { centerId: props.centerId ?? '', depth: depth.value } : {}),
-      ...(scope.value === 'query' ? { query: queryText.value.trim() } : {}),
-    }) as GraphSnapshot
+    let result: GraphSnapshot
+    if (scope.value === 'query') {
+      if (!adminBackend) throw new Error('Query graph is available in Admin Web only')
+      result = await adminBackend.graph({ scope: 'query', limit: 500, query: queryText.value.trim() }) as GraphSnapshot
+    } else {
+      const common = await knowledgeBackend.graph(scope.value === 'local' && props.centerId
+        ? docPath('wiki', props.centerId.replace(/^wiki\//, '')) : undefined)
+      result = graphSnapshotFromVault(common)
+    }
     if (version !== requestVersion) return
     graph.value = result
     selectedEdgeId.value = null
@@ -1217,7 +1231,7 @@ defineExpose({ focusNode, highlightNode })
             <Crosshair :size="13" />
             <span>{{ t('knowledgeV3.graphAnswer') }}</span>
           </button>
-          <button
+          <button v-if="adminBackend"
             type="button"
             class="kg-tool-btn"
             :class="{ on: scope === 'query' }"
@@ -1226,7 +1240,7 @@ defineExpose({ focusNode, highlightNode })
             <Search :size="13" />
             <span>{{ t('knowledgeV3.graphQuery') }}</span>
           </button>
-          <form v-if="scope === 'query'" class="kg-query-form" @submit.prevent="submitQuery">
+          <form v-if="scope === 'query' && adminBackend" class="kg-query-form" @submit.prevent="submitQuery">
             <input v-model="queryText" :aria-label="t('knowledgeV3.graphQueryInput')" :placeholder="t('knowledgeV3.graphQueryPlaceholder')">
             <button type="submit">{{ t('knowledgeV3.graphQueryRun') }}</button>
           </form>

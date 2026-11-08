@@ -3,6 +3,44 @@ import { inject, type InjectionKey } from 'vue'
 import { jsonRequest, requestJson, withQuery } from '@/api/client'
 
 export type KnowledgeSpace = 'raw' | 'wiki' | 'drafts'
+export type Scope = 'raw' | 'wiki' | 'all'
+export type DocumentScope = Exclude<Scope, 'all'>
+export type DocPath = { scope: DocumentScope; relative: string }
+export type ReadWindow = { from_line?: number; max_lines?: number }
+export type VaultTreeNode = { name: string; path: string; is_directory: boolean; children: VaultTreeNode[] }
+export type VaultPage = { path: string; title: string; content: string; revision: string }
+export type VaultHit = { path: string; title: string; score: number; line: number; snippet: string }
+export type VaultGraph = {
+  nodes: Array<{ path: string; label: string; title: string; inbound: number; outbound: number }>
+  edges: Array<{ source: string; target: string | null; raw_target: string; line: number }>
+  unresolved: string[]
+}
+export type VaultStatus = { raw_documents: number; wiki_pages: number; graph_links: number; resolved_links: number; unresolved_links: number }
+export type TextEdit = { start_line: number; delete_lines: number; insert: string }
+export type VaultChange =
+  | { type: 'write'; path: DocPath; content: string; expect?: string | null }
+  | { type: 'patch'; path: DocPath; edits: TextEdit[]; expect?: string | null }
+  | { type: 'move'; from: DocPath; to: DocPath }
+  | { type: 'delete'; path: DocPath }
+  | { type: 'import_raw'; files: Array<{ path: DocPath; content: string }> }
+  | { type: 'ingest_source'; source: DocPath }
+  | { type: 'reindex'; force: boolean }
+export type Applied = { paths: string[]; revision: string | null }
+export type VaultEvent =
+  | { type: 'changed'; paths: string[]; origin: 'ui' | 'mcp' | 'server' }
+  | { type: 'external'; paths: string[] }
+  | { type: 'reindexed'; stats: { raw_documents: number; wiki_pages: number; total_chunks: number } }
+  | { type: 'lock'; writable: boolean }
+
+export function docPath(scope: DocumentScope, relative: string): DocPath {
+  const pieces = relative.split('/')
+  if (!relative || relative.startsWith('/') || relative.includes('\\') || relative.includes(':')
+    || relative.includes('\0') || !relative.endsWith('.md') || pieces.some(piece => !piece || piece === '.' || piece === '..')) {
+    throw new VaultError('invalid_path', `Invalid ${scope} document path: ${relative}`)
+  }
+  return { scope, relative }
+}
+
 export type KnowledgeTreeNode = {
   type: 'file' | 'folder'
   space: KnowledgeSpace
@@ -70,7 +108,20 @@ export type KnowledgeGraphOptions = { scope?: 'global' | 'local' | 'query'; cent
 /** Public data seam shared by Admin Web and the desktop shell. */
 export interface KnowledgeBackend {
   readonly capabilities: { chat: boolean }
+  tree(scope: Scope): Promise<VaultTreeNode>
+  read(path: DocPath, window?: ReadWindow): Promise<VaultPage>
+  search(query: string): Promise<VaultHit[]>
+  graph(focus?: DocPath): Promise<VaultGraph>
+  status(): Promise<VaultStatus>
+  apply(change: VaultChange): Promise<Applied>
+  onChange(listener: (event: VaultEvent) => void): () => void
+}
+
+/** Admin-only routes and DTOs that have no equivalent in wiki-core::Vault. */
+export interface AdminKnowledgeBackend {
+  readonly capabilities: { chat: boolean }
   tree(space: KnowledgeSpace): Promise<{ items: KnowledgeTreeNode[]; [key: string]: unknown }>
+  treeMetadata?(space: KnowledgeSpace): Promise<KnowledgeTreeNode[]>
   read(path: string, space?: KnowledgeSpace): Promise<KnowledgePage | KnowledgeRawFile>
   search(query: string, options?: KnowledgeSearchOptions): Promise<{ items: KnowledgeHit[]; next_cursor?: string | null; [key: string]: unknown }>
   graph(options?: KnowledgeGraphOptions): Promise<KnowledgeGraph>
@@ -82,15 +133,25 @@ export interface KnowledgeBackend {
   onChange(listener: (event: KnowledgeChangeEvent) => void): () => void
 }
 
+export interface AdminKnowledgeExtension {
+  readonly admin: AdminKnowledgeBackend
+}
+
 type RequestJson = <T>(path: string, init?: RequestInit) => Promise<T>
 
 /** HTTP adapter for the existing Admin Knowledge routes. */
-export class HttpKnowledgeBackend implements KnowledgeBackend {
+class HttpAdminKnowledgeBackend implements AdminKnowledgeBackend {
   readonly capabilities = { chat: true } as const
+  private readonly lastTrees = new Map<KnowledgeSpace, KnowledgeTreeNode[]>()
   constructor(private readonly request: RequestJson = requestJson, private readonly pollIntervalMs = 2_000) {}
 
   tree(space: KnowledgeSpace) {
     return this.request<{ items: KnowledgeTreeNode[] }>(withQuery('/api/admin/knowledge/tree', { space }))
+      .then(result => { this.lastTrees.set(space, result.items); return result })
+  }
+
+  async treeMetadata(space: KnowledgeSpace) {
+    return this.lastTrees.get(space) ?? (await this.tree(space)).items
   }
 
   read(path: string, space: KnowledgeSpace = path.startsWith('raw/') ? 'raw' : 'wiki') {
@@ -125,6 +186,13 @@ export class HttpKnowledgeBackend implements KnowledgeBackend {
     switch (change.type) {
       case 'write': {
         const raw = change.path.startsWith('raw/')
+        if (raw && change.expect == null) {
+          const parts = change.path.split('/')
+          const fileName = parts.pop() ?? ''
+          return this.request('/api/admin/knowledge/raw/files', jsonRequest('POST', {
+            folder_path: parts.join('/') || 'raw', file_name: fileName, body: change.body,
+          }))
+        }
         if (raw && change.folderPath && change.fileName) {
           return this.request('/api/admin/knowledge/raw/files', jsonRequest('POST', {
             folder_path: change.folderPath, file_name: change.fileName, body: change.body,
@@ -224,7 +292,7 @@ export type MemoryKnowledgeSeed = {
 }
 
 /** Deterministic in-memory adapter used by Knowledge UI tests. */
-export class MemoryKnowledgeBackend implements KnowledgeBackend {
+class MemoryAdminKnowledgeBackend implements AdminKnowledgeBackend {
   readonly capabilities = { chat: false } as const
   private readonly pages = new Map<string, KnowledgePage>()
   private readonly rawFiles = new Map<string, KnowledgeRawFile>()
@@ -235,6 +303,7 @@ export class MemoryKnowledgeBackend implements KnowledgeBackend {
   private currentStatus: KnowledgeStatus
   private readonly graphSnapshot: KnowledgeGraph
   private readonly graphFailure: unknown
+  private readonly lastTrees = new Map<KnowledgeSpace, KnowledgeTreeNode[]>()
 
   constructor(seed: MemoryKnowledgeSeed = {}) {
     for (const page of seed.pages ?? []) {
@@ -260,8 +329,12 @@ export class MemoryKnowledgeBackend implements KnowledgeBackend {
       type: 'file' as const, space, path: file.path ?? '', name: (file.path ?? '').split('/').at(-1) ?? '', editable: true,
       ...(space === 'wiki' ? { id: (file as KnowledgePage).id, revision: (file as KnowledgePage).revision } : {}),
     }))
-    return { items: [...folders, ...notes] }
+    const items = [...folders, ...notes]
+    this.lastTrees.set(space, items)
+    return { items }
   }
+
+  async treeMetadata(space: KnowledgeSpace) { return this.lastTrees.get(space) ?? (await this.tree(space)).items }
 
   async read(path: string, space: KnowledgeSpace = path.startsWith('raw/') ? 'raw' : 'wiki') {
     const file = (space === 'raw' ? this.rawFiles : this.pages).get(path)
@@ -400,6 +473,161 @@ export class MemoryKnowledgeBackend implements KnowledgeBackend {
     }
     this.folders.set(space, folders)
   }
+}
+
+function adminPath(path: DocPath): string {
+  return `${path.scope === 'raw' ? 'raw' : 'wiki'}/${path.relative}`
+}
+
+function vaultPath(path: DocPath): string {
+  return `${path.scope === 'raw' ? 'sources' : 'wiki'}/${path.relative}`
+}
+
+function treeFromAdmin(items: KnowledgeTreeNode[], scope: Scope): VaultTreeNode {
+  const rootPath = scope === 'all' ? 'all' : scope === 'raw' ? 'sources' : 'wiki'
+  const root: VaultTreeNode = { name: rootPath, path: rootPath, is_directory: true, children: [] }
+  const byPath = new Map<string, VaultTreeNode>([[rootPath, root]])
+  for (const item of items) {
+    const path = item.space === 'raw' ? item.path.replace(/^raw\//, 'sources/') : item.path
+    if (path === rootPath) continue
+    byPath.set(path, { name: item.name, path, is_directory: item.type === 'folder', children: [] })
+  }
+  for (const [path, node] of byPath) {
+    if (path === rootPath) continue
+    const parentPath = path.slice(0, Math.max(0, path.lastIndexOf('/'))) || rootPath
+    const parent = byPath.get(parentPath) ?? root
+    if (!parent.children.some(child => child.path === path)) parent.children.push(node)
+  }
+  return root
+}
+
+function translateEvent(event: KnowledgeChangeEvent): VaultEvent {
+  if (event.type === 'external') return { type: 'external', paths: event.paths ?? [] }
+  if (event.type === 'reindexed') return { type: 'reindexed', stats: {
+    raw_documents: Number(event.status?.raw_documents ?? 0), wiki_pages: Number(event.status?.wiki_pages ?? event.status?.document_count ?? 0), total_chunks: 0,
+  } }
+  return { type: 'changed', paths: event.paths ?? [], origin: event.origin === 'mcp' || event.origin === 'server' ? event.origin : 'ui' }
+}
+
+function applied(result: unknown, fallbackPath?: string): Applied {
+  const value = result && typeof result === 'object' ? result as Record<string, unknown> : {}
+  const paths = Array.isArray(value.paths) ? value.paths.filter((path): path is string => typeof path === 'string')
+    : typeof value.path === 'string' ? [value.path] : fallbackPath ? [fallbackPath] : []
+  const revision = typeof value.revision === 'string' || typeof value.revision === 'number' ? String(value.revision) : null
+  return { paths, revision }
+}
+
+async function editContent(content: string, edits: TextEdit[]) {
+  const lines = content.split('\n')
+  for (const edit of [...edits].sort((a, b) => b.start_line - a.start_line)) lines.splice(edit.start_line, edit.delete_lines, ...edit.insert.split('\n'))
+  return lines.join('\n')
+}
+
+abstract class VaultKnowledgeBackend implements KnowledgeBackend, AdminKnowledgeExtension {
+  abstract readonly capabilities: { chat: boolean }
+  readonly admin: AdminKnowledgeBackend
+  protected constructor(admin: AdminKnowledgeBackend) { this.admin = admin }
+
+  async tree(scope: Scope) {
+    const spaces: KnowledgeSpace[] = scope === 'all' ? ['raw', 'wiki'] : [scope]
+    const items = (await Promise.all(spaces.map(async space => (await this.admin.tree(space)).items))).flat()
+    return treeFromAdmin(items, scope)
+  }
+  async read(path: DocPath, window: ReadWindow = {}) {
+    const page = await this.admin.read(adminPath(path), path.scope)
+    const body = 'body' in page ? page.body : ''
+    const start = Math.max(0, window.from_line ?? 0)
+    const content = body.split('\n').slice(start, window.max_lines === undefined ? undefined : start + window.max_lines).join('\n')
+    return { path: vaultPath(path), title: 'title' in page ? String(page.title) : path.relative.split('/').at(-1) ?? path.relative,
+      content, revision: String('revision' in page ? page.revision : page.sha256) }
+  }
+  async search(query: string) {
+    const result = await this.admin.search(query)
+    return result.items.map(hit => ({ path: (hit.path ?? hit.id).replace(/^raw\//, 'sources/'), title: hit.title, score: Number(hit.score ?? 0),
+      line: Number(hit.match_line ?? 0), snippet: hit.excerpt ?? '' }))
+  }
+  async graph(focus?: DocPath) {
+    const graph = await this.admin.graph(focus ? { scope: 'local', centerId: adminPath(focus), depth: 1 } : { scope: 'global' })
+    const nodes = graph.nodes.map(value => { const node = value as Record<string, unknown>; return {
+      path: String(node.path ?? node.id ?? ''), label: String(node.label ?? node.title ?? ''), title: String(node.title ?? ''),
+      inbound: Number(node.inbound ?? 0), outbound: Number(node.outbound ?? 0) } })
+    const idToPath = new Map(graph.nodes.map(value => { const node = value as Record<string, unknown>; return [String(node.id ?? node.path ?? ''), String(node.path ?? node.id ?? '')] }))
+    return { nodes,
+      edges: graph.edges.map(value => { const edge = value as Record<string, unknown>
+        const reference = Array.isArray(edge.references) ? edge.references[0] as Record<string, unknown> | undefined : undefined
+        const lines = Array.isArray(edge.lines) ? edge.lines : []
+        return {
+        source: idToPath.get(String(edge.source ?? edge.source_id ?? '')) ?? String(edge.source ?? edge.source_id ?? ''),
+        target: (edge.target ?? edge.target_id) == null ? null : idToPath.get(String(edge.target ?? edge.target_id)) ?? String(edge.target ?? edge.target_id),
+        raw_target: String(edge.raw_target ?? reference?.raw_target ?? ''), line: Number(edge.line ?? edge.line_number ?? lines[0] ?? reference?.line ?? 0) } }),
+      unresolved: (graph.unresolved ?? []).map(value => typeof value === 'string' ? value : String((value as Record<string, unknown>).raw_target ?? '')) }
+  }
+  async status(): Promise<VaultStatus> {
+    const status = await this.admin.status(); const count = Number(status.document_count ?? 0)
+    return { raw_documents: Number(status.raw_documents ?? status.raw_document_count ?? status.sources_count ?? 0), wiki_pages: Number(status.wiki_pages ?? status.wiki_page_count ?? status.wiki_count ?? count),
+      graph_links: Number(status.graph_links ?? 0), resolved_links: Number(status.resolved_links ?? 0), unresolved_links: Number(status.unresolved_links ?? 0) }
+  }
+  async apply(change: VaultChange): Promise<Applied> {
+    const path = 'path' in change ? adminPath(change.path) : undefined
+    let result: unknown
+    switch (change.type) {
+      case 'write': result = await this.admin.apply({ type: 'write', path: path!, body: change.content,
+        expect: change.expect == null ? undefined : change.path.scope === 'raw' ? change.expect : Number(change.expect) }); break
+      case 'patch': {
+        const current = await this.admin.read(path!, change.path.scope)
+        const currentRevision = 'revision' in current ? current.revision : current.sha256
+        const expect = change.expect ?? String(currentRevision)
+        result = await this.admin.apply({ type: 'write', path: path!, body: await editContent('body' in current ? current.body : '', change.edits),
+          expect: change.path.scope === 'raw' ? expect : Number(expect) }); break
+      }
+      case 'move': result = await this.admin.apply({ type: 'move', from: adminPath(change.from), to: adminPath(change.to) }); break
+      case 'delete': result = await this.admin.apply({ type: 'delete', path: path! }); break
+      case 'import_raw': {
+        const grouped = new Map<string, Array<{ path: string; body: string }>>()
+        for (const file of change.files) {
+          const parts = file.path.relative.split('/')
+          const fileName = parts.pop() ?? ''
+          const folder = ['raw', ...parts].join('/')
+          const files = grouped.get(folder) ?? []
+          files.push({ path: fileName, body: file.content })
+          grouped.set(folder, files)
+        }
+        const results = await Promise.all([...grouped].map(([folder, files]) => this.admin.apply({ type: 'import_raw', folder, files })))
+        const paths = results.flatMap(value => {
+          if (!value || typeof value !== 'object') return []
+          const created = (value as { created?: unknown }).created
+          return Array.isArray(created) ? created.filter((path): path is string => typeof path === 'string') : []
+        }).map(path => path.replace(/^raw\//, 'sources/'))
+        return { paths, revision: null }
+      }
+      case 'ingest_source': result = await this.admin.apply({ type: 'ingest_source', path: adminPath(change.source) }); break
+      case 'reindex': result = await this.admin.apply({ type: 'reindex' }); break
+    }
+    return applied(result, path)
+  }
+  onChange(listener: (event: VaultEvent) => void) { return this.admin.onChange(event => listener(translateEvent(event))) }
+}
+
+export class HttpKnowledgeBackend extends VaultKnowledgeBackend {
+  readonly capabilities = { chat: true } as const
+  constructor(request: RequestJson = requestJson, pollIntervalMs = 2_000) { super(new HttpAdminKnowledgeBackend(request, pollIntervalMs)) }
+}
+
+export class MemoryKnowledgeBackend extends VaultKnowledgeBackend {
+  readonly capabilities = { chat: false } as const
+  constructor(seed: MemoryKnowledgeSeed = {}) { super(new MemoryAdminKnowledgeBackend(seed)) }
+}
+
+export function useAdminKnowledgeBackend() {
+  const backend = useKnowledgeBackend()
+  const admin = (backend as KnowledgeBackend & Partial<AdminKnowledgeExtension>).admin
+  if (!admin) throw new Error('The active KnowledgeBackend does not support Admin Web operations')
+  return admin
+}
+
+export function useOptionalAdminKnowledgeBackend() {
+  const backend = useKnowledgeBackend()
+  return (backend as KnowledgeBackend & Partial<AdminKnowledgeExtension>).admin ?? null
 }
 
 export const KNOWLEDGE_BACKEND_KEY: InjectionKey<KnowledgeBackend> = Symbol('KnowledgeBackend')
