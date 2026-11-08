@@ -694,7 +694,7 @@ it('creates nested folders through Explorer in the File tab without writing a fi
     }
     return fallback(url)
   })
-  const prompt = vi.spyOn(window, 'prompt').mockReturnValue('docs/flow')
+  const prompt = vi.spyOn(window, 'prompt')
   const wrapper = mount(KnowledgePage)
   try {
     await flushPromises()
@@ -704,6 +704,12 @@ it('creates nested folders through Explorer in the File tab without writing a fi
     await flushPromises()
     await wrapper.get('button[aria-label="Add folder"]').trigger('click')
     await flushPromises()
+    expect(creates).toEqual([])
+    const name = wrapper.get('input[aria-label="New folder name"]')
+    await name.setValue('docs/flow')
+    await name.trigger('keydown', { key: 'Enter' })
+    await flushPromises()
+    expect(prompt).not.toHaveBeenCalled()
     expect(creates).toEqual([
       { space: 'raw', parent_path: 'raw', name: 'docs/flow' },
     ])
