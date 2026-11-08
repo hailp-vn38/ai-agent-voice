@@ -36,6 +36,20 @@ use wiki_mcp::{Access, CallCtx, Policy, ToolHost};
 
 const KEYCHAIN_SERVICE: &str = "com.vela.wikidesktop.mcp";
 const MCP_PATH: &str = "/mcp";
+const ALLOWED_ORIGINS: [&str; 2] = ["tauri://localhost", "http://tauri.localhost"];
+
+fn allowed_hosts(port: u16) -> [String; 2] {
+    [format!("127.0.0.1:{port}"), format!("localhost:{port}")]
+}
+
+/// Everything needed to serve one vault over loopback MCP.
+pub struct McpLaunch {
+    pub vault: Arc<Vault>,
+    pub vault_path: PathBuf,
+    pub port: Option<u16>,
+    pub allow_write: bool,
+    pub runtime_file: PathBuf,
+}
 
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -50,8 +64,7 @@ pub struct McpStatus {
 pub struct McpInfo {
     pub port: u16,
     pub allow_write: bool,
-    pub read_url: String,
-    pub write_url: String,
+    pub url: String,
     pub read_config: String,
     pub write_config: String,
     pub stdio_config: String,
@@ -62,6 +75,7 @@ pub struct McpInfo {
 #[serde(rename_all = "camelCase")]
 struct RuntimeFile {
     port: u16,
+    vault_path: PathBuf,
     read_token: String,
     write_token: String,
 }
@@ -76,6 +90,7 @@ struct ServerState {
     write_token: std::sync::RwLock<String>,
     allow_write: AtomicBool,
     port: u16,
+    vault_path: PathBuf,
     active_requests: AtomicUsize,
     sessions: std::sync::Mutex<HashSet<String>>,
     last_call_at: std::sync::RwLock<Option<u64>>,
@@ -125,6 +140,7 @@ impl ServerState {
             runtime_file,
             &RuntimeFile {
                 port: self.port,
+                vault_path: self.vault_path.clone(),
                 read_token: self
                     .read_token
                     .read()
@@ -144,10 +160,26 @@ pub struct McpServerRuntime {
     state: Arc<ServerState>,
     cancellation: CancellationToken,
     runtime_file: PathBuf,
-    vault_path: PathBuf,
 }
 
 impl McpServerRuntime {
+    /// The `mcpServers.wiki` entry that launches the bundled `wiki-mcp`.
+    pub fn stdio_server(&self) -> Result<serde_json::Value, String> {
+        let executable = std::env::current_exe().map_err(|error| error.to_string())?;
+        let sidecar = executable
+            .parent()
+            .unwrap_or_else(|| Path::new("/"))
+            .join("wiki-mcp");
+        let mut args = vec![
+            serde_json::json!("--vault"),
+            serde_json::json!(self.state.vault_path),
+        ];
+        if self.state.allow_write.load(Ordering::Acquire) {
+            args.push(serde_json::json!("--allow-write"));
+        }
+        Ok(serde_json::json!({ "command": sidecar, "args": args }))
+    }
+
     pub fn info(&self) -> Result<McpInfo, String> {
         let base = format!("http://127.0.0.1:{}{MCP_PATH}", self.state.port);
         let read_token = self
@@ -160,27 +192,17 @@ impl McpServerRuntime {
             .write_token
             .read()
             .map_err(|_| "write token lock poisoned")?;
-        let executable = std::env::current_exe().map_err(|error| error.to_string())?;
-        let sidecar = executable
-            .parent()
-            .unwrap_or_else(|| Path::new("/"))
-            .join("wiki-mcp");
+        let allow_write = self.state.allow_write.load(Ordering::Acquire);
         let stdio_config = serde_json::json!({
-            "mcpServers": {
-                "wiki": {
-                    "command": sidecar,
-                    "args": ["--vault", self.vault_path]
-                }
-            }
+            "mcpServers": { "wiki": self.stdio_server()? }
         })
         .to_string();
         Ok(McpInfo {
             port: self.state.port,
-            allow_write: self.state.allow_write.load(Ordering::Acquire),
-            read_url: base.clone(),
-            write_url: base.clone(),
+            allow_write,
             read_config: serde_json::json!({"url": base, "headers": {"Authorization": format!("Bearer {read_token}")}}).to_string(),
-            write_config: serde_json::json!({"url": format!("http://127.0.0.1:{}{MCP_PATH}", self.state.port), "headers": {"Authorization": format!("Bearer {write_token}")}}).to_string(),
+            write_config: serde_json::json!({"url": base, "headers": {"Authorization": format!("Bearer {write_token}")}}).to_string(),
+            url: base,
             stdio_config,
             status: self.state.status(),
         })
@@ -197,7 +219,8 @@ impl McpServerRuntime {
         Ok(())
     }
 
-    pub fn rotate_token(&self, write: bool) -> Result<(), String> {
+    pub fn rotate_token(&self, access: Access) -> Result<(), String> {
+        let write = matches!(access, Access::ReadWrite);
         let previous = if write {
             self.state
                 .write_token
@@ -220,30 +243,28 @@ impl McpServerRuntime {
         Ok(())
     }
 
-    pub fn shutdown(&self) {
+    /// Stops serving and removes `runtime.json` so `wiki-mcp` stops bridging.
+    /// Used on app exit; replacing a server only drops it, because the new
+    /// server has already rewritten the runtime file.
+    pub fn shutdown(self) {
         self.cancellation.cancel();
         let _ = std::fs::remove_file(&self.runtime_file);
     }
 }
 
-pub async fn start(
-    app: AppHandle,
-    vault: Arc<Vault>,
-    requested_port: Option<u16>,
-    allow_write: bool,
-    runtime_file: PathBuf,
-    vault_path: PathBuf,
-) -> Result<McpServerRuntime, String> {
+impl Drop for McpServerRuntime {
+    fn drop(&mut self) {
+        self.cancellation.cancel();
+    }
+}
+
+pub async fn start(app: AppHandle, launch: McpLaunch) -> Result<McpServerRuntime, String> {
     let emit_app = app.clone();
     let emit_status = Arc::new(move |status| {
         let _ = emit_app.emit("mcp://status", status);
     });
     start_with_tokens(
-        vault,
-        requested_port,
-        allow_write,
-        runtime_file,
-        vault_path,
+        launch,
         load_or_create_token("read")?,
         load_or_create_token("write")?,
         emit_status,
@@ -252,15 +273,18 @@ pub async fn start(
 }
 
 async fn start_with_tokens(
-    vault: Arc<Vault>,
-    requested_port: Option<u16>,
-    allow_write: bool,
-    runtime_file: PathBuf,
-    vault_path: PathBuf,
+    launch: McpLaunch,
     read_token: String,
     write_token: String,
     emit_status: Arc<dyn Fn(McpStatus) + Send + Sync>,
 ) -> Result<McpServerRuntime, String> {
+    let McpLaunch {
+        vault,
+        vault_path,
+        port: requested_port,
+        allow_write,
+        runtime_file,
+    } = launch;
     let listener = TcpListener::bind(SocketAddr::new(
         IpAddr::V4(Ipv4Addr::LOCALHOST),
         requested_port.unwrap_or(0),
@@ -285,6 +309,7 @@ async fn start_with_tokens(
         write_token: std::sync::RwLock::new(write_token),
         allow_write: AtomicBool::new(allow_write),
         port,
+        vault_path: std::fs::canonicalize(&vault_path).unwrap_or(vault_path),
         active_requests: AtomicUsize::new(0),
         sessions: std::sync::Mutex::new(HashSet::new()),
         last_call_at: std::sync::RwLock::new(None),
@@ -296,8 +321,8 @@ async fn start_with_tokens(
         .with_json_response(true)
         .with_max_request_body_bytes(256 * 1024)
         .with_cancellation_token(cancellation.clone())
-        .with_allowed_hosts([format!("127.0.0.1:{port}"), format!("localhost:{port}")])
-        .with_allowed_origins(["tauri://localhost", "http://tauri.localhost"])
+        .with_allowed_hosts(allowed_hosts(port))
+        .with_allowed_origins(ALLOWED_ORIGINS)
         .enforce_origin_validation();
     let service_state = state.clone();
     let service = StreamableHttpService::new(
@@ -324,7 +349,6 @@ async fn start_with_tokens(
         state,
         cancellation,
         runtime_file,
-        vault_path,
     })
 }
 
@@ -333,10 +357,7 @@ async fn authenticate(
     mut request: Request,
     next: Next,
 ) -> Response {
-    let expected_host = [
-        format!("127.0.0.1:{}", state.port),
-        format!("localhost:{}", state.port),
-    ];
+    let expected_host = allowed_hosts(state.port);
     let host = request
         .headers()
         .get(header::HOST)
@@ -344,13 +365,12 @@ async fn authenticate(
     if !host.is_some_and(|host| expected_host.iter().any(|allowed| allowed == host)) {
         return StatusCode::FORBIDDEN.into_response();
     }
-    if let Some(origin) = request.headers().get(header::ORIGIN) {
-        if !origin
+    if let Some(origin) = request.headers().get(header::ORIGIN)
+        && !origin
             .to_str()
-            .is_ok_and(|origin| matches!(origin, "tauri://localhost" | "http://tauri.localhost"))
-        {
-            return StatusCode::FORBIDDEN.into_response();
-        }
+            .is_ok_and(|origin| ALLOWED_ORIGINS.contains(&origin))
+    {
+        return StatusCode::FORBIDDEN.into_response();
     }
     let Some(token) = request
         .headers()
@@ -559,11 +579,13 @@ mod tests {
         let runtime_path = runtime_dir.path().join("runtime.json");
         let vault = Arc::new(Vault::open(wiki_core::VaultConfig::new(vault_dir.path())).unwrap());
         let runtime = start_with_tokens(
-            vault,
-            None,
-            true,
-            runtime_path.clone(),
-            vault_dir.path().to_path_buf(),
+            McpLaunch {
+                vault,
+                vault_path: vault_dir.path().to_path_buf(),
+                port: None,
+                allow_write: true,
+                runtime_file: runtime_path.clone(),
+            },
             "read-test-token".into(),
             "write-test-token".into(),
             Arc::new(|_| {}),
@@ -572,10 +594,14 @@ mod tests {
         .unwrap();
         let info = runtime.info().unwrap();
         let stdio_config: serde_json::Value = serde_json::from_str(&info.stdio_config).unwrap();
+        let canonical_vault = std::fs::canonicalize(vault_dir.path()).unwrap();
         assert_eq!(
             stdio_config["mcpServers"]["wiki"]["args"],
-            json!(["--vault", vault_dir.path().to_string_lossy()])
+            json!(["--vault", canonical_vault, "--allow-write"])
         );
+        let runtime_file: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&runtime_path).unwrap()).unwrap();
+        assert_eq!(runtime_file["vaultPath"], json!(canonical_vault));
         let uri = format!("http://127.0.0.1:{}/mcp", info.port);
         let client = reqwest::Client::new();
 

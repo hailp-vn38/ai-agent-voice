@@ -90,7 +90,14 @@ xcrun notarytool submit "$app_zip" --keychain-profile "$notary_profile" --wait
 xcrun stapler staple "$app"
 xcrun stapler validate "$app"
 spctl --assess --type execute --verbose=4 "$app"
-spctl --assess --type execute --verbose=4 "$bundled_sidecar"
+# spctl only assesses bundles, so it rejects a bare Mach-O. The sidecar is
+# covered by the app's notarization ticket; check its own Developer ID
+# signature and hardened runtime instead.
+sidecar_signature="$(codesign --display --verbose=4 "$bundled_sidecar" 2>&1)"
+grep -q "^Authority=Developer ID Application" <<<"$sidecar_signature" ||
+	fail "wiki-mcp is not signed with a Developer ID Application identity"
+grep -Eq "^CodeDirectory .*flags=0x[0-9a-f]*\(.*runtime.*\)" <<<"$sidecar_signature" ||
+	fail "wiki-mcp is not signed with the hardened runtime"
 
 dmg="$out_dir/Wiki-$version-universal.dmg"
 rm -f "$dmg"

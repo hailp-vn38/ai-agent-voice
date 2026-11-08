@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::{
     path::PathBuf,
-    sync::{Arc, Mutex},
+    sync::{Arc, Mutex, MutexGuard},
 };
 use tauri::{Emitter, Manager, State};
 use tauri_plugin_dialog::DialogExt;
@@ -10,9 +10,12 @@ use wiki_core::{
     VaultError, VaultStatus,
 };
 
+mod claude_config;
 mod mcp_commands;
 mod mcp_server;
 mod watcher;
+
+const RECENT_VAULT_LIMIT: usize = 12;
 
 #[derive(Default, Serialize, Deserialize)]
 pub(crate) struct Settings {
@@ -24,14 +27,51 @@ pub(crate) struct Settings {
     pub(crate) mcp_allow_write: bool,
 }
 
+impl Settings {
+    fn remember_vault(&mut self, path: &str) {
+        self.recent_vaults.retain(|recent| recent != path);
+        self.recent_vaults.insert(0, path.to_owned());
+        self.recent_vaults.truncate(RECENT_VAULT_LIMIT);
+        self.current_vault = Some(path.to_owned());
+    }
+}
+
+/// Stops a background task when dropped, so replacing the slot that holds it
+/// is enough to cancel the previous task.
+struct TaskCancel(tokio::sync::watch::Sender<bool>);
+
+impl TaskCancel {
+    fn new() -> (Self, tokio::sync::watch::Receiver<bool>) {
+        let (sender, receiver) = tokio::sync::watch::channel(false);
+        (Self(sender), receiver)
+    }
+}
+
+impl Drop for TaskCancel {
+    fn drop(&mut self) {
+        let _ = self.0.send(true);
+    }
+}
+
+async fn cancelled(receiver: &mut tokio::sync::watch::Receiver<bool>) {
+    while !*receiver.borrow() {
+        if receiver.changed().await.is_err() {
+            return;
+        }
+    }
+}
+
 pub(crate) struct DesktopState {
     pub(crate) vault: Mutex<Option<Arc<Vault>>>,
     pub(crate) settings: Mutex<Settings>,
     pub(crate) settings_file: PathBuf,
-    event_cancel: Mutex<Option<tokio::sync::watch::Sender<bool>>>,
+    event_forwarding: Mutex<Option<TaskCancel>>,
     pub(crate) mcp_server: Mutex<Option<mcp_server::McpServerRuntime>>,
+    /// Why the MCP server is not running, shown in MCP settings.
+    pub(crate) mcp_error: Mutex<Option<String>>,
+    pub(crate) claude_preview: Mutex<Option<claude_config::Preview>>,
     watcher: Mutex<Option<watcher::WatchHandle>>,
-    lock_retry_cancel: Mutex<Option<tokio::sync::watch::Sender<bool>>>,
+    lock_retry: Mutex<Option<TaskCancel>>,
 }
 
 #[derive(Debug, Serialize)]
@@ -39,10 +79,19 @@ pub(crate) struct DesktopState {
 pub(crate) enum CommandError {
     NotFound { message: String },
     InvalidPath { message: String },
+    InvalidInput { message: String },
     Conflict { message: String, current: String },
     ReadOnly { message: String },
     Io { message: String },
     Index { message: String },
+}
+
+impl CommandError {
+    pub(crate) fn io(message: impl ToString) -> Self {
+        Self::Io {
+            message: message.to_string(),
+        }
+    }
 }
 
 impl From<VaultError> for CommandError {
@@ -62,31 +111,56 @@ impl From<VaultError> for CommandError {
     }
 }
 
+impl From<std::io::Error> for CommandError {
+    fn from(error: std::io::Error) -> Self {
+        Self::io(error)
+    }
+}
+
+impl From<serde_json::Error> for CommandError {
+    fn from(error: serde_json::Error) -> Self {
+        Self::io(error)
+    }
+}
+
+/// Locks shell state; a poisoned lock becomes an `Io` error naming `what`.
+pub(crate) fn locked<'a, T>(
+    mutex: &'a Mutex<T>,
+    what: &str,
+) -> Result<MutexGuard<'a, T>, CommandError> {
+    mutex
+        .lock()
+        .map_err(|_| CommandError::io(format!("{what} lock poisoned")))
+}
+
+fn emit_lock(app: &tauri::AppHandle, writable: bool) -> bool {
+    app.emit("vault://lock", serde_json::json!({ "writable": writable }))
+        .is_ok()
+}
+
 impl DesktopState {
     fn persist(&self) -> Result<(), CommandError> {
-        let settings = self.settings.lock().map_err(|_| CommandError::Io {
-            message: "settings lock poisoned".into(),
-        })?;
-        let json = serde_json::to_vec_pretty(&*settings).map_err(|error| CommandError::Io {
-            message: error.to_string(),
-        })?;
+        let json = serde_json::to_vec_pretty(&*locked(&self.settings, "settings")?)?;
         if let Some(parent) = self.settings_file.parent() {
-            std::fs::create_dir_all(parent).map_err(|error| CommandError::Io {
-                message: error.to_string(),
-            })?;
+            std::fs::create_dir_all(parent)?;
         }
-        std::fs::write(&self.settings_file, json).map_err(|error| CommandError::Io {
-            message: error.to_string(),
-        })
+        std::fs::write(&self.settings_file, json)?;
+        Ok(())
     }
 
     fn active_vault(&self) -> Result<Arc<Vault>, CommandError> {
-        self.vault
-            .lock()
-            .map_err(|_| CommandError::Io {
-                message: "vault state poisoned".into(),
-            })?
+        locked(&self.vault, "vault")?
             .clone()
+            .ok_or_else(|| CommandError::NotFound {
+                message: "No knowledge vault is open".into(),
+            })
+    }
+
+    fn current_vault_path(&self) -> Result<PathBuf, CommandError> {
+        locked(&self.settings, "settings")?
+            .current_vault
+            .as_ref()
+            .map(PathBuf::from)
             .ok_or_else(|| CommandError::NotFound {
                 message: "No knowledge vault is open".into(),
             })
@@ -94,115 +168,49 @@ impl DesktopState {
 }
 
 fn open_vault_state(state: &DesktopState, path: String) -> Result<String, CommandError> {
-    let root = PathBuf::from(&path)
-        .canonicalize()
-        .map_err(|error| CommandError::Io {
-            message: error.to_string(),
-        })?;
+    let root = PathBuf::from(&path).canonicalize()?;
     let canonical = root.to_string_lossy().into_owned();
-    let already_open = state
-        .settings
-        .lock()
-        .map_err(|_| CommandError::Io {
-            message: "settings lock poisoned".into(),
-        })?
+    let already_open = locked(&state.settings, "settings")?
         .current_vault
         .as_deref()
         == Some(canonical.as_str());
-    if already_open && state.vault.lock().ok().is_some_and(|vault| vault.is_some()) {
+    if already_open && locked(&state.vault, "vault")?.is_some() {
         return Ok(canonical);
     }
     let vault = Arc::new(Vault::open(VaultConfig::new(&root))?);
-    *state.vault.lock().map_err(|_| CommandError::Io {
-        message: "vault state poisoned".into(),
-    })? = Some(vault);
-    {
-        let mut settings = state.settings.lock().map_err(|_| CommandError::Io {
-            message: "settings lock poisoned".into(),
-        })?;
-        let path = root.to_string_lossy().into_owned();
-        settings.recent_vaults.retain(|recent| recent != &path);
-        settings.recent_vaults.insert(0, path.clone());
-        settings.recent_vaults.truncate(12);
-        settings.current_vault = Some(path.clone());
-    }
+    *locked(&state.vault, "vault")? = Some(vault);
+    locked(&state.settings, "settings")?.remember_vault(&canonical);
     state.persist()?;
-    Ok(root.to_string_lossy().into_owned())
+    Ok(canonical)
 }
 
 fn restart_watcher(state: &DesktopState) -> Result<(), CommandError> {
-    if let Some(previous) = state
-        .watcher
-        .lock()
-        .map_err(|_| CommandError::Io {
-            message: "file watcher lock poisoned".into(),
-        })?
-        .take()
-    {
-        drop(previous);
-    }
-    let root = state
-        .settings
-        .lock()
-        .map_err(|_| CommandError::Io {
-            message: "settings lock poisoned".into(),
-        })?
-        .current_vault
-        .as_ref()
-        .map(PathBuf::from)
-        .ok_or_else(|| CommandError::NotFound {
-            message: "No knowledge vault is open".into(),
-        })?;
-    let vault = state.active_vault()?;
-    let handle = watcher::start(root, vault).map_err(|error| CommandError::Io {
-        message: error.to_string(),
-    })?;
-    *state.watcher.lock().map_err(|_| CommandError::Io {
-        message: "file watcher lock poisoned".into(),
-    })? = Some(handle);
+    locked(&state.watcher, "file watcher")?.take();
+    let handle = watcher::start(state.current_vault_path()?, state.active_vault()?)
+        .map_err(CommandError::io)?;
+    *locked(&state.watcher, "file watcher")? = Some(handle);
     Ok(())
 }
 
 fn restart_lock_retry(app: &tauri::AppHandle, state: &DesktopState) -> Result<(), CommandError> {
-    if let Some(previous) = state
-        .lock_retry_cancel
-        .lock()
-        .map_err(|_| CommandError::Io {
-            message: "vault lock retry handle poisoned".into(),
-        })?
-        .take()
-    {
-        let _ = previous.send(true);
-    }
+    locked(&state.lock_retry, "vault lock retry")?.take();
     let vault = state.active_vault()?;
-    let _ = app.emit(
-        "vault://lock",
-        serde_json::json!({"writable": vault.is_writable()}),
-    );
+    emit_lock(app, vault.is_writable());
     if vault.is_writable() {
         return Ok(());
     }
-    let (cancel, mut cancelled) = tokio::sync::watch::channel(false);
-    *state
-        .lock_retry_cancel
-        .lock()
-        .map_err(|_| CommandError::Io {
-            message: "vault lock retry handle poisoned".into(),
-        })? = Some(cancel);
-    let app = app.clone();
+    let (cancel, mut stop) = TaskCancel::new();
+    *locked(&state.lock_retry, "vault lock retry")? = Some(cancel);
     tauri::async_runtime::spawn(async move {
         let mut interval = tokio::time::interval(std::time::Duration::from_secs(1));
         interval.tick().await;
         loop {
             tokio::select! {
-                changed = cancelled.changed() => {
-                    if changed.is_err() || *cancelled.borrow() { break; }
-                }
+                _ = cancelled(&mut stop) => break,
                 _ = interval.tick() => match vault.try_acquire_write() {
-                    Ok(true) => {
-                        let _ = app.emit("vault://lock", serde_json::json!({"writable": true}));
-                        break;
-                    }
+                    // `try_acquire_write` publishes `VaultEvent::Lock`, which
+                    // `forward_vault_events` turns into `vault://lock`.
+                    Ok(true) => break,
                     Ok(false) => {}
                     Err(error) => eprintln!("wiki vault lock retry failed: {error}"),
                 }
@@ -219,41 +227,30 @@ fn activate_vault(
 ) -> Result<String, CommandError> {
     let result = open_vault_state(state, path)?;
     forward_vault_events(&app, state)?;
-    start_mcp_server(app.clone(), state)?;
+    // MCP is optional: a busy or invalid port must never keep the vault closed.
+    if let Err(error) = start_mcp_server(app.clone(), state, None) {
+        eprintln!("wiki MCP server did not start: {error:?}");
+    }
     restart_watcher(state)?;
     restart_lock_retry(&app, state)?;
     Ok(result)
 }
 
 fn forward_vault_events(app: &tauri::AppHandle, state: &DesktopState) -> Result<(), CommandError> {
-    let vault = state.active_vault()?;
-    let events = vault.subscribe();
-    let (cancel, mut cancelled) = tokio::sync::watch::channel(false);
-    if let Some(previous) = state
-        .event_cancel
-        .lock()
-        .map_err(|_| CommandError::Io {
-            message: "event forwarding lock poisoned".into(),
-        })?
-        .replace(cancel)
-    {
-        let _ = previous.send(true);
-    }
+    let mut events = state.active_vault()?.subscribe();
+    let (cancel, mut stop) = TaskCancel::new();
+    *locked(&state.event_forwarding, "event forwarding")? = Some(cancel);
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
-        let mut events = events;
         loop {
             tokio::select! {
-                changed = cancelled.changed() => {
-                    if changed.is_err() || *cancelled.borrow() {
-                        break;
-                    }
-                }
+                _ = cancelled(&mut stop) => break,
                 event = events.recv() => match event {
+                    Ok(wiki_core::VaultEvent::Lock { writable }) => {
+                        if !emit_lock(&app, writable) { break; }
+                    }
                     Ok(event) => {
-                        if let wiki_core::VaultEvent::Lock { writable } = event {
-                            if app.emit("vault://lock", serde_json::json!({"writable": writable})).is_err() { break; }
-                        } else if app.emit("vault://changed", &event).is_err() { break; }
+                        if app.emit("vault://changed", &event).is_err() { break; }
                     }
                     Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
                     Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
@@ -264,53 +261,61 @@ fn forward_vault_events(app: &tauri::AppHandle, state: &DesktopState) -> Result<
     Ok(())
 }
 
-fn start_mcp_server(app: tauri::AppHandle, state: &DesktopState) -> Result<(), CommandError> {
-    if let Some(previous) = state
-        .mcp_server
-        .lock()
-        .map_err(|_| CommandError::Io {
-            message: "MCP server lock poisoned".into(),
-        })?
-        .take()
-    {
-        previous.shutdown();
+/// Starts MCP for the open vault. With `port: None` the saved port is tried
+/// first and any free port is used if it is taken; an explicit port must bind
+/// or the running server is left untouched.
+pub(crate) fn start_mcp_server(
+    app: tauri::AppHandle,
+    state: &DesktopState,
+    port: Option<u16>,
+) -> Result<(), CommandError> {
+    let vault_changed = port.is_none();
+    if vault_changed {
+        // The old server serves the old vault and may hold the saved port.
+        locked(&state.mcp_server, "MCP server")?.take();
     }
-    let (port, allow_write, vault_path) = {
-        let settings = state.settings.lock().map_err(|_| CommandError::Io {
-            message: "settings lock poisoned".into(),
-        })?;
-        let vault_path = settings
-            .current_vault
-            .as_ref()
-            .map(PathBuf::from)
-            .ok_or_else(|| CommandError::NotFound {
-                message: "No knowledge vault is open".into(),
-            })?;
-        (settings.mcp_port, settings.mcp_allow_write, vault_path)
+    let (saved_port, allow_write) = {
+        let settings = locked(&state.settings, "settings")?;
+        (settings.mcp_port, settings.mcp_allow_write)
     };
+    let vault = state.active_vault()?;
+    let vault_path = state.current_vault_path()?;
     let runtime_file = state.settings_file.with_file_name("runtime.json");
-    let runtime = tauri::async_runtime::block_on(mcp_server::start(
-        app,
-        state.active_vault()?,
-        port,
-        allow_write,
-        runtime_file,
-        vault_path,
-    ))
-    .map_err(|message| CommandError::Io { message })?;
-    let info = runtime
-        .info()
-        .map_err(|message| CommandError::Io { message })?;
-    {
-        let mut settings = state.settings.lock().map_err(|_| CommandError::Io {
-            message: "settings lock poisoned".into(),
-        })?;
-        settings.mcp_port = Some(info.port);
-    }
+    let start = |port| -> Result<_, CommandError> {
+        let launch = mcp_server::McpLaunch {
+            vault: vault.clone(),
+            vault_path: vault_path.clone(),
+            port,
+            allow_write,
+            runtime_file: runtime_file.clone(),
+        };
+        tauri::async_runtime::block_on(mcp_server::start(app.clone(), launch))
+            .map_err(CommandError::io)
+    };
+    let started = match port {
+        Some(port) => start(Some(port)),
+        None => start(saved_port).or_else(|error| match saved_port {
+            Some(saved) => {
+                eprintln!("wiki MCP port {saved} unavailable ({error:?}); using a free port");
+                start(None)
+            }
+            None => Err(error),
+        }),
+    };
+    let runtime = match started {
+        Ok(runtime) => runtime,
+        Err(error) => {
+            if let CommandError::Io { message } = &error {
+                *locked(&state.mcp_error, "MCP error")? = Some(message.clone());
+            }
+            return Err(error);
+        }
+    };
+    let bound = runtime.info().map_err(CommandError::io)?.port;
+    locked(&state.settings, "settings")?.mcp_port = Some(bound);
     state.persist()?;
-    *state.mcp_server.lock().map_err(|_| CommandError::Io {
-        message: "MCP server lock poisoned".into(),
-    })? = Some(runtime);
+    *locked(&state.mcp_error, "MCP error")? = None;
+    *locked(&state.mcp_server, "MCP server")? = Some(runtime);
     Ok(())
 }
 
@@ -336,38 +341,31 @@ fn vault_pick(
     else {
         return Ok(None);
     };
-    let path = path.into_path().map_err(|error| CommandError::Io {
-        message: error.to_string(),
-    })?;
-    Ok(Some(activate_vault(
-        app,
-        &state,
-        path.to_string_lossy().into_owned(),
-    )?))
+    let path = path.into_path().map_err(CommandError::io)?;
+    activate_vault(app, &state, path.to_string_lossy().into_owned()).map(Some)
 }
 
-#[tauri::command]
-fn vault_recent(state: State<'_, DesktopState>) -> Result<Vec<String>, CommandError> {
-    Ok(state
-        .settings
-        .lock()
-        .map_err(|_| CommandError::Io {
-            message: "settings lock poisoned".into(),
-        })?
-        .recent_vaults
-        .clone())
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct VaultSession {
+    current: Option<String>,
+    recent: Vec<String>,
+    writable: bool,
 }
 
+/// What the window needs on load: the open vault, recent vaults and whether
+/// the vault is writable (so a `vault://lock` emitted during startup is not missed).
 #[tauri::command]
-fn vault_current(state: State<'_, DesktopState>) -> Result<Option<String>, CommandError> {
-    Ok(state
-        .settings
-        .lock()
-        .map_err(|_| CommandError::Io {
-            message: "settings lock poisoned".into(),
-        })?
-        .current_vault
-        .clone())
+fn vault_session(state: State<'_, DesktopState>) -> Result<VaultSession, CommandError> {
+    let settings = locked(&state.settings, "settings")?;
+    let writable = locked(&state.vault, "vault")?
+        .as_ref()
+        .is_some_and(|vault| vault.is_writable());
+    Ok(VaultSession {
+        current: settings.current_vault.clone(),
+        recent: settings.recent_vaults.clone(),
+        writable,
+    })
 }
 
 #[tauri::command]
@@ -413,10 +411,37 @@ fn vault_apply(state: State<'_, DesktopState>, change: Change) -> Result<Applied
     Ok(state.active_vault()?.apply_from(Origin::Ui, change)?)
 }
 
+/// Window labels matching `wiki-*` share the `default` capability with `main`.
+fn build_window(app: &tauri::AppHandle, label: &str) -> tauri::Result<tauri::WebviewWindow> {
+    use tauri::window::{Effect, EffectState, EffectsBuilder};
+    tauri::WebviewWindowBuilder::new(app, label, tauri::WebviewUrl::App("index.html".into()))
+        .title("Wiki")
+        .inner_size(1280.0, 820.0)
+        .min_inner_size(900.0, 620.0)
+        .title_bar_style(tauri::TitleBarStyle::Overlay)
+        .hidden_title(true)
+        .transparent(true)
+        .effects(
+            EffectsBuilder::new()
+                .effect(Effect::Sidebar)
+                .state(EffectState::FollowsWindowActiveState)
+                .build(),
+        )
+        .build()
+}
+
+#[tauri::command]
+fn window_new(app: tauri::AppHandle) -> Result<String, CommandError> {
+    let label = format!("wiki-{}", uuid::Uuid::new_v4().simple());
+    build_window(&app, &label).map_err(CommandError::io)?;
+    Ok(label)
+}
+
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
+            build_window(app.handle(), "main")?;
             let mut settings_file = app.path().app_data_dir()?;
             std::fs::create_dir_all(&settings_file)?;
             settings_file.push("settings.json");
@@ -424,26 +449,23 @@ fn main() {
                 .ok()
                 .and_then(|bytes| serde_json::from_slice::<Settings>(&bytes).ok())
                 .unwrap_or_default();
+            let current = settings.current_vault.clone();
             let state = DesktopState {
                 vault: Mutex::new(None),
                 settings: Mutex::new(settings),
                 settings_file,
-                event_cancel: Mutex::new(None),
+                event_forwarding: Mutex::new(None),
                 mcp_server: Mutex::new(None),
+                mcp_error: Mutex::new(None),
+                claude_preview: Mutex::new(None),
                 watcher: Mutex::new(None),
-                lock_retry_cancel: Mutex::new(None),
+                lock_retry: Mutex::new(None),
             };
-            if let Some(current) = state
-                .settings
-                .lock()
-                .ok()
-                .and_then(|settings| settings.current_vault.clone())
+            if let Some(current) = current
+                && activate_vault(app.handle().clone(), &state, current).is_err()
+                && let Ok(mut settings) = state.settings.lock()
             {
-                if activate_vault(app.handle().clone(), &state, current).is_err() {
-                    if let Ok(mut settings) = state.settings.lock() {
-                        settings.current_vault = None;
-                    }
-                }
+                settings.current_vault = None;
             }
             app.manage(state);
             Ok(())
@@ -451,8 +473,7 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             vault_open,
             vault_pick,
-            vault_recent,
-            vault_current,
+            vault_session,
             vault_tree,
             vault_read,
             vault_search,
@@ -460,6 +481,7 @@ fn main() {
             vault_status,
             vault_is_writable,
             vault_apply,
+            window_new,
             mcp_commands::mcp_info,
             mcp_commands::mcp_set_allow_write,
             mcp_commands::mcp_set_port,
@@ -470,13 +492,12 @@ fn main() {
         .build(tauri::generate_context!())
         .expect("error while building Wiki desktop app")
         .run(|app, event| {
-            if matches!(event, tauri::RunEvent::Exit) {
-                if let Some(state) = app.try_state::<DesktopState>()
-                    && let Ok(mut runtime) = state.mcp_server.lock()
-                    && let Some(runtime) = runtime.take()
-                {
-                    runtime.shutdown();
-                }
+            if matches!(event, tauri::RunEvent::Exit)
+                && let Some(state) = app.try_state::<DesktopState>()
+                && let Ok(mut runtime) = state.mcp_server.lock()
+                && let Some(runtime) = runtime.take()
+            {
+                runtime.shutdown();
             }
         });
 }

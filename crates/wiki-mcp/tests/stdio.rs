@@ -78,38 +78,60 @@ impl ServerHandler for FakeAppMcp {
     }
 }
 
-async fn require_app_token(request: Request, next: Next) -> Response {
+async fn require_app_token(expected: &'static str, request: Request, next: Next) -> Response {
     if request
         .headers()
         .get(header::AUTHORIZATION)
         .and_then(|value| value.to_str().ok())
-        != Some("Bearer app-write-token")
+        != Some(format!("Bearer {expected}").as_str())
     {
         return StatusCode::UNAUTHORIZED.into_response();
     }
     next.run(request).await
 }
 
-async fn start_fake_app() -> (u16, tokio::task::JoinHandle<()>) {
+/// Fake desktop app that only accepts `expected_token`.
+async fn start_fake_app(expected_token: &'static str) -> (u16, tokio::task::JoinHandle<()>) {
+    let (port, server, _) = start_counting_fake_app(expected_token).await;
+    (port, server)
+}
+
+/// Like `start_fake_app`, also counting the MCP sessions clients open.
+async fn start_counting_fake_app(
+    expected_token: &'static str,
+) -> (
+    u16,
+    tokio::task::JoinHandle<()>,
+    Arc<std::sync::atomic::AtomicUsize>,
+) {
+    let sessions = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let opened = sessions.clone();
     let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
         .await
         .unwrap();
     let port = listener.local_addr().unwrap().port();
     let config = StreamableHttpServerConfig::default()
-        .with_legacy_session_mode(false)
+        // Session mode like the desktop app, so one handler per client session.
+        .with_legacy_session_mode(true)
         .with_json_response(true)
         .with_allowed_hosts([format!("127.0.0.1:{port}")]);
     let service = StreamableHttpService::new(
-        || Ok(FakeAppMcp),
+        move || {
+            opened.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Ok(FakeAppMcp)
+        },
         Arc::new(LocalSessionManager::default()),
         config,
     );
     let app = Router::new()
         .route_service("/mcp", service)
-        .layer(middleware::from_fn(require_app_token));
+        .layer(middleware::from_fn(move |request, next| {
+            require_app_token(expected_token, request, next)
+        }));
     (
         port,
         tokio::spawn(async move { axum::serve(listener, app).await.unwrap() }),
+        sessions,
     )
 }
 
@@ -209,7 +231,7 @@ async fn direct_stdio_keeps_reads_available_and_reports_read_only_writes() {
 async fn stdio_bridges_tool_list_and_status_to_the_running_app() {
     let runtime_dir = TempDir::new().unwrap();
     let runtime_file = runtime_dir.path().join("runtime.json");
-    let (port, server) = start_fake_app().await;
+    let (port, server) = start_fake_app("app-read-token").await;
     write_runtime(
         &runtime_file,
         serde_json::json!({
@@ -286,4 +308,190 @@ async fn dead_runtime_endpoint_falls_back_to_direct_stdio_within_timeout() {
         .unwrap();
     assert_eq!(status.structured_content.unwrap()["tool"], "wiki_status");
     client.cancel().await.unwrap();
+}
+
+async fn bridged_status_source(mut binary: Command) -> serde_json::Value {
+    binary.stderr(std::process::Stdio::null());
+    let transport = TokioChildProcess::new(binary).unwrap();
+    let client = tokio::time::timeout(Duration::from_secs(5), ().serve(transport))
+        .await
+        .expect("wiki-mcp should start within five seconds")
+        .unwrap();
+    let status = client
+        .call_tool(CallToolRequestParams::new("wiki_status"))
+        .await
+        .unwrap();
+    client.cancel().await.unwrap();
+    status.structured_content.unwrap()["source"].clone()
+}
+
+fn runtime_for(path: &std::path::Path, port: u16, vault: &std::path::Path) {
+    write_runtime(
+        path,
+        serde_json::json!({
+            "port": port,
+            "vaultPath": std::fs::canonicalize(vault).unwrap(),
+            "readToken": "app-read-token",
+            "writeToken": "app-write-token"
+        }),
+    );
+}
+
+#[tokio::test]
+async fn bridge_sends_write_token_only_with_allow_write() {
+    let vault = TempDir::new().unwrap();
+    let runtime_dir = TempDir::new().unwrap();
+    let runtime_file = runtime_dir.path().join("runtime.json");
+    let (port, server) = start_fake_app("app-write-token").await;
+    runtime_for(&runtime_file, port, vault.path());
+
+    let mut writer = command(&vault);
+    writer.arg("--runtime-file").arg(&runtime_file);
+    assert_eq!(bridged_status_source(writer).await, "desktop-app");
+
+    // Without --allow-write the bridge presents the read token, which this app
+    // rejects, so wiki-mcp falls back to the vault directly.
+    let mut reader = Command::new(env!("CARGO_BIN_EXE_wiki-mcp"));
+    reader
+        .arg("--vault")
+        .arg(vault.path())
+        .arg("--runtime-file")
+        .arg(&runtime_file);
+    assert_ne!(bridged_status_source(reader).await, "desktop-app");
+    server.abort();
+}
+
+#[tokio::test]
+async fn bridge_only_serves_the_vault_named_by_vault_flag() {
+    let requested = TempDir::new().unwrap();
+    let other = TempDir::new().unwrap();
+    let runtime_dir = TempDir::new().unwrap();
+    let runtime_file = runtime_dir.path().join("runtime.json");
+    let (port, server) = start_fake_app("app-read-token").await;
+
+    let pinned = || {
+        let mut binary = Command::new(env!("CARGO_BIN_EXE_wiki-mcp"));
+        binary
+            .arg("--vault")
+            .arg(requested.path())
+            .arg("--runtime-file")
+            .arg(&runtime_file);
+        binary
+    };
+
+    runtime_for(&runtime_file, port, other.path());
+    assert_ne!(bridged_status_source(pinned()).await, "desktop-app");
+
+    runtime_for(&runtime_file, port, requested.path());
+    assert_eq!(bridged_status_source(pinned()).await, "desktop-app");
+    server.abort();
+}
+
+#[tokio::test]
+async fn bridge_keeps_one_app_session_for_the_whole_stdio_session() {
+    let runtime_dir = TempDir::new().unwrap();
+    let runtime_file = runtime_dir.path().join("runtime.json");
+    let (port, server, sessions) = start_counting_fake_app("app-read-token").await;
+    write_runtime(
+        &runtime_file,
+        serde_json::json!({
+            "port": port,
+            "readToken": "app-read-token",
+            "writeToken": "app-write-token"
+        }),
+    );
+    let mut binary = Command::new(env!("CARGO_BIN_EXE_wiki-mcp"));
+    binary.arg("--runtime-file").arg(&runtime_file);
+    let client = ().serve(TokioChildProcess::new(binary).unwrap()).await.unwrap();
+    client.list_all_tools().await.unwrap();
+    for _ in 0..3 {
+        client
+            .call_tool(CallToolRequestParams::new("wiki_status"))
+            .await
+            .unwrap();
+    }
+    assert_eq!(sessions.load(std::sync::atomic::Ordering::SeqCst), 1);
+    client.cancel().await.unwrap();
+    server.abort();
+}
+
+#[tokio::test]
+async fn concurrent_writers_keep_the_index_whole_and_only_the_lockless_one_is_read_only() {
+    let root = TempDir::new().unwrap();
+    let app = Arc::new(Vault::open(VaultConfig::new(root.path())).unwrap());
+    assert!(app.is_writable());
+    let client = ().serve(TokioChildProcess::new(command(&root)).unwrap()).await.unwrap();
+
+    const WRITES: usize = 12;
+    let app_writes = {
+        let app = app.clone();
+        tokio::task::spawn_blocking(move || {
+            (0..WRITES)
+                .map(|n| {
+                    app.apply(wiki_core::Change::Write {
+                        path: wiki_core::DocPath::parse(
+                            wiki_core::Scope::Wiki,
+                            format!("app/page-{n}.md"),
+                        )
+                        .unwrap(),
+                        content: format!("# App page {n}\n\nconcurrentmarker{n}"),
+                        expect: None,
+                    })
+                })
+                .collect::<Vec<_>>()
+        })
+    };
+    let mcp_writes = async {
+        let mut results = Vec::new();
+        for n in 0..WRITES {
+            results.push(
+                client
+                    .call_tool(
+                        CallToolRequestParams::new("wiki_write_file").with_arguments(
+                            serde_json::json!({
+                                "scope": "wiki",
+                                "rel_path": format!("mcp/page-{n}.md"),
+                                "content": format!("# MCP page {n}"),
+                            })
+                            .as_object()
+                            .unwrap()
+                            .clone(),
+                        ),
+                    )
+                    .await
+                    .unwrap(),
+            );
+        }
+        results
+    };
+    let (app_writes, mcp_writes) = tokio::join!(app_writes, mcp_writes);
+
+    assert!(app_writes.unwrap().iter().all(Result::is_ok));
+    assert!(mcp_writes.iter().all(|result| {
+        result.is_error.unwrap_or(false)
+            && result.content.iter().any(|block| {
+                block
+                    .as_text()
+                    .is_some_and(|text| text.text.contains("read-only"))
+            })
+    }));
+    assert!(!root.path().join("wiki/mcp").exists());
+    client.cancel().await.unwrap();
+    drop(app);
+
+    // Reopen from disk: the index holds every app page and nothing else broke.
+    let reopened = Vault::open(VaultConfig::new(root.path())).unwrap();
+    for n in 0..WRITES {
+        let marker = format!("concurrentmarker{n}");
+        assert!(
+            reopened
+                .search(&marker)
+                .unwrap()
+                .iter()
+                .any(|hit| hit.path == format!("wiki/app/page-{n}.md")),
+            "index lost app page {n}"
+        );
+    }
+    let index_md = std::fs::read_to_string(root.path().join("wiki/index.md")).unwrap();
+    assert!((0..WRITES).all(|n| index_md.contains(&format!("page-{n}"))));
 }

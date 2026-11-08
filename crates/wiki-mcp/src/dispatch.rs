@@ -201,15 +201,14 @@ pub(super) fn call_sync(
                 .get("append_text")
                 .and_then(Value::as_str)
                 .filter(|s| !s.is_empty())
+                && !content.contains(append.trim())
             {
-                if !content.contains(append.trim()) {
-                    if !content.ends_with('\n') {
-                        content.push('\n')
-                    }
-                    content.push_str(append);
-                    if !content.ends_with('\n') {
-                        content.push('\n')
-                    }
+                if !content.ends_with('\n') {
+                    content.push('\n')
+                }
+                content.push_str(append);
+                if !content.ends_with('\n') {
+                    content.push('\n')
                 }
             }
             vault.apply_from(

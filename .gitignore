@@ -18,6 +18,7 @@ models/
 /apps/admin-web/dist/
 /apps/wiki-desktop/dist/
 /apps/wiki-desktop/src-tauri/target/
+/apps/wiki-desktop/src-tauri/binaries/
 /apps/wiki-desktop/src-tauri/gen/schemas/
 /apps/admin-web/.env
 /apps/admin-web/.vite/

@@ -15,9 +15,9 @@ impl Vault {
         &self,
         paths: impl IntoIterator<Item = DocPath>,
     ) -> Result<bool, VaultError> {
-        if !self.is_writable() {
-            return Err(VaultError::ReadOnly);
-        }
+        // A reader still refreshes its private index and tells the UI; only the
+        // lock holder may rewrite `wiki/index.md` inside the vault.
+        let writable = self.is_writable();
         let _guard = self
             .write_lock
             .lock()
@@ -54,8 +54,10 @@ impl Vault {
             return Ok(false);
         }
         self.engine()?.sync_index()?;
-        self.engine()?.rebuild_or_sync_index_md()?;
-        let _ = self.record_self_writes(&["wiki/index.md".into()]);
+        if writable {
+            self.engine()?.rebuild_or_sync_index_md()?;
+            let _ = self.record_self_writes(&["wiki/index.md".into()]);
+        }
         let external: Vec<String> = external
             .iter()
             .map(|path| path.display().to_string())

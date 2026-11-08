@@ -1,17 +1,23 @@
 use rmcp::{
     ErrorData, RoleClient, RoleServer, ServerHandler, ServiceExt,
     model::{
-        CallToolRequestParams, CallToolResponse, CallToolResult, ClientConfig, ContentBlock,
-        ListToolsResult, PaginatedRequestParams, ServerCapabilities, ServerConfig, Tool,
+        CallToolRequest, CallToolRequestParams, CallToolResponse, CallToolResult,
+        CancelledNotificationParam, ClientConfig, ClientRequest, ContentBlock, ListToolsResult,
+        PaginatedRequestParams, ServerCapabilities, ServerConfig, ServerResult, Tool,
     },
-    service::RequestContext,
+    service::{Peer, PeerRequestOptions, RequestContext, RunningService},
     transport::{
         StreamableHttpClientTransport, stdio,
         streamable_http_client::StreamableHttpClientTransportConfig,
     },
 };
 use serde::Deserialize;
-use std::{path::PathBuf, process::ExitCode, sync::Arc, time::Duration};
+use std::{
+    path::{Path, PathBuf},
+    process::ExitCode,
+    sync::Arc,
+    time::Duration,
+};
 use wiki_core::{Vault, VaultConfig};
 use wiki_mcp::{Access, CallCtx, Policy, ToolHost};
 
@@ -56,6 +62,8 @@ fn parse_args() -> Result<Option<Args>, String> {
 #[serde(rename_all = "camelCase")]
 struct RuntimeFile {
     port: u16,
+    #[serde(default)]
+    vault_path: Option<PathBuf>,
     read_token: String,
     write_token: String,
 }
@@ -66,10 +74,82 @@ struct BridgeConfig {
     token: String,
 }
 
+/// One MCP session to the running app for the whole stdio session, so the
+/// app sees one client and cancellations reach the request they belong to.
+struct Bridge {
+    config: BridgeConfig,
+    client: tokio::sync::Mutex<Option<RunningService<RoleClient, ClientConfig>>>,
+}
+
+impl Bridge {
+    /// The live session, reconnecting once if the app restarted its server.
+    async fn peer(&self) -> Result<Peer<RoleClient>, ErrorData> {
+        let mut client = self.client.lock().await;
+        if let Some(running) = client.as_ref()
+            && !running.is_closed()
+            && !running.peer().is_transport_closed()
+        {
+            return Ok(running.peer().clone());
+        }
+        let running = bridge_client(&self.config)
+            .await
+            .map_err(|error| ErrorData::internal_error(error, None))?;
+        let peer = running.peer().clone();
+        *client = Some(running);
+        Ok(peer)
+    }
+
+    /// Ends the HTTP session so the app stops counting this client.
+    async fn close(&self) {
+        if let Some(running) = self.client.lock().await.take() {
+            let _ = running.cancel().await;
+        }
+    }
+
+    async fn call_tool(
+        &self,
+        request: CallToolRequestParams,
+        cancel: tokio_util::sync::CancellationToken,
+    ) -> Result<CallToolResponse, ErrorData> {
+        let peer = self.peer().await?;
+        let handle = peer
+            .send_cancellable_request(
+                ClientRequest::CallToolRequest(CallToolRequest::new(request)),
+                PeerRequestOptions::no_options(),
+            )
+            .await
+            .map_err(|error| ErrorData::internal_error(error.to_string(), None))?;
+        let request_id = handle.id.clone();
+        let response = tokio::select! {
+            response = handle.await_response() => response,
+            () = cancel.cancelled() => {
+                let _ = peer
+                    .notify_cancelled(CancelledNotificationParam::new(
+                        Some(request_id),
+                        Some("cancelled by the stdio client".into()),
+                    ))
+                    .await;
+                return Err(ErrorData::internal_error("request cancelled", None));
+            }
+        };
+        match response.map_err(|error| ErrorData::internal_error(error.to_string(), None))? {
+            ServerResult::CallToolResult(result) => Ok(CallToolResponse::Complete(result)),
+            ServerResult::InputRequiredResult(result) => {
+                Ok(CallToolResponse::InputRequired(result))
+            }
+            ServerResult::CreateTaskResult(result) => Ok(CallToolResponse::Task(result)),
+            _ => Err(ErrorData::internal_error(
+                "unexpected response from the Wiki app",
+                None,
+            )),
+        }
+    }
+}
+
 #[derive(Clone)]
 enum Backend {
     Direct(Arc<ToolHost>),
-    Bridge(BridgeConfig),
+    Bridge(Arc<Bridge>),
 }
 
 #[derive(Clone)]
@@ -104,10 +184,60 @@ fn runtime_file_path(args: &Args) -> PathBuf {
     let home = std::env::var_os("HOME")
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("."));
-    home.join("Library/Application Support/com.vela.wikidesktop/runtime.json")
+    home.join("Library/Application Support")
+        .join(bundle_identifier().unwrap_or_else(|| DEFAULT_BUNDLE_ID.into()))
+        .join("runtime.json")
 }
 
-async fn bridge_backend(path: PathBuf) -> Option<BridgeConfig> {
+/// Bundle id used when `wiki-mcp` runs outside `Wiki.app` (development).
+const DEFAULT_BUNDLE_ID: &str = "com.vela.wikidesktop";
+
+/// The app keeps `runtime.json` under its bundle id, which a release may
+/// override, so read it from the `Wiki.app` this binary is bundled in.
+fn bundle_identifier() -> Option<String> {
+    let executable = std::env::current_exe().ok()?;
+    let contents = executable.parent()?.parent()?;
+    let plist = std::fs::read_to_string(contents.join("Info.plist")).ok()?;
+    bundle_identifier_from_plist(&plist)
+}
+
+fn bundle_identifier_from_plist(plist: &str) -> Option<String> {
+    let (_, after_key) = plist.split_once("<key>CFBundleIdentifier</key>")?;
+    let (_, after_open) = after_key.split_once("<string>")?;
+    let (value, _) = after_open.split_once("</string>")?;
+    let value = value.trim();
+    (!value.is_empty()).then(|| value.to_owned())
+}
+
+/// The running app serves exactly one vault. A client pinned to a vault with
+/// `--vault` may only be bridged when the app has that same vault open.
+fn runtime_serves_requested_vault(runtime: &RuntimeFile, requested: Option<&Path>) -> bool {
+    let Some(requested) = requested else {
+        return true;
+    };
+    let Some(served) = runtime.vault_path.as_deref() else {
+        return false;
+    };
+    match (
+        std::fs::canonicalize(requested),
+        std::fs::canonicalize(served),
+    ) {
+        (Ok(requested), Ok(served)) => requested == served,
+        _ => false,
+    }
+}
+
+/// Bridged requests carry the same access the client would get in direct mode:
+/// the write token only with `--allow-write`, otherwise the read token.
+fn bridge_token(runtime: RuntimeFile, allow_write: bool) -> String {
+    if allow_write && !runtime.write_token.is_empty() {
+        runtime.write_token
+    } else {
+        runtime.read_token
+    }
+}
+
+async fn bridge_backend(path: PathBuf, args: &Args) -> Option<Bridge> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -120,25 +250,22 @@ async fn bridge_backend(path: PathBuf) -> Option<BridgeConfig> {
     if runtime.port == 0 || runtime.read_token.is_empty() {
         return None;
     }
+    if !runtime_serves_requested_vault(&runtime, args.vault.as_deref()) {
+        eprintln!(
+            "wiki-mcp: the running Wiki app has a different vault open; using --vault directly"
+        );
+        return None;
+    }
     let bridge = BridgeConfig {
         uri: format!("http://127.0.0.1:{}/mcp", runtime.port),
-        token: if runtime.write_token.is_empty() {
-            runtime.read_token
-        } else {
-            runtime.write_token
-        },
+        token: bridge_token(runtime, args.allow_write),
     };
+    // The probe session becomes the bridge's session.
     let client = bridge_client(&bridge).await.ok()?;
-    let _ = client.cancel().await;
-    Some(bridge)
-}
-
-async fn connect_bridge(
-    bridge: &BridgeConfig,
-) -> Result<rmcp::service::RunningService<RoleClient, ClientConfig>, ErrorData> {
-    bridge_client(bridge)
-        .await
-        .map_err(|error| ErrorData::internal_error(error, None))
+    Some(Bridge {
+        config: bridge,
+        client: tokio::sync::Mutex::new(Some(client)),
+    })
 }
 
 impl ServerHandler for StdioHandler {
@@ -174,15 +301,12 @@ impl ServerHandler for StdioHandler {
                     .collect(),
                 ..Default::default()
             }),
-            Backend::Bridge(bridge) => {
-                let client = connect_bridge(bridge).await?;
-                let result = client
-                    .list_tools(request)
-                    .await
-                    .map_err(|error| ErrorData::internal_error(error.to_string(), None));
-                let _ = client.cancel().await;
-                result
-            }
+            Backend::Bridge(bridge) => bridge
+                .peer()
+                .await?
+                .list_tools(request)
+                .await
+                .map_err(|error| ErrorData::internal_error(error.to_string(), None)),
         }
     }
 
@@ -212,24 +336,16 @@ impl ServerHandler for StdioHandler {
                 };
                 Ok(result.into())
             }
-            Backend::Bridge(bridge) => {
-                let client = connect_bridge(bridge).await?;
-                let result = client
-                    .call_tool(request)
-                    .await
-                    .map_err(|error| ErrorData::internal_error(error.to_string(), None));
-                let _ = client.cancel().await;
-                result.map(Into::into)
-            }
+            Backend::Bridge(bridge) => bridge.call_tool(request, ctx.ct).await,
         }
     }
 }
 
 async fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
-    let backend = match bridge_backend(runtime_file_path(&args)).await {
+    let backend = match bridge_backend(runtime_file_path(&args), &args).await {
         Some(bridge) => {
             eprintln!("wiki-mcp: forwarding stdio requests to the running Wiki app");
-            Backend::Bridge(bridge)
+            Backend::Bridge(Arc::new(bridge))
         }
         None => {
             let vault_path = args
@@ -250,9 +366,17 @@ async fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
             )))
         }
     };
+    let bridge = match &backend {
+        Backend::Bridge(bridge) => Some(bridge.clone()),
+        Backend::Direct(_) => None,
+    };
     let service = StdioHandler { backend };
     let running = service.serve(stdio()).await?;
-    running.waiting().await?;
+    let waited = running.waiting().await;
+    if let Some(bridge) = bridge {
+        bridge.close().await;
+    }
+    waited?;
     Ok(())
 }
 
@@ -277,5 +401,28 @@ async fn main() -> ExitCode {
             eprintln!("wiki-mcp: {error}");
             ExitCode::FAILURE
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::bundle_identifier_from_plist;
+
+    #[test]
+    fn reads_the_bundle_identifier_from_info_plist() {
+        let plist = r#"<?xml version="1.0" encoding="UTF-8"?>
+<plist version="1.0"><dict>
+  <key>CFBundleExecutable</key><string>wiki-desktop</string>
+  <key>CFBundleIdentifier</key>
+  <string>com.example.wiki-beta</string>
+</dict></plist>"#;
+        assert_eq!(
+            bundle_identifier_from_plist(plist).as_deref(),
+            Some("com.example.wiki-beta")
+        );
+        assert_eq!(
+            bundle_identifier_from_plist("<plist><dict></dict></plist>"),
+            None
+        );
     }
 }

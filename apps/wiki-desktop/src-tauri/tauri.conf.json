@@ -11,16 +11,7 @@
   },
   "app": {
     "macOSPrivateApi": true,
-    "windows": [{
-      "title": "Wiki",
-      "width": 1280,
-      "height": 820,
-      "minWidth": 900,
-      "minHeight": 620,
-      "titleBarStyle": "Overlay",
-      "hiddenTitle": true,
-      "transparent": true
-    }],
+    "windows": [],
     "security": {
       "csp": "default-src 'self'; img-src 'self' data: asset:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src ipc: http://ipc.localhost"
     }

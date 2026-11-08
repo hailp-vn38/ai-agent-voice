@@ -21,6 +21,6 @@ Script dừng trước khi build nếu thiếu signing identity hoặc notary pr
 
 ## Kết quả và gate phát hành
 
-DMG nằm trong `output/wiki-desktop/`. Script kiểm tra kiến trúc universal, chữ ký của `wiki-mcp` và app, ticket stapled, cùng `spctl --assess` cho app, sidecar và DMG. Release owner vẫn cần cài DMG trên một máy macOS sạch, mở app qua Finder và xác nhận Claude Desktop gọi đúng `Wiki.app/Contents/MacOS/wiki-mcp`; đây là gate thủ công cuối cùng.
+DMG nằm trong `output/wiki-desktop/`. Script kiểm tra kiến trúc universal, chữ ký của `wiki-mcp` và app, ticket stapled, cùng `spctl --assess` cho app và DMG. `spctl` không đánh giá binary trần nên với `wiki-mcp` script kiểm tra chữ ký Developer ID và hardened runtime; sidecar được notarize cùng app. Release owner vẫn cần cài DMG trên một máy macOS sạch, mở app qua Finder và xác nhận Claude Desktop gọi đúng `Wiki.app/Contents/MacOS/wiki-mcp`; đây là gate thủ công cuối cùng.
 
 Thứ tự notarization dùng `notarytool submit --wait` rồi `stapler staple`/`validate`. Binary con được ký trước app chứa nó; app được ký với hardened runtime và entitlement JIT duy nhất. Sidecar không nhận entitlement; DMG cũng được ký trước khi submit.

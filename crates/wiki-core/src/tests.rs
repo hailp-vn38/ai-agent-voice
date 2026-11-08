@@ -1,4 +1,6 @@
-use super::{Change, DocPath, Origin, RawFile, Revision, Scope, TextEdit, Vault, VaultConfig, VaultEvent};
+use super::{
+    Change, DocPath, Origin, RawFile, Revision, Scope, TextEdit, Vault, VaultConfig, VaultEvent,
+};
 use llm_wiki::{CollectionScope, WikiEngine};
 use std::fs;
 use tempfile::tempdir;
@@ -590,4 +592,39 @@ fn external_changes_refresh_search_and_app_writes_are_suppressed() {
         events.try_recv().unwrap(),
         super::VaultEvent::External { .. }
     ));
+}
+
+#[test]
+fn a_read_only_vault_reports_external_changes_without_rewriting_the_index() {
+    let temp = tempdir().unwrap();
+    let writer = Vault::open(VaultConfig::new(temp.path())).unwrap();
+    let reader = Vault::open(VaultConfig::new(temp.path())).unwrap();
+    assert!(!reader.is_writable());
+    let mut events = reader.subscribe();
+    let index_md = temp.path().join("wiki/index.md");
+    let index_before = fs::read(&index_md).ok();
+
+    let path = DocPath::parse(Scope::Wiki, "concepts/edited-elsewhere.md").unwrap();
+    let file = temp.path().join(path.vault_relative());
+    fs::create_dir_all(file.parent().unwrap()).unwrap();
+    fs::write(
+        &file,
+        "# Elsewhere\n\nEdited while another process holds the lock.",
+    )
+    .unwrap();
+
+    assert!(reader.notice_external([path]).unwrap());
+    assert!(matches!(
+        events.try_recv().unwrap(),
+        super::VaultEvent::External { .. }
+    ));
+    assert!(
+        reader
+            .search("another process holds")
+            .unwrap()
+            .iter()
+            .any(|hit| hit.path == "wiki/concepts/edited-elsewhere.md")
+    );
+    assert_eq!(fs::read(&index_md).ok(), index_before);
+    drop(writer);
 }

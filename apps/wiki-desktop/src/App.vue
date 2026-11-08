@@ -2,21 +2,26 @@
 import { onMounted, onBeforeUnmount, ref } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
-import { WebviewWindow } from '@tauri-apps/api/webviewWindow'
 import KnowledgePage from '@vela/knowledge-ui/components/KnowledgePage.vue'
 import { VaultError, type VaultEvent } from '@vela/knowledge-ui'
 
 type McpInfo = {
   port: number
   allowWrite: boolean
-  readUrl: string
-  writeUrl: string
+  url: string
   readConfig: string
   writeConfig: string
   stdioConfig: string
   status: { connectedClients: number; activeRequests: number; lastCallAt: number | null }
 }
-type ClaudePreview = { path: string; before: string; after: string }
+type ClaudePreview = { path: string; diff: { kind: 'same' | 'added' | 'removed'; text: string }[] }
+type VaultSession = { current: string | null; recent: string[]; writable: boolean }
+
+/** Tauri rejects with the serialized `CommandError` object, not an `Error`. */
+function errorMessage(cause: unknown): string {
+  if (cause && typeof cause === 'object' && 'message' in cause) return String((cause as { message: unknown }).message)
+  return String(cause)
+}
 
 const current = ref<string | null>(null)
 const recent = ref<string[]>([])
@@ -30,16 +35,16 @@ const vaultWritable = ref(true)
 const claudePreview = ref<ClaudePreview | null>(null)
 const claudeInstalled = ref(false)
 const requestedMcpPort = ref<number | null>(null)
-let windowNumber = 1
 let removeMcpStatus: (() => void) | undefined
 let removeVaultEvents: (() => void) | undefined
 let removeVaultLock: (() => void) | undefined
 let toastTimer: ReturnType<typeof setTimeout> | undefined
 
 async function refreshVaults() {
-  recent.value = await invoke<string[]>('vault_recent')
-  current.value = await invoke<string | null>('vault_current')
-  if (current.value) vaultWritable.value = await invoke<boolean>('vault_is_writable')
+  const session = await invoke<VaultSession>('vault_session')
+  recent.value = session.recent
+  current.value = session.current
+  vaultWritable.value = session.writable
 }
 async function openVault(path: string) {
   loading.value = true
@@ -72,7 +77,7 @@ async function refreshMcp() {
     mcpError.value = ''
   } catch (cause) {
     mcpInfo.value = null
-    mcpError.value = cause instanceof Error ? cause.message : String(cause)
+    mcpError.value = errorMessage(cause)
   }
 }
 async function saveMcpPort() {
@@ -82,7 +87,7 @@ async function saveMcpPort() {
     requestedMcpPort.value = mcpInfo.value.port
     mcpError.value = ''
   } catch (cause) {
-    mcpError.value = cause instanceof Error ? cause.message : String(cause)
+    mcpError.value = errorMessage(cause)
     await refreshMcp()
   }
 }
@@ -92,7 +97,7 @@ async function toggleMcpWrite(event: Event) {
     mcpInfo.value = await invoke<McpInfo>('mcp_set_allow_write', { allowWrite })
     mcpError.value = ''
   } catch (cause) {
-    mcpError.value = cause instanceof Error ? cause.message : String(cause)
+    mcpError.value = errorMessage(cause)
     await refreshMcp()
   }
 }
@@ -104,12 +109,12 @@ async function copyMcp(value: string) {
     mcpError.value = `Không thể sao chép: ${String(cause)}`
   }
 }
-async function rotateMcpToken(access: 'read' | 'write') {
+async function rotateMcpToken(access: 'read_only' | 'read_write') {
   try {
     mcpInfo.value = await invoke<McpInfo>('mcp_rotate_token', { access })
     mcpError.value = ''
   } catch (cause) {
-    mcpError.value = cause instanceof Error ? cause.message : String(cause)
+    mcpError.value = errorMessage(cause)
   }
 }
 async function previewClaudeConfig() {
@@ -118,7 +123,7 @@ async function previewClaudeConfig() {
     claudeInstalled.value = false
     mcpError.value = ''
   } catch (cause) {
-    mcpError.value = cause instanceof Error ? cause.message : String(cause)
+    mcpError.value = errorMessage(cause)
   }
 }
 async function installClaudeConfig() {
@@ -128,7 +133,7 @@ async function installClaudeConfig() {
     claudeInstalled.value = true
     mcpError.value = ''
   } catch (cause) {
-    mcpError.value = cause instanceof Error ? cause.message : String(cause)
+    mcpError.value = errorMessage(cause)
   }
 }
 async function onShortcut(event: KeyboardEvent) {
@@ -141,8 +146,7 @@ async function onShortcut(event: KeyboardEvent) {
   }
   if (key === 'n' && event.shiftKey) {
     event.preventDefault()
-    windowNumber += 1
-    new WebviewWindow(`wiki-${windowNumber}`, { url: 'index.html', title: 'Wiki', width: 1280, height: 820 })
+    try { await invoke<string>('window_new') } catch (cause) { error.value = new VaultError('io', errorMessage(cause)) }
   }
   if (key === 'g') {
     event.preventDefault()
@@ -218,12 +222,12 @@ onBeforeUnmount(() => {
           <div class="mcp-token-row">
             <div><strong>Quyền đọc</strong><small>Token riêng, chỉ gọi được tool đọc.</small></div>
             <button type="button" @click="copyMcp(mcpInfo.readConfig)">Sao chép URL và token đọc</button>
-            <button type="button" @click="rotateMcpToken('read')">Đổi token</button>
+            <button type="button" @click="rotateMcpToken('read_only')">Đổi token</button>
           </div>
           <div class="mcp-token-row">
             <div><strong>Quyền ghi</strong><small>Chỉ hoạt động khi bật quyền ghi.</small></div>
             <button type="button" :disabled="!mcpInfo.allowWrite" @click="copyMcp(mcpInfo.writeConfig)">Sao chép URL và token ghi</button>
-            <button type="button" @click="rotateMcpToken('write')">Đổi token</button>
+            <button type="button" @click="rotateMcpToken('read_write')">Đổi token</button>
           </div>
           <div class="mcp-token-row">
             <div><strong>Claude Desktop · stdio</strong><small>Chuyển tiếp qua app khi đang chạy.</small></div>
@@ -235,12 +239,12 @@ onBeforeUnmount(() => {
         <section v-if="claudePreview" class="claude-preview" aria-label="Claude Desktop config diff">
           <h2>{{ claudeInstalled ? 'Đã cập nhật cấu hình' : 'Xem thay đổi trước khi cài' }}</h2>
           <p>{{ claudePreview.path }}</p>
-          <div class="config-diff"><div><strong>Hiện tại</strong><pre>{{ claudePreview.before }}</pre></div><div><strong>Sau khi cài</strong><pre>{{ claudePreview.after }}</pre></div></div>
+          <pre class="config-diff"><span v-for="(line, index) in claudePreview.diff" :key="index" :class="`diff-${line.kind}`">{{ line.kind === 'added' ? '+ ' : line.kind === 'removed' ? '- ' : '  ' }}{{ line.text }}</span></pre>
           <button v-if="!claudeInstalled" type="button" @click="installClaudeConfig">Xác nhận và ghi cấu hình</button>
         </section>
       </section>
     </div>
-    <section v-else class="welcome" aria-labelledby="welcome-title">
+    <section v-if="!current" class="welcome" aria-labelledby="welcome-title">
       <div class="welcome-card">
         <span class="welcome-mark" aria-hidden="true">W</span>
         <h1 id="welcome-title">Mở kho tri thức</h1>
