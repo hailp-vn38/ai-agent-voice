@@ -215,28 +215,52 @@ export class HttpKnowledgeBackend implements KnowledgeBackend {
   }
 }
 
-export type MemoryKnowledgeSeed = { pages?: KnowledgePage[]; rawFiles?: KnowledgeRawFile[]; status?: Partial<KnowledgeStatus> }
+export type MemoryKnowledgeSeed = {
+  pages?: KnowledgePage[]
+  rawFiles?: KnowledgeRawFile[]
+  status?: Partial<KnowledgeStatus>
+  graph?: KnowledgeGraph
+  graphError?: unknown
+}
 
 /** Deterministic in-memory adapter used by Knowledge UI tests. */
 export class MemoryKnowledgeBackend implements KnowledgeBackend {
   readonly capabilities = { chat: false } as const
   private readonly pages = new Map<string, KnowledgePage>()
   private readonly rawFiles = new Map<string, KnowledgeRawFile>()
+  private readonly folders = new Map<KnowledgeSpace, Set<string>>([
+    ['wiki', new Set(['wiki'])], ['raw', new Set(['raw'])], ['drafts', new Set(['drafts'])],
+  ])
   private readonly listeners = new Set<(event: KnowledgeChangeEvent) => void>()
   private currentStatus: KnowledgeStatus
+  private readonly graphSnapshot: KnowledgeGraph
+  private readonly graphFailure: unknown
 
   constructor(seed: MemoryKnowledgeSeed = {}) {
-    for (const page of seed.pages ?? []) this.pages.set(page.path ?? page.id, { ...page, path: page.path ?? page.id })
-    for (const file of seed.rawFiles ?? []) this.rawFiles.set(file.path, { ...file })
+    for (const page of seed.pages ?? []) {
+      const path = page.path ?? page.id
+      this.pages.set(path, { ...page, path })
+      this.addParentFolders('wiki', path)
+    }
+    for (const file of seed.rawFiles ?? []) {
+      this.rawFiles.set(file.path, { ...file })
+      this.addParentFolders('raw', file.path)
+    }
     this.currentStatus = { health: 'healthy', document_count: this.pages.size + this.rawFiles.size, last_complete_scan_at: null, ...seed.status }
+    this.graphSnapshot = seed.graph ?? { nodes: [], edges: [], unresolved: [], truncated: false }
+    this.graphFailure = seed.graphError
   }
 
   async tree(space: KnowledgeSpace) {
     const files = space === 'wiki' ? this.pages : this.rawFiles
-    return { items: [...files.values()].map(file => ({
+    const folders = [...(this.folders.get(space) ?? [])].map(path => ({
+      type: 'folder' as const, space, path, name: path.split('/').at(-1) ?? path, editable: true,
+    }))
+    const notes = [...files.values()].map(file => ({
       type: 'file' as const, space, path: file.path ?? '', name: (file.path ?? '').split('/').at(-1) ?? '', editable: true,
       ...(space === 'wiki' ? { id: (file as KnowledgePage).id, revision: (file as KnowledgePage).revision } : {}),
-    })) }
+    }))
+    return { items: [...folders, ...notes] }
   }
 
   async read(path: string, space: KnowledgeSpace = path.startsWith('raw/') ? 'raw' : 'wiki') {
@@ -266,7 +290,10 @@ export class MemoryKnowledgeBackend implements KnowledgeBackend {
     return { items, next_cursor: null }
   }
 
-  async graph(): Promise<KnowledgeGraph> { return { nodes: [], edges: [], unresolved: [], truncated: false } }
+  async graph(): Promise<KnowledgeGraph> {
+    if (this.graphFailure) throw this.graphFailure
+    return structuredClone(this.graphSnapshot)
+  }
   async status() { return { ...this.currentStatus } }
 
   async apply(change: Change) {
@@ -278,23 +305,27 @@ export class MemoryKnowledgeBackend implements KnowledgeBackend {
     if (change.type === 'write' || change.type === 'patch') {
       const raw = change.path.startsWith('raw/')
       if (change.type === 'write' && raw && change.folderPath && change.fileName) {
-        const updated = { path: `${change.folderPath}/${change.fileName}`, body: change.body, sha256: 'memory-sha' }
+        const updated = { path: `${change.folderPath}/${change.fileName}`, body: change.body, sha256: 'memory-rev-1' }
         this.rawFiles.set(updated.path, updated)
+        this.addParentFolders('raw', updated.path)
         this.publish({ type: 'changed', paths: [updated.path], origin: 'ui' })
         return updated
       }
       const current = raw ? this.rawFiles.get(change.path) : this.pages.get(change.path)
-      const revision = raw ? (current ? 1 : 0) : (current as KnowledgePage | undefined)?.revision ?? 0
-      if (change.expect !== undefined && String(change.expect) !== String(revision)) {
-        throw new VaultError('conflict', 'Knowledge file changed since it was read', revision ? String(revision) : undefined)
+      const revision: string | number | undefined = raw
+        ? (current as KnowledgeRawFile | undefined)?.sha256
+        : (current as KnowledgePage | undefined)?.revision
+      if (change.expect !== undefined && String(change.expect) !== String(revision ?? 0)) {
+        throw new VaultError('conflict', 'Knowledge file changed since it was read', revision === undefined ? undefined : String(revision))
       }
       const updated: KnowledgePage | KnowledgeRawFile = raw
-        ? { path: change.path, body: change.body, sha256: String(revision + 1) }
+        ? { path: change.path, body: change.body, sha256: `memory-rev-${(Number(String(revision).match(/\d+$/)?.[0]) || 0) + 1}` }
         : { id: (current as KnowledgePage | undefined)?.id ?? change.path, path: change.path,
           title: (current as KnowledgePage | undefined)?.title ?? change.path.split('/').at(-1) ?? change.path,
-          body: change.body, revision: revision + 1 }
+          body: change.body, revision: Number(revision ?? 0) + 1 }
       if (raw) this.rawFiles.set(change.path, updated as KnowledgeRawFile)
       else this.pages.set(change.path, updated as KnowledgePage)
+      this.addParentFolders(raw ? 'raw' : 'wiki', change.path)
       this.currentStatus = { ...this.currentStatus, document_count: this.pages.size + this.rawFiles.size }
       this.publish({ type: 'changed', paths: [change.path], origin: 'ui' })
       return updated
@@ -334,7 +365,11 @@ export class MemoryKnowledgeBackend implements KnowledgeBackend {
       this.publish({ type: 'changed', paths: [change.path], origin: 'ui' })
       return { path: change.path }
     }
-    if (change.type === 'create_folder') return { path: `${change.parentPath}/${change.name}` }
+    if (change.type === 'create_folder') {
+      const path = `${change.parentPath}/${change.name}`
+      this.addParentFolders(change.space, path + '/.folder')
+      return { path }
+    }
     if (change.type === 'create_source') return { id: 'memory-source', version: 1, name: change.name, provenance: change.provenance, sha256: '' }
     if (change.type === 'publish') {
       const page = this.pages.get(change.path)
@@ -356,6 +391,15 @@ export class MemoryKnowledgeBackend implements KnowledgeBackend {
   async chart(fileName: string) { throw new VaultError('not_found', `Knowledge chart not found: ${fileName}`) }
 
   private publish(event: KnowledgeChangeEvent) { for (const listener of this.listeners) listener(event) }
+  private addParentFolders(space: KnowledgeSpace, path: string) {
+    const folders = this.folders.get(space) ?? new Set<string>([space])
+    let parent = ''
+    for (const segment of path.split('/').slice(0, -1)) {
+      parent = parent ? `${parent}/${segment}` : segment
+      folders.add(parent)
+    }
+    this.folders.set(space, folders)
+  }
 }
 
 export const KNOWLEDGE_BACKEND_KEY: InjectionKey<KnowledgeBackend> = Symbol('KnowledgeBackend')

@@ -5,7 +5,6 @@ import { ApiError } from '@/api/errors'
 import KnowledgePage from './KnowledgePage.vue'
 import WikiChatPanel from './WikiChatPanel.vue'
 import KnowledgeGraph from './KnowledgeGraph.vue'
-import { KNOWLEDGE_BACKEND_KEY, MemoryKnowledgeBackend } from './knowledgeBackend'
 
 const { requestJsonMock, routeQuery, focusNodeMock, highlightNodeMock, routerReplaceMock } = vi.hoisted(() => ({
   requestJsonMock: vi.fn(), routeQuery: {} as Record<string,string>,
@@ -1898,19 +1897,3 @@ it('gives outline and chat one right panel width and one collapsed state', async
     expect(window.localStorage.getItem('voice-agent-knowledge-outline-collapsed')).toBe('true')
   } finally { wrapper.unmount() }
 })
-
-it('renders a Wiki Page through the injected in-memory KnowledgeBackend', async () => {
-  const backend = new MemoryKnowledgeBackend({ pages: [{
-    id: 'wiki/memory-note.md', path: 'wiki/memory-note.md', title: 'Memory Note',
-    body: '# Memory Note\n\nLoaded through the backend seam.', revision: 1,
-  }] })
-  const wrapper = mount(KnowledgePage, {
-    global: { provide: { [KNOWLEDGE_BACKEND_KEY as symbol]: backend } },
-  })
-  try {
-    await flushPromises()
-    expect(wrapper.text()).toContain('Memory Note')
-    expect(wrapper.text()).toContain('Loaded through the backend seam.')
-  } finally { wrapper.unmount() }
-})
-

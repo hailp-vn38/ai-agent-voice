@@ -54,7 +54,7 @@ for (const [name, createBackend] of adapters) {
   describe(`${name} contract`, () => {
     it('reads, searches without Vietnamese diacritics, and applies a revisioned write', async () => {
       const backend = createBackend()
-      expect((await backend.tree('wiki')).items.map(item => item.path)).toEqual(['wiki/gardening.md'])
+      expect((await backend.tree('wiki')).items.filter(item => item.type === 'file').map(item => item.path)).toEqual(['wiki/gardening.md'])
       expect((await backend.read('wiki/gardening.md')).body).toContain('cà chua')
       expect((await backend.search('ca chua')).items.map(item => item.path)).toEqual(['wiki/gardening.md'])
 
@@ -71,7 +71,7 @@ describe('MemoryKnowledgeBackend', () => {
       pages: [{ id: 'wiki/gardening.md', path: 'wiki/gardening.md', title: 'Gardening', body: 'Trồng cà chua trong nhà kính.', revision: 1 }],
     })
 
-    expect((await backend.tree('wiki')).items.map(item => item.path)).toEqual(['wiki/gardening.md'])
+    expect((await backend.tree('wiki')).items.filter(item => item.type === 'file').map(item => item.path)).toEqual(['wiki/gardening.md'])
     expect((await backend.read('wiki/gardening.md')).body).toContain('cà chua')
     expect((await backend.search('ca chua')).items.map(item => item.path)).toEqual(['wiki/gardening.md'])
   })
