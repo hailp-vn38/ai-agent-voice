@@ -4,10 +4,11 @@ use llm_wiki::{
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use std::collections::HashMap;
 use std::io::Write;
 use std::path::{Component, Path, PathBuf};
 use std::sync::Mutex;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use thiserror::Error;
 use tokio::sync::broadcast;
 
@@ -264,7 +265,9 @@ pub struct Applied {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum VaultEvent {
     Changed { paths: Vec<String>, origin: Origin },
+    External { paths: Vec<String> },
     Reindexed { stats: ReindexStats },
+    Lock { writable: bool },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -308,6 +311,45 @@ pub struct Vault {
     engine: WikiEngine,
     write_lock: Mutex<()>,
     events: broadcast::Sender<VaultEvent>,
+    lock_file: Mutex<Option<std::fs::File>>,
+    writable: AtomicBool,
+    self_writes: Mutex<HashMap<PathBuf, Option<Revision>>>,
+}
+
+fn try_lock_vault(root: &Path) -> Result<Option<std::fs::File>, VaultError> {
+    let path = root.join(".wiki-desktop.lock");
+    let mut options = std::fs::OpenOptions::new();
+    options.read(true).write(true).create(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let file = options
+        .open(path)
+        .map_err(|error| VaultError::Io(error.to_string()))?;
+    #[cfg(unix)]
+    {
+        use std::os::fd::AsRawFd;
+        let result = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
+        if result == 0 {
+            Ok(Some(file))
+        } else {
+            let error = std::io::Error::last_os_error();
+            if error.kind() == std::io::ErrorKind::WouldBlock {
+                Ok(None)
+            } else {
+                Err(VaultError::Io(error.to_string()))
+            }
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = file;
+        Err(VaultError::Io(
+            "advisory vault locking requires a Unix platform".into(),
+        ))
+    }
 }
 
 #[derive(Default)]
@@ -318,6 +360,16 @@ struct ChangePlan {
 struct FileSnapshot {
     relative: PathBuf,
     content: Option<Vec<u8>>,
+}
+
+struct DirectorySnapshot {
+    relative: PathBuf,
+    existed: bool,
+}
+
+struct SnapshotSet {
+    files: Vec<FileSnapshot>,
+    directories: Vec<DirectorySnapshot>,
 }
 
 static TEMP_FILE_ID: AtomicU64 = AtomicU64::new(0);
@@ -424,6 +476,8 @@ impl Vault {
                 return Err(VaultError::InvalidPath(scoped_root.display().to_string()));
             }
         }
+        let lock_file = try_lock_vault(&root)?;
+        let writable = lock_file.is_some();
         let engine = WikiEngine::open_with_config(WikiConfig::new(&root))?;
         let (events, _) = broadcast::channel(64);
         Ok(Self {
@@ -431,7 +485,34 @@ impl Vault {
             engine,
             write_lock: Mutex::new(()),
             events,
+            lock_file: Mutex::new(lock_file),
+            writable: AtomicBool::new(writable),
+            self_writes: Mutex::new(HashMap::new()),
         })
+    }
+
+    pub fn is_writable(&self) -> bool {
+        self.writable.load(Ordering::Acquire)
+    }
+
+    pub fn try_acquire_write(&self) -> Result<bool, VaultError> {
+        if self.is_writable() {
+            return Ok(true);
+        }
+        let mut lock_file = self
+            .lock_file
+            .lock()
+            .map_err(|_| VaultError::Io("vault lock handle poisoned".into()))?;
+        if self.is_writable() {
+            return Ok(true);
+        }
+        if let Some(file) = try_lock_vault(&self.root)? {
+            *lock_file = Some(file);
+            self.writable.store(true, Ordering::Release);
+            let _ = self.events.send(VaultEvent::Lock { writable: true });
+            return Ok(true);
+        }
+        Ok(false)
     }
 
     pub fn subscribe(&self) -> broadcast::Receiver<VaultEvent> {
@@ -443,6 +524,9 @@ impl Vault {
     }
 
     pub fn apply_from(&self, origin: Origin, change: Change) -> Result<Applied, VaultError> {
+        if !self.is_writable() {
+            return Err(VaultError::ReadOnly);
+        }
         let _guard = self
             .write_lock
             .lock()
@@ -466,6 +550,7 @@ impl Vault {
         event_paths.push("wiki/log.md".into());
         event_paths.sort();
         event_paths.dedup();
+        let _ = self.record_self_writes(&event_paths);
         let _ = self.events.send(VaultEvent::Changed {
             paths: event_paths.clone(),
             origin,
@@ -474,6 +559,76 @@ impl Vault {
             paths: event_paths,
             revision,
         })
+    }
+
+    pub fn notice_external(
+        &self,
+        paths: impl IntoIterator<Item = DocPath>,
+    ) -> Result<bool, VaultError> {
+        if !self.is_writable() {
+            return Err(VaultError::ReadOnly);
+        }
+        let _guard = self
+            .write_lock
+            .lock()
+            .map_err(|_| VaultError::Io("vault write lock poisoned".into()))?;
+        let paths: Vec<PathBuf> = paths
+            .into_iter()
+            .map(|path| path.vault_relative())
+            .collect();
+        if paths.is_empty() {
+            return Ok(false);
+        }
+        let mut external = Vec::new();
+        let mut self_writes = self
+            .self_writes
+            .lock()
+            .map_err(|_| VaultError::Io("vault self-write set poisoned".into()))?;
+        for relative in paths {
+            let current = match std::fs::read(self.root.join(&relative)) {
+                Ok(content) => Some(Revision::of(&content)),
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+                Err(error) => return Err(VaultError::Io(error.to_string())),
+            };
+            match self_writes.get(&relative) {
+                Some(written) if written == &current => continue,
+                Some(_) => {
+                    self_writes.remove(&relative);
+                }
+                None => {}
+            }
+            external.push(relative);
+        }
+        drop(self_writes);
+        if external.is_empty() {
+            return Ok(false);
+        }
+        self.engine.sync_index()?;
+        self.engine.rebuild_or_sync_index_md()?;
+        let _ = self.record_self_writes(&["wiki/index.md".into()]);
+        let external: Vec<String> = external
+            .iter()
+            .map(|path| path.display().to_string())
+            .collect();
+        let _ = self.events.send(VaultEvent::External { paths: external });
+        Ok(true)
+    }
+
+    fn record_self_writes(&self, paths: &[String]) -> Result<(), VaultError> {
+        let mut self_writes = self
+            .self_writes
+            .lock()
+            .map_err(|_| VaultError::Io("vault self-write set poisoned".into()))?;
+        for path in paths {
+            let relative = PathBuf::from(path);
+            let revision = match std::fs::read(self.root.join(&relative)) {
+                Ok(content) => Some(Revision::of(&content)),
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+                Err(error) => return Err(VaultError::Io(error.to_string())),
+            };
+            self_writes.insert(relative, revision);
+        }
+        Ok(())
     }
 
     fn prepare_change(&self, change: &Change) -> Result<ChangePlan, VaultError> {
@@ -760,8 +915,8 @@ impl Vault {
         write_atomic(&target, content)
     }
 
-    fn snapshot_paths(&self, paths: &[PathBuf]) -> Result<Vec<FileSnapshot>, VaultError> {
-        paths
+    fn snapshot_paths(&self, paths: &[PathBuf]) -> Result<SnapshotSet, VaultError> {
+        let files = paths
             .iter()
             .map(|relative| {
                 let absolute = self.root.join(relative);
@@ -775,11 +930,32 @@ impl Vault {
                     content,
                 })
             })
-            .collect()
+            .collect::<Result<Vec<_>, VaultError>>()?;
+        let mut directories = std::collections::BTreeMap::new();
+        for relative in paths {
+            let mut parent = relative.parent();
+            while let Some(directory) = parent {
+                if directory.as_os_str().is_empty() {
+                    break;
+                }
+                let absolute = self.root.join(directory);
+                directories
+                    .entry(directory.to_path_buf())
+                    .or_insert_with(|| DirectorySnapshot {
+                        relative: directory.to_path_buf(),
+                        existed: absolute.is_dir(),
+                    });
+                parent = directory.parent();
+            }
+        }
+        Ok(SnapshotSet {
+            files,
+            directories: directories.into_values().collect(),
+        })
     }
 
-    fn restore_snapshots(&self, snapshots: Vec<FileSnapshot>) -> Result<(), VaultError> {
-        for snapshot in snapshots {
+    fn restore_snapshots(&self, snapshots: SnapshotSet) -> Result<(), VaultError> {
+        for snapshot in snapshots.files {
             let absolute = self.root.join(&snapshot.relative);
             if let Some(content) = snapshot.content {
                 if let Some(parent) = absolute.parent() {
@@ -793,6 +969,19 @@ impl Vault {
             }
         }
         self.engine.sync_index()?;
+        let mut directories = snapshots.directories;
+        directories.sort_by_key(|entry| std::cmp::Reverse(entry.relative.components().count()));
+        for directory in directories.into_iter().filter(|entry| !entry.existed) {
+            let absolute = self.root.join(directory.relative);
+            if absolute.is_dir()
+                && std::fs::read_dir(&absolute)
+                    .map_err(|error| VaultError::Io(error.to_string()))?
+                    .next()
+                    .is_none()
+            {
+                std::fs::remove_dir(absolute).map_err(|error| VaultError::Io(error.to_string()))?;
+            }
+        }
         Ok(())
     }
 
@@ -1313,6 +1502,7 @@ mod tests {
                 .is_err()
         );
         assert!(!temp.path().join(first.vault_relative()).exists());
+        assert!(!temp.path().join("sources/batch").exists());
         assert!(vault.search("First batch file").unwrap().is_empty());
         assert!(events.try_recv().is_err());
     }
@@ -1343,6 +1533,118 @@ mod tests {
                 to: moved
             }),
             Err(super::VaultError::InvalidPath(_))
+        ));
+    }
+
+    #[test]
+    fn a_second_vault_is_read_only_until_the_current_writer_releases_the_lock() {
+        let temp = tempdir().unwrap();
+        let first = Vault::open(VaultConfig::new(temp.path())).unwrap();
+        let second = Vault::open(VaultConfig::new(temp.path())).unwrap();
+        let path = DocPath::parse(Scope::Wiki, "lock/read-only.md").unwrap();
+        let mut events = second.subscribe();
+
+        assert!(first.is_writable());
+        assert!(!second.is_writable());
+        assert!(matches!(
+            second.apply(Change::Write {
+                path,
+                content: "# Must not write".into(),
+                expect: None,
+            }),
+            Err(super::VaultError::ReadOnly)
+        ));
+        drop(first);
+        assert!(second.try_acquire_write().unwrap());
+        assert!(second.is_writable());
+        assert!(matches!(
+            events.try_recv().unwrap(),
+            super::VaultEvent::Lock { writable: true }
+        ));
+    }
+
+    #[test]
+    fn subprocess_vault_lock_holder() {
+        let Some(root) = std::env::var_os("WIKI_CORE_LOCK_CHILD_ROOT") else {
+            return;
+        };
+        let root = std::path::PathBuf::from(root);
+        let vault = Vault::open(VaultConfig::new(&root)).unwrap();
+        assert!(vault.is_writable());
+        fs::write(root.join("child-ready"), "ready").unwrap();
+        for _ in 0..500 {
+            if root.join("child-release").exists() {
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        panic!("parent did not release the subprocess lock holder");
+    }
+
+    #[test]
+    fn a_separate_process_holding_the_lock_forces_read_only_mode() {
+        let temp = tempdir().unwrap();
+        let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+            .arg("--exact")
+            .arg("tests::subprocess_vault_lock_holder")
+            .arg("--nocapture")
+            .env("WIKI_CORE_LOCK_CHILD_ROOT", temp.path())
+            .spawn()
+            .unwrap();
+        let ready = temp.path().join("child-ready");
+        for _ in 0..500 {
+            if ready.exists() {
+                break;
+            }
+            assert!(
+                child.try_wait().unwrap().is_none(),
+                "lock holder exited before acquiring lock"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert!(ready.exists(), "subprocess never acquired the vault lock");
+        let vault = Vault::open(VaultConfig::new(temp.path())).unwrap();
+        assert!(!vault.is_writable());
+        fs::write(temp.path().join("child-release"), "release").unwrap();
+        assert!(child.wait().unwrap().success());
+        assert!(vault.try_acquire_write().unwrap());
+        assert!(vault.is_writable());
+    }
+
+    #[test]
+    fn external_changes_refresh_search_and_app_writes_are_suppressed() {
+        let temp = tempdir().unwrap();
+        let vault = Vault::open(VaultConfig::new(temp.path())).unwrap();
+        let path = DocPath::parse(Scope::Wiki, "concepts/external.md").unwrap();
+        let mut events = vault.subscribe();
+        vault
+            .apply(Change::Write {
+                path: path.clone(),
+                content: "# Original\n\nWritten by this vault.".into(),
+                expect: None,
+            })
+            .unwrap();
+        let _ = events.try_recv().unwrap();
+        assert!(!vault.notice_external([path.clone()]).unwrap());
+        assert!(!vault.notice_external([path.clone()]).unwrap());
+        assert!(events.try_recv().is_err());
+
+        fs::write(
+            temp.path().join(path.vault_relative()),
+            "# External\n\nChanged by another application.",
+        )
+        .unwrap();
+        assert!(vault.notice_external([path]).unwrap());
+        assert!(
+            vault
+                .search("another application")
+                .unwrap()
+                .iter()
+                .any(|hit| hit.path == "wiki/concepts/external.md")
+        );
+        assert!(matches!(
+            events.try_recv().unwrap(),
+            super::VaultEvent::External { .. }
         ));
     }
 }

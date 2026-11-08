@@ -1,6 +1,6 @@
 # 03: Vault: một writer giữa các process và thay đổi bên ngoài
 
-Status: ready-for-agent
+Status: resolved
 Blocked by: 02
 Spec: ../spec.md (user stories 31–33, 44)
 
@@ -18,7 +18,12 @@ Bảo đảm chỉ một process ghi kho tri thức, và `Vault` nhận được
 
 ## Tiêu chí xong
 
-- [ ] Hai `Vault` trên cùng thư mục (mô phỏng hai process): cái thứ hai bị `ReadOnly` khi ghi. Cái thứ nhất đóng thì cái thứ hai lấy được quyền ghi.
-- [ ] Test có spawn process con giữ lock để chứng minh `flock` hoạt động giữa các process.
-- [ ] Sửa file trực tiếp trên đĩa rồi gọi `notice_external` → `search` thấy nội dung mới và nhận được `External`.
-- [ ] Path vừa được `apply` ghi xong rồi gọi `notice_external` → không phát `External`.
+- [x] Hai `Vault` trên cùng thư mục (mô phỏng hai process): cái thứ hai bị `ReadOnly` khi ghi. Cái thứ nhất đóng thì cái thứ hai lấy được quyền ghi.
+- [x] Test có spawn process con giữ lock để chứng minh `flock` hoạt động giữa các process.
+- [x] Sửa file trực tiếp trên đĩa rồi gọi `notice_external` → `search` thấy nội dung mới và nhận được `External`.
+- [x] Path vừa được `apply` ghi xong rồi gọi `notice_external` → không phát `External`.
+
+## Comments
+
+- Implemented the advisory writer lock, read-only writes, lock-state event, external index refresh, and hash-based suppression for files just written by this vault.
+- `wiki-core` tests cover same-process handoff, a spawned process holding the lock, external search/event delivery, and self-write suppression. The agent reports 13 wiki-core tests, locked check/clippy, and touched-file rustfmt passing.

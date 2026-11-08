@@ -5279,6 +5279,7 @@ dependencies = [
 name = "wiki-core"
 version = "0.1.0"
 dependencies = [
+ "libc",
  "llm-wiki-rs",
  "serde",
  "serde_json",
