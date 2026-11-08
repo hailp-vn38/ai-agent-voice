@@ -1,7 +1,7 @@
 import { mount } from '@vue/test-utils'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { defineComponent, h, ref } from 'vue'
-import { useDragReorder } from './useDragReorder'
+import { useDragReorder } from '@vela/knowledge-ui/components/useDragReorder'
 
 beforeEach(() => { vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'requestAnimationFrame', 'cancelAnimationFrame'] }) })
 afterEach(() => { vi.useRealTimers() })

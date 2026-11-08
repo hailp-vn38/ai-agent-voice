@@ -5,9 +5,13 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
-    "./components/*": "./src/*",
+    "./components/*.vue": "./src/*.vue",
+    "./components/mermaidRenderer": "./src/mermaidRenderer.ts",
+    "./components/tradingChartRenderer": "./src/tradingChartRenderer.ts",
+    "./components/useDragReorder": "./src/useDragReorder.ts",
+    "./components/useKnowledgeWorkspace": "./src/useKnowledgeWorkspace.ts",
     "./styles/*": "./src/styles/*",
-    "./lib/*": "./src/lib/*"
+    "./lib/markdown": "./src/lib/markdown.ts"
   },
   "peerDependencies": {
     "@lucide/vue": "1.48.0",

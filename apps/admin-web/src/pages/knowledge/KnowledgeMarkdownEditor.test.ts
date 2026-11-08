@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { linePrefixEdit, listContinuation, textStats, wikiLinkQuery, wrapEdit } from './KnowledgeMarkdownEditor.vue'
+import { linePrefixEdit, listContinuation, textStats, wikiLinkQuery, wrapEdit } from '@vela/knowledge-ui/components/KnowledgeMarkdownEditor.vue'
 
 const run = (value: string, e: { text: string; start: number; end: number }) =>
   value.slice(0, e.start) + e.text + value.slice(e.end)

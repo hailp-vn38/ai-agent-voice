@@ -1,9 +1,12 @@
-import { ref } from 'vue'
+import { inject, ref } from 'vue'
+import { KNOWLEDGE_CHAT_PROVIDER_KEY } from './integration'
 
 export type WikiChatFile = { path: string; title: string }
 
 /** Optional chat integration point. The desktop package has no chat adapter in v1. */
 export function useWikiChat() {
+  const provider = inject(KNOWLEDGE_CHAT_PROVIDER_KEY, null)
+  if (provider) return provider()
   const messages = ref<unknown[]>([])
   const conversationId = ref<string | null>(null)
   const loadingConversation = ref(false)

@@ -58,8 +58,8 @@ import { Button } from '@/components/ui/button'
 import { useI18n } from '@/composables/useI18n'
 import { useTheme } from '@/composables/useTheme'
 import { renderMarkdown } from '@/lib/markdown'
-import { renderMermaidBlocks } from '@/pages/knowledge/mermaidRenderer'
-import { renderTradingChartBlocks } from '@/pages/knowledge/tradingChartRenderer'
+import { renderMermaidBlocks } from '@vela/knowledge-ui/components/mermaidRenderer'
+import { renderTradingChartBlocks } from '@vela/knowledge-ui/components/tradingChartRenderer'
 import '@/pages/knowledge/knowledge-reader.css'
 
 const { t } = useI18n()

@@ -1,6 +1,6 @@
 import { mount } from '@vue/test-utils'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
-import RightPanelTabs from './RightPanelTabs.vue'
+import RightPanelTabs from '@vela/knowledge-ui/components/RightPanelTabs.vue'
 
 beforeEach(() => { vi.useFakeTimers() })
 afterEach(() => { vi.useRealTimers() })

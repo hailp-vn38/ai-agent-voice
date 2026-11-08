@@ -2,7 +2,7 @@ import { flushPromises, mount } from '@vue/test-utils'
 import { beforeEach, expect, it, vi } from 'vitest'
 import { ApiError } from '@/api/errors'
 import { setLocale, translate } from '@/composables/useI18n'
-import KnowledgeGraph from './KnowledgeGraph.vue'
+import KnowledgeGraph from '@vela/knowledge-ui/components/KnowledgeGraph.vue'
 import { KNOWLEDGE_BACKEND_KEY, MemoryKnowledgeBackend, type KnowledgeGraph as KnowledgeGraphData } from './knowledgeBackend'
 
 const { events, drawMock, fitMock, centerMock } = vi.hoisted(() => ({

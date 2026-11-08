@@ -1,4 +1,4 @@
-import { inject, type InjectionKey, type Ref } from 'vue'
+import { inject, type Component, type InjectionKey, type Ref } from 'vue'
 import { knowledgeMessages } from './i18n'
 
 export type KnowledgeTranslator = (key: string, params?: Record<string, string | number>) => string
@@ -10,6 +10,9 @@ export const KNOWLEDGE_NAVIGATION_KEY: InjectionKey<{
   query: Readonly<Ref<Record<string, unknown>>>
   replace: (query: Record<string, unknown>) => void
 }> = Symbol('KnowledgeNavigation')
+/** App-specific conversation logic is injected so the shared workspace stays transport agnostic. */
+export const KNOWLEDGE_CHAT_PROVIDER_KEY: InjectionKey<() => any> = Symbol('KnowledgeChatProvider')
+export const KNOWLEDGE_CHAT_PANEL_KEY: InjectionKey<Component> = Symbol('KnowledgeChatPanel')
 
 
 

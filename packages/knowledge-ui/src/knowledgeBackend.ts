@@ -334,7 +334,7 @@ class MemoryAdminKnowledgeBackend implements AdminKnowledgeBackend {
   }
 }
 
-function adminPath(path: DocPath): string {
+export function adminPath(path: DocPath): string {
   return `${path.scope === 'raw' ? 'raw' : 'wiki'}/${path.relative}`
 }
 
@@ -382,7 +382,7 @@ async function editContent(content: string, edits: TextEdit[]) {
   return lines.join('\n')
 }
 
-abstract class VaultKnowledgeBackend implements KnowledgeBackend, AdminKnowledgeExtension {
+export abstract class VaultKnowledgeBackend implements KnowledgeBackend, AdminKnowledgeExtension {
   abstract readonly capabilities: { chat: boolean }
   readonly admin: AdminKnowledgeBackend
   protected readonly documentIdsByVaultPath = new Map<string, string>()

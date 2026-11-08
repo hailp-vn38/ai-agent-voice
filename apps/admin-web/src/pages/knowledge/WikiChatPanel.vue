@@ -5,7 +5,7 @@ import { renderMarkdown } from '@/lib/markdown'
 import ConfirmDialog from '@/components/admin/ConfirmDialog.vue'
 import { useI18n } from '@/composables/useI18n'
 import { useTheme } from '@/composables/useTheme'
-import { renderMermaidBlocks } from './mermaidRenderer'
+import { renderMermaidBlocks } from '@vela/knowledge-ui/components/mermaidRenderer'
 import { MAX_PINNED_FILES, type WikiChatFile, type WikiChatMessage } from './useWikiChat'
 import type { WikiConversationSummary } from '@/api/wiki-chat'
 

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, inject, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { Network, Link2, Copy, Download, FileText, Folder, FolderOpen, FolderPlus, FolderUp, FilePlus2, Pencil, ChevronsUp, BookOpen, ArrowUpRight, ChevronDown, ChevronRight, Search, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, Columns2, SquarePlus, X } from '@lucide/vue'
 import { renderMarkdown, markdownOutline } from './lib/markdown'
 import { renderMermaidBlocks } from './mermaidRenderer'
@@ -10,9 +10,8 @@ import KnowledgeGraph from './KnowledgeGraph.vue'
 import { formatApiError, isApiError } from './lib/errors'
 import { Button } from './ui/button'
 import { ActionMenu, MenuItem } from './ui/action-menu'
-import { useI18n, useKnowledgeNavigation } from './integration'
+import { KNOWLEDGE_CHAT_PANEL_KEY, useI18n, useKnowledgeNavigation } from './integration'
 import { useWikiChat, type WikiChatFile } from './useWikiChat'
-import WikiChatPanel from './WikiChatPanel.vue'
 import RightPanelTabs, { type RightTab } from './RightPanelTabs.vue'
 import { movedOrder, useDragReorder } from './useDragReorder'
 import KnowledgeNoteView, { noteIntroduction } from './KnowledgeNoteView.vue'
@@ -60,6 +59,7 @@ function rawFromVault(page: { path: string; title: string; content: string; revi
 }
 
 const { t } = useI18n()
+const WikiChatPanelComponent = inject(KNOWLEDGE_CHAT_PANEL_KEY, null)
 const { dark } = useTheme()
 const { route, router } = useKnowledgeNavigation()
 const knowledgeBackend = useKnowledgeBackend()
@@ -2434,7 +2434,7 @@ onBeforeUnmount(() => stopListeningForKnowledgeChanges?.())
       aria-orientation="vertical" :aria-label="t('knowledgeV3.resizeRightPanel')"
       @pointerdown="startPanelResize($event, 'right')"
       @keydown.left.prevent="nudgePanel('right', -16)" @keydown.right.prevent="nudgePanel('right', 16)"></div>
-    <WikiChatPanel v-if="knowledgeBackend.capabilities.chat && chatMounted" v-show="rightPanel === 'chat'" :messages="wikiChatMessages" :busy="wikiChatBusy"
+    <component :is="WikiChatPanelComponent" v-if="WikiChatPanelComponent && knowledgeBackend.capabilities.chat && chatMounted" v-show="rightPanel === 'chat'" :messages="wikiChatMessages" :busy="wikiChatBusy"
       :loading-conversation="wikiChatLoadingConversation"
       :conversations="wikiChatConversations" :conversation-id="wikiChatConversationId"
       :loading-conversations="wikiChatLoadingConversations" :conversation-list-error="wikiChatConversationListError"
@@ -2454,7 +2454,7 @@ onBeforeUnmount(() => stopListeningForKnowledgeChanges?.())
       <template v-if="viewMode !== 'graph'" #title>
         <RightPanelTabs active="chat" :order="rightTabOrder" :capabilities="knowledgeBackend.capabilities" @select="selectRightTab" @reorder="reorderRightTabs" />
       </template>
-    </WikiChatPanel>
+    </component>
     <button v-if="knowledgeBackend.capabilities.chat" type="button" class="wiki-chat-drawer-toggle"
       :aria-label="chatDrawerOpen ? t('knowledgeV3.chatCloseDrawer') : t('knowledgeV3.chatOpenDrawer')"
       :aria-expanded="chatDrawerOpen" aria-controls="wiki-chat-panel" @click="toggleChatDrawer">

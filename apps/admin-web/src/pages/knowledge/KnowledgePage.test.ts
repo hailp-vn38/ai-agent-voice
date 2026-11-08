@@ -4,7 +4,7 @@ import { setLocale } from '@/composables/useI18n'
 import { ApiError } from '@/api/errors'
 import KnowledgePage from './KnowledgePage.vue'
 import WikiChatPanel from './WikiChatPanel.vue'
-import KnowledgeGraph from './KnowledgeGraph.vue'
+import KnowledgeGraph from '@vela/knowledge-ui/components/KnowledgeGraph.vue'
 import {
   HttpKnowledgeBackend,
   KNOWLEDGE_BACKEND_KEY,
@@ -31,7 +31,7 @@ vi.mock('vue-router', () => ({
   useRoute: () => ({ query: routeQuery }),
   useRouter: () => ({ replace: routerReplaceMock }),
 }))
-vi.mock('./KnowledgeGraph.vue', async () => {
+vi.mock('@vela/knowledge-ui/components/KnowledgeGraph.vue', async () => {
   const { defineComponent, h } = await import('vue')
   return { default: defineComponent({
     props: { centerId: String, reloadToken: Number, focusMode: Boolean, answerGraph: Object, inactive: Boolean },

@@ -1,7 +1,7 @@
 import { mount } from '@vue/test-utils'
 import { beforeEach, expect, it, vi } from 'vitest'
 import { setLocale } from '@/composables/useI18n'
-import { renderMermaidBlocks } from './mermaidRenderer'
+import { renderMermaidBlocks } from '@vela/knowledge-ui/components/mermaidRenderer'
 import WikiChatPanel from './WikiChatPanel.vue'
 import type { WikiChatMessage } from './useWikiChat'
 import type { WikiConversationSummary } from '@/api/wiki-chat'
@@ -13,7 +13,7 @@ function assistant(status: WikiChatMessage['status']): WikiChatMessage {
   }
 }
 
-vi.mock('./mermaidRenderer', () => ({ renderMermaidBlocks: vi.fn(() => Promise.resolve()) }))
+vi.mock('@vela/knowledge-ui/components/mermaidRenderer', () => ({ renderMermaidBlocks: vi.fn(() => Promise.resolve()) }))
 
 beforeEach(() => {
   setLocale('en')
