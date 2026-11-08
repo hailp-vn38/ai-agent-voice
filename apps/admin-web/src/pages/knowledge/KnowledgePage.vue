@@ -20,7 +20,8 @@ import { movedOrder, useDragReorder } from './useDragReorder'
 import KnowledgeNoteView, { noteIntroduction } from './KnowledgeNoteView.vue'
 import KnowledgeMarkdownEditor from './KnowledgeMarkdownEditor.vue'
 import { useKnowledgeWorkspace, type NoteDoc, type Page, type RawFile, type TabRef, type TreeSpace, type WorkspacePane, type WorkspaceTab } from './useKnowledgeWorkspace'
-import { useKnowledgeBackend } from './knowledgeBackend'
+import { useKnowledgeBackend, useOptionalAdminKnowledgeBackend } from './knowledgeBackend'
+import { docPath, type Scope, type VaultTreeNode } from './knowledgeBackend'
 
 type SearchMode = 'hybrid' | 'lex' | 'vec'
 type Hit = {
@@ -41,11 +42,44 @@ type OpenMode = 'current' | 'tab' | 'side'
 type Health = { health: string; document_count: number; last_complete_scan_at: number | null }
 type Source = { id: string; version: number; name: string; provenance: string; sha256: string }
 
+function toDocPath(path: string, space: 'raw' | 'wiki') {
+  const relative = path.replace(/^(?:wiki|raw|sources)\//, '')
+  return docPath(space, relative)
+}
+function fromVaultTree(node: VaultTreeNode, space: 'raw' | 'wiki'): TreeNode[] {
+  return node.children.flatMap(child => {
+    const path = space === 'raw' ? child.path.replace(/^sources\//, 'raw/') : child.path
+    const current: TreeNode = { type: child.is_directory ? 'folder' : 'file', space, path,
+      name: child.name, editable: true, ...(!child.is_directory ? { id: path } : {}) }
+    return [current, ...fromVaultTree(child, space)]
+  })
+}
+function pageFromVault(page: { path: string; title: string; content: string; revision: string }): Page {
+  return { id: page.path, title: page.title, body: page.content, revision: page.revision, status: '', source_ref: null }
+}
+function rawFromVault(page: { path: string; title: string; content: string; revision: string }): RawFile {
+  return { path: page.path.replace(/^sources\//, 'raw/'), body: page.content, sha256: page.revision }
+}
+
 const { t } = useI18n()
 const { dark } = useTheme()
 const route = useRoute()
 const router = useRouter()
 const knowledgeBackend = useKnowledgeBackend()
+const adminBackend = useOptionalAdminKnowledgeBackend()
+async function readKnowledge(path: string, space: TreeSpace): Promise<Page | RawFile> {
+  if (space === 'drafts') {
+    if (!adminBackend) throw new Error('Drafts are available in Admin Web only')
+    return await adminBackend.read(path, space) as Page
+  }
+  try {
+    const page = await knowledgeBackend.read(toDocPath(path, space), { from_line: 0 })
+    return space === 'raw' ? rawFromVault(page) : pageFromVault(page)
+  } catch (cause) {
+    if (adminBackend && !path.endsWith('.md')) return await adminBackend.read(path, space) as Page
+    throw cause
+  }
+}
 const {
   messages: wikiChatMessages,
   conversationId: wikiChatConversationId,
@@ -122,6 +156,7 @@ watch(() => route.query.conversation, async rawId => {
   else if (result === 'failed') selectRightTab('chat')
 }, { immediate: true })
 const graphControls = ref<{ focusNode: (id: string, showInspector?: boolean) => void; highlightNode: (id: string | null) => void } | null>(null)
+const pendingGraphFocus = ref<string | null>(null)
 const highlightedChatNode = ref<string | null>(null)
 const MIN_WIDTH_TO_SPLIT_FOR_CITATION = 600
 const readingRightTab = ref<RightTab>('outline')
@@ -134,7 +169,13 @@ watch(() => wikiChatMessages.value.length, count => {
 })
 function setGraphControls(instance: unknown) {
   // Moving Graph between panes mounts the new instance before the old ref clears.
-  if (instance) graphControls.value = instance as NonNullable<typeof graphControls.value>
+  if (instance) {
+    graphControls.value = instance as NonNullable<typeof graphControls.value>
+    if (pendingGraphFocus.value) {
+      graphControls.value.focusNode(pendingGraphFocus.value, false)
+      pendingGraphFocus.value = null
+    }
+  }
 }
 
 const VAULT_SPACE_KEY = 'voice-agent-knowledge-vault-space'
@@ -302,7 +343,7 @@ async function openCitation(path: string) {
   try {
     if (path.startsWith('sources/')) {
       const rawPath = 'raw/' + path.slice('sources/'.length)
-      await knowledgeBackend.read(rawPath, 'raw')
+      await readKnowledge(rawPath, 'raw')
     } else if (await answerPageMissing(
       tree.value.find(node => node.space === 'wiki' && node.path === path)?.id ?? path,
     )) return
@@ -312,6 +353,12 @@ async function openCitation(path: string) {
     return
   }
   // The page itself opens next, so Graph only marks the node instead of covering itself with its card.
+  if (!graphControls.value) {
+    pendingGraphFocus.value = path
+    await showGraph()
+    await nextTick()
+    await nextTick()
+  }
   graphControls.value?.focusNode(path, false)
   if (path.startsWith('sources/')) { await openSourceCitation(path); return }
   const open = findOpenTab(tab => tabHoldsPath(tab, 'wiki', path))
@@ -545,7 +592,8 @@ async function confirmInlineFolder() {
   error.value = ''
   try {
     const parts = segmentsOfPath(value, false)
-    const created = await knowledgeBackend.apply({ type: 'create_folder', space: 'raw', parentPath: base, name: parts.join('/') }) as { path: string }
+    if (!adminBackend) throw new Error('Folder creation is available in Admin Web only')
+    const created = await adminBackend.apply({ type: 'create_folder', space: 'raw', parentPath: base, name: parts.join('/') }) as { path: string }
     openFolders.value = new Set([...openFolders.value, ...parts.map((_, index) =>
       base + '/' + parts.slice(0, index + 1).join('/')), base])
     cancelInlineNote()
@@ -605,8 +653,8 @@ async function createPendingRawFile() {
   busy.value = true
   error.value = ''
   try {
-    rawFile.value = await knowledgeBackend.apply({ type: 'write', path: pending.path, folderPath: pending.folder,
-      fileName: pending.fileName, body: body.value }) as RawFile
+    await knowledgeBackend.apply({ type: 'write', path: toDocPath(pending.path, 'raw'), content: body.value })
+    rawFile.value = await readKnowledge(pending.path, 'raw') as RawFile
     pendingRawFile.value = null
     selectedPath.value = rawFile.value.path || pending.path
     recordRecentItem({ space: 'raw', path: selectedPath.value, title: title.value })
@@ -771,7 +819,7 @@ async function uploadRawBatch(items: UploadItem[], targetFolderPath?: string) {
     let chunkBytes = 0
     const flush = async () => {
       if (chunk.length === 0) return
-      const result = await knowledgeBackend.apply({ type: 'import_raw', folder, files: chunk }) as {
+      const result = await adminBackend!.apply({ type: 'import_raw', folder, files: chunk }) as {
         created: string[]; skipped: string[]; failed: Array<{ path: string }>
       }
       created += result.created.length
@@ -856,8 +904,9 @@ async function uploadSingleFiles(files: File[], targetFolderPath?: string) {
     let lastFileName = ''
     for (const item of prepared) {
       const content = await readFileText(item.file)
-      lastCreated = await knowledgeBackend.apply({ type: 'write', path: `raw/${folder}/${item.fileName}`,
-        folderPath: folder, fileName: item.fileName, body: content }) as RawFile
+      const path = `${folder}/${item.fileName}`
+      await knowledgeBackend.apply({ type: 'write', path: toDocPath(path, 'raw'), content })
+      lastCreated = await readKnowledge(path, 'raw') as RawFile
       lastFileName = item.fileName
     }
     if (lastCreated) {
@@ -1007,7 +1056,7 @@ async function openWikiPage(id: string, mode: OpenMode, source: WorkspacePane = 
 }
 async function answerPageMissing(id: string): Promise<boolean> {
   try {
-    await knowledgeBackend.read(id, 'wiki')
+    await readKnowledge(id, 'wiki')
     return false
   } catch (cause) {
     if (!isApiError(cause) || cause.status !== 404) throw cause
@@ -1422,11 +1471,11 @@ async function loadBackgroundTab(tab: WorkspaceTab) {
   tab.loading = true
   try {
     if (target.space === 'raw') {
-      const file = await knowledgeBackend.read(target.path, 'raw') as RawFile
+      const file = await readKnowledge(target.path, 'raw') as RawFile
       tab.doc = { space: 'raw', path: file.path || target.path, title: target.title, body: file.body,
         page: null, rawFile: file, readOnly: false, sourceRef: '' }
     } else {
-      const page = await knowledgeBackend.read(target.id || target.path, 'wiki') as Page
+      const page = await readKnowledge(target.id || target.path, target.space) as Page
       tab.doc = { space: target.space, path: target.path, title: page.title, body: page.body,
         page, rawFile: null, readOnly: false, sourceRef: page.source_ref ?? '' }
     }
@@ -1454,7 +1503,7 @@ function newDraft() {
 }
 async function refreshSources() {
   try {
-    sources.value = await knowledgeBackend.sources() as Source[]
+    sources.value = adminBackend ? await adminBackend.sources() as Source[] : []
   } catch (cause) { error.value = formatApiError(cause) }
 }
 async function importSource() {
@@ -1462,7 +1511,8 @@ async function importSource() {
   busy.value = true
   error.value = ''
   try {
-    const source = await knowledgeBackend.apply({ type: 'create_source', name: sourceName.value,
+    if (!adminBackend) throw new Error('Source registry is available in Admin Web only')
+    const source = await adminBackend.apply({ type: 'create_source', name: sourceName.value,
       provenance: sourceProvenance.value, content: sourceContent.value }) as Source
     sourceRef.value = `${source.id}:${source.version}`
     sourceName.value = ''
@@ -1478,7 +1528,8 @@ async function publish() {
   busy.value = true
   error.value = ''
   try {
-    const record = await knowledgeBackend.apply({ type: 'publish', path: selected.value.id,
+    if (!adminBackend) throw new Error('Publishing is available in Admin Web only')
+    const record = await adminBackend.apply({ type: 'publish', path: selected.value.id,
       expect: selected.value.revision, sourceRef: sourceRef.value.trim() }) as Page
     selected.value = record
     if (activeSpace.value === 'drafts') {
@@ -1496,18 +1547,28 @@ async function publish() {
   finally { busy.value = false }
 }
 async function refreshHealth() {
-  try { health.value = await knowledgeBackend.status() as Health }
+  try {
+    const status = await knowledgeBackend.status()
+    health.value = { health: 'ready', document_count: status.raw_documents + status.wiki_pages, last_complete_scan_at: null }
+  }
   catch (cause) { error.value = formatApiError(cause) }
 }
 async function listPages(append = false) {
   if (append && !nextCursor.value) return
   try {
-    const response = await knowledgeBackend.search('', {
-      limit: 100,
-      ...(append && nextCursor.value ? { cursor: nextCursor.value } : {}),
-    }) as { items: Hit[]; next_cursor: string | null }
-    pageCatalog.value = append ? [...pageCatalog.value, ...response.items] : response.items
-    nextCursor.value = response.next_cursor
+    if (adminBackend) {
+      const response = await adminBackend.search('', {
+        limit: 100,
+        ...(append && nextCursor.value ? { cursor: nextCursor.value } : {}),
+      })
+      pageCatalog.value = append ? [...pageCatalog.value, ...response.items as Hit[]] : response.items as Hit[]
+      nextCursor.value = response.next_cursor ?? null
+      return
+    }
+    const hits = await knowledgeBackend.search('')
+    const items = hits.map(hit => ({ id: hit.path, path: hit.path, title: hit.title, revision: 0, excerpt: hit.snippet }))
+    pageCatalog.value = append ? [...pageCatalog.value, ...items] : items
+    nextCursor.value = null
   } catch (cause) { error.value = formatApiError(cause) }
 }
 function leaveComposeForNavigation(): boolean {
@@ -1529,7 +1590,7 @@ async function openRawNote(path: string, displayTitle: string) {
   const version = ++noteRequestVersion
   const openingTab = boundTab.value
   try {
-    const result = await knowledgeBackend.read(path, 'raw') as RawFile
+    const result = await readKnowledge(path, 'raw') as RawFile
     if (version !== noteRequestVersion) return
     rawFile.value = result
     title.value = displayTitle.replace(/\.md$/i, '')
@@ -1563,12 +1624,13 @@ async function search() {
   error.value = ''
   try {
     const spaceParam = activeSpace.value === 'raw' ? 'raw' : 'wiki'
-    const result = await knowledgeBackend.search(query, {
-      space: spaceParam,
-      mode: searchMode.value,
-      limit: 20,
-    }) as { items: Hit[] }
-    searchHits.value = result.items
+    // Space/mode/limit are Admin search options; Vault search remains the common fallback.
+    const hits = adminBackend
+      ? (await adminBackend.search(query, { space: spaceParam, mode: searchMode.value, limit: 20 })).items as Hit[]
+      : await knowledgeBackend.search(query)
+    searchHits.value = hits.map(hit => 'excerpt' in hit ? hit as Hit : {
+      id: hit.path, path: hit.path, title: hit.title, revision: 0, excerpt: hit.snippet, space: spaceParam,
+    })
     searchExecuted.value = true
   } catch (cause) { error.value = formatApiError(cause) }
   finally { busy.value = false }
@@ -1591,7 +1653,7 @@ async function openPage(id: string, nodePath?: string) {
   const version = ++noteRequestVersion
   const openingTab = boundTab.value
   try {
-    const page = await knowledgeBackend.read(id, 'wiki') as Page
+    const page = await readKnowledge(id, activeSpace.value === 'drafts' ? 'drafts' : 'wiki') as Page
     if (version !== noteRequestVersion) return
     selected.value = page
     const physical = tree.value.find(n => n.space === activeSpace.value && n.id === page.id)
@@ -1621,8 +1683,9 @@ async function save() {
     busy.value = true
     error.value = ''
     try {
-      rawFile.value = await knowledgeBackend.apply({ type: 'write', path: rawFile.value.path,
-        body: body.value, expect: rawFile.value.sha256 }) as RawFile
+      await knowledgeBackend.apply({ type: 'write', path: toDocPath(rawFile.value.path, 'raw'),
+        content: body.value, expect: rawFile.value.sha256 })
+      rawFile.value = await readKnowledge(rawFile.value.path, 'raw') as RawFile
     } catch (cause) { error.value = formatApiError(cause) }
     finally { busy.value = false }
     return
@@ -1633,11 +1696,18 @@ async function save() {
   try {
     const isEdit = selected.value !== null
     const fileName = newFileName.value.trim() || `${title.value.trim().replace(/\s+/g, '-')}.md`
-    const pagePath = selected.value?.id ?? `${folderPath.value}/${fileName}`
-    const page = await knowledgeBackend.apply({ type: 'write', path: pagePath,
-      ...(isEdit ? {} : { folderPath: folderPath.value, fileName: newFileName.value.trim() || undefined }),
-      title: title.value, body: body.value, sourceRef: sourceRef.value.trim() || null,
-      expect: selected.value?.revision ?? 0 }) as Page
+    const pagePath = isEdit ? selectedPath.value : `${folderPath.value}/${fileName}`
+    let page: Page
+    if (isEdit) {
+      await knowledgeBackend.apply({ type: 'write', path: toDocPath(pagePath, 'wiki'), content: body.value,
+        expect: selected.value?.revision == null ? undefined : String(selected.value.revision) })
+      page = await readKnowledge(pagePath, 'wiki') as Page
+    } else {
+      if (!adminBackend) throw new Error('Creating Wiki pages is available in Admin Web only')
+      page = await adminBackend.apply({ type: 'write', path: pagePath, folderPath: folderPath.value,
+        fileName: newFileName.value.trim() || undefined, title: title.value, body: body.value,
+        sourceRef: sourceRef.value.trim() || null }) as Page
+    }
     selected.value = page
     newFileName.value = ''
     await refreshTree()
@@ -1654,7 +1724,7 @@ async function rebuild() {
   busy.value = true
   error.value = ''
   try {
-    await knowledgeBackend.apply({ type: 'reindex' })
+    await knowledgeBackend.apply({ type: 'reindex', force: false })
     await refreshHealth()
     refreshGraph()
   } catch (cause) { error.value = formatApiError(cause) }
@@ -1666,10 +1736,25 @@ async function refreshTree() {
   const requestVersion = ++treeRequestVersion
   treeLoading.value = true
   try {
-    const result = await knowledgeBackend.tree(space as 'raw' | 'wiki') as { items: TreeNode[] }
+    let items: TreeNode[]
+    if (space === 'drafts') {
+      items = adminBackend ? (await adminBackend.tree(space)).items : []
+    } else {
+      const commonTree = await knowledgeBackend.tree(space as Scope)
+      items = fromVaultTree(commonTree, space)
+      if (adminBackend) {
+        const metadata = adminBackend.treeMetadata ? await adminBackend.treeMetadata(space) : (await adminBackend.tree(space)).items
+        const byPath = new Map(metadata.map(node => [node.path, node]))
+        items = items.map(node => {
+          const legacyPath = space === 'raw' ? node.path.replace(/^raw\//, 'raw/') : node.path
+          const detail = byPath.get(legacyPath)
+          return detail ? { ...node, ...detail, path: node.path, space } : node
+        })
+      }
+    }
     if (requestVersion === treeRequestVersion && activeSpace.value === space) {
-      tree.value = result.items
-      const existingFolders = new Set(result.items.filter(node => node.type === 'folder')
+      tree.value = items
+      const existingFolders = new Set(items.filter(node => node.type === 'folder')
         .map(node => node.path))
       openFolders.value = new Set([space, ...[...openFolders.value].filter(path => existingFolders.has(path))])
     }
@@ -1784,7 +1869,8 @@ async function chooseNode(node: TreeNode) {
         noteLoading.value = true
         const version = ++noteRequestVersion
         try {
-      const response = await knowledgeBackend.readSource(source.id)
+      if (!adminBackend) throw new Error('Source registry is available in Admin Web only')
+      const response = await adminBackend.readSource(source.id)
           if (version === noteRequestVersion) body.value = response.text
         } catch (cause) { error.value = formatApiError(cause) }
         finally { noteLoading.value = false }
@@ -1850,7 +1936,7 @@ async function importRawAsSource() {
   if (!rawFile.value || busy.value) return
   busy.value = true
   try {
-    const imported = await knowledgeBackend.apply({ type: 'ingest_source', path: rawFile.value.path,
+    const imported = await adminBackend!.apply({ type: 'ingest_source', path: rawFile.value.path,
       expect: rawFile.value.sha256, name: sourceName.value.trim() || rawFile.value.path.split('/').pop(),
       provenance: sourceProvenance.value.trim() || 'admin:manual' }) as Source
     sourceRef.value = imported.id + ':' + imported.version
@@ -1869,16 +1955,14 @@ async function moveSelected() {
   busy.value = true
   try {
     const result = rawFile.value
-      ? await knowledgeBackend.apply({ type: 'move', from: node.path, to: `${target}/${name}`,
-          expect: rawFile.value.sha256 }) as { path: string }
+      ? await knowledgeBackend.apply({ type: 'move', from: toDocPath(node.path, 'raw'), to: toDocPath(`${target}/${name}`, 'raw') })
       : selected.value
-        ? await knowledgeBackend.apply({ type: 'move', from: selected.value.id, to: `${target}/${name}`,
-            expect: selected.value.revision }) as { path: string }
+        ? await knowledgeBackend.apply({ type: 'move', from: toDocPath(selectedPath.value, 'wiki'), to: toDocPath(`${target}/${name}`, 'wiki') })
         : null
     if (result) {
       await refreshTree()
-      selectedPath.value = result.path
-      const next = tree.value.find(n => n.path === result.path)
+      selectedPath.value = result.paths[0]?.replace(/^sources\//, 'raw/').replace(/^wiki\//, 'wiki/') ?? selectedPath.value
+      const next = tree.value.find(n => n.path === selectedPath.value)
       if (next) await chooseNode(next)
       refreshGraph()
     }
@@ -1964,7 +2048,7 @@ async function copyNoteLink() {
     await navigator.clipboard.writeText(window.location.origin + '/knowledge#' + encodeURIComponent(selected.value.id))
   } catch (cause) { error.value = formatApiError(cause) }
 }
-async function refreshLinkedNotes(id: string) {
+async function refreshLinkedNotes(path: string) {
   const version = ++linkedRequestVersion
   linkedNotes.value = []
   if (activeSpace.value !== 'wiki') {
@@ -1973,23 +2057,22 @@ async function refreshLinkedNotes(id: string) {
   }
   linkedLoading.value = true
   try {
-    const result = await knowledgeBackend.graph({ scope: 'global', limit: 500 }) as {
-      nodes: { id: string; title: string }[]
-      edges: { source_id: string; target_id: string }[]
-    }
+    const graph = await knowledgeBackend.graph()
+    const nodes = graph.nodes.map(node => ({ id: node.path, title: node.title }))
+    const edges = graph.edges.flatMap(edge => edge.target ? [{ source_id: edge.source, target_id: edge.target }] : [])
     if (version !== linkedRequestVersion) return
-    const related = new Set(result.edges.flatMap(edge =>
-      edge.target_id === id ? [edge.source_id] : edge.source_id === id ? [edge.target_id] : []))
-    linkedNotes.value = result.nodes.filter(node => related.has(node.id) && node.id !== id)
+    const related = new Set(edges.flatMap(edge =>
+      edge.target_id === path ? [edge.source_id] : edge.source_id === path ? [edge.target_id] : []))
+    linkedNotes.value = nodes.filter(node => related.has(node.id) && node.id !== path)
   } catch {
     if (version === linkedRequestVersion) linkedNotes.value = []
   } finally {
     if (version === linkedRequestVersion) linkedLoading.value = false
   }
 }
-watch(() => selected.value?.id, id => {
+watch(() => selectedPath.value, path => {
   activeHeading.value = ''
-  if (id) void refreshLinkedNotes(id)
+  if (path?.startsWith('wiki/')) void refreshLinkedNotes(path)
   else { ++linkedRequestVersion; linkedNotes.value = []; linkedLoading.value = false }
 })
 
@@ -2074,9 +2157,9 @@ onBeforeUnmount(() => stopListeningForKnowledgeChanges?.())
       <div v-if="activeSpace === 'raw'" class="a-explorer-toolbar" role="toolbar" :aria-label="t('knowledgeV3.explorer')">
         <button type="button" class="a-explorer-new" aria-label="Add file" :title="t('knowledgeV3.createNote')"
           :disabled="busy" @click="startNewFile"><FilePlus2 :size="15" /><span>{{ t('knowledgeV3.createNote') }}</span></button>
-        <button type="button" class="icon-button" aria-label="Add folder" title="Add folder"
+        <button v-if="adminBackend" type="button" class="icon-button" aria-label="Add folder" title="Add folder"
           :disabled="busy" @click="newFolder"><FolderPlus :size="16" /></button>
-        <button type="button" class="icon-button" :aria-label="t('knowledgeV3.uploadFolder')"
+        <button v-if="adminBackend" type="button" class="icon-button" :aria-label="t('knowledgeV3.uploadFolder')"
           :title="t('knowledgeV3.uploadFolder')" :disabled="busy" @click="pickFolderUpload"><FolderUp :size="16" /></button>
         <input ref="folderInput" type="file" class="hidden" webkitdirectory multiple
           @change="onFolderPicked" />

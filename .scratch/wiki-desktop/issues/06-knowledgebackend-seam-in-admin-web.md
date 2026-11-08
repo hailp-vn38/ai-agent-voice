@@ -24,8 +24,10 @@ Gom mọi lệnh gọi dữ liệu của trang Knowledge về sau một interfac
 
 ## Cập nhật tiến độ
 
-- Đã thêm `KnowledgeBackend` cùng `HttpKnowledgeBackend` và `MemoryKnowledgeBackend`; Admin Web inject backend ở cấp ứng dụng. Các luồng cây, đọc, tìm kiếm, đồ thị, trạng thái, thay đổi và khả năng chat đi qua seam này.
-- Contract test hiện chạy cùng kịch bản đọc, tìm kiếm không dấu và ghi có revision cho cả hai adapter; test HTTP dùng server giả.
-- Đã thêm test KnowledgePage qua `MemoryKnowledgeBackend`, gồm Wiki Page, Raw Working Note và tìm kiếm, đồng thời xác nhận các luồng này không gọi `fetch`.
-- Còn thiếu: chuyển bộ `KnowledgePage.test.ts` hiện hữu khỏi mock `requestJson` sang `MemoryKnowledgeBackend` và xác nhận toàn bộ suite đó pass. Chưa có gate E2E trang Knowledge để chạy và ghi nhận kết quả.
-- Vì vậy ticket vẫn `ready-for-agent`; tiêu chí chuyển test hiện hữu và E2E chưa hoàn tất.
+- 2026-11-08: Hợp đồng common dùng `Scope`, validated `DocPath { scope, relative }`, `ReadWindow`, cây lồng nhau, `Page { content, revision }`, `Hit[]`, `VaultStatus`, các `VaultChange` của wiki-core và `Applied`. HTTP DTO được chuyển đổi ở adapter; DTO/routes riêng của Admin nằm trong `AdminKnowledgeBackend` extension.
+- 2026-11-08: `knowledgeBackend.vault.test.ts` chạy contract chung trên Memory và Http (server giả) cho tree, read window, search, status, graph và write. `knowledgeBackend.admin.test.ts` giữ contract route/DTO Admin. `KnowledgePage.backend.test.ts` kiểm tra mở Wiki, Raw, search, sửa Wiki và chạy Page không có Admin extension.
+- Chưa hoàn tất: chuyển hết các luồng Vault trong `KnowledgePage.test.ts` khỏi HTTP route mocks, đồng thời chạy E2E Knowledge. Ticket vẫn `ready-for-agent`.
+
+## Comments
+
+- 2026-11-08: `KnowledgeGraph.test.ts` dùng MemoryKnowledgeBackend cho global/focused graph; query graph còn đi qua Admin extension. `RightPanelTabs.test.ts` không gọi backend; `useWikiChat.test.ts` kiểm tra API/SSE Admin nên vẫn giữ server-specific.

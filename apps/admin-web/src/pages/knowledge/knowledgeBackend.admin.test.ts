@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest'
 
-import { HttpKnowledgeBackend, MemoryKnowledgeBackend, type Change, type KnowledgeBackend, type KnowledgePage } from './knowledgeBackend'
+import { HttpKnowledgeBackend, MemoryKnowledgeBackend, type Change, type AdminKnowledgeBackend, type KnowledgePage } from './knowledgeBackend'
 
-function makeHttpServer() {
+function makeHttpServer(): AdminKnowledgeBackend {
   const pages = new Map<string, KnowledgePage>([['wiki/gardening.md', {
     id: 'wiki/gardening.md', path: 'wiki/gardening.md', title: 'Gardening', body: 'Trồng cà chua trong nhà kính.', revision: 1,
   }]])
@@ -40,13 +40,13 @@ function makeHttpServer() {
     }
     throw new Error(`Unexpected fake server request: ${method} ${path}`)
   }
-  return new HttpKnowledgeBackend(request, 60_000)
+  return new HttpKnowledgeBackend(request, 60_000).admin!
 }
 
-const adapters: Array<[string, () => KnowledgeBackend]> = [
-  ['MemoryKnowledgeBackend', () => new MemoryKnowledgeBackend({
+const adapters: Array<[string, () => AdminKnowledgeBackend]> = [
+  ['MemoryAdminKnowledgeBackend', () => new MemoryKnowledgeBackend({
     pages: [{ id: 'wiki/gardening.md', path: 'wiki/gardening.md', title: 'Gardening', body: 'Trồng cà chua trong nhà kính.', revision: 1 }],
-  })],
+  }).admin!],
   ['HttpKnowledgeBackend', makeHttpServer],
 ]
 
@@ -69,7 +69,7 @@ describe('MemoryKnowledgeBackend', () => {
   it('supports the shared read and search contract over a wiki page', async () => {
     const backend = new MemoryKnowledgeBackend({
       pages: [{ id: 'wiki/gardening.md', path: 'wiki/gardening.md', title: 'Gardening', body: 'Trồng cà chua trong nhà kính.', revision: 1 }],
-    })
+    }).admin!
 
     expect((await backend.tree('wiki')).items.filter(item => item.type === 'file').map(item => item.path)).toEqual(['wiki/gardening.md'])
     expect((await backend.read('wiki/gardening.md')).body).toContain('cà chua')
@@ -79,7 +79,7 @@ describe('MemoryKnowledgeBackend', () => {
   it('publishes a change after apply and returns a typed conflict for a stale revision', async () => {
     const backend = new MemoryKnowledgeBackend({ pages: [
       { id: 'wiki/gardening.md', path: 'wiki/gardening.md', title: 'Gardening', body: 'Original', revision: 1 },
-    ] })
+    ] }).admin!
     const events: unknown[] = []
     backend.onChange(event => events.push(event))
 
