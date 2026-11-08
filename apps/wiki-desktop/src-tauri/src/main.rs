@@ -10,6 +10,8 @@ use wiki_core::{
     VaultError, VaultStatus,
 };
 
+mod watcher;
+
 #[derive(Default, Serialize, Deserialize)]
 struct Settings {
     recent_vaults: Vec<String>,
@@ -21,6 +23,7 @@ struct DesktopState {
     settings: Mutex<Settings>,
     settings_file: PathBuf,
     event_cancel: Mutex<Option<tokio::sync::watch::Sender<bool>>>,
+    watcher: Mutex<Option<watcher::WatchHandle>>,
 }
 
 #[derive(Debug, Serialize)]
@@ -119,6 +122,39 @@ fn open_vault(state: &DesktopState, path: String) -> Result<String, CommandError
     Ok(root.to_string_lossy().into_owned())
 }
 
+fn restart_watcher(state: &DesktopState) -> Result<(), CommandError> {
+    if let Some(previous) = state
+        .watcher
+        .lock()
+        .map_err(|_| CommandError::Io {
+            message: "file watcher lock poisoned".into(),
+        })?
+        .take()
+    {
+        drop(previous);
+    }
+    let root = state
+        .settings
+        .lock()
+        .map_err(|_| CommandError::Io {
+            message: "settings lock poisoned".into(),
+        })?
+        .current_vault
+        .as_ref()
+        .map(PathBuf::from)
+        .ok_or_else(|| CommandError::NotFound {
+            message: "No knowledge vault is open".into(),
+        })?;
+    let vault = state.active_vault()?;
+    let handle = watcher::start(root, vault).map_err(|error| CommandError::Io {
+        message: error.to_string(),
+    })?;
+    *state.watcher.lock().map_err(|_| CommandError::Io {
+        message: "file watcher lock poisoned".into(),
+    })? = Some(handle);
+    Ok(())
+}
+
 fn forward_vault_events(app: tauri::AppHandle, state: &DesktopState) -> Result<(), CommandError> {
     let vault = state.active_vault()?;
     let events = vault.subscribe();
@@ -163,6 +199,7 @@ fn vault_open(
 ) -> Result<String, CommandError> {
     let result = open_vault(&state, path)?;
     forward_vault_events(app, &state)?;
+    restart_watcher(&state)?;
     Ok(result)
 }
 
@@ -184,6 +221,7 @@ fn vault_pick(
     })?;
     let result = open_vault(&state, path.to_string_lossy().into_owned())?;
     forward_vault_events(app, &state)?;
+    restart_watcher(&state)?;
     Ok(Some(result))
 }
 
@@ -265,6 +303,7 @@ fn main() {
                 settings: Mutex::new(settings),
                 settings_file,
                 event_cancel: Mutex::new(None),
+                watcher: Mutex::new(None),
             };
             if let Some(current) = state
                 .settings
@@ -278,6 +317,9 @@ fn main() {
                     }
                 } else {
                     let _ = forward_vault_events(app.handle().clone(), &state);
+                    if let Err(error) = restart_watcher(&state) {
+                        eprintln!("wiki watcher could not start: {error:?}");
+                    }
                 }
             }
             app.manage(state);
