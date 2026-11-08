@@ -6,6 +6,7 @@ license.workspace = true
 
 [dependencies]
 llm-wiki-rs.workspace = true
+libc = "0.2"
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
