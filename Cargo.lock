@@ -5073,6 +5073,8 @@ dependencies = [
  "unicode-normalization",
  "url",
  "uuid",
+ "wiki-core",
+ "wiki-mcp",
  "zeroize",
  "zip 6.0.0",
 ]
@@ -5284,6 +5286,20 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.20",
  "tokio",
+]
+
+[[package]]
+name = "wiki-mcp"
+version = "0.1.0"
+dependencies = [
+ "llm-wiki-rs",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.20",
+ "tokio",
+ "tokio-util",
+ "wiki-core",
 ]
 
 [[package]]
