@@ -19,5 +19,13 @@ Gom mọi lệnh gọi dữ liệu của trang Knowledge về sau một interfac
 ## Tiêu chí xong
 
 - [ ] Test Knowledge hiện có (`KnowledgePage`, `KnowledgeGraph`, `RightPanelTabs`, `useWikiChat`, …) chuyển từ mock `fetch` sang `MemoryBackend` và pass.
-- [ ] Một bộ contract test chạy cho cả `MemoryBackend` và `HttpBackend` (với server giả) cho thấy hai adapter hành xử giống nhau.
+- [x] Một bộ contract test chạy cho cả `MemoryBackend` và `HttpBackend` (với server giả) cho thấy hai adapter hành xử giống nhau.
 - [ ] E2E trang Knowledge pass, giao diện không đổi.
+
+## Cập nhật tiến độ
+
+- Đã thêm `KnowledgeBackend` cùng `HttpKnowledgeBackend` và `MemoryKnowledgeBackend`; Admin Web inject backend ở cấp ứng dụng. Các luồng cây, đọc, tìm kiếm, đồ thị, trạng thái, thay đổi và khả năng chat đi qua seam này.
+- Contract test hiện chạy cùng kịch bản đọc, tìm kiếm không dấu và ghi có revision cho cả hai adapter; test HTTP dùng server giả.
+- Đã thêm test KnowledgePage qua `MemoryKnowledgeBackend`, gồm Wiki Page, Raw Working Note và tìm kiếm, đồng thời xác nhận các luồng này không gọi `fetch`.
+- Còn thiếu: chuyển bộ `KnowledgePage.test.ts` hiện hữu khỏi mock `requestJson` sang `MemoryKnowledgeBackend` và xác nhận toàn bộ suite đó pass. Chưa có gate E2E trang Knowledge để chạy và ghi nhận kết quả.
+- Vì vậy ticket vẫn `ready-for-agent`; tiêu chí chuyển test hiện hữu và E2E chưa hoàn tất.
