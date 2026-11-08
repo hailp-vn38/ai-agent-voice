@@ -1897,4 +1897,3 @@ it('gives outline and chat one right panel width and one collapsed state', async
     expect(window.localStorage.getItem('voice-agent-knowledge-outline-collapsed')).toBe('true')
   } finally { wrapper.unmount() }
 })
-

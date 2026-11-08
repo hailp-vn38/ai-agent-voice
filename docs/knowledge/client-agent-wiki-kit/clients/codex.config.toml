@@ -1,0 +1,5 @@
+# Thêm vào ~/.codex/config.toml (hoặc .codex/config.toml của project).
+# export WIKI_MCP_TOKEN=<token read-write tạo ở Admin → Knowledge → MCP>
+[mcp_servers.knowledge]
+url = "http://127.0.0.1:8080/mcp/knowledge"   # đổi host:port theo server; path mặc định /mcp/knowledge
+bearer_token_env_var = "WIKI_MCP_TOKEN"

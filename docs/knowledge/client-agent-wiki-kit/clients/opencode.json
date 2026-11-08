@@ -1,0 +1,14 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "instructions": ["AGENTS.md"],
+  "mcp": {
+    "knowledge": {
+      "type": "remote",
+      "url": "http://127.0.0.1:8080/mcp/knowledge",
+      "enabled": true,
+      "headers": {
+        "Authorization": "Bearer {env:WIKI_MCP_TOKEN}"
+      }
+    }
+  }
+}

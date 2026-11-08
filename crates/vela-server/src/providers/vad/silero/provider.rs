@@ -100,7 +100,7 @@ impl VadSession for SileroVadSession {
 }
 
 fn build_session(model: &Path, num_threads: i32) -> Result<Session, VadError> {
-    Session::builder()
+    onnx_session_builder()
         .map_err(ort_error)?
         .with_intra_threads(
             num_threads
@@ -112,9 +112,10 @@ fn build_session(model: &Path, num_threads: i32) -> Result<Session, VadError> {
         .map_err(ort_error)
 }
 
+static ORT_ENVIRONMENT: OnceLock<Result<ort::environment::Environment, String>> = OnceLock::new();
+
 pub(crate) fn initialize_ort(configured_library: &Path) -> Result<(), VadError> {
-    static ORT_INIT: OnceLock<Result<(), String>> = OnceLock::new();
-    ORT_INIT
+    ORT_ENVIRONMENT
         .get_or_init(|| {
             // Operators may override the deployment path, but startup never searches the system.
             let path = std::env::var_os("VOICE_ONNX_RUNTIME_LIB")
@@ -128,16 +129,21 @@ pub(crate) fn initialize_ort(configured_library: &Path) -> Result<(), VadError> 
             }
             ort::init_from(path)
                 .map_err(|error| error.to_string())?
-                .commit()
-                .then_some(())
-                .ok_or_else(|| {
-                    "ONNX Runtime was initialized before the configured library could be applied"
-                        .to_owned()
-                })
+                .build()
+                .map_err(|error| error.to_string())
         })
         .as_ref()
+        .map(|_| ())
         .map_err(|error| VadError::Failed(error.clone()))
-        .copied()
+}
+
+/// Starts a session builder on the process ONNX Runtime environment created by [`initialize_ort`].
+pub(crate) fn onnx_session_builder() -> ort::Result<ort::session::builder::SessionBuilder> {
+    match ORT_ENVIRONMENT.get() {
+        Some(Ok(environment)) => Session::builder(environment),
+        Some(Err(error)) => Err(ort::Error::new(error.clone())),
+        None => Err(ort::Error::new("ONNX Runtime has not been initialized")),
+    }
 }
 
 /// Loads the deployment-selected ONNX Runtime before an offline qualification gate proceeds.

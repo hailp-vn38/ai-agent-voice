@@ -27,6 +27,7 @@ import { useTheme } from '@/composables/useTheme'
 import { renderMermaidBlocks } from './mermaidRenderer'
 import { renderTradingChartBlocks } from './tradingChartRenderer'
 import type { NoteDoc, WorkspaceTab } from './useKnowledgeWorkspace'
+import { useKnowledgeBackend } from './knowledgeBackend'
 
 const props = defineProps<{
   tab: WorkspaceTab
@@ -41,6 +42,7 @@ const emit = defineEmits<{
 
 const { t } = useI18n()
 const { dark } = useTheme()
+const knowledgeBackend = useKnowledgeBackend()
 const viewport = ref<HTMLElement | null>(null)
 
 const properties = computed(() => parseMarkdownProperties(props.doc?.body ?? ''))
@@ -51,7 +53,7 @@ const propertiesListId = computed(() => 'knowledge-doc-properties-' + props.tab.
 
 function renderBlocks() {
   void renderMermaidBlocks(viewport.value, dark.value)
-  void renderTradingChartBlocks(viewport.value, dark.value)
+  void renderTradingChartBlocks(viewport.value, dark.value, { fetcher: fileName => knowledgeBackend.chart(fileName) })
 }
 function onScroll() {
   if (viewport.value) props.tab.scrollTop = viewport.value.scrollTop

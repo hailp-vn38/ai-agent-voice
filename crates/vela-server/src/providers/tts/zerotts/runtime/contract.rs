@@ -376,7 +376,7 @@ pub(super) fn load_graph(
     inputs: &[(&str, TensorElementType, usize)],
     outputs: &[(&str, TensorElementType, usize)],
 ) -> Result<Session, TtsError> {
-    let session = Session::builder()
+    let session = crate::providers::vad::silero::onnx_session_builder()
         .map_err(contract_error)?
         .with_intra_threads(threads)
         .map_err(contract_error)?

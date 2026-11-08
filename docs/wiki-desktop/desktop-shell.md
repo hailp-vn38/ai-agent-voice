@@ -1,0 +1,76 @@
+# Tauri shell: apps/wiki-desktop
+
+Shell là một module **nông có chủ đích**: nó chỉ nối các phần lại với nhau (WebView ↔ `Vault`, `ToolHost` ↔ HTTP, watcher ↔ `Vault`). Mọi logic nghiệp vụ nằm trong `wiki-core` và `wiki-mcp`. Nếu một command Tauri dài quá khoảng 15 dòng thì phần thừa nên chuyển vào core.
+
+## Cấu trúc
+
+```
+apps/wiki-desktop/
+├─ package.json            # Vite + Vue 3, import knowledge UI (xem ui-reuse.md)
+├─ src/                    # main.ts, TauriBackend adapter, Settings view
+└─ src-tauri/
+   ├─ Cargo.toml           # member của workspace; deps: tauri 2, wiki-core, wiki-mcp, notify
+   ├─ tauri.conf.json
+   ├─ capabilities/default.json
+   └─ src/
+      ├─ main.rs           # setup: mở Vault, start MCP, start watcher
+      ├─ commands.rs       # #[tauri::command] → Vault
+      ├─ events.rs         # VaultEvent → emit("vault://changed")
+      ├─ mcp_server.rs     # rmcp HTTP + runtime.json
+      └─ watcher.rs        # notify → Vault::notice_external
+```
+
+## Commands (WebView → Rust)
+
+Chỉ có đúng sáu command, tương ứng với interface `Vault`:
+
+| Command | Gọi tới | Thay cho route admin |
+|---|---|---|
+| `vault_tree(scope)` | `Vault::tree` | `GET /knowledge/tree`, `/folders` |
+| `vault_read(path, window)` | `Vault::read` | `GET /knowledge/pages/:path`, `/sources/:path` |
+| `vault_search(query)` | `Vault::search` | `GET /knowledge/index?q=` |
+| `vault_graph(focus)` | `Vault::graph` | `GET /knowledge/graph` |
+| `vault_status()` | `Vault::status` | — |
+| `vault_apply(change)` | `Vault::apply_from(Origin::Ui, …)` | `PUT/POST/DELETE pages`, `/raw/batch`, `/raw/move`, `/raw/import-source`, `/index/rebuild` |
+
+Thêm vài command của riêng shell: `vault_open(dir)` / `vault_pick()` (hộp thoại chọn thư mục), `mcp_info()` (port, trạng thái, đoạn cấu hình client), `mcp_rotate_token()`.
+
+`Change` và `VaultError` derive `serde`, nên frontend nhận lỗi có kiểu (`{ kind: "Conflict", current }`) thay vì chuỗi văn bản.
+
+## Events (Rust → WebView)
+
+- `vault://changed`: `VaultEvent` đã serialize. UI tải lại cây thư mục hoặc trang đang mở. Nếu `origin = Mcp` thì hiện toast "Agent đã cập nhật …".
+- `vault://lock`: `{ writable: bool }`, dùng khi `wiki-mcp` direct đang giữ lock.
+- `mcp://status`: số client đang kết nối và lần gọi gần nhất. Hiện trong footer.
+
+## File watcher <a id="file-watcher"></a>
+
+- Dùng `notify` (FSEvents trên macOS), debounce khoảng 300 ms, bỏ qua `.wiki-desktop.lock`, file SQLite và file tạm của chính `Vault`.
+- Gom các path thay đổi rồi gọi `Vault::notice_external(paths)`.
+- Thay đổi do `Vault::apply` gây ra thì không phát lại lần nữa. `Vault` giữ một tập "path vừa ghi kèm hash", watcher so với tập đó để lọc.
+
+## Cấu hình và dữ liệu
+
+| Thứ | Vị trí |
+|---|---|
+| Danh sách vault gần đây, vault đang mở, port MCP | `~/Library/Application Support/<bundle-id>/settings.json` |
+| `runtime.json` (port, token cho bridge) | cùng thư mục, quyền `0600`, xóa khi app thoát |
+| Token MCP | macOS Keychain (`keyring` crate) |
+| Vault | thư mục do người dùng chọn, mặc định `~/Documents/Wiki` |
+
+## Bảo mật <a id="bao-mat"></a>
+
+- MCP HTTP chỉ bind `127.0.0.1` và luôn yêu cầu token, kể cả với loopback. Lý do: trang web độc hại vẫn có thể gửi request tới localhost.
+- Kiểm tra header `Origin`/`Host` để chặn DNS rebinding.
+- Capabilities Tauri chỉ cấp `dialog:open`, `event` và các command ở trên. Không cấp `fs` hay `shell` cho WebView. WebView không đọc file trực tiếp mà luôn đi qua `Vault`, nhờ đó kiểm tra `DocPath` có hiệu lực ở mọi lối vào.
+- CSP cấm script ngoài. Mermaid và chart renderer được bundle sẵn.
+
+## Đóng gói
+
+- `tauri build --target universal-apple-darwin`. `wiki-mcp` là `externalBin` (sidecar) hoặc build vào `Contents/MacOS/`.
+- Ký bằng Developer ID, bật hardened runtime và notarize bằng `notarytool`. Binary `wiki-mcp` cũng phải được ký.
+- Cập nhật app dùng `tauri-plugin-updater` (có thể để sau v1).
+
+## Menu và phím tắt
+
+`⌘N` trang mới, `⌘P` mở nhanh (search), `⌘⇧F` tìm toàn văn, `⌘G` graph, `⌘,` Settings, `⌘O` mở vault. Menu bar có thêm mục "Copy MCP config".

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { Network, Link2, Copy, Download, FileText, Folder, FolderOpen, FolderPlus, FolderUp, FilePlus2, Pencil, ChevronsUp, BookOpen, ArrowUpRight, ChevronDown, ChevronRight, Search, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, Columns2, SquarePlus, X } from '@lucide/vue'
 import { renderMarkdown, markdownOutline } from '@/lib/markdown'
@@ -8,7 +8,6 @@ import { renderTradingChartBlocks } from './tradingChartRenderer'
 import { useTheme } from '@/composables/useTheme'
 import './knowledge-reader.css'
 import KnowledgeGraph from './KnowledgeGraph.vue'
-import { requestJson, jsonRequest, withQuery } from '@/api/client'
 import { formatApiError, isApiError } from '@/api/errors'
 import PageHeader from '@/components/admin/PageHeader.vue'
 import { Button } from '@/components/ui/button'
@@ -21,6 +20,7 @@ import { movedOrder, useDragReorder } from './useDragReorder'
 import KnowledgeNoteView, { noteIntroduction } from './KnowledgeNoteView.vue'
 import KnowledgeMarkdownEditor from './KnowledgeMarkdownEditor.vue'
 import { useKnowledgeWorkspace, type NoteDoc, type Page, type RawFile, type TabRef, type TreeSpace, type WorkspacePane, type WorkspaceTab } from './useKnowledgeWorkspace'
+import { useKnowledgeBackend } from './knowledgeBackend'
 
 type SearchMode = 'hybrid' | 'lex' | 'vec'
 type Hit = {
@@ -45,6 +45,7 @@ const { t } = useI18n()
 const { dark } = useTheme()
 const route = useRoute()
 const router = useRouter()
+const knowledgeBackend = useKnowledgeBackend()
 const {
   messages: wikiChatMessages,
   conversationId: wikiChatConversationId,
@@ -301,7 +302,7 @@ async function openCitation(path: string) {
   try {
     if (path.startsWith('sources/')) {
       const rawPath = 'raw/' + path.slice('sources/'.length)
-      await requestJson<RawFile>(withQuery('/api/admin/knowledge/raw/files', { path: rawPath }), { cache: 'no-store' })
+      await knowledgeBackend.read(rawPath, 'raw')
     } else if (await answerPageMissing(
       tree.value.find(node => node.space === 'wiki' && node.path === path)?.id ?? path,
     )) return
@@ -456,6 +457,7 @@ watch([activeSpace, openFolders, selectedPath], ([space, folders, path]) => {
   } catch { /* Storage unavailable; preserve in-memory navigation. */ }
 })
 const workspace = useKnowledgeWorkspace(validExplorerPath)
+let stopListeningForKnowledgeChanges: (() => void) | null = null
 const { panes, focusedPaneId, graphPaneId, focusedPane, boundTab } = workspace
 const viewMode = ref<'read' | 'graph' | 'compose'>('read')
 // Drafts are not in the index the chat reads from, so only Wiki and Source files can be attached.
@@ -543,8 +545,7 @@ async function confirmInlineFolder() {
   error.value = ''
   try {
     const parts = segmentsOfPath(value, false)
-    const created = await requestJson<{ path: string }>('/api/admin/knowledge/folders',
-      jsonRequest('POST', { space: 'raw', parent_path: base, name: parts.join('/') }))
+    const created = await knowledgeBackend.apply({ type: 'create_folder', space: 'raw', parentPath: base, name: parts.join('/') }) as { path: string }
     openFolders.value = new Set([...openFolders.value, ...parts.map((_, index) =>
       base + '/' + parts.slice(0, index + 1).join('/')), base])
     cancelInlineNote()
@@ -604,8 +605,8 @@ async function createPendingRawFile() {
   busy.value = true
   error.value = ''
   try {
-    rawFile.value = await requestJson<RawFile>('/api/admin/knowledge/raw/files',
-      jsonRequest('POST', { folder_path: pending.folder, file_name: pending.fileName, body: body.value }))
+    rawFile.value = await knowledgeBackend.apply({ type: 'write', path: pending.path, folderPath: pending.folder,
+      fileName: pending.fileName, body: body.value }) as RawFile
     pendingRawFile.value = null
     selectedPath.value = rawFile.value.path || pending.path
     recordRecentItem({ space: 'raw', path: selectedPath.value, title: title.value })
@@ -770,8 +771,9 @@ async function uploadRawBatch(items: UploadItem[], targetFolderPath?: string) {
     let chunkBytes = 0
     const flush = async () => {
       if (chunk.length === 0) return
-      const result = await requestJson<{ created: string[]; skipped: string[]; failed: Array<{ path: string }> }>(
-        '/api/admin/knowledge/raw/batch', jsonRequest('POST', { folder_path: folder, files: chunk }))
+      const result = await knowledgeBackend.apply({ type: 'import_raw', folder, files: chunk }) as {
+        created: string[]; skipped: string[]; failed: Array<{ path: string }>
+      }
       created += result.created.length
       skipped += result.skipped.length
       failed.push(...result.failed.map(item => item.path))
@@ -854,8 +856,8 @@ async function uploadSingleFiles(files: File[], targetFolderPath?: string) {
     let lastFileName = ''
     for (const item of prepared) {
       const content = await readFileText(item.file)
-      lastCreated = await requestJson<RawFile>('/api/admin/knowledge/raw/files',
-        jsonRequest('POST', { folder_path: folder, file_name: item.fileName, body: content }))
+      lastCreated = await knowledgeBackend.apply({ type: 'write', path: `raw/${folder}/${item.fileName}`,
+        folderPath: folder, fileName: item.fileName, body: content }) as RawFile
       lastFileName = item.fileName
     }
     if (lastCreated) {
@@ -1005,7 +1007,7 @@ async function openWikiPage(id: string, mode: OpenMode, source: WorkspacePane = 
 }
 async function answerPageMissing(id: string): Promise<boolean> {
   try {
-    await requestJson<Page>(`/api/admin/knowledge/pages/${encodeURIComponent(id)}`, { cache: 'no-store' })
+    await knowledgeBackend.read(id, 'wiki')
     return false
   } catch (cause) {
     if (!isApiError(cause) || cause.status !== 404) throw cause
@@ -1420,11 +1422,11 @@ async function loadBackgroundTab(tab: WorkspaceTab) {
   tab.loading = true
   try {
     if (target.space === 'raw') {
-      const file = await requestJson<RawFile>(withQuery('/api/admin/knowledge/raw/files', { path: target.path }))
+      const file = await knowledgeBackend.read(target.path, 'raw') as RawFile
       tab.doc = { space: 'raw', path: file.path || target.path, title: target.title, body: file.body,
         page: null, rawFile: file, readOnly: false, sourceRef: '' }
     } else {
-      const page = await requestJson<Page>('/api/admin/knowledge/pages/' + encodeURIComponent(target.id || target.path))
+      const page = await knowledgeBackend.read(target.id || target.path, 'wiki') as Page
       tab.doc = { space: target.space, path: target.path, title: page.title, body: page.body,
         page, rawFile: null, readOnly: false, sourceRef: page.source_ref ?? '' }
     }
@@ -1452,8 +1454,7 @@ function newDraft() {
 }
 async function refreshSources() {
   try {
-    const response = await requestJson<{ items: Source[] }>('/api/admin/knowledge/sources')
-    sources.value = response.items
+    sources.value = await knowledgeBackend.sources() as Source[]
   } catch (cause) { error.value = formatApiError(cause) }
 }
 async function importSource() {
@@ -1461,9 +1462,8 @@ async function importSource() {
   busy.value = true
   error.value = ''
   try {
-    const source = await requestJson<Source>('/api/admin/knowledge/sources',
-      jsonRequest('POST', { name: sourceName.value, provenance: sourceProvenance.value,
-        content: sourceContent.value }))
+    const source = await knowledgeBackend.apply({ type: 'create_source', name: sourceName.value,
+      provenance: sourceProvenance.value, content: sourceContent.value }) as Source
     sourceRef.value = `${source.id}:${source.version}`
     sourceName.value = ''
     sourceContent.value = ''
@@ -1478,9 +1478,8 @@ async function publish() {
   busy.value = true
   error.value = ''
   try {
-    const record = await requestJson<Page>(
-      `/api/admin/knowledge/pages/${encodeURIComponent(selected.value.id)}/publish`,
-      jsonRequest('POST', { expected_revision: selected.value.revision, source_ref: sourceRef.value.trim() }))
+    const record = await knowledgeBackend.apply({ type: 'publish', path: selected.value.id,
+      expect: selected.value.revision, sourceRef: sourceRef.value.trim() }) as Page
     selected.value = record
     if (activeSpace.value === 'drafts') {
       resetExplorer('wiki')
@@ -1497,18 +1496,16 @@ async function publish() {
   finally { busy.value = false }
 }
 async function refreshHealth() {
-  try { health.value = await requestJson<Health>('/api/admin/knowledge/index') }
+  try { health.value = await knowledgeBackend.status() as Health }
   catch (cause) { error.value = formatApiError(cause) }
 }
 async function listPages(append = false) {
   if (append && !nextCursor.value) return
   try {
-    const response = await requestJson<{ items: Hit[]; next_cursor: string | null }>(
-      withQuery('/api/admin/knowledge/pages', {
-        limit: 100,
-        ...(append && nextCursor.value ? { after: nextCursor.value } : {}),
-      }),
-    )
+    const response = await knowledgeBackend.search('', {
+      limit: 100,
+      ...(append && nextCursor.value ? { cursor: nextCursor.value } : {}),
+    }) as { items: Hit[]; next_cursor: string | null }
     pageCatalog.value = append ? [...pageCatalog.value, ...response.items] : response.items
     nextCursor.value = response.next_cursor
   } catch (cause) { error.value = formatApiError(cause) }
@@ -1532,7 +1529,7 @@ async function openRawNote(path: string, displayTitle: string) {
   const version = ++noteRequestVersion
   const openingTab = boundTab.value
   try {
-    const result = await requestJson<RawFile>(withQuery('/api/admin/knowledge/raw/files', { path }))
+    const result = await knowledgeBackend.read(path, 'raw') as RawFile
     if (version !== noteRequestVersion) return
     rawFile.value = result
     title.value = displayTitle.replace(/\.md$/i, '')
@@ -1566,14 +1563,11 @@ async function search() {
   error.value = ''
   try {
     const spaceParam = activeSpace.value === 'raw' ? 'raw' : 'wiki'
-    const result = await requestJson<{ items: Hit[] }>(
-      withQuery('/api/admin/knowledge/pages', {
-        q: query,
-        space: spaceParam,
-        mode: searchMode.value,
-        limit: 20,
-      }),
-    )
+    const result = await knowledgeBackend.search(query, {
+      space: spaceParam,
+      mode: searchMode.value,
+      limit: 20,
+    }) as { items: Hit[] }
     searchHits.value = result.items
     searchExecuted.value = true
   } catch (cause) { error.value = formatApiError(cause) }
@@ -1597,9 +1591,7 @@ async function openPage(id: string, nodePath?: string) {
   const version = ++noteRequestVersion
   const openingTab = boundTab.value
   try {
-    const page = await requestJson<Page>(
-      `/api/admin/knowledge/pages/${encodeURIComponent(id)}`,
-    )
+    const page = await knowledgeBackend.read(id, 'wiki') as Page
     if (version !== noteRequestVersion) return
     selected.value = page
     const physical = tree.value.find(n => n.space === activeSpace.value && n.id === page.id)
@@ -1629,8 +1621,8 @@ async function save() {
     busy.value = true
     error.value = ''
     try {
-      rawFile.value = await requestJson<RawFile>('/api/admin/knowledge/raw/files',
-        jsonRequest('PUT', { path: rawFile.value.path, body: body.value, expected_sha256: rawFile.value.sha256 }))
+      rawFile.value = await knowledgeBackend.apply({ type: 'write', path: rawFile.value.path,
+        body: body.value, expect: rawFile.value.sha256 }) as RawFile
     } catch (cause) { error.value = formatApiError(cause) }
     finally { busy.value = false }
     return
@@ -1640,17 +1632,12 @@ async function save() {
   error.value = ''
   try {
     const isEdit = selected.value !== null
-    const path = isEdit
-      ? `/api/admin/knowledge/pages/${encodeURIComponent(selected.value!.id)}`
-      : '/api/admin/knowledge/pages'
-    const page = await requestJson<Page>(path, jsonRequest(isEdit ? 'PUT' : 'POST', {
-      ...(isEdit ? { id: selected.value!.id } : { folder_path: folderPath.value,
-        ...(newFileName.value.trim() ? { file_name: newFileName.value.trim() } : {}) }),
-      title: title.value,
-      body: body.value,
-      source_ref: sourceRef.value.trim() || null,
-      expected_revision: selected.value?.revision ?? 0,
-    }))
+    const fileName = newFileName.value.trim() || `${title.value.trim().replace(/\s+/g, '-')}.md`
+    const pagePath = selected.value?.id ?? `${folderPath.value}/${fileName}`
+    const page = await knowledgeBackend.apply({ type: 'write', path: pagePath,
+      ...(isEdit ? {} : { folderPath: folderPath.value, fileName: newFileName.value.trim() || undefined }),
+      title: title.value, body: body.value, sourceRef: sourceRef.value.trim() || null,
+      expect: selected.value?.revision ?? 0 }) as Page
     selected.value = page
     newFileName.value = ''
     await refreshTree()
@@ -1667,7 +1654,7 @@ async function rebuild() {
   busy.value = true
   error.value = ''
   try {
-    await requestJson('/api/admin/knowledge/index/rebuild', { method: 'POST' })
+    await knowledgeBackend.apply({ type: 'reindex' })
     await refreshHealth()
     refreshGraph()
   } catch (cause) { error.value = formatApiError(cause) }
@@ -1679,8 +1666,7 @@ async function refreshTree() {
   const requestVersion = ++treeRequestVersion
   treeLoading.value = true
   try {
-    const result = await requestJson<{items: TreeNode[]}>(
-      withQuery('/api/admin/knowledge/tree', { space }))
+    const result = await knowledgeBackend.tree(space as 'raw' | 'wiki') as { items: TreeNode[] }
     if (requestVersion === treeRequestVersion && activeSpace.value === space) {
       tree.value = result.items
       const existingFolders = new Set(result.items.filter(node => node.type === 'folder')
@@ -1798,8 +1784,7 @@ async function chooseNode(node: TreeNode) {
         noteLoading.value = true
         const version = ++noteRequestVersion
         try {
-          const response = await requestJson<{ text: string }>(
-            '/api/admin/knowledge/sources/' + encodeURIComponent(source.id))
+      const response = await knowledgeBackend.readSource(source.id)
           if (version === noteRequestVersion) body.value = response.text
         } catch (cause) { error.value = formatApiError(cause) }
         finally { noteLoading.value = false }
@@ -1865,9 +1850,9 @@ async function importRawAsSource() {
   if (!rawFile.value || busy.value) return
   busy.value = true
   try {
-    const imported = await requestJson<Source>('/api/admin/knowledge/raw/import-source',
-      jsonRequest('POST', { path: rawFile.value.path, expected_sha256: rawFile.value.sha256,
-        name: sourceName.value.trim() || rawFile.value.path.split('/').pop(), provenance: sourceProvenance.value.trim() || 'admin:manual' }))
+    const imported = await knowledgeBackend.apply({ type: 'ingest_source', path: rawFile.value.path,
+      expect: rawFile.value.sha256, name: sourceName.value.trim() || rawFile.value.path.split('/').pop(),
+      provenance: sourceProvenance.value.trim() || 'admin:manual' }) as Source
     sourceRef.value = imported.id + ':' + imported.version
     await refreshSources()
     await refreshTree()
@@ -1884,13 +1869,11 @@ async function moveSelected() {
   busy.value = true
   try {
     const result = rawFile.value
-      ? await requestJson<{path:string}>('/api/admin/knowledge/raw/move',
-          jsonRequest('POST', {path: node.path, target_folder_path: target,
-            file_name: name, expected_sha256: rawFile.value.sha256}))
+      ? await knowledgeBackend.apply({ type: 'move', from: node.path, to: `${target}/${name}`,
+          expect: rawFile.value.sha256 }) as { path: string }
       : selected.value
-        ? await requestJson<{path:string}>('/api/admin/knowledge/pages/' + encodeURIComponent(selected.value.id) + '/move',
-            jsonRequest('POST', {target_folder_path: target, file_name: name,
-              expected_folder_path: currentFolder.value, expected_revision: selected.value.revision}))
+        ? await knowledgeBackend.apply({ type: 'move', from: selected.value.id, to: `${target}/${name}`,
+            expect: selected.value.revision }) as { path: string }
         : null
     if (result) {
       await refreshTree()
@@ -1990,10 +1973,10 @@ async function refreshLinkedNotes(id: string) {
   }
   linkedLoading.value = true
   try {
-    const result = await requestJson<{
+    const result = await knowledgeBackend.graph({ scope: 'global', limit: 500 }) as {
       nodes: { id: string; title: string }[]
       edges: { source_id: string; target_id: string }[]
-    }>(withQuery('/api/admin/knowledge/graph', { scope: 'global', limit: 500 }))
+    }
     if (version !== linkedRequestVersion) return
     const related = new Set(result.edges.flatMap(edge =>
       edge.target_id === id ? [edge.source_id] : edge.source_id === id ? [edge.target_id] : []))
@@ -2032,6 +2015,15 @@ onMounted(() => {
   // Read before the tree loads, because that load rewrites the in-memory preferences.
   const closedEveryFile = explorerPreferences[activeSpace.value]?.selectedPath === activeSpace.value
   void refreshHealth()
+  stopListeningForKnowledgeChanges = knowledgeBackend.onChange(event => {
+    if (event.type === 'changed' || event.type === 'external' || event.type === 'reindexed') {
+      void refreshTree()
+      void refreshHealth()
+      refreshGraph()
+      if (selected.value) void openPage(selected.value.id, selectedPath.value)
+      else if (rawFile.value) void openRawNote(rawFile.value.path, title.value)
+    }
+  })
   void refreshSources()
   void listPages()
   void refreshTree().then(async () => {
@@ -2043,6 +2035,7 @@ onMounted(() => {
   }).catch(cause => { error.value = formatApiError(cause) })
     .finally(() => { workspaceReady.value = true })
 })
+onBeforeUnmount(() => stopListeningForKnowledgeChanges?.())
 </script>
 
 <template>
@@ -2371,7 +2364,7 @@ onMounted(() => {
       @reset="resetWikiChat" @refresh-conversation="refreshWikiConversation"
       @focus-citation="openCitation" @highlight-citation="highlightChatCitation">
       <template v-if="viewMode !== 'graph'" #title>
-        <RightPanelTabs active="chat" :order="rightTabOrder" @select="selectRightTab" @reorder="reorderRightTabs" />
+        <RightPanelTabs active="chat" :order="rightTabOrder" :capabilities="knowledgeBackend.capabilities" @select="selectRightTab" @reorder="reorderRightTabs" />
       </template>
     </WikiChatPanel>
     <button type="button" class="wiki-chat-drawer-toggle"
@@ -2382,7 +2375,7 @@ onMounted(() => {
     <aside v-if="rightPanel === 'outline'" id="knowledge-outline-panel" class="a-outline"
       :class="{ 'is-collapsed': rightPanelCollapsed }" :aria-hidden="rightPanelCollapsed">
       <div class="a-outline-top">
-        <RightPanelTabs active="outline" :order="rightTabOrder" @select="selectRightTab" @reorder="reorderRightTabs" />
+        <RightPanelTabs active="outline" :order="rightTabOrder" :capabilities="knowledgeBackend.capabilities" @select="selectRightTab" @reorder="reorderRightTabs" />
       </div>
       <div class="aside-scroll">
         <div class="a-aside-label">On this page</div>

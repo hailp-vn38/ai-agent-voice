@@ -73,7 +73,7 @@ fn build_session(
             "ViFastTts ONNX Runtime initialization failed: {error}"
         ))
     })?;
-    Session::builder()
+    crate::providers::vad::silero::onnx_session_builder()
         .map_err(|error| TtsError::IncompatibleContract(error.to_string()))?
         .with_intra_threads(num_threads.try_into().map_err(|_| TtsError::Failed)?)
         .map_err(|error| TtsError::IncompatibleContract(error.to_string()))?

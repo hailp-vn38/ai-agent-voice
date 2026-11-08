@@ -3,20 +3,13 @@ import { beforeEach, expect, it, vi } from 'vitest'
 import { ApiError } from '@/api/errors'
 import { setLocale, translate } from '@/composables/useI18n'
 import KnowledgeGraph from './KnowledgeGraph.vue'
+import { KNOWLEDGE_BACKEND_KEY, MemoryKnowledgeBackend, type KnowledgeGraph as KnowledgeGraphData } from './knowledgeBackend'
 
-const { requestJsonMock, events, drawMock, fitMock, centerMock } = vi.hoisted(() => ({
-  requestJsonMock: vi.fn(),
+const { events, drawMock, fitMock, centerMock } = vi.hoisted(() => ({
   events: {} as Record<string, (event: { target: { id: () => string }; originalEvent?: { metaKey?: boolean } }) => void>,
   drawMock: vi.fn(),
   fitMock: vi.fn(),
   centerMock: vi.fn(),
-}))
-vi.mock('@/api/client', () => ({
-  requestJson: requestJsonMock,
-  withQuery: (path: string, query: Record<string, string | number>) =>
-    path + '?' + new URLSearchParams(
-      Object.entries(query).map(([name, value]) => [name, String(value)]),
-    ).toString(),
 }))
 vi.mock('cytoscape', () => ({
   default: (options: unknown) => {
@@ -52,11 +45,23 @@ beforeEach(() => {
   vi.clearAllMocks()
   for (const key of Object.keys(events)) delete events[key]
   setLocale('en')
-  requestJsonMock.mockResolvedValue(snapshot)
 })
 
+function mountGraph(
+  props: InstanceType<typeof KnowledgeGraph>['$props'] = { reloadToken: 0 },
+  graph: KnowledgeGraphData = snapshot,
+  graphError?: unknown,
+) {
+  const backend = new MemoryKnowledgeBackend({ graph, graphError })
+  const wrapper = mount(KnowledgeGraph, {
+    props,
+    global: { provide: { [KNOWLEDGE_BACKEND_KEY as symbol]: backend } },
+  })
+  return { wrapper, backend }
+}
+
 it('selects an edge and exposes the original Wikilink alias and anchor', async () => {
-  const wrapper = mount(KnowledgeGraph, { props: { centerId: 'wiki_agent', reloadToken: 0 } })
+  const { wrapper } = mountGraph({ centerId: 'wiki_agent', reloadToken: 0 })
   try {
     await flushPromises()
     expect(drawMock).toHaveBeenCalledOnce()
@@ -77,7 +82,7 @@ it('selects an edge and exposes the original Wikilink alias and anchor', async (
 })
 
 it('opens a node beside Graph on Ctrl or Cmd click', async () => {
-  const wrapper = mount(KnowledgeGraph, { props: { reloadToken: 0 } })
+  const { wrapper } = mountGraph({ reloadToken: 0 })
   try {
     await flushPromises()
     events['tap:node']({ target: { id: () => 'wiki_agent' }, originalEvent: { metaKey: true } })
@@ -89,15 +94,15 @@ it('opens a node beside Graph on Ctrl or Cmd click', async () => {
 })
 
 it('queries the selected one-hop local neighborhood and can re-layout', async () => {
-  const wrapper = mount(KnowledgeGraph, { props: { centerId: 'wiki_agent', reloadToken: 0 } })
+  const { wrapper, backend } = mountGraph({ centerId: 'wiki_agent', reloadToken: 0 })
+  const graph = vi.spyOn(backend, 'graph')
   try {
     await flushPromises()
     const local = wrapper.findAll('button').find(button =>
       button.text() === translate('knowledgeV3.graphLocal'))!
     await local.trigger('click')
     await flushPromises()
-    expect(requestJsonMock).toHaveBeenCalledWith(expect.stringContaining('scope=local'))
-    expect(requestJsonMock).toHaveBeenCalledWith(expect.stringContaining('center_id=wiki_agent'))
+    expect(graph).toHaveBeenLastCalledWith({ scope: 'local', centerId: 'wiki_agent', depth: 1, limit: 500 })
     const relayout = wrapper.findAll('button').find(button =>
       button.text() === translate('knowledgeV3.graphRelayout'))
     await relayout!.trigger('click')
@@ -106,9 +111,7 @@ it('queries the selected one-hop local neighborhood and can re-layout', async ()
 })
 
 it('queries a topic and styles retrieved tiers without changing the node type colors', async () => {
-  requestJsonMock
-    .mockResolvedValueOnce(snapshot)
-    .mockResolvedValueOnce({
+  const querySnapshot = {
       ...snapshot,
       nodes: snapshot.nodes.map((node, index) => ({
         ...node,
@@ -116,8 +119,9 @@ it('queries a topic and styles retrieved tiers without changing the node type co
         score: index === 0 ? 0.82 : null,
       })),
       truncated: true,
-    })
-  const wrapper = mount(KnowledgeGraph, { props: { centerId: 'wiki_agent', reloadToken: 0 } })
+    }
+  const { wrapper, backend } = mountGraph({ centerId: 'wiki_agent', reloadToken: 0 }, querySnapshot)
+  const graph = vi.spyOn(backend, 'graph')
   try {
     await flushPromises()
     const query = wrapper.findAll('button').find(button =>
@@ -128,8 +132,7 @@ it('queries a topic and styles retrieved tiers without changing the node type co
     await wrapper.find('form.kg-query-form').trigger('submit')
     await flushPromises()
 
-    expect(requestJsonMock).toHaveBeenLastCalledWith(expect.stringContaining('scope=query'))
-    expect(requestJsonMock).toHaveBeenLastCalledWith(expect.stringContaining('q=trading'))
+    expect(graph).toHaveBeenLastCalledWith({ scope: 'query', limit: 500, query: 'trading' })
     expect(wrapper.text()).toContain(translate('knowledgeV3.graphTruncated'))
     const options = drawMock.mock.calls.at(-1)?.[0] as {
       elements: Array<{ data: { tier?: string } }>
@@ -150,12 +153,10 @@ it('draws an answer graph from its prop, avoids API reloads, and opens node deta
     unresolved: [],
     truncated: false,
   }
-  const wrapper = mount(KnowledgeGraph, {
-    props: { centerId: null, reloadToken: 0, answerGraph },
-  })
+  const { wrapper, backend } = mountGraph({ centerId: null, reloadToken: 0, answerGraph })
   try {
     await flushPromises()
-    expect(requestJsonMock).not.toHaveBeenCalled()
+    const graph = vi.spyOn(backend, 'graph')
     expect(drawMock).toHaveBeenCalledOnce()
     expect(wrapper.text()).toContain(translate('knowledgeV3.graphAnswer'))
     expect(drawMock.mock.calls[0]?.[0].elements[0]?.data.tier).toBe('read')
@@ -188,12 +189,12 @@ it('draws an answer graph from its prop, avoids API reloads, and opens node deta
     await wrapper.setProps({ reloadToken: 1 })
     await flushPromises()
     expect(drawMock).toHaveBeenCalledTimes(3)
-    expect(requestJsonMock).not.toHaveBeenCalled()
+    expect(graph).not.toHaveBeenCalled()
   } finally { wrapper.unmount() }
 })
 
 it('leaves Global nodes without a tier so answer styling cannot change them', async () => {
-  const wrapper = mount(KnowledgeGraph, { props: { centerId: null, reloadToken: 0 } })
+  const { wrapper } = mountGraph({ centerId: null, reloadToken: 0 })
   try {
     await flushPromises()
     const elements = drawMock.mock.calls.at(-1)?.[0].elements as Array<{ data: { tier?: string } }>
@@ -202,8 +203,8 @@ it('leaves Global nodes without a tier so answer styling cannot change them', as
 })
 
 it('offers an index rebuild when Graph is stale', async () => {
-  requestJsonMock.mockRejectedValue(new ApiError('index_stale', 503, 'index_stale'))
-  const wrapper = mount(KnowledgeGraph, { props: { centerId: 'wiki_agent', reloadToken: 0 } })
+  const { wrapper } = mountGraph({ centerId: 'wiki_agent', reloadToken: 0 }, snapshot,
+    new ApiError('index_stale', 503, 'index_stale'))
   try {
     await flushPromises()
     const rebuild = wrapper.findAll('button').find(button =>
@@ -215,7 +216,7 @@ it('offers an index rebuild when Graph is stale', async () => {
 })
 
 it('keeps non-zero flex sizing when Cytoscape applies position:relative and drops dangling or duplicate edges', async () => {
-  requestJsonMock.mockResolvedValue({
+  const danglingSnapshot = {
     nodes: [
       { id: 'wiki_agent', path: 'wiki/AI/Agent.md', title: 'Agent', status: 'verified', revision: 2 },
       { id: 'wiki_llm', path: 'wiki/AI/LLM.md', title: 'LLM', status: 'verified', revision: 1 },
@@ -245,8 +246,8 @@ it('keeps non-zero flex sizing when Cytoscape applies position:relative and drop
     ],
     unresolved: [],
     truncated: false,
-  })
-  const wrapper = mount(KnowledgeGraph, { props: { centerId: 'wiki_agent', reloadToken: 0 } })
+  }
+  const { wrapper } = mountGraph({ centerId: 'wiki_agent', reloadToken: 0 }, danglingSnapshot)
   try {
     await flushPromises()
     const canvas = wrapper.find('[role="img"]')
@@ -277,7 +278,7 @@ it('keeps non-zero flex sizing when Cytoscape applies position:relative and drop
 })
 
 it('opens the note directly without showing the graph node info card when a node is clicked, and supports increasing/decreasing font size', async () => {
-  const wrapper = mount(KnowledgeGraph, { props: { centerId: 'wiki_agent', reloadToken: 0 } })
+  const { wrapper } = mountGraph({ centerId: 'wiki_agent', reloadToken: 0 })
   try {
     await flushPromises()
     const inspect = wrapper.get('aside.kg-inspect')
@@ -316,7 +317,7 @@ it('opens the note directly without showing the graph node info card when a node
 })
 
 it('supports floating node search, display settings menu, and centers computed node positions around (0, 0)', async () => {
-  const wrapper = mount(KnowledgeGraph, { props: { centerId: 'wiki_agent', reloadToken: 0 } })
+  const { wrapper } = mountGraph({ centerId: 'wiki_agent', reloadToken: 0 })
   try {
     await flushPromises()
     const options = drawMock.mock.calls[0]?.[0] as {

@@ -12,12 +12,12 @@ import {
   SlidersHorizontal,
   Scan,
 } from '@lucide/vue'
-import { requestJson, withQuery } from '@/api/client'
 import { formatApiError, isApiError } from '@/api/errors'
 import { Button } from '@/components/ui/button'
 import { useI18n } from '@/composables/useI18n'
 import { useTheme } from '@/composables/useTheme'
 import './knowledge-reader.css'
+import { useKnowledgeBackend } from './knowledgeBackend'
 
 type GraphNode = {
   id: string
@@ -62,6 +62,7 @@ const emit = defineEmits<{
 
 const { t } = useI18n()
 const { dark } = useTheme()
+const knowledgeBackend = useKnowledgeBackend()
 
 const localFocusMode = ref(Boolean(props.focusMode))
 watch(() => props.focusMode, value => {
@@ -1062,12 +1063,12 @@ async function loadGraph() {
   error.value = ''
   isStale.value = false
   try {
-    const result = await requestJson<GraphSnapshot>(withQuery('/api/admin/knowledge/graph', {
+    const result = await knowledgeBackend.graph({
       scope: scope.value,
       limit: 500,
-      ...(scope.value === 'local' ? { center_id: props.centerId ?? '', depth: depth.value } : {}),
-      ...(scope.value === 'query' ? { q: queryText.value.trim() } : {}),
-    }))
+      ...(scope.value === 'local' ? { centerId: props.centerId ?? '', depth: depth.value } : {}),
+      ...(scope.value === 'query' ? { query: queryText.value.trim() } : {}),
+    }) as GraphSnapshot
     if (version !== requestVersion) return
     graph.value = result
     selectedEdgeId.value = null
