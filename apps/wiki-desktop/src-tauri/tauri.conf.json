@@ -25,6 +25,14 @@
       "csp": "default-src 'self'; img-src 'self' data: asset:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src ipc: http://ipc.localhost"
     }
   },
-  "bundle": { "active": true, "targets": ["dmg", "app"], "icon": []
+  "bundle": {
+    "active": true,
+    "targets": ["app"],
+    "icon": [],
+    "externalBin": ["binaries/wiki-mcp"],
+    "macOS": {
+      "entitlements": "Entitlements.plist",
+      "signingIdentity": null
+    }
   }
 }
