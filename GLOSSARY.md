@@ -240,6 +240,10 @@ _Avoid_: canonical memory page, index row
 Kho Markdown riêng của Memory, tách khỏi kho tri thức Wiki, gồm một phần cho từng Device và một phần dùng chung của deployment.
 _Avoid_: Wiki Vault, knowledge store
 
+**Vault**:
+Module lõi trong ứng dụng Wiki Desktop, bọc kho tri thức Wiki và là nơi thống nhất các thao tác đọc, ghi, lập chỉ mục và phát sự kiện. `Vault` không phải Memory Vault.
+_Avoid_: Memory Vault, kho Memory
+
 **Memory Scope**:
 Phần của Memory Vault mà một thao tác được phép chạm tới, là một Device hoặc deployment; chỉ server xác định, Agent và Speaker không tham gia, và đây không phải ranh giới bảo mật.
 _Avoid_: Agent memory, Speaker memory, model-selected scope
