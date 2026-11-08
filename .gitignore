@@ -26,3 +26,7 @@ __pycache__/
 
 # Claude Code worktrees.
 /.claude/worktrees/
+
+# Root npm workspace install tree.
+/node_modules/
+/packages/knowledge-ui/node_modules/

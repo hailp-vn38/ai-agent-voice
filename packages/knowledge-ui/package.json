@@ -1,0 +1,21 @@
+{
+  "name": "@vela/knowledge-ui",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./components/*": "./src/*",
+    "./styles/*": "./src/styles/*",
+    "./lib/*": "./src/lib/*"
+  },
+  "peerDependencies": {
+    "@lucide/vue": "1.48.0",
+    "cytoscape": "3.30.4",
+    "vue": "3.5.43",
+    "class-variance-authority": "0.7.1"
+  },
+  "scripts": {
+    "test": "vitest run --config ../../apps/admin-web/vite.config.ts src"
+  }
+}

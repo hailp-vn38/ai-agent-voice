@@ -1,6 +1,7 @@
 import { inject, type InjectionKey } from 'vue'
 
 import { jsonRequest, requestJson, withQuery } from '@/api/client'
+import { KNOWLEDGE_BACKEND_KEY as SHARED_KNOWLEDGE_BACKEND_KEY } from '@vela/knowledge-ui'
 
 export type KnowledgeSpace = 'raw' | 'wiki' | 'drafts'
 export type Scope = 'raw' | 'wiki' | 'all'
@@ -650,7 +651,7 @@ export function useOptionalAdminKnowledgeBackend() {
   return (backend as KnowledgeBackend & Partial<AdminKnowledgeExtension>).admin ?? null
 }
 
-export const KNOWLEDGE_BACKEND_KEY: InjectionKey<KnowledgeBackend> = Symbol('KnowledgeBackend')
+export const KNOWLEDGE_BACKEND_KEY = SHARED_KNOWLEDGE_BACKEND_KEY as InjectionKey<KnowledgeBackend>
 const defaultBackend = new HttpKnowledgeBackend()
 export function useKnowledgeBackend() {
   return inject(KNOWLEDGE_BACKEND_KEY, defaultBackend)
