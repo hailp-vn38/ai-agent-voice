@@ -349,6 +349,16 @@ struct FileSnapshot {
     content: Option<Vec<u8>>,
 }
 
+struct DirectorySnapshot {
+    relative: PathBuf,
+    existed: bool,
+}
+
+struct SnapshotSet {
+    files: Vec<FileSnapshot>,
+    directories: Vec<DirectorySnapshot>,
+}
+
 static TEMP_FILE_ID: AtomicU64 = AtomicU64::new(0);
 
 fn write_atomic(target: &Path, content: &[u8]) -> Result<(), VaultError> {
@@ -861,8 +871,8 @@ impl Vault {
         write_atomic(&target, content)
     }
 
-    fn snapshot_paths(&self, paths: &[PathBuf]) -> Result<Vec<FileSnapshot>, VaultError> {
-        paths
+    fn snapshot_paths(&self, paths: &[PathBuf]) -> Result<SnapshotSet, VaultError> {
+        let files = paths
             .iter()
             .map(|relative| {
                 let absolute = self.root.join(relative);
@@ -876,11 +886,32 @@ impl Vault {
                     content,
                 })
             })
-            .collect()
+            .collect::<Result<Vec<_>, VaultError>>()?;
+        let mut directories = std::collections::BTreeMap::new();
+        for relative in paths {
+            let mut parent = relative.parent();
+            while let Some(directory) = parent {
+                if directory.as_os_str().is_empty() {
+                    break;
+                }
+                let absolute = self.root.join(directory);
+                directories
+                    .entry(directory.to_path_buf())
+                    .or_insert_with(|| DirectorySnapshot {
+                        relative: directory.to_path_buf(),
+                        existed: absolute.is_dir(),
+                    });
+                parent = directory.parent();
+            }
+        }
+        Ok(SnapshotSet {
+            files,
+            directories: directories.into_values().collect(),
+        })
     }
 
-    fn restore_snapshots(&self, snapshots: Vec<FileSnapshot>) -> Result<(), VaultError> {
-        for snapshot in snapshots {
+    fn restore_snapshots(&self, snapshots: SnapshotSet) -> Result<(), VaultError> {
+        for snapshot in snapshots.files {
             let absolute = self.root.join(&snapshot.relative);
             if let Some(content) = snapshot.content {
                 if let Some(parent) = absolute.parent() {
@@ -894,6 +925,19 @@ impl Vault {
             }
         }
         self.engine.sync_index()?;
+        let mut directories = snapshots.directories;
+        directories.sort_by_key(|entry| std::cmp::Reverse(entry.relative.components().count()));
+        for directory in directories.into_iter().filter(|entry| !entry.existed) {
+            let absolute = self.root.join(directory.relative);
+            if absolute.is_dir()
+                && std::fs::read_dir(&absolute)
+                    .map_err(|error| VaultError::Io(error.to_string()))?
+                    .next()
+                    .is_none()
+            {
+                std::fs::remove_dir(absolute).map_err(|error| VaultError::Io(error.to_string()))?;
+            }
+        }
         Ok(())
     }
 
@@ -1376,6 +1420,7 @@ mod tests {
                 .is_err()
         );
         assert!(!temp.path().join(first.vault_relative()).exists());
+        assert!(!temp.path().join("sources/batch").exists());
         assert!(vault.search("First batch file").unwrap().is_empty());
         assert!(events.try_recv().is_err());
     }
