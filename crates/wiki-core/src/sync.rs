@@ -273,11 +273,16 @@ impl VaultSync {
         let result = self.sync_once();
         match result {
             Ok((report, ahead, behind)) => {
-                self.set_status(SyncStatus::Idle {
-                    last_sync: Some(SystemTime::now()),
-                    ahead,
-                    behind,
-                });
+                let copies = self.existing_conflict_copies();
+                if copies.is_empty() {
+                    self.set_status(SyncStatus::Idle {
+                        last_sync: Some(SystemTime::now()),
+                        ahead,
+                        behind,
+                    });
+                } else {
+                    self.set_status(SyncStatus::Conflicted { copies });
+                }
                 Ok(report)
             }
             Err(error) => {
@@ -293,6 +298,7 @@ impl VaultSync {
     fn sync_once(&self) -> Result<(SyncReport, u32, u32), SyncError> {
         let mut report = SyncReport::default();
         let commit_origins = self.change_origins();
+        let mut conflicts = Vec::new();
         let mut inner_error = None;
         let operation = self.vault.exclusive_external(|root| {
             let result = (|| -> Result<Vec<PathBuf>, SyncError> {
@@ -345,7 +351,19 @@ impl VaultSync {
                         self.git_at(root, &["commit", "-m", &message], false)?;
                     }
                 }
-                self.fetch_merge_at(root)
+                match self.fetch_merge_at(root) {
+                    Ok((mut paths, copies)) => {
+                        conflicts = copies;
+                        self.vault
+                            .reindex_exclusive_external()
+                            .map_err(|error| SyncError::Vault(error.to_string()))?;
+                        if self.commit_derived_index_if_changed(root)? {
+                            paths.push(PathBuf::from("wiki/index.md"));
+                        }
+                        Ok(paths)
+                    }
+                    Err(error) => Err(error),
+                }
             })();
             match result {
                 Ok(paths) => Ok(paths),
@@ -364,21 +382,38 @@ impl VaultSync {
             }
         };
         report.pulled = changed;
+        report.conflicts = conflicts;
         match self.git(&["push", "-u", "origin", &self.config.branch], true) {
             Ok(_) => report.pushed = true,
             Err(SyncError::Git(message)) if message.contains("rejected") => {
                 let mut retry_error = None;
+                let mut retry_conflicts = Vec::new();
                 let retry = self
                     .vault
                     .exclusive_external(|root| match self.fetch_merge_at(root) {
-                        Ok(paths) => Ok(paths),
+                        Ok((mut paths, copies)) => {
+                            retry_conflicts = copies;
+                            self.vault
+                                .reindex_exclusive_external()
+                                .map_err(|error| VaultError::Io(error.to_string()))?;
+                            if self
+                                .commit_derived_index_if_changed(root)
+                                .map_err(|error| VaultError::Io(error.to_string()))?
+                            {
+                                paths.push(PathBuf::from("wiki/index.md"));
+                            }
+                            Ok(paths)
+                        }
                         Err(error) => {
                             retry_error = Some(error);
                             Err(VaultError::Io("wiki sync retry failed".into()))
                         }
                     });
                 match retry {
-                    Ok(paths) => report.pulled.extend(paths),
+                    Ok(paths) => {
+                        report.pulled.extend(paths);
+                        report.conflicts.extend(retry_conflicts);
+                    }
                     Err(_) => {
                         return Err(retry_error.unwrap_or_else(|| {
                             SyncError::Git("push retry could not update from origin".into())
@@ -394,7 +429,7 @@ impl VaultSync {
         Ok((report, ahead, behind))
     }
 
-    fn fetch_merge_at(&self, root: &Path) -> Result<Vec<PathBuf>, SyncError> {
+    fn fetch_merge_at(&self, root: &Path) -> Result<(Vec<PathBuf>, Vec<DocPath>), SyncError> {
         let old = self
             .git_at(root, &["rev-parse", "HEAD"], false)?
             .stdout_string()?
@@ -408,6 +443,7 @@ impl VaultSync {
         }
         let remote_ref = format!("origin/{branch}");
         let remote_ref_path = format!("refs/remotes/{remote_ref}");
+        let mut conflicts = Vec::new();
         if self
             .git_at(
                 root,
@@ -420,7 +456,22 @@ impl VaultSync {
                 .git_at(root, &["merge-base", "HEAD", &remote_ref], false)
                 .is_ok()
             {
-                self.git_at(root, &["merge", "--no-edit", &remote_ref], true)?;
+                if let Err(merge_error) =
+                    self.git_at(root, &["merge", "--no-edit", &remote_ref], true)
+                {
+                    let unmerged = match self.unmerged_paths(root) {
+                        Ok(paths) => paths,
+                        Err(error) => {
+                            let _ = self.git_at(root, &["merge", "--abort"], false);
+                            return Err(error);
+                        }
+                    };
+                    if unmerged.is_empty() {
+                        let _ = self.git_at(root, &["merge", "--abort"], false);
+                        return Err(merge_error);
+                    }
+                    conflicts = self.resolve_conflicted_merge(root, &unmerged)?;
+                }
             } else {
                 return Err(SyncError::Git(
                     "local and remote histories are unrelated".into(),
@@ -428,17 +479,192 @@ impl VaultSync {
             }
         }
         let diff = self.git_at(root, &["diff", "--name-only", "-z", &old, "HEAD"], false)?;
-        Ok(diff
+        Ok((
+            diff.stdout
+                .split(|byte| *byte == 0)
+                .filter_map(|raw| {
+                    if raw.is_empty() {
+                        return None;
+                    }
+                    let relative = PathBuf::from(os_string(raw));
+                    doc_path_for(&relative).map(|_| relative)
+                })
+                .collect(),
+            conflicts,
+        ))
+    }
+
+    fn unmerged_paths(&self, root: &Path) -> Result<Vec<PathBuf>, SyncError> {
+        let output = self.git_at(
+            root,
+            &["diff", "--name-only", "--diff-filter=U", "-z"],
+            false,
+        )?;
+        Ok(output
             .stdout
             .split(|byte| *byte == 0)
-            .filter_map(|raw| {
-                if raw.is_empty() {
-                    return None;
-                }
-                let relative = PathBuf::from(os_string(raw));
-                doc_path_for(&relative).map(|_| relative)
-            })
+            .filter(|path| !path.is_empty())
+            .map(os_string)
+            .map(PathBuf::from)
             .collect())
+    }
+
+    fn resolve_conflicted_merge(
+        &self,
+        root: &Path,
+        unmerged: &[PathBuf],
+    ) -> Result<Vec<DocPath>, SyncError> {
+        let mut created_copies = Vec::new();
+        let resolution = (|| {
+            let mut copies = Vec::new();
+            let mut reindex = false;
+            let host = self.remote_host(root);
+            let date = utc_date(SystemTime::now());
+            for relative in unmerged {
+                let relative_text = relative.to_string_lossy().into_owned();
+                let ours = self.blob_at_stage(root, 2, &relative_text);
+                let theirs = self.blob_at_stage(root, 3, &relative_text);
+
+                if relative == Path::new("wiki/log.md") {
+                    let mut merged = ours.clone().unwrap_or_default();
+                    if !merged.is_empty() && !merged.ends_with(b"\n") {
+                        merged.push(b'\n');
+                    }
+                    if let Some(remote) = theirs {
+                        merged.extend_from_slice(&remote);
+                    }
+                    fs::write(root.join(relative), merged)
+                        .map_err(|error| SyncError::Git(error.to_string()))?;
+                    continue;
+                }
+
+                if relative == Path::new("wiki/index.md") {
+                    if let Some(local) = ours {
+                        fs::write(root.join(relative), local)
+                            .map_err(|error| SyncError::Git(error.to_string()))?;
+                    } else if root.join(relative).exists() {
+                        fs::remove_file(root.join(relative))
+                            .map_err(|error| SyncError::Git(error.to_string()))?;
+                    }
+                    reindex = true;
+                    continue;
+                }
+
+                match (ours, theirs) {
+                    (Some(local), Some(remote)) => {
+                        let copy = conflict_copy_path(root, relative, &date, &host);
+                        fs::write(root.join(&copy), remote)
+                            .map_err(|error| SyncError::Git(error.to_string()))?;
+                        created_copies.push(copy.clone());
+                        if let Some(path) = doc_path_for(&copy) {
+                            copies.push(path);
+                        }
+                        fs::write(root.join(relative), local)
+                            .map_err(|error| SyncError::Git(error.to_string()))?;
+                    }
+                    (Some(local), None) => {
+                        fs::write(root.join(relative), local)
+                            .map_err(|error| SyncError::Git(error.to_string()))?;
+                    }
+                    (None, Some(remote)) => {
+                        fs::write(root.join(relative), remote)
+                            .map_err(|error| SyncError::Git(error.to_string()))?;
+                    }
+                    (None, None) => {
+                        let path = root.join(relative);
+                        if path.exists() {
+                            fs::remove_file(path)
+                                .map_err(|error| SyncError::Git(error.to_string()))?;
+                        }
+                    }
+                }
+                let _ = relative_text;
+            }
+
+            if reindex {
+                self.vault
+                    .reindex_exclusive_external()
+                    .map_err(|error| SyncError::Vault(error.to_string()))?;
+            }
+            self.git_at(root, &["add", "-A"], false)?;
+            self.git_at(root, &["commit", "--no-edit"], true)?;
+            Ok(copies)
+        })();
+
+        match resolution {
+            Ok(copies) => Ok(copies),
+            Err(error) => {
+                let _ = self.git_at(root, &["merge", "--abort"], false);
+                for path in created_copies {
+                    let _ = fs::remove_file(root.join(path));
+                }
+                Err(error)
+            }
+        }
+    }
+
+    fn blob_at_stage(&self, root: &Path, stage: u8, relative: &str) -> Option<Vec<u8>> {
+        self.git_at(root, &["show", &format!(":{stage}:{relative}")], false)
+            .ok()
+            .map(|output| output.stdout)
+    }
+
+    fn commit_derived_index_if_changed(&self, root: &Path) -> Result<bool, SyncError> {
+        let status = self.git_at(root, &["status", "--porcelain"], false)?;
+        if status.stdout.is_empty() {
+            return Ok(false);
+        }
+        self.git_at(root, &["add", "-A"], false)?;
+        let staged = self.git_at(root, &["diff", "--cached", "--name-only", "-z"], false)?;
+        if staged.stdout.is_empty() {
+            return Ok(false);
+        }
+        self.git_at(
+            root,
+            &[
+                "commit",
+                "-m",
+                &format!("vault: rebuild derived index from {}", hostname()),
+                "-m",
+                "Origin: sync",
+            ],
+            false,
+        )?;
+        Ok(true)
+    }
+
+    fn remote_host(&self, root: &Path) -> String {
+        let Ok(output) = self.git_at(root, &["show", "-s", "--format=%s", "MERGE_HEAD"], false)
+        else {
+            return "remote".into();
+        };
+        let subject = String::from_utf8_lossy(&output.stdout);
+        let host = subject
+            .trim()
+            .split_once(" files from ")
+            .map(|(_, host)| host)
+            .filter(|host| !host.is_empty())
+            .unwrap_or("remote");
+        safe_filename_part(host)
+    }
+
+    fn existing_conflict_copies(&self) -> Vec<DocPath> {
+        let mut copies = Vec::new();
+        collect_conflict_copies(
+            Scope::Raw,
+            &self.vault_root().join("sources"),
+            &self.vault_root().join("sources"),
+            &mut copies,
+        );
+        collect_conflict_copies(
+            Scope::Wiki,
+            &self.vault_root().join("wiki"),
+            &self.vault_root().join("wiki"),
+            &mut copies,
+        );
+        copies.sort_by(|left, right| left.vault_relative().cmp(&right.vault_relative()));
+        copies.dedup();
+        copies
     }
 
     fn prepare_repository(&self) -> Result<(), SyncError> {
@@ -736,6 +962,88 @@ fn doc_path_for(path: &Path) -> Option<DocPath> {
     };
     DocPath::parse(scope, path.strip_prefix(prefix).ok()?).ok()
 }
+
+fn conflict_copy_path(root: &Path, relative: &Path, date: &str, host: &str) -> PathBuf {
+    let parent = relative.parent().unwrap_or_else(|| Path::new("."));
+    let file_stem = relative
+        .file_stem()
+        .and_then(OsStr::to_str)
+        .unwrap_or("page");
+    let extension = relative.extension().and_then(OsStr::to_str).unwrap_or("md");
+    let base = format!("{file_stem} (conflict {date} {host})");
+    let mut candidate = parent.join(format!("{base}.{extension}"));
+    let mut suffix = 2;
+    while root.join(&candidate).exists() {
+        candidate = parent.join(format!("{base} {suffix}.{extension}"));
+        suffix += 1;
+    }
+    candidate
+}
+
+fn safe_filename_part(value: &str) -> String {
+    let sanitized: String = value
+        .chars()
+        .map(|character| {
+            if character.is_ascii_alphanumeric() || matches!(character, '-' | '_' | '.') {
+                character
+            } else {
+                '-'
+            }
+        })
+        .collect();
+    let sanitized = sanitized.trim_matches(['-', '.']);
+    if sanitized.is_empty() {
+        "remote".into()
+    } else {
+        sanitized.to_string()
+    }
+}
+
+fn utc_date(time: SystemTime) -> String {
+    let seconds = time
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    let days = (seconds / 86_400) as i64;
+    let z = days + 719_468;
+    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
+    let day_of_era = z - era * 146_097;
+    let year_of_era =
+        (day_of_era - day_of_era / 1_460 + day_of_era / 36_524 - day_of_era / 146_096) / 365;
+    let mut year = year_of_era + era * 400;
+    let day_of_year = day_of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100);
+    let month_prime = (5 * day_of_year + 2) / 153;
+    let day = day_of_year - (153 * month_prime + 2) / 5 + 1;
+    let month = month_prime + if month_prime < 10 { 3 } else { -9 };
+    year += i64::from(month <= 2);
+    format!("{year:04}-{month:02}-{day:02}")
+}
+
+fn collect_conflict_copies(scope: Scope, root: &Path, directory: &Path, copies: &mut Vec<DocPath>) {
+    let Ok(entries) = fs::read_dir(directory) else {
+        return;
+    };
+    for entry in entries.filter_map(Result::ok) {
+        let path = entry.path();
+        if path.is_dir() {
+            collect_conflict_copies(scope, root, &path, copies);
+            continue;
+        }
+        if !path
+            .file_name()
+            .and_then(OsStr::to_str)
+            .is_some_and(|name| name.contains(" (conflict "))
+        {
+            continue;
+        }
+        let Ok(relative) = path.strip_prefix(root) else {
+            continue;
+        };
+        if let Ok(doc_path) = DocPath::parse(scope, relative) {
+            copies.push(doc_path);
+        }
+    }
+}
 #[cfg(unix)]
 fn os_string(bytes: &[u8]) -> std::ffi::OsString {
     use std::os::unix::ffi::OsStringExt;
@@ -914,6 +1222,7 @@ mod option_system_time {
 mod tests {
     use super::*;
     use crate::{Change, Origin, ReadWindow};
+    use std::io::Write;
     use std::process::Output;
 
     fn git(root: &Path, args: &[&str]) -> Output {
@@ -969,6 +1278,15 @@ mod tests {
         }
         println!("SKIPPED: git is not installed");
         true
+    }
+
+    fn assert_clean(root: &Path) {
+        let status = git(root, &["status", "--porcelain"]);
+        assert!(
+            status.stdout.is_empty(),
+            "repository should be clean after sync: {}",
+            String::from_utf8_lossy(&status.stdout)
+        );
     }
 
     #[test]
@@ -1030,6 +1348,187 @@ mod tests {
             }
         };
         assert!(external.iter().any(|path| path == "wiki/remote-page.md"));
+    }
+
+    #[test]
+    fn concurrent_page_edits_preserve_local_and_create_remote_conflict_copy() {
+        if skip_without_git() {
+            return;
+        }
+        let temp = tempfile::tempdir().unwrap();
+        let remote = new_bare_remote(temp.path());
+        let remote_url = remote.to_string_lossy().into_owned();
+        let vault_a =
+            Arc::new(Vault::open(crate::VaultConfig::new(temp.path().join("vault-a"))).unwrap());
+        let sync_a =
+            VaultSync::configure(Arc::clone(&vault_a), config(remote_url.clone())).unwrap();
+        write_page(&vault_a, "shared.md", "# Shared\nbase\n");
+        sync_a.sync_now().unwrap();
+
+        let b_root = temp.path().join("vault-b");
+        fs::create_dir_all(&b_root).unwrap();
+        git(&b_root, &["clone", &remote_url, "."]);
+        let vault_b = Arc::new(Vault::open(crate::VaultConfig::new(&b_root)).unwrap());
+        let sync_b = VaultSync::configure(Arc::clone(&vault_b), config(remote_url)).unwrap();
+
+        write_page(&vault_a, "shared.md", "# Shared\nchange from A\n");
+        write_page(&vault_b, "shared.md", "# Shared\nchange from B\n");
+        sync_a.sync_now().unwrap();
+
+        let report = sync_b.sync_now().unwrap();
+        let shared = DocPath::parse(Scope::Wiki, "shared.md").unwrap();
+        assert_eq!(
+            vault_b
+                .read(&shared, ReadWindow::default())
+                .unwrap()
+                .content,
+            "# Shared\nchange from B"
+        );
+        assert!(!report.conflicts.is_empty());
+        let status = sync_b.status();
+        assert!(matches!(status, SyncStatus::Conflicted { .. }));
+
+        let remote_copy = fs::read_dir(vault_b.root_path().join("wiki"))
+            .unwrap()
+            .filter_map(Result::ok)
+            .find(|entry| {
+                entry
+                    .file_name()
+                    .to_string_lossy()
+                    .contains("shared (conflict ")
+            })
+            .expect("remote version should be saved as a conflict copy");
+        assert_eq!(
+            fs::read_to_string(remote_copy.path()).unwrap(),
+            "# Shared\nchange from A\n"
+        );
+
+        fs::remove_file(remote_copy.path()).unwrap();
+        sync_b.sync_now().unwrap();
+        assert!(matches!(sync_b.status(), SyncStatus::Idle { .. }));
+        assert_clean(vault_a.root_path());
+        assert_clean(vault_b.root_path());
+    }
+
+    #[test]
+    fn concurrent_log_appends_are_unioned_without_conflict_markers() {
+        if skip_without_git() {
+            return;
+        }
+        let temp = tempfile::tempdir().unwrap();
+        let remote = new_bare_remote(temp.path());
+        let remote_url = remote.to_string_lossy().into_owned();
+        let vault_a =
+            Arc::new(Vault::open(crate::VaultConfig::new(temp.path().join("vault-a"))).unwrap());
+        let sync_a =
+            VaultSync::configure(Arc::clone(&vault_a), config(remote_url.clone())).unwrap();
+        fs::write(vault_a.root_path().join("wiki/log.md"), "# Log\nbase\n").unwrap();
+        sync_a.sync_now().unwrap();
+
+        let b_root = temp.path().join("vault-b");
+        fs::create_dir_all(&b_root).unwrap();
+        git(&b_root, &["clone", &remote_url, "."]);
+        let vault_b = Arc::new(Vault::open(crate::VaultConfig::new(&b_root)).unwrap());
+        let sync_b = VaultSync::configure(Arc::clone(&vault_b), config(remote_url)).unwrap();
+
+        fs::OpenOptions::new()
+            .append(true)
+            .open(vault_a.root_path().join("wiki/log.md"))
+            .unwrap()
+            .write_all(b"from A\n")
+            .unwrap();
+        fs::OpenOptions::new()
+            .append(true)
+            .open(vault_b.root_path().join("wiki/log.md"))
+            .unwrap()
+            .write_all(b"from B\n")
+            .unwrap();
+        sync_a.sync_now().unwrap();
+        sync_b.sync_now().unwrap();
+
+        let log = fs::read_to_string(vault_b.root_path().join("wiki/log.md")).unwrap();
+        assert!(log.contains("from A"));
+        assert!(log.contains("from B"));
+        assert!(!log.contains("<<<<<<<"));
+        assert!(!log.contains(">>>>>>>"));
+        assert!(matches!(sync_b.status(), SyncStatus::Idle { .. }));
+        assert_clean(vault_a.root_path());
+        assert_clean(vault_b.root_path());
+    }
+
+    #[test]
+    fn index_conflict_is_rebuilt_after_remote_pages_merge() {
+        if skip_without_git() {
+            return;
+        }
+        let temp = tempfile::tempdir().unwrap();
+        let remote = new_bare_remote(temp.path());
+        let remote_url = remote.to_string_lossy().into_owned();
+        let vault_a =
+            Arc::new(Vault::open(crate::VaultConfig::new(temp.path().join("vault-a"))).unwrap());
+        let sync_a =
+            VaultSync::configure(Arc::clone(&vault_a), config(remote_url.clone())).unwrap();
+        sync_a.sync_now().unwrap();
+
+        let b_root = temp.path().join("vault-b");
+        fs::create_dir_all(&b_root).unwrap();
+        git(&b_root, &["clone", &remote_url, "."]);
+        let vault_b = Arc::new(Vault::open(crate::VaultConfig::new(&b_root)).unwrap());
+        let sync_b = VaultSync::configure(Arc::clone(&vault_b), config(remote_url)).unwrap();
+
+        write_page(&vault_a, "from-a.md", "# From A\nA content\n");
+        write_page(&vault_b, "from-b.md", "# From B\nB content\n");
+        sync_a.sync_now().unwrap();
+        sync_b.sync_now().unwrap();
+
+        let index = fs::read_to_string(vault_b.root_path().join("wiki/index.md")).unwrap();
+        assert!(!index.contains("<<<<<<<"));
+        assert!(!index.contains("======="));
+        assert!(!index.contains(">>>>>>>"));
+        assert!(index.contains("From A"));
+        assert!(index.contains("From B"));
+        assert_clean(vault_a.root_path());
+        assert_clean(vault_b.root_path());
+    }
+
+    #[test]
+    fn delete_modify_conflict_keeps_the_modified_page() {
+        if skip_without_git() {
+            return;
+        }
+        let temp = tempfile::tempdir().unwrap();
+        let remote = new_bare_remote(temp.path());
+        let remote_url = remote.to_string_lossy().into_owned();
+        let vault_a =
+            Arc::new(Vault::open(crate::VaultConfig::new(temp.path().join("vault-a"))).unwrap());
+        let sync_a =
+            VaultSync::configure(Arc::clone(&vault_a), config(remote_url.clone())).unwrap();
+        write_page(&vault_a, "delete-modify.md", "# Keep Edited\nbase\n");
+        sync_a.sync_now().unwrap();
+
+        let b_root = temp.path().join("vault-b");
+        fs::create_dir_all(&b_root).unwrap();
+        git(&b_root, &["clone", &remote_url, "."]);
+        let vault_b = Arc::new(Vault::open(crate::VaultConfig::new(&b_root)).unwrap());
+        let sync_b = VaultSync::configure(Arc::clone(&vault_b), config(remote_url)).unwrap();
+
+        vault_a
+            .apply(Change::Delete {
+                path: DocPath::parse(Scope::Wiki, "delete-modify.md").unwrap(),
+            })
+            .unwrap();
+        write_page(&vault_b, "delete-modify.md", "# Keep Edited\nB edit\n");
+        sync_a.sync_now().unwrap();
+        sync_b.sync_now().unwrap();
+
+        let page = DocPath::parse(Scope::Wiki, "delete-modify.md").unwrap();
+        assert_eq!(
+            vault_b.read(&page, ReadWindow::default()).unwrap().content,
+            "# Keep Edited\nB edit"
+        );
+        assert!(matches!(sync_b.status(), SyncStatus::Idle { .. }));
+        assert_clean(vault_a.root_path());
+        assert_clean(vault_b.root_path());
     }
 
     #[test]

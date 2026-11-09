@@ -1,6 +1,6 @@
 # 07: Server: `Vault` dùng chung và `KnowledgeWriteGate`
 
-Status: ready-for-agent
+Status: resolved
 Blocked by: 01
 Spec: ../spec.md (user story 14)
 Thiết kế: docs/wiki-desktop/git-sync.md#server
@@ -18,7 +18,11 @@ Trên `vela-server`, có một chỗ để chặn mọi lần ghi Knowledge qua 
 
 ## Tiêu chí xong
 
-- [ ] Test: giữ write guard → request `PUT /knowledge/pages/...` chờ tới khi nhả; `GET` không chờ.
-- [ ] Test: tool MCP ghi chờ write guard tương tự.
-- [ ] Test hồi quy Knowledge admin và Knowledge MCP hiện có vẫn PASS.
-- [ ] `scripts/agent-test.sh` chạy target `vela-server` liên quan trước, rồi workspace.
+- [x] Test: giữ write guard → request `PUT /knowledge/pages/...` chờ tới khi nhả; `GET` không chờ.
+- [x] Test: tool MCP ghi chờ write guard tương tự.
+- [x] Test hồi quy Knowledge admin và Knowledge MCP hiện có vẫn PASS.
+- [x] `scripts/agent-test.sh` chạy target `vela-server` liên quan trước, rồi workspace.
+
+## Comments
+
+- 2026-11-09: Targeted middleware, MCP write, Knowledge Admin search, MCP read-only denial, and Knowledge MCP HTTP compatibility tests PASS. `scripts/agent-test.sh full` ran after the targeted checks but exited 101 on the unrelated `trusted_aec_auto_barge_in_stops_a_once_and_delivers_b_on_the_same_socket` failure at `crates/vela-server/tests/protocol_e2e.rs:581` (B TTS delivery was not observed). Saved log: `/private/var/folders/j6/50n8d4j97m7ddxpvtwpglnjh0000gn/T/ai-agent-voice-test-logs/agent-test.full.Q81mSp`.

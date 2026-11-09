@@ -12,9 +12,7 @@ pub(crate) use settings::{
 };
 
 use crate::{config::WikiMcpConfig, providers::llm::ToolDefinition};
-#[cfg(test)]
-use llm_wiki::is_read_only_wiki_tool;
-use llm_wiki::{AdaptiveReadBudget, WikiEngine, WikiError};
+use llm_wiki::{AdaptiveReadBudget, WikiEngine, WikiError, is_read_only_wiki_tool};
 use serde_json::{Value, json};
 use settings::{
     CALL_TIMEOUT_MS_RANGE, CONCURRENCY_RANGE, MAX_TOKENS, PersistedKnowledgeMcpSettings,
@@ -36,7 +34,7 @@ use std::{
 use tokio::sync::Notify;
 use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
-use wiki_core::{Vault, VaultConfig};
+use wiki_core::Vault;
 use wiki_mcp::{
     Access as ToolAccess, CallCtx as ToolCallCtx, Policy as ToolPolicy, ToolError, ToolHost,
 };
@@ -95,6 +93,7 @@ pub(crate) struct KnowledgeMcp {
     settings: RwLock<PersistedKnowledgeMcpSettings>,
     store_path: Option<PathBuf>,
     active_requests: Arc<AtomicUsize>,
+    write_gate: Arc<crate::app::KnowledgeWriteGate>,
 }
 
 impl KnowledgeMcp {
@@ -117,21 +116,30 @@ impl KnowledgeMcp {
             max_result_chars: max_result_chars
                 .clamp(*RESULT_CHARS_RANGE.start(), *RESULT_CHARS_RANGE.end()),
         };
-        Self::from_config(engine, autoflow_notify, &cfg, None)
+        let vault = Arc::new(
+            Vault::open(wiki_core::VaultConfig::new(&engine.config().data_root))
+                .expect("test WikiEngine fixture vault should open"),
+        );
+        Self::from_config(
+            engine,
+            vault,
+            Arc::new(crate::app::KnowledgeWriteGate::default()),
+            autoflow_notify,
+            &cfg,
+            None,
+        )
     }
 
     pub(crate) fn from_config(
         engine: Arc<WikiEngine>,
+        vault: Arc<Vault>,
+        write_gate: Arc<crate::app::KnowledgeWriteGate>,
         autoflow_notify: Option<Arc<Notify>>,
         cfg: &WikiMcpConfig,
         store_dir: Option<&Path>,
     ) -> Self {
-        let vault = Arc::new(
-            Vault::open(VaultConfig::new(&engine.config().data_root))
-                .expect("an open WikiEngine vault must also open through wiki-core"),
-        );
         let tool_host = Arc::new(ToolHost::new(
-            vault,
+            Arc::clone(&vault),
             ToolPolicy {
                 allow_write: cfg.allow_write,
                 max_concurrency: cfg.max_concurrency,
@@ -150,6 +158,7 @@ impl KnowledgeMcp {
             settings: RwLock::new(settings),
             store_path,
             active_requests: Arc::new(AtomicUsize::new(0)),
+            write_gate,
         }
     }
 
@@ -443,6 +452,15 @@ impl KnowledgeMcp {
         if Instant::now() >= ctx.deadline {
             return Err(KnowledgeToolError::Timeout);
         }
+        let _write_guard = if self.effective_write_allowed(ctx) && !is_read_only_wiki_tool(name) {
+            Some(tokio::select! {
+                _ = ctx.cancellation.cancelled() => return Err(KnowledgeToolError::Cancelled),
+                _ = tokio::time::sleep_until(ctx.deadline) => return Err(KnowledgeToolError::Timeout),
+                guard = self.write_gate.read() => guard,
+            })
+        } else {
+            None
+        };
         if !arguments.is_object() {
             return Err(KnowledgeToolError::InvalidArguments(
                 "tool arguments must be a JSON object".into(),

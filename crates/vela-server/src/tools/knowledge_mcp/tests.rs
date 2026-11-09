@@ -94,6 +94,38 @@ async fn read_only_caller_cannot_invoke_write_tools() {
 }
 
 #[tokio::test]
+async fn mcp_write_tool_waits_for_knowledge_write_gate() {
+    let (_dir, engine) = test_engine();
+    let mcp = Arc::new(KnowledgeMcp::new(engine, None, true, 12_000));
+    let write_guard = mcp.write_gate.write().await;
+    let mcp_call = Arc::clone(&mcp);
+    let ctx = test_ctx(KnowledgeMcpAccess::ReadWrite);
+    let mut call = tokio::spawn(async move {
+        mcp_call
+            .call_tool(
+                &ctx,
+                "wiki_write_file",
+                json!({
+                    "scope": "wiki",
+                    "rel_path": "entities/gated.md",
+                    "content": "# Gated write\n"
+                }),
+            )
+            .await
+    });
+
+    assert!(
+        tokio::time::timeout(Duration::from_millis(50), &mut call)
+            .await
+            .is_err()
+    );
+    drop(write_guard);
+    call.await
+        .unwrap()
+        .expect("MCP write should proceed after the gate opens");
+}
+
+#[tokio::test]
 async fn memory_facts_are_not_reachable_through_knowledge_mcp_or_wiki_query() {
     use crate::services::memory::{
         DeviceKind, FactKind, MemoryActor, MemoryChange, MemoryCore, MemoryScope,
@@ -223,7 +255,16 @@ async fn read_write_caller_can_write_query_and_stage_sources() {
 fn runtime_token_lifecycle_redaction_and_dynamic_concurrency() {
     let (dir, engine) = test_engine();
     let cfg = WikiMcpConfig::default();
-    let mcp = KnowledgeMcp::from_config(engine, None, &cfg, Some(&dir.0));
+    let vault =
+        Arc::new(Vault::open(wiki_core::VaultConfig::new(&engine.config().data_root)).unwrap());
+    let mcp = KnowledgeMcp::from_config(
+        engine,
+        vault,
+        Arc::new(crate::app::KnowledgeWriteGate::default()),
+        None,
+        &cfg,
+        Some(&dir.0),
+    );
     assert!(!mcp.is_enabled());
 
     let snap = mcp

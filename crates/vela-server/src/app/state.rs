@@ -76,6 +76,9 @@ impl Default for AdminTaskControlState {
 #[derive(Clone)]
 pub struct AppState {
     pub wiki_engine: Option<Arc<llm_wiki::WikiEngine>>,
+    /// The single Vault lock owner shared by Knowledge MCP and Git sync.
+    pub(crate) wiki_vault: Arc<std::sync::OnceLock<Arc<wiki_core::Vault>>>,
+    pub(crate) knowledge_write_gate: Arc<super::KnowledgeWriteGate>,
     /// `None` when `[memory]` is off or the vault could not open; the server runs either way.
     pub memory_core: Option<Arc<crate::services::memory::MemoryCore>>,
     pub orchestrator: Option<Arc<orchestrator_agent_rs::Orchestrator>>,
@@ -163,14 +166,31 @@ impl AppState {
             Some(eng) => Arc::clone(eng),
             None => crate::services::task_flow::open_wiki_engine(&self.config.wiki).ok()?,
         };
+        let vault = self.get_or_init_wiki_vault(&engine)?;
         let built = Arc::new(crate::tools::knowledge_mcp::KnowledgeMcp::from_config(
             engine,
+            vault,
+            Arc::clone(&self.knowledge_write_gate),
             self.autoflow_notify.clone(),
             &self.config.wiki.mcp,
             Some(self.config.orchestrator.store_dir.as_path()),
         ));
         let _ = self.knowledge_mcp.set(Arc::clone(&built));
         self.knowledge_mcp.get().cloned().or(Some(built))
+    }
+
+    pub(crate) fn get_or_init_wiki_vault(
+        &self,
+        engine: &llm_wiki::WikiEngine,
+    ) -> Option<Arc<wiki_core::Vault>> {
+        if let Some(vault) = self.wiki_vault.get() {
+            return Some(Arc::clone(vault));
+        }
+        let opened = Arc::new(
+            wiki_core::Vault::open(wiki_core::VaultConfig::new(&engine.config().data_root)).ok()?,
+        );
+        let _ = self.wiki_vault.set(opened);
+        self.wiki_vault.get().cloned()
     }
 
     pub(crate) fn load_backup_companion_settings(
@@ -853,6 +873,8 @@ impl AppState {
         ));
         let state = Self {
             wiki_engine: None,
+            wiki_vault: Arc::new(std::sync::OnceLock::new()),
+            knowledge_write_gate: Arc::new(super::KnowledgeWriteGate::default()),
             memory_core: None,
             orchestrator: None,
             task_manager: None,
