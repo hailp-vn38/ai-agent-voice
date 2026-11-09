@@ -78,6 +78,9 @@ pub struct AppState {
     pub wiki_engine: Option<Arc<llm_wiki::WikiEngine>>,
     /// The single Vault lock owner shared by Knowledge MCP and Git sync.
     pub(crate) wiki_vault: Arc<std::sync::OnceLock<Arc<wiki_core::Vault>>>,
+    /// Git sync is initialized once per server lifetime and shared by HTTP/SSE callers.
+    pub(crate) wiki_sync_service: Arc<std::sync::OnceLock<Arc<super::wiki_sync::WikiSyncService>>>,
+    pub(crate) wiki_sync_scheduler_started: Arc<std::sync::atomic::AtomicBool>,
     pub(crate) knowledge_write_gate: Arc<super::KnowledgeWriteGate>,
     /// `None` when `[memory]` is off or the vault could not open; the server runs either way.
     pub memory_core: Option<Arc<crate::services::memory::MemoryCore>>,
@@ -874,6 +877,8 @@ impl AppState {
         let state = Self {
             wiki_engine: None,
             wiki_vault: Arc::new(std::sync::OnceLock::new()),
+            wiki_sync_service: Arc::new(std::sync::OnceLock::new()),
+            wiki_sync_scheduler_started: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             knowledge_write_gate: Arc::new(super::KnowledgeWriteGate::default()),
             memory_core: None,
             orchestrator: None,

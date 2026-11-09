@@ -43,6 +43,7 @@ mod knowledge_write_gate;
 pub(crate) mod mcp_server;
 mod state;
 mod transport;
+mod wiki_sync;
 
 pub(crate) use knowledge_write_gate::{KnowledgeWriteGate, gate_knowledge_writes};
 pub use state::{AppState, SessionProfileAdmissionError};
@@ -160,6 +161,7 @@ pub fn router_with_state(mut state: AppState) -> Router {
     ));
     if state.wiki_engine.is_none()
         && (state.config.wiki.enabled
+            || state.config.wiki.sync.enabled
             || state.config.wiki.mcp.enabled
             || crate::tools::knowledge_mcp::persisted_settings_exist(
                 &state.config.orchestrator.store_dir,
@@ -168,7 +170,7 @@ pub fn router_with_state(mut state: AppState) -> Router {
     {
         state.wiki_engine = Some(engine);
     }
-    if state.config.wiki.enabled
+    if (state.config.wiki.enabled || state.config.wiki.sync.enabled)
         && let Some(engine) = state.wiki_engine.as_deref()
     {
         let _ = state.get_or_init_wiki_vault(engine);
@@ -176,6 +178,7 @@ pub fn router_with_state(mut state: AppState) -> Router {
     if state.wiki_engine.is_some() {
         let _ = state.get_or_init_knowledge_mcp();
     }
+    wiki_sync::start_if_enabled(&state);
     let vision_enabled = state.config.vision.enabled;
     let vision_config = state.config.vision.clone();
     let router = Router::new()
