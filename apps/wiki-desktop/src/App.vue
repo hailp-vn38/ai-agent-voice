@@ -3,7 +3,8 @@ import { onMounted, onBeforeUnmount, ref } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import KnowledgePage from '@vela/knowledge-ui/components/KnowledgePage.vue'
-import { VaultError, type VaultEvent } from '@vela/knowledge-ui'
+import { KNOWLEDGE_SYNC_OPEN_CONFLICT_EVENT, KnowledgeSyncBadge, KnowledgeSyncPanel, VaultError, type SyncStatus, type VaultEvent } from '@vela/knowledge-ui'
+import { tauriKnowledgeBackend } from './tauriBackend'
 
 type McpInfo = {
   port: number
@@ -28,6 +29,8 @@ const recent = ref<string[]>([])
 const error = ref<VaultError | null>(null)
 const loading = ref(false)
 const mcpOpen = ref(false)
+const syncOpen = ref(false)
+const syncStatus = ref<SyncStatus>({ type: 'disabled', reason: 'not_configured' })
 const mcpInfo = ref<McpInfo | null>(null)
 const mcpError = ref('')
 const mcpToast = ref('')
@@ -38,6 +41,7 @@ const requestedMcpPort = ref<number | null>(null)
 let removeMcpStatus: (() => void) | undefined
 let removeVaultEvents: (() => void) | undefined
 let removeVaultLock: (() => void) | undefined
+let removeSyncStatus: (() => void) | undefined
 let toastTimer: ReturnType<typeof setTimeout> | undefined
 
 async function refreshVaults() {
@@ -54,6 +58,7 @@ async function openVault(path: string) {
     vaultWritable.value = await invoke<boolean>('vault_is_writable')
     await refreshVaults()
     await refreshMcp()
+    await refreshSyncStatus()
   } catch (cause) {
     const value = cause && typeof cause === 'object' ? cause as { kind?: VaultError['kind']; message?: string; current?: string } : {}
     error.value = new VaultError(value.kind ?? 'io', value.message ?? String(cause), value.current)
@@ -64,7 +69,7 @@ async function pickVault() {
   error.value = null
   try {
     const picked = await invoke<string | null>('vault_pick')
-    if (picked) { current.value = picked; await refreshVaults(); await refreshMcp() }
+    if (picked) { current.value = picked; await refreshVaults(); await refreshMcp(); await refreshSyncStatus() }
   } catch (cause) {
     const value = cause && typeof cause === 'object' ? cause as { kind?: VaultError['kind']; message?: string; current?: string } : {}
     error.value = new VaultError(value.kind ?? 'io', value.message ?? String(cause), value.current)
@@ -79,6 +84,15 @@ async function refreshMcp() {
     mcpInfo.value = null
     mcpError.value = errorMessage(cause)
   }
+}
+async function refreshSyncStatus() {
+  if (!current.value) return
+  try { syncStatus.value = await tauriKnowledgeBackend.sync.status() }
+  catch { syncStatus.value = { type: 'disabled', reason: 'not_configured' } }
+}
+function openSyncConflict(path: { scope: 'raw' | 'wiki'; relative: string }) {
+  window.dispatchEvent(new CustomEvent(KNOWLEDGE_SYNC_OPEN_CONFLICT_EVENT, { detail: path }))
+  syncOpen.value = false
 }
 async function saveMcpPort() {
   if (!requestedMcpPort.value) return
@@ -173,6 +187,8 @@ onMounted(async () => {
     })
   } catch { /* Native event API is available only inside the packaged Tauri shell. */ }
   if (current.value) await refreshMcp()
+  if (current.value) await refreshSyncStatus()
+  removeSyncStatus = tauriKnowledgeBackend.sync.onStatus(status => { syncStatus.value = status })
   window.addEventListener('keydown', onShortcut)
 })
 onBeforeUnmount(() => {
@@ -180,6 +196,7 @@ onBeforeUnmount(() => {
   removeMcpStatus?.()
   removeVaultEvents?.()
   removeVaultLock?.()
+  removeSyncStatus?.()
   if (toastTimer) clearTimeout(toastTimer)
 })
 </script>
@@ -202,10 +219,16 @@ onBeforeUnmount(() => {
     <section v-if="current" class="knowledge-frame" aria-label="Knowledge vault">
       <KnowledgePage />
     </section>
-    <footer v-if="current" class="mcp-footer" aria-label="MCP connection status">
+    <footer v-if="current" class="mcp-footer" aria-label="MCP and sync status">
       <button type="button" @click="mcpOpen = true; refreshMcp()">MCP · {{ mcpInfo?.status.connectedClients ?? 0 }} client đang kết nối</button>
+      <KnowledgeSyncBadge :status="syncStatus" @activate="syncOpen = true" />
       <span v-if="mcpInfo?.status.lastCallAt">Gọi gần nhất {{ new Date(mcpInfo.status.lastCallAt).toLocaleTimeString() }}</span>
     </footer>
+    <div v-if="syncOpen" class="mcp-overlay" role="presentation" @click.self="syncOpen = false">
+      <section class="mcp-settings sync-settings" role="dialog" aria-modal="true" aria-labelledby="knowledge-sync-title">
+        <KnowledgeSyncPanel :backend="tauriKnowledgeBackend.sync" @close="syncOpen = false" @open-conflict="openSyncConflict" />
+      </section>
+    </div>
     <div v-if="mcpToast" class="mcp-toast" role="status">{{ mcpToast }}</div>
     <div v-if="mcpOpen" class="mcp-overlay" role="presentation" @click.self="mcpOpen = false">
       <section class="mcp-settings" role="dialog" aria-modal="true" aria-labelledby="mcp-title">

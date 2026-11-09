@@ -10,7 +10,7 @@ import KnowledgeGraph from './KnowledgeGraph.vue'
 import { formatApiError, isApiError } from './lib/errors'
 import { Button } from './ui/button'
 import { ActionMenu, MenuItem } from './ui/action-menu'
-import { KNOWLEDGE_CHAT_PANEL_KEY, KNOWLEDGE_CHAT_PROVIDER_KEY, isKnowledgeChatAvailable, useI18n, useKnowledgeNavigation } from './integration'
+import { KNOWLEDGE_CHAT_PANEL_KEY, KNOWLEDGE_CHAT_PROVIDER_KEY, KNOWLEDGE_SYNC_OPEN_CONFLICT_EVENT, isKnowledgeChatAvailable, useI18n, useKnowledgeNavigation } from './integration'
 import { useWikiChat, type WikiChatFile } from './useWikiChat'
 import RightPanelTabs, { type RightTab } from './RightPanelTabs.vue'
 import { movedOrder, useDragReorder } from './useDragReorder'
@@ -2268,6 +2268,21 @@ async function openJobLink() {
     await restoreSelectedNote('wiki', wiki)
   }
 }
+async function openSyncConflictPath(event: Event) {
+  const target = (event as CustomEvent<unknown>).detail
+  if (!target || typeof target !== 'object') return
+  const value = target as { scope?: unknown; relative?: unknown }
+  if ((value.scope !== 'raw' && value.scope !== 'wiki') || typeof value.relative !== 'string') return
+  const space = value.scope
+  const path = `${space}/${value.relative}`
+  await selectSpace(space)
+  if (space === 'raw') {
+    await openRawNote(path, value.relative.split('/').at(-1) ?? path)
+    return
+  }
+  const node = tree.value.find(item => item.space === 'wiki' && item.type === 'file' && item.path === path)
+  await openPage(node?.id ?? path, node?.path ?? path)
+}
 watch(() => [route.query.source, route.query.wiki], () => { void openJobLink() })
 function onKnowledgeShortcut(event: KeyboardEvent) {
   if (!(event.metaKey || event.ctrlKey) || event.shiftKey || event.key.toLowerCase() !== 'n') return
@@ -2281,6 +2296,7 @@ onMounted(() => {
   const closedEveryFile = explorerPreferences[activeSpace.value]?.selectedPath === activeSpace.value
   void refreshHealth()
   window.addEventListener('keydown', onKnowledgeShortcut)
+  window.addEventListener(KNOWLEDGE_SYNC_OPEN_CONFLICT_EVENT, openSyncConflictPath)
   stopListeningForKnowledgeChanges = knowledgeBackend.onChange(event => {
     if (event.type === 'changed' || event.type === 'external' || event.type === 'reindexed') {
       void refreshTree()
@@ -2305,6 +2321,7 @@ onMounted(() => {
 })
 onBeforeUnmount(() => {
   window.removeEventListener('keydown', onKnowledgeShortcut)
+  window.removeEventListener(KNOWLEDGE_SYNC_OPEN_CONFLICT_EVENT, openSyncConflictPath)
   stopListeningForKnowledgeChanges?.()
 })
 </script>

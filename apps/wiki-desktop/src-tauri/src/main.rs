@@ -38,6 +38,14 @@ pub(crate) struct SyncSettings {
     pub(crate) interval_min: u64,
 }
 
+#[derive(Debug, Clone, Serialize)]
+struct SyncConfigurationView {
+    remote_url: String,
+    branch: String,
+    auto: bool,
+    interval_min: u64,
+}
+
 impl Default for SyncSettings {
     fn default() -> Self {
         Self {
@@ -631,6 +639,50 @@ async fn sync_now(state: State<'_, DesktopState>) -> Result<SyncReport, SyncErro
         .map_err(|error| SyncError::Git(error.to_string()))?
 }
 
+#[tauri::command]
+async fn sync_configuration(
+    state: State<'_, DesktopState>,
+) -> Result<SyncConfigurationView, SyncError> {
+    let vault = state
+        .active_vault()
+        .map_err(|error| SyncError::Vault(format!("{error:?}")))?;
+    let path = state
+        .current_vault_path()
+        .map_err(|error| SyncError::Vault(format!("{error:?}")))?
+        .to_string_lossy()
+        .into_owned();
+    let settings = state
+        .settings
+        .lock()
+        .map_err(|_| SyncError::Git("settings lock poisoned".into()))?
+        .sync
+        .get(&path)
+        .cloned()
+        .unwrap_or_default();
+    let (remote_url, branch) = tauri::async_runtime::spawn_blocking(move || {
+        let remote = match VaultSync::current_remote(&vault) {
+            Ok(value) => value.unwrap_or_default(),
+            Err(SyncError::GitMissing) => String::new(),
+            Err(SyncError::UnsafeRemote(_)) => String::new(),
+            Err(error) => return Err(error),
+        };
+        let branch = match VaultSync::current_branch(&vault) {
+            Ok(value) => value.unwrap_or_else(|| "main".into()),
+            Err(SyncError::GitMissing) => "main".into(),
+            Err(error) => return Err(error),
+        };
+        Ok((remote, branch))
+    })
+    .await
+    .map_err(|error| SyncError::Git(error.to_string()))??;
+    Ok(SyncConfigurationView {
+        remote_url,
+        branch,
+        auto: settings.auto,
+        interval_min: settings.interval_min,
+    })
+}
+
 fn active_sync(state: &DesktopState) -> Result<Arc<VaultSync>, SyncError> {
     state
         .sync
@@ -786,6 +838,7 @@ fn main() {
             vault_is_writable,
             vault_apply,
             sync_status,
+            sync_configuration,
             sync_now,
             sync_configure,
             sync_disable,

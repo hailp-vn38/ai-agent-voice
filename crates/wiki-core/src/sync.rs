@@ -184,6 +184,33 @@ impl VaultSync {
         }
     }
 
+    /// Returns the configured `origin` URL without exposing credentials to host UIs.
+    pub fn current_remote(vault: &Vault) -> Result<Option<String>, SyncError> {
+        let git = find_git(std::env::var_os("PATH").as_deref()).ok_or(SyncError::GitMissing)?;
+        match run_git(
+            vault.root_path(),
+            &["remote", "get-url", "origin"],
+            &SyncConfig::default(),
+            Some(&git),
+            false,
+        ) {
+            Ok(output) => {
+                let remote = output.stdout_string()?.trim().to_string();
+                if is_unsafe_remote(&remote) {
+                    return Err(SyncError::UnsafeRemote(safe_remote(&remote)));
+                }
+                Ok((!remote.is_empty()).then_some(remote))
+            }
+            Err(SyncError::Git(message))
+                if message.contains("not a git repository")
+                    || message.contains("No such remote") =>
+            {
+                Ok(None)
+            }
+            Err(error) => Err(error),
+        }
+    }
+
     pub fn configure(vault: Arc<Vault>, config: SyncConfig) -> Result<Self, SyncError> {
         Self::configure_with_path(vault, config, std::env::var_os("PATH").as_deref())
     }
@@ -1378,13 +1405,11 @@ mod tests {
                 .content,
             "# Remote Page\nneedle from another computer"
         );
-        assert!(
-            vault_b
-                .search("needle")
-                .unwrap()
-                .iter()
-                .any(|hit| hit.path == "wiki/remote-page.md")
-        );
+        assert!(vault_b
+            .search("needle")
+            .unwrap()
+            .iter()
+            .any(|hit| hit.path == "wiki/remote-page.md"));
         let external = loop {
             match events.try_recv() {
                 Ok(VaultEvent::External { paths }) => break paths,
@@ -1592,11 +1617,9 @@ mod tests {
         .unwrap();
         sync.sync_now().unwrap();
         let files = String::from_utf8(git(vault.root_path(), &["ls-files"]).stdout).unwrap();
-        assert!(
-            !files
-                .lines()
-                .any(|path| path == ".wiki/index.sqlite" || path == ".wiki-desktop.lock")
-        );
+        assert!(!files
+            .lines()
+            .any(|path| path == ".wiki/index.sqlite" || path == ".wiki-desktop.lock"));
     }
 
     #[test]

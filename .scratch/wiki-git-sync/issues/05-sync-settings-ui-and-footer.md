@@ -1,6 +1,6 @@
 # 05: UI sync dùng chung trong `knowledge-ui` + adapter Tauri
 
-Status: ready-for-agent
+Status: resolved
 Blocked by: 04
 Spec: ../spec.md (user stories 1, 4, 5, 6, 8, 12, 13)
 Thiết kế: docs/wiki-desktop/git-sync.md#ui-dùng-chung-cho-desktop-và-admin-web

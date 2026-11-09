@@ -13,6 +13,7 @@ export const KNOWLEDGE_NAVIGATION_KEY: InjectionKey<{
 /** App-specific conversation logic is injected so the shared workspace stays transport agnostic. */
 export const KNOWLEDGE_CHAT_PROVIDER_KEY: InjectionKey<() => any> = Symbol('KnowledgeChatProvider')
 export const KNOWLEDGE_CHAT_PANEL_KEY: InjectionKey<Component> = Symbol('KnowledgeChatPanel')
+export const KNOWLEDGE_SYNC_OPEN_CONFLICT_EVENT = 'knowledge:sync-open-conflict'
 
 export function isKnowledgeChatAvailable(
   capabilities: { chat: boolean },

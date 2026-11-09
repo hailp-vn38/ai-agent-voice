@@ -1,6 +1,6 @@
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
-import type { KnowledgeBackend, DocPath, ReadWindow, Scope, VaultChange, VaultTreeNode, VaultPage, VaultHit, VaultGraph, VaultStatus, Applied, VaultEvent, VaultErrorKind } from '@vela/knowledge-ui'
+import type { KnowledgeBackend, DocPath, ReadWindow, Scope, VaultChange, VaultTreeNode, VaultPage, VaultHit, VaultGraph, VaultStatus, Applied, VaultEvent, VaultErrorKind, SyncBackend, SyncConfiguration, SyncReport, SyncSettingsInput, SyncStatus } from '@vela/knowledge-ui'
 import { VaultError } from '@vela/knowledge-ui'
 
 type TypedError = { kind?: VaultErrorKind; message?: string; current?: string }
@@ -18,6 +18,7 @@ async function call<T>(command: string, args?: Record<string, unknown>): Promise
 
 export class TauriKnowledgeBackend implements KnowledgeBackend {
   readonly capabilities = { chat: false, write: true } as const
+  readonly sync: SyncBackend = new TauriSyncBackend()
   async tree(scope: Scope): Promise<VaultTreeNode> { return call('vault_tree', { scope }) }
   async read(path: DocPath, window?: ReadWindow): Promise<VaultPage> { return call('vault_read', { path, window }) }
   async search(query: string): Promise<VaultHit[]> { return call('vault_search', { query }) }
@@ -28,6 +29,28 @@ export class TauriKnowledgeBackend implements KnowledgeBackend {
     let unlisten: (() => void) | undefined
     void listen<VaultEvent>('vault://changed', event => listener(event.payload)).then(stop => { unlisten = stop })
     return () => unlisten?.()
+  }
+}
+
+export class TauriSyncBackend implements SyncBackend {
+  readonly configurable = true
+  status(): Promise<SyncStatus> { return invoke('sync_status') }
+  configuration(): Promise<SyncConfiguration> { return invoke('sync_configuration') }
+  syncNow(): Promise<SyncReport> { return invoke('sync_now') }
+  configure(input: SyncSettingsInput): Promise<SyncStatus> {
+    return invoke('sync_configure', {
+      remoteUrl: input.remote_url, branch: input.branch, auto: input.auto, intervalMin: input.interval_min,
+    })
+  }
+  disable(): Promise<void> { return invoke('sync_disable') }
+  onStatus(listener: (status: SyncStatus) => void): () => void {
+    let active = true
+    let unlisten: (() => void) | undefined
+    void listen<SyncStatus>('sync://status', event => listener(event.payload)).then(stop => {
+      if (active) unlisten = stop
+      else stop()
+    })
+    return () => { active = false; unlisten?.() }
   }
 }
 
