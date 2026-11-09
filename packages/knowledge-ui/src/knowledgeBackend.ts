@@ -1,4 +1,5 @@
 import { inject, type InjectionKey } from 'vue'
+import type { SyncBackend, SyncConfiguration, SyncReport, SyncSettingsInput, SyncStatus } from './sync'
 
 export type KnowledgeSpace = 'raw' | 'wiki' | 'drafts'
 export type Scope = 'raw' | 'wiki' | 'all'
@@ -107,6 +108,7 @@ export type KnowledgeGraphOptions = { scope?: 'global' | 'local' | 'query'; cent
 /** Public data seam shared by Admin Web and the desktop shell. */
 export interface KnowledgeBackend {
   readonly capabilities: { chat: boolean; write?: boolean }
+  readonly sync?: SyncBackend
   tree(scope: Scope): Promise<VaultTreeNode>
   read(path: DocPath, window?: ReadWindow): Promise<VaultPage>
   search(query: string, options?: VaultSearchOptions): Promise<VaultHit[]>
@@ -119,6 +121,7 @@ export interface KnowledgeBackend {
 /** Admin-only routes and DTOs that have no equivalent in wiki-core::Vault. */
 export interface AdminKnowledgeBackend {
   readonly capabilities: { chat: boolean }
+  readonly sync?: SyncBackend
   tree(space: KnowledgeSpace): Promise<{ items: KnowledgeTreeNode[]; [key: string]: unknown }>
   treeMetadata?(space: KnowledgeSpace): Promise<KnowledgeTreeNode[]>
   read(path: string, space?: KnowledgeSpace): Promise<KnowledgePage | KnowledgeRawFile>
@@ -142,11 +145,62 @@ export type MemoryKnowledgeSeed = {
   status?: Partial<KnowledgeStatus>
   graph?: KnowledgeGraph
   graphError?: unknown
+  sync?: MemorySyncBackendOptions
+}
+
+export type MemorySyncBackendOptions = {
+  configurable?: boolean
+  status?: SyncStatus
+  configuration?: SyncConfiguration
+}
+
+/** In-memory transport adapter for sync panel and state tests. */
+export class MemorySyncBackend implements SyncBackend {
+  readonly configurable: boolean
+  private currentStatus: SyncStatus
+  private currentConfiguration: SyncConfiguration
+  private readonly listeners = new Set<(status: SyncStatus) => void>()
+
+  constructor(options: MemorySyncBackendOptions = {}) {
+    this.configurable = options.configurable ?? true
+    this.currentStatus = options.status ?? { type: 'disabled', reason: 'not_configured' }
+    this.currentConfiguration = options.configuration ?? {
+      remote_url: '', branch: 'main', auto: false, interval_min: 5,
+    }
+  }
+
+  async status() { return this.currentStatus }
+  async configuration() { return { ...this.currentConfiguration } }
+  async syncNow(): Promise<SyncReport> {
+    this.publish({ type: 'syncing' })
+    const result: SyncReport = { committed: 0, pulled: [], conflicts: [], pushed: false }
+    this.publish({ type: 'idle', last_sync: Math.floor(Date.now() / 1000), ahead: 0, behind: 0 })
+    return result
+  }
+  async configure(input: SyncSettingsInput) {
+    if (!this.configurable) throw new Error('Sync configuration is managed by the host')
+    this.currentConfiguration = { ...input }
+    this.publish({ type: 'idle', last_sync: null, ahead: 0, behind: 0 })
+    return this.currentStatus
+  }
+  async disable() {
+    if (!this.configurable) throw new Error('Sync configuration is managed by the host')
+    this.currentConfiguration.auto = false
+  }
+  onStatus(listener: (status: SyncStatus) => void) {
+    this.listeners.add(listener)
+    return () => this.listeners.delete(listener)
+  }
+  private publish(status: SyncStatus) {
+    this.currentStatus = status
+    for (const listener of this.listeners) listener(status)
+  }
 }
 
 /** Deterministic in-memory adapter used by Knowledge UI tests. */
 class MemoryAdminKnowledgeBackend implements AdminKnowledgeBackend {
   readonly capabilities = { chat: false } as const
+  readonly sync?: SyncBackend
   private readonly pages = new Map<string, KnowledgePage>()
   private readonly rawFiles = new Map<string, KnowledgeRawFile>()
   private readonly folders = new Map<KnowledgeSpace, Set<string>>([
@@ -159,6 +213,7 @@ class MemoryAdminKnowledgeBackend implements AdminKnowledgeBackend {
   private readonly lastTrees = new Map<KnowledgeSpace, KnowledgeTreeNode[]>()
 
   constructor(seed: MemoryKnowledgeSeed = {}) {
+    this.sync = seed.sync ? new MemorySyncBackend(seed.sync) : undefined
     for (const page of seed.pages ?? []) {
       const path = page.path ?? page.id
       this.pages.set(path, { ...page, path })
@@ -384,9 +439,10 @@ async function editContent(content: string, edits: TextEdit[]) {
 
 export abstract class VaultKnowledgeBackend implements KnowledgeBackend, AdminKnowledgeExtension {
   abstract readonly capabilities: { chat: boolean }
+  readonly sync?: SyncBackend
   readonly admin: AdminKnowledgeBackend
   protected readonly documentIdsByVaultPath = new Map<string, string>()
-  protected constructor(admin: AdminKnowledgeBackend) { this.admin = admin }
+  protected constructor(admin: AdminKnowledgeBackend) { this.admin = admin; this.sync = admin.sync }
 
   async tree(scope: Scope) {
     const spaces: KnowledgeSpace[] = scope === 'all' ? ['raw', 'wiki'] : [scope]
