@@ -25,6 +25,10 @@ pub struct Vault {
 }
 
 impl Vault {
+    pub(crate) fn root_path(&self) -> &std::path::Path {
+        &self.root
+    }
+
     fn engine(&self) -> Result<RwLockReadGuard<'_, WikiEngine>, crate::VaultError> {
         self.engine
             .read()
