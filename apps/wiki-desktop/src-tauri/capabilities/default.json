@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Knowledge UI windows: app commands, vault events and folder selection only",
+  "description": "Knowledge UI windows: app and sync commands, vault and sync status events, and folder selection",
   "windows": ["main", "wiki-*"],
   "permissions": [
     "core:event:default",

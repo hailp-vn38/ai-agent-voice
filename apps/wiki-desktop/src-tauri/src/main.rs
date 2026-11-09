@@ -1,13 +1,14 @@
 use serde::{Deserialize, Serialize};
 use std::{
+    collections::HashMap,
     path::PathBuf,
     sync::{Arc, Mutex, MutexGuard},
 };
 use tauri::{Emitter, Manager, State};
 use tauri_plugin_dialog::DialogExt;
 use wiki_core::{
-    Applied, Change, DocPath, Graph, Origin, Page, ReadWindow, Scope, TreeNode, Vault, VaultConfig,
-    VaultError, VaultStatus,
+    Applied, Change, DocPath, Graph, Origin, Page, ReadWindow, Scope, SyncConfig, SyncError,
+    SyncReport, SyncStatus, TreeNode, Vault, VaultConfig, VaultError, VaultStatus, VaultSync,
 };
 
 mod claude_config;
@@ -25,6 +26,29 @@ pub(crate) struct Settings {
     pub(crate) mcp_port: Option<u16>,
     #[serde(default)]
     pub(crate) mcp_allow_write: bool,
+    #[serde(default)]
+    pub(crate) sync: HashMap<String, SyncSettings>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct SyncSettings {
+    #[serde(default)]
+    pub(crate) auto: bool,
+    #[serde(default = "default_sync_interval")]
+    pub(crate) interval_min: u64,
+}
+
+impl Default for SyncSettings {
+    fn default() -> Self {
+        Self {
+            auto: false,
+            interval_min: default_sync_interval(),
+        }
+    }
+}
+
+fn default_sync_interval() -> u64 {
+    5
 }
 
 impl Settings {
@@ -72,6 +96,9 @@ pub(crate) struct DesktopState {
     pub(crate) claude_preview: Mutex<Option<claude_config::Preview>>,
     watcher: Mutex<Option<watcher::WatchHandle>>,
     lock_retry: Mutex<Option<TaskCancel>>,
+    sync: Mutex<Option<Arc<VaultSync>>>,
+    sync_status_forwarding: Mutex<Option<TaskCancel>>,
+    sync_scheduler: Mutex<Option<TaskCancel>>,
 }
 
 #[derive(Debug, Serialize)]
@@ -220,12 +247,128 @@ fn restart_lock_retry(app: &tauri::AppHandle, state: &DesktopState) -> Result<()
     Ok(())
 }
 
+fn install_sync(
+    app: &tauri::AppHandle,
+    state: &DesktopState,
+    sync: Arc<VaultSync>,
+) -> Result<(), CommandError> {
+    locked(&state.sync_scheduler, "sync scheduler")?.take();
+    locked(&state.sync_status_forwarding, "sync events")?.take();
+    *locked(&state.sync, "vault sync")? = Some(Arc::clone(&sync));
+    let mut updates = sync.subscribe();
+    let (cancel, mut stop) = TaskCancel::new();
+    *locked(&state.sync_status_forwarding, "sync events")? = Some(cancel);
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        loop {
+            tokio::select! {
+                _ = cancelled(&mut stop) => break,
+                status = updates.recv() => match status {
+                    Ok(status) if app.emit("sync://status", &status).is_ok() => {},
+                    Ok(_) | Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                }
+            }
+        }
+    });
+    restart_sync_scheduler(state, sync)
+}
+
+fn restart_sync_scheduler(state: &DesktopState, sync: Arc<VaultSync>) -> Result<(), CommandError> {
+    locked(&state.sync_scheduler, "sync scheduler")?.take();
+    let path = state.current_vault_path()?.to_string_lossy().into_owned();
+    let settings = locked(&state.settings, "settings")?
+        .sync
+        .get(&path)
+        .cloned()
+        .unwrap_or_default();
+    if !settings.auto {
+        return Ok(());
+    }
+    let vault = state.active_vault()?;
+    let mut vault_events = vault.subscribe();
+    let (cancel, mut stop) = TaskCancel::new();
+    *locked(&state.sync_scheduler, "sync scheduler")? = Some(cancel);
+    tauri::async_runtime::spawn(async move {
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(
+            settings.interval_min.max(1).saturating_mul(60),
+        ));
+        interval.tick().await;
+        if vault.is_writable() {
+            run_sync(Arc::clone(&sync)).await;
+        }
+        let mut debounce_at = None;
+        loop {
+            let debounce = async {
+                if let Some(deadline) = debounce_at {
+                    tokio::time::sleep_until(deadline).await;
+                } else {
+                    std::future::pending::<()>().await;
+                }
+            };
+            tokio::select! {
+                _ = cancelled(&mut stop) => break,
+                _ = interval.tick() => {
+                    if vault.is_writable() { run_sync(Arc::clone(&sync)).await; }
+                }
+                _ = debounce => {
+                    debounce_at = None;
+                    if vault.is_writable() { run_sync(Arc::clone(&sync)).await; }
+                }
+                event = vault_events.recv() => match event {
+                    Ok(wiki_core::VaultEvent::Changed { origin: Origin::Ui | Origin::Mcp, .. }) => {
+                        debounce_at = Some(tokio::time::Instant::now() + std::time::Duration::from_secs(30));
+                    }
+                    Ok(wiki_core::VaultEvent::Lock { writable: true }) if vault.is_writable() => {
+                        run_sync(Arc::clone(&sync)).await;
+                    }
+                    Ok(_) | Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                }
+            }
+        }
+    });
+    Ok(())
+}
+
+async fn run_sync(sync: Arc<VaultSync>) {
+    let _ = tauri::async_runtime::spawn_blocking(move || sync.sync_now()).await;
+}
+
+fn flush_sync_on_exit(state: &DesktopState) {
+    let auto = state
+        .current_vault_path()
+        .ok()
+        .and_then(|path| {
+            state
+                .settings
+                .lock()
+                .ok()?
+                .sync
+                .get(&path.to_string_lossy().into_owned())
+                .map(|settings| settings.auto)
+        })
+        .unwrap_or(false);
+    if !auto {
+        return;
+    }
+    let Ok(sync) = active_sync(state) else { return };
+    let task = tauri::async_runtime::spawn_blocking(move || sync.sync_now());
+    let _ = tauri::async_runtime::block_on(tokio::time::timeout(
+        std::time::Duration::from_secs(10),
+        task,
+    ));
+}
+
 fn activate_vault(
     app: tauri::AppHandle,
     state: &DesktopState,
     path: String,
 ) -> Result<String, CommandError> {
     let result = open_vault_state(state, path)?;
+    let sync = VaultSync::configure(state.active_vault()?, SyncConfig::default())
+        .map_err(|error| CommandError::io(error))?;
+    install_sync(&app, state, Arc::new(sync))?;
     forward_vault_events(&app, state)?;
     // MCP is optional: a busy or invalid port must never keep the vault closed.
     if let Err(error) = start_mcp_server(app.clone(), state, None) {
@@ -238,6 +381,7 @@ fn activate_vault(
 
 fn forward_vault_events(app: &tauri::AppHandle, state: &DesktopState) -> Result<(), CommandError> {
     let mut events = state.active_vault()?.subscribe();
+    let sync = locked(&state.sync, "vault sync")?.clone();
     let (cancel, mut stop) = TaskCancel::new();
     *locked(&state.event_forwarding, "event forwarding")? = Some(cancel);
     let app = app.clone();
@@ -248,6 +392,12 @@ fn forward_vault_events(app: &tauri::AppHandle, state: &DesktopState) -> Result<
                 event = events.recv() => match event {
                     Ok(wiki_core::VaultEvent::Lock { writable }) => {
                         if !emit_lock(&app, writable) { break; }
+                        let status = if writable {
+                            sync.as_ref().map(|sync| sync.status()).unwrap_or(SyncStatus::Disabled { reason: wiki_core::DisabledReason::NotConfigured })
+                        } else {
+                            SyncStatus::Disabled { reason: wiki_core::DisabledReason::ReadOnly }
+                        };
+                        if app.emit("sync://status", &status).is_err() { break; }
                     }
                     Ok(event) => {
                         if app.emit("vault://changed", &event).is_err() { break; }
@@ -415,6 +565,121 @@ fn vault_apply(state: State<'_, DesktopState>, change: Change) -> Result<Applied
     Ok(state.active_vault()?.apply_from(Origin::Ui, change)?)
 }
 
+#[tauri::command]
+fn sync_status(state: State<'_, DesktopState>) -> Result<SyncStatus, SyncError> {
+    current_sync_status(&state)
+}
+
+fn current_sync_status(state: &DesktopState) -> Result<SyncStatus, SyncError> {
+    let vault = state
+        .active_vault()
+        .map_err(|error| SyncError::Vault(format!("{error:?}")))?;
+    if !vault.is_writable() {
+        return Ok(SyncStatus::Disabled {
+            reason: wiki_core::DisabledReason::ReadOnly,
+        });
+    }
+    let sync = state
+        .sync
+        .lock()
+        .map_err(|_| SyncError::Git("sync state lock poisoned".into()))?;
+    Ok(sync.as_ref().map_or(
+        SyncStatus::Disabled {
+            reason: wiki_core::DisabledReason::NotConfigured,
+        },
+        |sync| sync.status(),
+    ))
+}
+
+#[tauri::command]
+async fn sync_now(state: State<'_, DesktopState>) -> Result<SyncReport, SyncError> {
+    let sync = active_sync(&state)?;
+    tauri::async_runtime::spawn_blocking(move || sync.sync_now())
+        .await
+        .map_err(|error| SyncError::Git(error.to_string()))?
+}
+
+fn active_sync(state: &DesktopState) -> Result<Arc<VaultSync>, SyncError> {
+    state
+        .sync
+        .lock()
+        .map_err(|_| SyncError::Git("sync state lock poisoned".into()))?
+        .clone()
+        .ok_or(SyncError::ReadOnly)
+}
+
+#[tauri::command]
+async fn sync_configure(
+    app: tauri::AppHandle,
+    state: State<'_, DesktopState>,
+    remote_url: String,
+    branch: String,
+    auto: bool,
+    interval_min: u64,
+) -> Result<SyncStatus, SyncError> {
+    configure_sync(app, &state, remote_url, branch, auto, interval_min).await
+}
+
+async fn configure_sync(
+    app: tauri::AppHandle,
+    state: &DesktopState,
+    remote_url: String,
+    branch: String,
+    auto: bool,
+    interval_min: u64,
+) -> Result<SyncStatus, SyncError> {
+    let vault = state
+        .active_vault()
+        .map_err(|error| SyncError::Vault(format!("{error:?}")))?;
+    let config = SyncConfig {
+        remote_url: Some(remote_url),
+        branch,
+        ..SyncConfig::default()
+    };
+    let sync = tauri::async_runtime::spawn_blocking(move || VaultSync::configure(vault, config))
+        .await
+        .map_err(|error| SyncError::Git(error.to_string()))??;
+    let status = sync.status();
+    install_sync(&app, state, Arc::new(sync))
+        .map_err(|error| SyncError::Git(format!("{error:?}")))?;
+    let path = state
+        .current_vault_path()
+        .map_err(|error| SyncError::Git(format!("{error:?}")))?
+        .to_string_lossy()
+        .into_owned();
+    state
+        .settings
+        .lock()
+        .map_err(|_| SyncError::Git("settings lock poisoned".into()))?
+        .sync
+        .insert(
+            path,
+            SyncSettings {
+                auto,
+                interval_min: interval_min.max(1),
+            },
+        );
+    state
+        .persist()
+        .map_err(|error| SyncError::Git(format!("{error:?}")))?;
+    Ok(status)
+}
+
+#[tauri::command]
+fn sync_disable(state: State<'_, DesktopState>) -> Result<(), CommandError> {
+    disable_sync(&state)
+}
+
+fn disable_sync(state: &DesktopState) -> Result<(), CommandError> {
+    locked(&state.sync_scheduler, "sync scheduler")?.take();
+    let path = state.current_vault_path()?.to_string_lossy().into_owned();
+    let mut settings = locked(&state.settings, "settings")?;
+    let entry = settings.sync.entry(path).or_default();
+    entry.auto = false;
+    drop(settings);
+    state.persist()
+}
+
 /// Window labels matching `wiki-*` share the `default` capability with `main`.
 fn build_window(app: &tauri::AppHandle, label: &str) -> tauri::Result<tauri::WebviewWindow> {
     use tauri::window::{Effect, EffectState, EffectsBuilder};
@@ -464,6 +729,9 @@ fn main() {
                 claude_preview: Mutex::new(None),
                 watcher: Mutex::new(None),
                 lock_retry: Mutex::new(None),
+                sync: Mutex::new(None),
+                sync_status_forwarding: Mutex::new(None),
+                sync_scheduler: Mutex::new(None),
             };
             if let Some(current) = current
                 && activate_vault(app.handle().clone(), &state, current).is_err()
@@ -485,6 +753,10 @@ fn main() {
             vault_status,
             vault_is_writable,
             vault_apply,
+            sync_status,
+            sync_now,
+            sync_configure,
+            sync_disable,
             window_new,
             mcp_commands::mcp_info,
             mcp_commands::mcp_set_allow_write,
@@ -498,10 +770,33 @@ fn main() {
         .run(|app, event| {
             if matches!(event, tauri::RunEvent::Exit)
                 && let Some(state) = app.try_state::<DesktopState>()
-                && let Ok(mut runtime) = state.mcp_server.lock()
-                && let Some(runtime) = runtime.take()
             {
-                runtime.shutdown();
+                if let Ok(mut scheduler) = state.sync_scheduler.lock() {
+                    scheduler.take();
+                }
+                if let Ok(mut events) = state.sync_status_forwarding.lock() {
+                    events.take();
+                }
+                if let Ok(mut runtime) = state.mcp_server.lock()
+                    && let Some(runtime) = runtime.take()
+                {
+                    runtime.shutdown();
+                }
+                flush_sync_on_exit(&state);
             }
         });
+}
+
+#[cfg(test)]
+mod sync_settings_tests {
+    use super::Settings;
+
+    #[test]
+    fn old_settings_without_sync_still_load() {
+        let settings: Settings = serde_json::from_str(
+            r#"{"recent_vaults":[],"current_vault":null,"mcp_port":null,"mcp_allow_write":false}"#,
+        )
+        .expect("legacy settings remain readable");
+        assert!(settings.sync.is_empty());
+    }
 }
