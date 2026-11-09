@@ -1,14 +1,76 @@
 //! Vault notifications and suppression of filesystem events from our own writes.
 
 use super::Vault;
-use crate::{DocPath, ReindexStats, Revision, VaultError, VaultEvent};
+use crate::{DocPath, ReindexStats, Revision, Scope, VaultError, VaultEvent};
 use llm_wiki::SyncStats;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use tokio::sync::broadcast;
 
 impl Vault {
     pub fn subscribe(&self) -> broadcast::Receiver<VaultEvent> {
         self.events.subscribe()
+    }
+
+    /// Run an external multi-file update while excluding normal vault writes.
+    pub(crate) fn exclusive_external<F>(&self, f: F) -> Result<Vec<DocPath>, VaultError>
+    where
+        F: FnOnce(&Path) -> Result<Vec<PathBuf>, VaultError>,
+    {
+        if !self.is_writable() {
+            return Err(VaultError::ReadOnly);
+        }
+        let _guard = self
+            .write_lock
+            .lock()
+            .map_err(|_| VaultError::Io("vault write lock poisoned".into()))?;
+        if !self.is_writable() {
+            return Err(VaultError::ReadOnly);
+        }
+
+        let result = f(&self.root);
+        let paths: Vec<DocPath> = result
+            .as_ref()
+            .map(|paths| {
+                paths
+                    .iter()
+                    .filter_map(|path| self.doc_path(path))
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        let refresh = (|| {
+            self.engine()?.sync_index()?;
+            self.engine()?.rebuild_or_sync_index_md()?;
+            self.record_self_writes(&["wiki/index.md".into()])
+        })();
+        if let Err(error) = result {
+            refresh?;
+            return Err(error);
+        }
+        refresh?;
+
+        let relative_paths: Vec<String> = paths
+            .iter()
+            .map(|path| path.vault_relative().display().to_string())
+            .collect();
+        self.record_self_writes(&relative_paths)?;
+        if !relative_paths.is_empty() {
+            let _ = self.events.send(VaultEvent::External {
+                paths: relative_paths,
+            });
+        }
+        Ok(paths)
+    }
+
+    fn doc_path(&self, path: &Path) -> Option<DocPath> {
+        let (scope, root) = if let Ok(relative) = path.strip_prefix("sources") {
+            (Scope::Raw, relative)
+        } else if let Ok(relative) = path.strip_prefix("wiki") {
+            (Scope::Wiki, relative)
+        } else {
+            return None;
+        };
+        DocPath::parse(scope, root).ok()
     }
 
     pub fn notice_external(

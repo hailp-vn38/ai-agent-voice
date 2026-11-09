@@ -628,3 +628,160 @@ fn a_read_only_vault_reports_external_changes_without_rewriting_the_index() {
     assert_eq!(fs::read(&index_md).ok(), index_before);
     drop(writer);
 }
+
+#[test]
+fn exclusive_external_refreshes_documents_and_publishes_one_event() {
+    let temp = tempdir().unwrap();
+    let vault = Vault::open(VaultConfig::new(temp.path())).unwrap();
+    let mut events = vault.subscribe();
+
+    let paths = vault
+        .exclusive_external(|root| {
+            fs::create_dir_all(root.join("wiki/concepts")).unwrap();
+            fs::write(
+                root.join("wiki/concepts/first-sync.md"),
+                "# First sync\n\nQuartz knowledge entry.",
+            )
+            .unwrap();
+            fs::write(
+                root.join("wiki/concepts/second-sync.md"),
+                "# Second sync\n\nObsidian knowledge entry.",
+            )
+            .unwrap();
+            Ok(vec![
+                "wiki/concepts/first-sync.md".into(),
+                "wiki/concepts/second-sync.md".into(),
+                "README.md".into(),
+            ])
+        })
+        .unwrap();
+
+    assert_eq!(
+        paths
+            .iter()
+            .map(|path| path.vault_relative().display().to_string())
+            .collect::<Vec<_>>(),
+        [
+            "wiki/concepts/first-sync.md",
+            "wiki/concepts/second-sync.md"
+        ]
+    );
+    for path in [
+        DocPath::parse(Scope::Wiki, "concepts/first-sync.md").unwrap(),
+        DocPath::parse(Scope::Wiki, "concepts/second-sync.md").unwrap(),
+    ] {
+        assert!(vault.read(&path, Default::default()).is_ok());
+    }
+    assert!(
+        vault
+            .search("quartz knowledge")
+            .unwrap()
+            .iter()
+            .any(|hit| hit.path == "wiki/concepts/first-sync.md")
+    );
+    assert!(
+        vault
+            .search("obsidian knowledge")
+            .unwrap()
+            .iter()
+            .any(|hit| hit.path == "wiki/concepts/second-sync.md")
+    );
+    assert!(matches!(
+        events.try_recv().unwrap(),
+        VaultEvent::External { paths }
+            if paths == [
+                "wiki/concepts/first-sync.md",
+                "wiki/concepts/second-sync.md"
+            ]
+    ));
+    assert!(events.try_recv().is_err());
+}
+
+#[test]
+fn exclusive_external_rejects_a_reader_without_running_the_closure() {
+    let temp = tempdir().unwrap();
+    let _writer = Vault::open(VaultConfig::new(temp.path())).unwrap();
+    let reader = Vault::open(VaultConfig::new(temp.path())).unwrap();
+    let closure_ran = std::sync::atomic::AtomicBool::new(false);
+
+    let result = reader.exclusive_external(|_| {
+        closure_ran.store(true, std::sync::atomic::Ordering::SeqCst);
+        Ok(Vec::new())
+    });
+
+    assert!(matches!(result, Err(super::VaultError::ReadOnly)));
+    assert!(!closure_ran.load(std::sync::atomic::Ordering::SeqCst));
+}
+
+#[test]
+fn exclusive_external_refreshes_the_index_even_when_the_closure_fails() {
+    let temp = tempdir().unwrap();
+    let vault = Vault::open(VaultConfig::new(temp.path())).unwrap();
+    let result = vault.exclusive_external(|root| {
+        fs::create_dir_all(root.join("wiki/concepts")).unwrap();
+        fs::write(
+            root.join("wiki/concepts/partial-sync.md"),
+            "# Partial sync\n\nIndex this partial update.",
+        )
+        .unwrap();
+        Err(super::VaultError::Io("simulated sync failure".into()))
+    });
+
+    assert!(
+        matches!(result, Err(super::VaultError::Io(message)) if message == "simulated sync failure")
+    );
+    assert!(
+        vault
+            .search("partial update")
+            .unwrap()
+            .iter()
+            .any(|hit| hit.path == "wiki/concepts/partial-sync.md")
+    );
+}
+
+#[test]
+fn apply_waits_until_exclusive_external_finishes() {
+    use std::sync::mpsc;
+    use std::time::Duration;
+
+    let temp = tempdir().unwrap();
+    let vault = std::sync::Arc::new(Vault::open(VaultConfig::new(temp.path())).unwrap());
+    let path = DocPath::parse(Scope::Wiki, "concepts/after-sync.md").unwrap();
+    let (entered_tx, entered_rx) = mpsc::channel();
+    let (release_tx, release_rx) = mpsc::channel();
+    let (apply_done_tx, apply_done_rx) = mpsc::channel();
+
+    let sync_vault = std::sync::Arc::clone(&vault);
+    let sync_thread = std::thread::spawn(move || {
+        sync_vault
+            .exclusive_external(|root| {
+                entered_tx.send(()).unwrap();
+                release_rx.recv().unwrap();
+                fs::create_dir_all(root.join("wiki/concepts")).unwrap();
+                fs::write(root.join("wiki/concepts/external.md"), "# External").unwrap();
+                Ok(vec!["wiki/concepts/external.md".into()])
+            })
+            .unwrap();
+    });
+    entered_rx.recv().unwrap();
+
+    let apply_vault = std::sync::Arc::clone(&vault);
+    let apply_thread = std::thread::spawn(move || {
+        let result = apply_vault.apply(Change::Write {
+            path,
+            content: "# After sync".into(),
+            expect: None,
+        });
+        apply_done_tx.send(result.is_ok()).unwrap();
+    });
+
+    assert!(
+        apply_done_rx
+            .recv_timeout(Duration::from_millis(50))
+            .is_err()
+    );
+    release_tx.send(()).unwrap();
+    sync_thread.join().unwrap();
+    assert!(apply_done_rx.recv_timeout(Duration::from_secs(2)).unwrap());
+    apply_thread.join().unwrap();
+}
