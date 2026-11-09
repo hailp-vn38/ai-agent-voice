@@ -1,6 +1,6 @@
 # 03: `VaultSync`: xử lý xung đột
 
-Status: ready-for-agent
+Status: resolved
 Blocked by: 02
 Spec: ../spec.md (user story 6)
 Thiết kế: docs/wiki-desktop/git-sync.md#xung-đột
@@ -20,10 +20,12 @@ Merge xung đột không bao giờ để repo ở trạng thái dở và không 
 
 ## Tiêu chí xong
 
-- [ ] Test: A và B cùng sửa một trang → B giữ bản của B, có file conflict chứa bản của A, `status` là `Conflicted`.
-- [ ] Test: hai bên thêm dòng vào `log.md` → đủ dòng của cả hai, không có conflict marker.
-- [ ] Test: `index.md` xung đột → được sinh lại, không có conflict marker.
-- [ ] Test: A xóa trang, B sửa trang → trang còn, nội dung của B.
-- [ ] Test: sau khi xóa file conflict và sync lại → `Idle`.
-- [ ] `git status --porcelain` sạch sau mọi test.
-- [ ] `scripts/agent-test.sh` cho `wiki-core` PASS.
+- [x] Test: A và B cùng sửa một trang → B giữ bản của B, có file conflict chứa bản của A, `status` là `Conflicted`.
+- [x] Test: hai bên thêm dòng vào `log.md` → đủ dòng của cả hai, không có conflict marker.
+- [x] Test: `index.md` xung đột → được sinh lại, không có conflict marker.
+- [x] Test: A xóa trang, B sửa trang → trang còn, nội dung của B.
+- [x] Test: sau khi xóa file conflict và sync lại → `Idle`.
+- [x] `git status --porcelain` sạch sau mọi test.
+- [x] `scripts/agent-test.sh` cho `wiki-core` PASS.
+
+Kiểm tra: `scripts/agent-test.sh targeted conflict wiki-core` PASS (4 test); `scripts/agent-test.sh package wiki-core` PASS (31 test; lượt đầu có một lỗi lock test không tái hiện ở lượt hai); `cargo fmt --manifest-path crates/wiki-core/Cargo.toml -- --check` và `git diff --check` PASS qua wrapper.
