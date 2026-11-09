@@ -62,6 +62,16 @@ impl Vault {
         Ok(paths)
     }
 
+    /// Rebuild the search projection while `exclusive_external` already holds
+    /// the vault write lock. Callers must not route this through `apply`, which
+    /// would try to acquire the same lock again.
+    pub(crate) fn reindex_exclusive_external(&self) -> Result<(), VaultError> {
+        let stats = self.engine()?.sync_index()?;
+        self.engine()?.rebuild_or_sync_index_md()?;
+        self.publish_reindexed(stats);
+        Ok(())
+    }
+
     fn doc_path(&self, path: &Path) -> Option<DocPath> {
         let (scope, root) = if let Ok(relative) = path.strip_prefix("sources") {
             (Scope::Raw, relative)
