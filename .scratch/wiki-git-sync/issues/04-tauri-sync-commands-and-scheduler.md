@@ -1,6 +1,6 @@
 # 04: Tauri shell: command, event và lịch sync
 
-Status: ready-for-agent
+Status: resolved
 Blocked by: 02
 Spec: ../spec.md (user stories 2, 3, 4, 10)
 Thiết kế: docs/wiki-desktop/git-sync.md#tauri-shell
@@ -26,6 +26,6 @@ App tự sync theo lịch và WebView điều khiển được sync.
 
 ## Comments
 
-- Shell commands/settings/events, per-vault scheduling, lock-aware checks, and bounded exit sync are implemented. Tauri package check, all 5 shell tests, legacy-settings test, format check, and diff check pass.
-- Follow-up before resolution: initialize from the core-reported current branch after restart and refresh status when a read-only vault regains its write lock.
+- Shell commands/settings/events, per-vault scheduling, lock-aware checks, bounded exit sync, and branch recovery are implemented. Tauri check, all 5 shell tests, legacy-settings test, both Rust format checks, and diff check pass.
+- Core provides the current-branch accessor used on startup and refreshes status when a read-only vault regains its write lock. Tests cover custom-branch initialization/push and lock reacquisition; `wiki-core` package passes 34 tests.
 - `NOT_RUN`: GitHub credential and real-remote smoke scenarios belong to ticket 06 and still require human acceptance.

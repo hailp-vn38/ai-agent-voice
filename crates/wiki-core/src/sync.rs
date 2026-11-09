@@ -164,6 +164,26 @@ pub struct VaultSync {
 }
 
 impl VaultSync {
+    /// Returns the active local branch for a vault, if it already has a Git worktree.
+    /// This lets hosts restore their sync configuration without invoking Git themselves.
+    pub fn current_branch(vault: &Vault) -> Result<Option<String>, SyncError> {
+        let git = find_git(std::env::var_os("PATH").as_deref()).ok_or(SyncError::GitMissing)?;
+        match run_git(
+            vault.root_path(),
+            &["branch", "--show-current"],
+            &SyncConfig::default(),
+            Some(&git),
+            false,
+        ) {
+            Ok(output) => {
+                let branch = output.stdout_string()?.trim().to_string();
+                Ok((!branch.is_empty()).then_some(branch))
+            }
+            Err(SyncError::Git(message)) if message.contains("not a git repository") => Ok(None),
+            Err(error) => Err(error),
+        }
+    }
+
     pub fn configure(vault: Arc<Vault>, config: SyncConfig) -> Result<Self, SyncError> {
         Self::configure_with_path(vault, config, std::env::var_os("PATH").as_deref())
     }
@@ -246,6 +266,31 @@ impl VaultSync {
                 kind: SyncErrorKind::Git,
                 message: "sync status lock poisoned".into(),
             })
+    }
+
+    /// Re-evaluates lock-dependent status without starting network synchronization.
+    pub fn refresh_status(&self) -> Result<SyncStatus, SyncError> {
+        let status = if !self.vault.is_writable() {
+            SyncStatus::Disabled {
+                reason: DisabledReason::ReadOnly,
+            }
+        } else if self.git_binary.is_none() {
+            SyncStatus::Disabled {
+                reason: DisabledReason::NoGit,
+            }
+        } else if self.remote_url()?.is_none() {
+            SyncStatus::Disabled {
+                reason: DisabledReason::NotConfigured,
+            }
+        } else {
+            SyncStatus::Idle {
+                last_sync: None,
+                ahead: 0,
+                behind: 0,
+            }
+        };
+        self.set_status(status.clone());
+        Ok(status)
     }
 
     pub fn subscribe(&self) -> broadcast::Receiver<SyncStatus> {
@@ -725,7 +770,7 @@ impl VaultSync {
                 .is_ok()
             {
                 self.git(&["checkout", &self.config.branch], false)?;
-            } else if self.git(&["rev-parse", "--verify", "HEAD"], false).is_ok() {
+            } else {
                 self.git(&["checkout", "-b", &self.config.branch], false)?;
             }
         }
@@ -1660,5 +1705,85 @@ mod tests {
         )
         .unwrap();
         assert!(version.stdout_string().unwrap().starts_with("git version "));
+    }
+
+    #[test]
+    fn current_branch_is_available_to_restore_desktop_sync_settings() {
+        if skip_without_git() {
+            return;
+        }
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("vault");
+        fs::create_dir_all(&root).unwrap();
+        git(&root, &["init", "-b", "custom-wiki"]);
+        let vault = Vault::open(crate::VaultConfig::new(&root)).unwrap();
+
+        assert_eq!(
+            VaultSync::current_branch(&vault).unwrap().as_deref(),
+            Some("custom-wiki")
+        );
+    }
+
+    #[test]
+    fn initial_sync_uses_and_pushes_the_selected_custom_branch() {
+        if skip_without_git() {
+            return;
+        }
+        let temp = tempfile::tempdir().unwrap();
+        let remote = new_bare_remote(temp.path());
+        let root = temp.path().join("vault");
+        let vault = Arc::new(Vault::open(crate::VaultConfig::new(&root)).unwrap());
+        let mut sync_config = config(remote.to_string_lossy().into_owned());
+        sync_config.branch = "custom-wiki".into();
+        let sync = VaultSync::configure(Arc::clone(&vault), sync_config).unwrap();
+
+        assert_eq!(
+            String::from_utf8(git(&root, &["branch", "--show-current"]).stdout)
+                .unwrap()
+                .trim(),
+            "custom-wiki"
+        );
+        write_page(&vault, "custom.md", "# Custom branch\n");
+        assert!(sync.sync_now().unwrap().pushed);
+        assert!(
+            git(&remote, &["show-ref", "--verify", "refs/heads/custom-wiki"])
+                .status
+                .success()
+        );
+    }
+
+    #[test]
+    fn refresh_status_recovers_when_a_reader_acquires_the_write_lock() {
+        if skip_without_git() {
+            return;
+        }
+        let temp = tempfile::tempdir().unwrap();
+        let remote = new_bare_remote(temp.path());
+        let root = temp.path().join("vault");
+        let writer = Arc::new(Vault::open(crate::VaultConfig::new(&root)).unwrap());
+        VaultSync::configure(
+            Arc::clone(&writer),
+            config(remote.to_string_lossy().into_owned()),
+        )
+        .unwrap();
+        let reader = Arc::new(Vault::open(crate::VaultConfig::new(&root)).unwrap());
+        let sync = VaultSync::configure(
+            Arc::clone(&reader),
+            config(remote.to_string_lossy().into_owned()),
+        )
+        .unwrap();
+        assert!(matches!(
+            sync.status(),
+            SyncStatus::Disabled {
+                reason: DisabledReason::ReadOnly
+            }
+        ));
+
+        drop(writer);
+        assert!(reader.try_acquire_write().unwrap());
+        assert!(matches!(
+            sync.refresh_status().unwrap(),
+            SyncStatus::Idle { .. }
+        ));
     }
 }

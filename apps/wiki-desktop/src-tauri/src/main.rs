@@ -366,7 +366,7 @@ fn activate_vault(
     path: String,
 ) -> Result<String, CommandError> {
     let result = open_vault_state(state, path)?;
-    let sync = VaultSync::configure(state.active_vault()?, SyncConfig::default())
+    let sync = configure_open_vault_sync(state.active_vault()?)
         .map_err(|error| CommandError::io(error))?;
     install_sync(&app, state, Arc::new(sync))?;
     forward_vault_events(&app, state)?;
@@ -377,6 +377,20 @@ fn activate_vault(
     restart_watcher(state)?;
     restart_lock_retry(&app, state)?;
     Ok(result)
+}
+
+fn configure_open_vault_sync(vault: Arc<Vault>) -> Result<VaultSync, SyncError> {
+    let branch = VaultSync::current_branch(&vault)
+        .ok()
+        .flatten()
+        .unwrap_or_else(|| "main".into());
+    VaultSync::configure(
+        vault,
+        SyncConfig {
+            branch,
+            ..SyncConfig::default()
+        },
+    )
 }
 
 fn forward_vault_events(app: &tauri::AppHandle, state: &DesktopState) -> Result<(), CommandError> {
@@ -392,10 +406,17 @@ fn forward_vault_events(app: &tauri::AppHandle, state: &DesktopState) -> Result<
                 event = events.recv() => match event {
                     Ok(wiki_core::VaultEvent::Lock { writable }) => {
                         if !emit_lock(&app, writable) { break; }
-                        let status = if writable {
-                            sync.as_ref().map(|sync| sync.status()).unwrap_or(SyncStatus::Disabled { reason: wiki_core::DisabledReason::NotConfigured })
-                        } else {
-                            SyncStatus::Disabled { reason: wiki_core::DisabledReason::ReadOnly }
+                        let status = match (writable, sync.as_ref()) {
+                            (true, Some(sync)) => {
+                                let sync = Arc::clone(sync);
+                                tauri::async_runtime::spawn_blocking(move || sync.refresh_status())
+                                    .await
+                                    .ok()
+                                    .and_then(Result::ok)
+                                    .unwrap_or(SyncStatus::Disabled { reason: wiki_core::DisabledReason::NotConfigured })
+                            }
+                            (true, None) => SyncStatus::Disabled { reason: wiki_core::DisabledReason::NotConfigured },
+                            (false, _) => SyncStatus::Disabled { reason: wiki_core::DisabledReason::ReadOnly },
                         };
                         if app.emit("sync://status", &status).is_err() { break; }
                     }
@@ -583,12 +604,23 @@ fn current_sync_status(state: &DesktopState) -> Result<SyncStatus, SyncError> {
         .sync
         .lock()
         .map_err(|_| SyncError::Git("sync state lock poisoned".into()))?;
-    Ok(sync.as_ref().map_or(
+    let status = sync.as_ref().map_or(
         SyncStatus::Disabled {
             reason: wiki_core::DisabledReason::NotConfigured,
         },
         |sync| sync.status(),
-    ))
+    );
+    if matches!(
+        &status,
+        SyncStatus::Disabled {
+            reason: wiki_core::DisabledReason::ReadOnly
+        }
+    ) {
+        return sync
+            .as_ref()
+            .map_or(Ok(status), |sync| sync.refresh_status());
+    }
+    Ok(status)
 }
 
 #[tauri::command]
