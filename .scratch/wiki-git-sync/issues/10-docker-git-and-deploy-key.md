@@ -1,6 +1,6 @@
 # 10: Docker: git trong image và mount deploy key
 
-Status: ready-for-agent
+Status: ready-for-human
 Blocked by: 08
 Spec: ../spec.md (user story 11)
 Thiết kế: docs/wiki-desktop/git-sync.md#docker
@@ -19,4 +19,10 @@ Container server chạy được git qua SSH với deploy key, không cần `HOM
 
 - [ ] Build image qua đường test Docker hiện có (`compose.test.yaml`) PASS; `git --version` và `ssh -V` chạy được trong container với user `1000`.
 - [ ] Smoke trong container với bare repo qua `file://` (không cần mạng): sync chạy, không báo `dubious ownership`.
-- [ ] `git diff --check` PASS.
+- [x] `git diff --check` PASS.
+
+## Comments
+
+- Added `git openssh-client` to the runtime image, read-only deploy-key and known-host mounts with `create_host_path: false`, ignored host secret paths, operator instructions, and a Compose smoke service that runs git operations as UID 1000 without `HOME` against a local bare repository.
+- `scripts/agent-test.sh run -- docker compose -f compose.test.yaml --profile checks config --quiet`: PASS; `scripts/agent-test.sh run -- sh -n scripts/docker/wiki-git-smoke.sh`: PASS; `scripts/agent-test.sh run -- git diff --check`: PASS. Production Compose config also parsed successfully with a temporary empty ignored `docker/secrets.env`.
+- Container build/smoke is NOT_RUN: Docker CLI is installed, but the Docker daemon socket is unavailable (`Cannot connect to the Docker daemon at unix:///Users/lamphuchai/.docker/run/docker.sock`). The image/runtime acceptance checks remain for a host with a running daemon.

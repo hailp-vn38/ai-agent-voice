@@ -230,7 +230,7 @@ max_file_mb = 50
 - `server.Dockerfile` (stage `runtime`): thêm `git openssh-client`.
 - `compose.prod.yaml`: mount `./docker/wiki-deploy-key` và `./docker/github-known-hosts` read-only, `create_host_path: false`, giống `credential-keys.json`.
 - `docker/config.prod.example.toml` và `config.example.toml`: thêm mục `[wiki.sync]` với `enabled = false`.
-- Hướng dẫn tạo deploy key (`ssh-keygen -t ed25519`, thêm vào GitHub → Settings → Deploy keys, bật "Allow write access") và lấy `known_hosts` (`ssh-keyscan github.com`, đối chiếu fingerprint GitHub công bố) ghi vào `docs/knowledge/`.
+- Hướng dẫn tạo deploy key (`ssh-keygen -t ed25519`, thêm vào GitHub → Settings → Deploy keys, bật "Allow write access") và lấy `known_hosts` (`ssh-keyscan github.com`, đối chiếu fingerprint GitHub công bố): [wiki-git-sync-deploy-key.md](../knowledge/wiki-git-sync-deploy-key.md). Có thể chạy smoke test trong Compose bằng `docker compose -f compose.test.yaml --profile checks run --rm git-sync-smoke`.
 
 ### HTTP (admin, cần token admin như các route Knowledge khác)
 

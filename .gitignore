@@ -6,6 +6,8 @@
 /docker/config.prod.toml
 /docker/secrets.env
 /docker/credential-keys.json
+/docker/wiki-deploy-key
+/docker/github-known-hosts
 models/
 /runtime/**
 .DS_Store
