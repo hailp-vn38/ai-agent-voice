@@ -12,6 +12,8 @@ const emit = defineEmits<{
 }>()
 const { t } = useI18n()
 const status = ref<SyncStatus>({ type: 'disabled', reason: 'not_configured' })
+const loading = ref(true)
+const publicGitHubRemote = ref(false)
 const busy = ref(false)
 const failure = ref<unknown>(null)
 const locale = computed(() => document.documentElement.lang === 'vi' ? 'vi' : 'en')
@@ -22,8 +24,23 @@ let stopStatus: (() => void) | undefined
 
 async function refresh() {
   if (!props.backend) return
-  status.value = await props.backend.status()
-  if (props.backend.configuration) Object.assign(settings, await props.backend.configuration())
+  loading.value = true
+  try {
+    const [nextStatus, configuration] = await Promise.all([
+      props.backend.status(),
+      props.backend.configuration?.(),
+    ])
+    status.value = nextStatus
+    if (configuration) {
+      Object.assign(settings, {
+        remote_url: configuration.remote_url,
+        branch: configuration.branch,
+        auto: configuration.auto,
+        interval_min: configuration.interval_min,
+      })
+      publicGitHubRemote.value = configuration.public_github_remote ?? false
+    }
+  } finally { loading.value = false }
 }
 
 async function syncNow() {
@@ -77,10 +94,17 @@ onBeforeUnmount(() => stopStatus?.())
       <h2 id="knowledge-sync-title">{{ t('knowledgeSync.title') }}</h2>
       <button type="button" :aria-label="t('knowledgeSync.close')" @click="emit('close')">×</button>
     </header>
-    <KnowledgeSyncBadge :status="status" />
+    <div v-if="loading" class="knowledge-sync-panel__loading card-shimmer" role="status" aria-busy="true">
+      <span>{{ t('knowledgeSync.loading') }}</span>
+    </div>
+    <KnowledgeSyncBadge v-else :status="status" />
     <p v-if="errorLabel" role="alert" class="knowledge-sync-panel__error">{{ errorLabel }}</p>
+    <p v-if="!loading && publicGitHubRemote" class="knowledge-sync-panel__warning" role="status">{{ t('knowledgeSync.publicRemoteWarning') }}</p>
 
-    <form v-if="backend.configurable" data-testid="sync-settings-form" @submit.prevent="save">
+    <div v-if="loading" class="knowledge-sync-panel__details-loading card-shimmer" role="status" aria-busy="true">
+      <span>{{ t('knowledgeSync.loading') }}</span>
+    </div>
+    <form v-else-if="backend.configurable" data-testid="sync-settings-form" @submit.prevent="save">
       <label>
         {{ t('knowledgeSync.remote') }}
         <input v-model.trim="settings.remote_url" type="text" inputmode="url" autocomplete="url" required>
@@ -134,6 +158,9 @@ onBeforeUnmount(() => stopStatus?.())
 .knowledge-sync-panel button { cursor: pointer; }
 .knowledge-sync-panel button:disabled { cursor: wait; opacity: .6; }
 .knowledge-sync-panel__error { color: #b42318; }
+.knowledge-sync-panel__warning { padding: .65rem; border-inline-start: 3px solid #d97706; background: color-mix(in srgb, #d97706 10%, transparent); }
+.knowledge-sync-panel__loading { min-height: 2.6rem; border-radius: .35rem; }
+.knowledge-sync-panel__details-loading { min-height: 10rem; border-radius: .35rem; }
 .knowledge-sync-panel__conflicts { margin: 0; padding-inline-start: 1.2rem; }
 .knowledge-sync-panel__conflicts button { border: 0; padding: .25rem; color: inherit; background: transparent; text-decoration: underline; }
 .knowledge-sync-panel__configuration { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: .4rem .8rem; margin: 0; overflow-wrap: anywhere; }

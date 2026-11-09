@@ -24,7 +24,7 @@ export type SyncSettingsInput = {
   interval_min: number
 }
 
-export type SyncConfiguration = SyncSettingsInput
+export type SyncConfiguration = SyncSettingsInput & { public_github_remote?: boolean }
 
 export interface SyncBackend {
   readonly configurable: boolean

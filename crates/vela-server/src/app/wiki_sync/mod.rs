@@ -105,7 +105,24 @@ impl WikiSyncService {
         }
 
         self.publish(self.sync.status());
-        let _write_guard = self.write_gate.write().await;
+        let _write_guard = match tokio::time::timeout(
+            self.sync.command_timeout(),
+            self.write_gate.write(),
+        )
+        .await
+        {
+            Ok(guard) => guard,
+            Err(_) => {
+                let error = SyncError::Timeout {
+                    command: "waiting for Wiki vault write lock".into(),
+                };
+                self.publish(SyncStatus::Error {
+                    kind: error.kind(),
+                    message: error.to_string(),
+                });
+                return Err(error);
+            }
+        };
         let sync = Arc::clone(&self.sync);
         tokio::task::spawn_blocking(move || sync.sync_now())
             .await
@@ -116,9 +133,9 @@ impl WikiSyncService {
         self.sync_in_progress.load(Ordering::Acquire)
     }
 
-    async fn ingest_job_running(&self) -> bool {
+    async fn ingest_job_running(&self) -> Option<bool> {
         let Some(task_manager) = &self.task_manager else {
-            return false;
+            return Some(false);
         };
         let filter = TaskFilter {
             agent_id: Some("wiki_root".into()),
@@ -126,13 +143,14 @@ impl WikiSyncService {
             ..Default::default()
         };
         match task_manager.list_all_tasks(&filter).await {
-            Ok(page) => page
-                .items
-                .into_iter()
-                .any(|task| !task.status.is_terminal()),
+            Ok(page) => Some(
+                page.items
+                    .into_iter()
+                    .any(|task| !task.status.is_terminal()),
+            ),
             Err(error) => {
                 warn!(error = %error, "could not inspect active Wiki ingest tasks before sync");
-                false
+                None
             }
         }
     }
@@ -237,12 +255,12 @@ async fn wait_for_ingest_idle<F, Fut, P>(
 ) -> bool
 where
     F: FnMut() -> Fut,
-    Fut: std::future::Future<Output = bool>,
+    Fut: std::future::Future<Output = Option<bool>>,
     P: FnMut(SystemTime),
 {
     let started = Instant::now();
     loop {
-        if !is_running().await {
+        if is_running().await == Some(false) {
             return true;
         }
         if started.elapsed() >= max_wait {
@@ -308,183 +326,4 @@ pub(crate) fn start_if_enabled(state: &AppState) {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use axum::{Router, extract::State, http::StatusCode, middleware, routing::put};
-    use std::sync::atomic::{AtomicUsize, Ordering};
-
-    #[test]
-    fn published_sync_errors_do_not_include_git_stderr() {
-        let status = safe_status(SyncStatus::Error {
-            kind: wiki_core::SyncErrorKind::Auth,
-            message: "fatal: Authentication failed for secret-token".into(),
-        });
-        assert!(
-            matches!(status, SyncStatus::Error { message, .. } if message == "Authentication failed")
-        );
-    }
-
-    #[tokio::test]
-    async fn active_ingest_defers_then_sync_can_continue_when_it_finishes() {
-        let checks = Arc::new(AtomicUsize::new(0));
-        let deferred = Arc::new(AtomicUsize::new(0));
-        let checks_for_query = Arc::clone(&checks);
-        let deferred_for_status = Arc::clone(&deferred);
-        let idle = wait_for_ingest_idle(
-            move || {
-                let check = checks_for_query.fetch_add(1, Ordering::SeqCst);
-                async move { check < 2 }
-            },
-            CancellationToken::new(),
-            Duration::from_millis(5),
-            Duration::from_secs(1),
-            move |retry_at| {
-                assert!(retry_at > SystemTime::now());
-                deferred_for_status.fetch_add(1, Ordering::SeqCst);
-            },
-        )
-        .await;
-        assert!(idle);
-        assert_eq!(checks.load(Ordering::SeqCst), 3);
-        assert_eq!(deferred.load(Ordering::SeqCst), 2);
-    }
-
-    #[tokio::test]
-    async fn knowledge_route_write_is_committed_after_debounce() {
-        if !git_available() {
-            eprintln!("SKIPPED: git is not installed");
-            return;
-        }
-        let root = std::env::temp_dir().join(format!("wiki-sync-route-{}", uuid::Uuid::new_v4()));
-        let remote = std::env::temp_dir().join(format!("wiki-sync-bare-{}", uuid::Uuid::new_v4()));
-        std::fs::create_dir_all(&root).unwrap();
-        std::fs::create_dir_all(&remote).unwrap();
-        let init = std::process::Command::new("git")
-            .args(["init", "--bare", "--initial-branch=main"])
-            .arg(&remote)
-            .output()
-            .unwrap();
-        assert!(init.status.success());
-
-        let vault = Arc::new(Vault::open(wiki_core::VaultConfig::new(&root)).unwrap());
-        let mut config = wiki_core::SyncConfig::default();
-        config.remote_url = Some(remote.to_string_lossy().into_owned());
-        config.author = Some(wiki_core::GitAuthor {
-            name: "Test Server".into(),
-            email: "test@example.invalid".into(),
-        });
-        let sync = Arc::new(VaultSync::configure(Arc::clone(&vault), config).unwrap());
-        let gate = Arc::new(KnowledgeWriteGate::default());
-        let stopping = CancellationToken::new();
-        let service = WikiSyncService::new(
-            Arc::clone(&vault),
-            sync,
-            Arc::clone(&gate),
-            None,
-            stopping.clone(),
-        );
-        service.start_scheduler(Duration::from_millis(30), Duration::from_secs(3_600));
-
-        async fn write_page(State(root): State<std::path::PathBuf>) -> StatusCode {
-            std::fs::write(
-                root.join("wiki/debounced.md"),
-                "# Committed after debounce\n",
-            )
-            .unwrap();
-            StatusCode::OK
-        }
-        let app = Router::new()
-            .route("/knowledge/pages/debounced", put(write_page))
-            .route_layer(middleware::from_fn_with_state(
-                Arc::clone(&gate),
-                crate::app::gate_knowledge_writes,
-            ))
-            .with_state(root.clone());
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let address = listener.local_addr().unwrap();
-        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
-        let response = reqwest::Client::new()
-            .put(format!("http://{address}/knowledge/pages/debounced"))
-            .send()
-            .await
-            .unwrap();
-        assert_eq!(response.status(), StatusCode::OK);
-
-        tokio::time::timeout(Duration::from_secs(8), async {
-            loop {
-                let output = std::process::Command::new("git")
-                    .arg("--git-dir")
-                    .arg(&remote)
-                    .args(["show", "main:wiki/debounced.md"])
-                    .output()
-                    .unwrap();
-                if output.status.success() {
-                    assert_eq!(
-                        String::from_utf8_lossy(&output.stdout),
-                        "# Committed after debounce\n"
-                    );
-                    break;
-                }
-                tokio::time::sleep(Duration::from_millis(50)).await;
-            }
-        })
-        .await
-        .expect("debounced route write reaches the bare remote");
-        stopping.cancel();
-        server.abort();
-        let _ = std::fs::remove_dir_all(root);
-        let _ = std::fs::remove_dir_all(remote);
-    }
-
-    #[tokio::test]
-    async fn reader_vault_reports_read_only_and_does_not_start_scheduler() {
-        if !git_available() {
-            eprintln!("SKIPPED: git is not installed");
-            return;
-        }
-        let root = std::env::temp_dir().join(format!("wiki-sync-reader-{}", uuid::Uuid::new_v4()));
-        let remote =
-            std::env::temp_dir().join(format!("wiki-sync-reader-bare-{}", uuid::Uuid::new_v4()));
-        std::fs::create_dir_all(&root).unwrap();
-        std::fs::create_dir_all(&remote).unwrap();
-        let init = std::process::Command::new("git")
-            .args(["init", "--bare", "--initial-branch=main"])
-            .arg(&remote)
-            .output()
-            .unwrap();
-        assert!(init.status.success());
-        let _writer = Arc::new(Vault::open(wiki_core::VaultConfig::new(&root)).unwrap());
-        let reader = Arc::new(Vault::open(wiki_core::VaultConfig::new(&root)).unwrap());
-        assert!(!reader.is_writable());
-        let mut config = wiki_core::SyncConfig::default();
-        config.remote_url = Some(remote.to_string_lossy().into_owned());
-        let sync = Arc::new(VaultSync::configure(Arc::clone(&reader), config).unwrap());
-        assert!(matches!(
-            sync.status(),
-            SyncStatus::Disabled {
-                reason: DisabledReason::ReadOnly
-            }
-        ));
-        let gate = Arc::new(KnowledgeWriteGate::default());
-        let stopping = CancellationToken::new();
-        let service = WikiSyncService::new(reader, sync, gate, None, stopping.clone());
-        service.start_scheduler(Duration::from_millis(10), Duration::from_millis(20));
-        tokio::time::sleep(Duration::from_millis(80)).await;
-        assert!(matches!(
-            service.status(),
-            SyncStatus::Disabled {
-                reason: DisabledReason::ReadOnly
-            }
-        ));
-        stopping.cancel();
-        let _ = std::fs::remove_dir_all(root);
-        let _ = std::fs::remove_dir_all(remote);
-    }
-
-    fn git_available() -> bool {
-        std::process::Command::new("git")
-            .arg("--version")
-            .output()
-            .is_ok_and(|result| result.status.success())
-    }
-}
+mod tests;

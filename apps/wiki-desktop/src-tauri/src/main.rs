@@ -44,6 +44,7 @@ struct SyncConfigurationView {
     branch: String,
     auto: bool,
     interval_min: u64,
+    public_github_remote: bool,
 }
 
 impl Default for SyncSettings {
@@ -659,28 +660,84 @@ async fn sync_configuration(
         .get(&path)
         .cloned()
         .unwrap_or_default();
-    let (remote_url, branch) = tauri::async_runtime::spawn_blocking(move || {
-        let remote = match VaultSync::current_remote(&vault) {
-            Ok(value) => value.unwrap_or_default(),
-            Err(SyncError::GitMissing) => String::new(),
-            Err(SyncError::UnsafeRemote(_)) => String::new(),
-            Err(error) => return Err(error),
-        };
-        let branch = match VaultSync::current_branch(&vault) {
-            Ok(value) => value.unwrap_or_else(|| "main".into()),
-            Err(SyncError::GitMissing) => "main".into(),
-            Err(error) => return Err(error),
-        };
-        Ok((remote, branch))
-    })
-    .await
-    .map_err(|error| SyncError::Git(error.to_string()))??;
+    let (remote_url, branch, public_github_remote) =
+        tauri::async_runtime::spawn_blocking(move || {
+            let root = std::path::PathBuf::from(path);
+            let remote = match VaultSync::current_remote(&vault) {
+                Ok(value) => value.unwrap_or_default(),
+                Err(SyncError::GitMissing) => String::new(),
+                Err(SyncError::UnsafeRemote(_)) => String::new(),
+                Err(error) => return Err(error),
+            };
+            let branch = match VaultSync::current_branch(&vault) {
+                Ok(value) => value.unwrap_or_else(|| "main".into()),
+                Err(SyncError::GitMissing) => "main".into(),
+                Err(error) => return Err(error),
+            };
+            let public_github_remote = public_github_remote_warning(&root);
+            Ok((remote, branch, public_github_remote))
+        })
+        .await
+        .map_err(|error| SyncError::Git(error.to_string()))??;
     Ok(SyncConfigurationView {
         remote_url,
         branch,
         auto: settings.auto,
         interval_min: settings.interval_min,
+        public_github_remote,
     })
+}
+
+fn public_github_remote_warning(root: &std::path::Path) -> bool {
+    public_github_remote_warning_with("gh", root)
+}
+
+fn public_github_remote_warning_with(
+    gh_binary: impl AsRef<std::ffi::OsStr>,
+    root: &std::path::Path,
+) -> bool {
+    use std::{
+        process::{Command, Stdio},
+        thread,
+        time::{Duration, Instant},
+    };
+
+    let child = Command::new(gh_binary)
+        .args([
+            "repo",
+            "view",
+            "--json",
+            "visibility",
+            "--jq",
+            ".visibility",
+        ])
+        .current_dir(root)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .ok();
+    let Some(mut child) = child else {
+        return false;
+    };
+    let deadline = Instant::now() + Duration::from_secs(2);
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) if status.success() => {
+                let Ok(output) = child.wait_with_output() else {
+                    return false;
+                };
+                return String::from_utf8_lossy(&output.stdout).trim() == "PUBLIC";
+            }
+            Ok(Some(_)) | Err(_) => return false,
+            Ok(None) if Instant::now() < deadline => thread::sleep(Duration::from_millis(50)),
+            Ok(None) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return false;
+            }
+        }
+    }
 }
 
 fn active_sync(state: &DesktopState) -> Result<Arc<VaultSync>, SyncError> {
@@ -874,7 +931,19 @@ fn main() {
 
 #[cfg(test)]
 mod sync_settings_tests {
-    use super::Settings;
+    use super::{Settings, public_github_remote_warning_with};
+    use std::{fs, os::unix::fs::PermissionsExt};
+
+    fn fake_gh(output: &str) -> (std::path::PathBuf, std::path::PathBuf) {
+        let root = std::env::temp_dir().join(format!("wiki-gh-warning-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        let binary = root.join("gh");
+        fs::write(&binary, format!("#!/bin/sh\nprintf '%s\\n' '{output}'\n")).unwrap();
+        let mut permissions = fs::metadata(&binary).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&binary, permissions).unwrap();
+        (root, binary)
+    }
 
     #[test]
     fn old_settings_without_sync_still_load() {
@@ -883,5 +952,24 @@ mod sync_settings_tests {
         )
         .expect("legacy settings remain readable");
         assert!(settings.sync.is_empty());
+    }
+
+    #[test]
+    fn public_github_remote_is_reported_but_private_or_missing_gh_is_silent() {
+        let (root, gh) = fake_gh("PUBLIC");
+        assert!(public_github_remote_warning_with(&gh, &root));
+        fs::remove_dir_all(&root).unwrap();
+
+        let (root, gh) = fake_gh("PRIVATE");
+        assert!(!public_github_remote_warning_with(&gh, &root));
+        fs::remove_dir_all(&root).unwrap();
+
+        let root = std::env::temp_dir().join(format!("wiki-gh-missing-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        assert!(!public_github_remote_warning_with(
+            root.join("missing-gh"),
+            &root
+        ));
+        fs::remove_dir_all(root).unwrap();
     }
 }

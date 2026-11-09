@@ -30,3 +30,7 @@ Có module `wiki-core::sync::VaultSync` chạy được một vòng commit → f
 - [x] Test: `GitAuth::SshKey` sinh đúng env/args; runner chạy được khi `HOME` không có.
 - [x] Test bỏ qua có in `SKIPPED` khi máy không có git.
 - [x] `scripts/agent-test.sh package wiki-core` PASS.
+## Review follow-up
+
+- Oversize validation now checks only changed, staged, and untracked files entering the next commit; unchanged tracked files do not block sync. Regression coverage includes both oversized changed files and unchanged oversized files.
+- Desktop configuration reports a public GitHub remote when `gh` is available; missing CLI/auth is silent and does not gate synchronization.

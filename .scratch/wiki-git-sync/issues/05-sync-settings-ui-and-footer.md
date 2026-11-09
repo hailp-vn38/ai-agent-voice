@@ -23,3 +23,6 @@ Một bộ UI sync trong `packages/knowledge-ui` dùng được cho cả desktop
 - [ ] Unit test: map `SyncStatus` → nhãn/huy hiệu, map lỗi → thông điệp, panel ẩn trường cấu hình khi `configurable = false`, không có `sync` thì không render gì.
 - [ ] `package-boundary.test.ts` vẫn PASS (package không import gì từ app).
 - [ ] Typecheck và test frontend của `packages/knowledge-ui` và `apps/wiki-desktop` PASS.
+## Review follow-up
+
+- Sync status/config loading now uses accessible shimmer placeholders until both requests resolve. The desktop-provided public GitHub warning is localized in the shared SyncPanel.

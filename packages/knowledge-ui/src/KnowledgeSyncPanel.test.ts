@@ -38,6 +38,35 @@ describe('KnowledgeSyncPanel', () => {
     wrapper.unmount()
   })
 
+  it('shows accessible loading skeletons before sync status and configuration resolve', async () => {
+    let resolveStatus!: (status: SyncStatus) => void
+    const backend = new MemorySyncBackend()
+    backend.status = () => new Promise(resolve => { resolveStatus = resolve })
+    const wrapper = mount(KnowledgeSyncPanel, { props: { backend } })
+
+    expect(wrapper.find('[role="status"][aria-busy="true"].card-shimmer').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="sync-settings-form"]').exists()).toBe(false)
+    expect(wrapper.text()).not.toContain('Sync is not configured.')
+
+    resolveStatus({ type: 'idle', last_sync: null, ahead: 0, behind: 0 })
+    await flushPromises()
+    expect(wrapper.find('[role="status"][aria-busy="true"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="sync-settings-form"]').exists()).toBe(true)
+    wrapper.unmount()
+  })
+
+  it('shows a public GitHub remote warning returned by the desktop backend', async () => {
+    const backend = new MemorySyncBackend()
+    backend.configuration = async () => ({
+      remote_url: 'https://github.com/vela/wiki.git', branch: 'main', auto: false, interval_min: 5,
+      public_github_remote: true,
+    })
+    const wrapper = mount(KnowledgeSyncPanel, { props: { backend } })
+    await flushPromises()
+    expect(wrapper.find('.knowledge-sync-panel__warning').text()).toContain('repository is public')
+    wrapper.unmount()
+  })
+
   it('opens a conflict page when its copy is selected', async () => {
     const path = { scope: 'wiki' as const, relative: 'topic (conflict 2026-11-09 host).md' }
     const backend = new MemorySyncBackend({
