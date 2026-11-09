@@ -47,6 +47,7 @@ mod wiki_sync;
 
 pub(crate) use knowledge_write_gate::{KnowledgeWriteGate, gate_knowledge_writes};
 pub use state::{AppState, SessionProfileAdmissionError};
+pub(crate) use wiki_sync::WikiSyncService;
 
 /// Application seam for tests and other callers that have already initialized providers.
 pub async fn router_with_providers(

@@ -1,12 +1,14 @@
 import { apiUrl } from './client'
 import { consumeSse, createSseParserState } from './sse'
 import { readAdminToken } from '@/stores/auth'
+import type { SyncStatus } from '@vela/knowledge-ui'
 
 export interface KnowledgeChangeCallbacks {
   /** The vault changed. `paths` is empty when the server could not list every path. */
   onChanged: (paths: string[]) => void
   /** Changes may have been missed while disconnected; reload everything. */
   onResync: () => void
+  onSyncStatus?: (status: SyncStatus) => void
 }
 
 export type ListenKnowledgeChanges = (callbacks: KnowledgeChangeCallbacks, signal: AbortSignal) => Promise<void>
@@ -68,6 +70,12 @@ export const listenKnowledgeChanges: ListenKnowledgeChanges = async (callbacks, 
               const paths = changedPaths(frame.data)
               if (paths) callbacks.onChanged(paths)
               else callbacks.onResync()
+            } else if (frame.event === 'sync_status') {
+              try {
+                const status = JSON.parse(frame.data) as SyncStatus
+                if (status && typeof status === 'object' && 'type' in status) callbacks.onSyncStatus?.(status)
+                else callbacks.onResync()
+              } catch { callbacks.onResync() }
             }
           }
         }

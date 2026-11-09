@@ -33,6 +33,20 @@ describe('Knowledge SSE listener', () => {
     expect(new Headers(init.headers).get('authorization')).toBe('Bearer test-admin-token')
   })
 
+  it('forwards sync_status events to the sync adapter callback', async () => {
+    const abort = new AbortController()
+    const statuses: unknown[] = []
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(sseResponse(
+      'event: ready\ndata: {}\n\n' +
+      'event: sync_status\ndata: {"type":"error","kind":"auth","message":"safe"}\n\n',
+    )))
+    await listenKnowledgeChanges({
+      onChanged: () => {}, onResync: () => {},
+      onSyncStatus: status => { statuses.push(status); abort.abort() },
+    }, abort.signal)
+    expect(statuses).toEqual([{ type: 'error', kind: 'auth', message: 'safe' }])
+  })
+
   it('reports no paths for a truncated change and resyncs after a reconnect', async () => {
     vi.useFakeTimers()
     try {

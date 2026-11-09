@@ -127,22 +127,41 @@ pub(in crate::app::admin) async fn knowledge_events(
         index_files: vec![db, PathBuf::from(wal)],
     });
     let stopping = state.lifecycle.stopping().clone();
+    let sync_events = state
+        .wiki_sync_service
+        .get()
+        .map(|service| service.subscribe());
 
     let messages = futures_util::stream::unfold(
-        (None::<Snapshot>, roots, stopping),
-        |(previous, roots, stopping)| async move {
+        (None::<Snapshot>, roots, stopping, sync_events),
+        |(previous, roots, stopping, mut sync_events)| async move {
             let Some(mut previous) = previous else {
                 // Take the baseline before `ready`, so any change after it produces an event.
                 let baseline = take_snapshot(&roots).await.unwrap_or_default();
                 return Some((
                     Ok::<Event, Infallible>(Event::default().event("ready").data("{}")),
-                    (Some(baseline), roots, stopping),
+                    (Some(baseline), roots, stopping, sync_events),
                 ));
             };
             loop {
                 tokio::select! {
                     biased;
                     _ = stopping.cancelled() => return None,
+                    event = async { match sync_events.as_mut() { Some(events) => events.recv().await, None => std::future::pending::<Result<_, _>>().await } } => {
+                        let status = match event {
+                            Ok(status) => status,
+                            Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
+                                // A fresh GET gives the current state after a lagged subscriber reconnects.
+                                continue;
+                            }
+                            Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                                sync_events = None;
+                                continue;
+                            }
+                        };
+                        let data = serde_json::to_string(&status).unwrap_or_else(|_| "{}".into());
+                        return Some((Ok(Event::default().event("sync_status").data(data)), (Some(previous), roots, stopping, sync_events)));
+                    }
                     _ = tokio::time::sleep(CHECK_INTERVAL) => {}
                 }
                 let Some(current) = take_snapshot(&roots).await else {
@@ -167,7 +186,7 @@ pub(in crate::app::admin) async fn knowledge_events(
                     Ok(Event::default()
                         .event("knowledge_changed")
                         .data(data.to_string())),
-                    (Some(previous), roots, stopping),
+                    (Some(previous), roots, stopping, sync_events),
                 ));
             }
         },

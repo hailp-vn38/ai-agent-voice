@@ -6,7 +6,7 @@ import type {
   AdminKnowledgeBackend, Change, DocPath, KnowledgeChangeEvent, KnowledgeGraph,
   KnowledgeGraphOptions, KnowledgeHit, KnowledgePage, KnowledgeRawFile,
   KnowledgeSearchOptions, KnowledgeSpace, KnowledgeStatus, KnowledgeTreeNode,
-  Scope,
+  Scope, SyncBackend, SyncConfiguration, SyncReport, SyncStatus,
 } from '@vela/knowledge-ui'
 
 export * from '@vela/knowledge-ui'
@@ -15,11 +15,38 @@ type HttpRequestJson = <T>(path: string, init?: RequestInit) => Promise<T>
 
 class HttpAdminKnowledgeBackend implements AdminKnowledgeBackend {
   readonly capabilities = { chat: true } as const
+  readonly sync: SyncBackend
   private readonly lastTrees = new Map<KnowledgeSpace, KnowledgeTreeNode[]>()
+  private readonly changeListeners = new Set<(event: KnowledgeChangeEvent) => void>()
+  private readonly syncListeners = new Set<(status: SyncStatus) => void>()
+  private streamAbort?: AbortController
   constructor(
     private readonly request: HttpRequestJson = requestJson,
     private readonly listen: ListenKnowledgeChanges = listenKnowledgeChanges,
-  ) {}
+  ) { this.sync = new HttpSyncBackend(request, this) }
+
+  addSyncListener(listener: (status: SyncStatus) => void) {
+    this.syncListeners.add(listener)
+    this.startEvents()
+    return () => { this.syncListeners.delete(listener); this.stopEventsIfUnused() }
+  }
+
+  private startEvents() {
+    if (this.streamAbort) return
+    const abort = new AbortController()
+    this.streamAbort = abort
+    void this.listen({
+      onChanged: paths => this.changeListeners.forEach(listener => listener({ type: 'external', origin: 'server', paths })),
+      onResync: () => this.changeListeners.forEach(listener => listener({ type: 'external', origin: 'server', paths: [] })),
+      onSyncStatus: status => this.syncListeners.forEach(listener => listener(status)),
+    }, abort.signal)
+  }
+
+  private stopEventsIfUnused() {
+    if (this.changeListeners.size || this.syncListeners.size) return
+    this.streamAbort?.abort()
+    this.streamAbort = undefined
+  }
 
   tree(space: KnowledgeSpace) {
     return this.request<{ items: KnowledgeTreeNode[] }>(withQuery('/api/admin/knowledge/tree', { space }))
@@ -141,13 +168,26 @@ class HttpAdminKnowledgeBackend implements AdminKnowledgeBackend {
 
   /** The server pushes vault changes over SSE; every change reloads from REST. */
   onChange(listener: (event: KnowledgeChangeEvent) => void) {
-    const abort = new AbortController()
-    void this.listen({
-      onChanged: paths => listener({ type: 'external', origin: 'server', paths }),
-      onResync: () => listener({ type: 'external', origin: 'server', paths: [] }),
-    }, abort.signal)
-    return () => abort.abort()
+    this.changeListeners.add(listener)
+    this.startEvents()
+    return () => { this.changeListeners.delete(listener); this.stopEventsIfUnused() }
   }
+}
+
+class HttpSyncBackend implements SyncBackend {
+  readonly configurable = false
+  constructor(
+    private readonly request: HttpRequestJson,
+    private readonly backend: HttpAdminKnowledgeBackend,
+  ) {}
+
+  async status(): Promise<SyncStatus> { return (await this.request<{ status: SyncStatus }>('/api/admin/knowledge/sync')).status }
+  async configuration(): Promise<SyncConfiguration> {
+    const { configuration } = await this.request<{ configuration: SyncConfiguration }>('/api/admin/knowledge/sync')
+    return configuration
+  }
+  syncNow(): Promise<SyncReport> { return this.request('/api/admin/knowledge/sync', jsonRequest('POST', {})) }
+  onStatus(listener: (status: SyncStatus) => void) { return this.backend.addSyncListener(listener) }
 }
 
 

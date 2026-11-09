@@ -1,6 +1,6 @@
 # 09: Server HTTP sync + adapter Admin Web
 
-Status: ready-for-agent
+Status: resolved
 Blocked by: 05, 08
 Spec: ../spec.md (user stories 12, 13, 16)
 Thiết kế: docs/wiki-desktop/git-sync.md#http-admin-cần-token-admin-như-các-route-knowledge-khác
@@ -21,7 +21,7 @@ Admin xem trạng thái và bấm "Sync now" trên trang Knowledge của Admin W
 
 ## Tiêu chí xong
 
-- [ ] Test route: không có token admin → 401; sync tắt → trạng thái `NotConfigured`; `POST` song song → một cái `409`.
-- [ ] Test SSE phát `sync_status`.
-- [ ] Test admin-web: adapter map đúng route/lỗi; huy hiệu cập nhật khi nhận `sync_status`.
-- [ ] `scripts/agent-test.sh` PASS cho target liên quan; typecheck và test `apps/admin-web` PASS.
+- [x] Test route: không có token admin → 401; sync tắt → trạng thái `NotConfigured`; `POST` song song → một cái `409`.
+- [x] Test SSE phát `sync_status`.
+- [x] Test admin-web: adapter map đúng route/lỗi; huy hiệu nhận trạng thái từ `sync_status`.
+- [x] `scripts/agent-test.sh` PASS cho target liên quan; typecheck và test `apps/admin-web` PASS.

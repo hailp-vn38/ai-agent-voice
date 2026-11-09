@@ -14,6 +14,7 @@ use std::sync::Arc;
 pub(in crate::app) fn router(state: AppState) -> Router<AppState> {
     Router::new()
         .merge(knowledge_routes(Arc::clone(&state.knowledge_write_gate)))
+        .merge(wiki_sync_routes())
         .merge(background_routes())
         .merge(notification_routes())
         .merge(mcp_routes())
@@ -171,6 +172,15 @@ fn knowledge_routes(gate: Arc<super::super::KnowledgeWriteGate>) -> Router<AppSt
             gate,
             super::super::gate_knowledge_writes,
         ))
+}
+
+fn wiki_sync_routes() -> Router<AppState> {
+    // The sync handler takes the write side of KnowledgeWriteGate itself. Excluding it from the
+    // normal request writer middleware prevents acquiring a read guard before the write guard.
+    Router::new().route(
+        "/knowledge/sync",
+        get(knowledge::knowledge_sync).post(knowledge::knowledge_sync_now),
+    )
 }
 
 fn background_routes() -> Router<AppState> {

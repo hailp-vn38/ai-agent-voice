@@ -277,7 +277,8 @@ impl VaultSync {
                     kind: error.kind(),
                     message: error.to_string(),
                 });
-                return Err(error);
+                // Keep the configured synchronizer alive. Hosts need its error status and
+                // must be able to retry after credentials/network recover without restarting.
             }
             Err(error) => return Err(error),
         }
@@ -1674,6 +1675,39 @@ mod tests {
             }
         ));
         assert!(matches!(sync.sync_now(), Err(SyncError::ReadOnly)));
+    }
+
+    #[test]
+    fn initial_auth_failure_keeps_a_retryable_status_bearing_sync() {
+        if skip_without_git() {
+            return;
+        }
+        let temp = tempfile::tempdir().unwrap();
+        let fake_bin = temp.path().join("fake-bin");
+        fs::create_dir_all(&fake_bin).unwrap();
+        let fake_git = fake_bin.join("git");
+        fs::write(
+            &fake_git,
+            "#!/bin/sh\nfor arg in \"$@\"; do\n  if [ \"$arg\" = \"ls-remote\" ]; then echo 'fatal: Authentication failed' >&2; exit 128; fi\ndone\nexec /usr/bin/git \"$@\"\n",
+        )
+        .unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&fake_git, fs::Permissions::from_mode(0o755)).unwrap();
+        let vault =
+            Arc::new(Vault::open(crate::VaultConfig::new(temp.path().join("vault"))).unwrap());
+        let sync = VaultSync::configure_with_path(
+            vault,
+            config("https://github.com/owner/wiki.git".into()),
+            Some(fake_bin.as_os_str()),
+        )
+        .expect("initial auth failure should preserve the configured synchronizer");
+        assert!(matches!(
+            sync.status(),
+            SyncStatus::Error {
+                kind: SyncErrorKind::Auth,
+                ..
+            }
+        ));
     }
 
     #[test]
