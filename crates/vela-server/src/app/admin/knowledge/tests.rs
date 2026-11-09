@@ -65,6 +65,74 @@ admin_token = "knowledge-test-token"
     (format!("http://{addr}/api/admin"), temp_root, handle)
 }
 
+async fn sync_sse_fixture_server() -> (
+    String,
+    std::path::PathBuf,
+    tokio::task::JoinHandle<()>,
+    Arc<crate::app::WikiSyncService>,
+    Arc<crate::app::KnowledgeWriteGate>,
+) {
+    let temp_root =
+        std::env::temp_dir().join(format!("knowledge-sync-sse-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&temp_root).unwrap();
+    let mut config: AppConfig = toml::from_str(
+        r#"
+[server]
+bind = "127.0.0.1:0"
+public_ws_url = "ws://127.0.0.1:0/voice/v1/"
+[provider_defaults]
+vad = "test"
+asr = "test"
+llm = "test"
+tts = "test"
+[api]
+enabled = true
+admin_token = "knowledge-test-token"
+"#,
+    )
+    .unwrap();
+    config.wiki.sync.enabled = true;
+    let engine = Arc::new(WikiEngine::open(temp_root.join("vault")).unwrap());
+    let mut state = AppState::from_provider_set_with_database(
+        config,
+        Arc::new(ProviderSet::unavailable()),
+        None,
+    );
+    state.wiki_engine = Some(engine);
+    let vault = Arc::new(
+        wiki_core::Vault::open(wiki_core::VaultConfig::new(temp_root.join("vault"))).unwrap(),
+    );
+    let sync = Arc::new(
+        wiki_core::VaultSync::configure(Arc::clone(&vault), wiki_core::SyncConfig::default())
+            .unwrap(),
+    );
+    let service = crate::app::WikiSyncService::new(
+        vault,
+        sync,
+        Arc::clone(&state.knowledge_write_gate),
+        None,
+        tokio_util::sync::CancellationToken::new(),
+    );
+    assert!(state.wiki_sync_service.set(Arc::clone(&service)).is_ok());
+    state
+        .wiki_sync_scheduler_started
+        .store(true, std::sync::atomic::Ordering::Release);
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let gate = Arc::clone(&state.knowledge_write_gate);
+    let router = router_with_state(state);
+    let handle = tokio::spawn(async move {
+        axum::serve(listener, router).await.unwrap();
+    });
+    (
+        format!("http://{address}/api/admin"),
+        temp_root,
+        handle,
+        service,
+        gate,
+    )
+}
+
 async fn graph_cap_fixture_server() -> (String, std::path::PathBuf, tokio::task::JoinHandle<()>) {
     let temp_root =
         std::env::temp_dir().join(format!("knowledge-graph-cap-test-{}", uuid::Uuid::new_v4()));
@@ -538,6 +606,110 @@ async fn knowledge_events_pushes_a_change_after_a_page_is_created() {
         "unexpected paths: {paths:?}"
     );
 
+    handle.abort();
+    let _ = std::fs::remove_dir_all(temp_root);
+}
+
+#[tokio::test]
+async fn knowledge_events_pushes_sync_status_changes() {
+    let (base, temp_root, handle, service, _gate) = sync_sse_fixture_server().await;
+    let client = reqwest::Client::new();
+    let mut events = client
+        .get(format!("{base}/knowledge/events"))
+        .bearer_auth("knowledge-test-token")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(events.status(), StatusCode::OK);
+    let mut buffer = String::new();
+    next_sse_event(&mut events, &mut buffer, "ready").await;
+
+    service.publish(wiki_core::SyncStatus::Syncing);
+    let payload: Value =
+        serde_json::from_str(&next_sse_event(&mut events, &mut buffer, "sync_status").await)
+            .unwrap();
+    assert_eq!(payload, serde_json::json!({"type":"syncing"}));
+    handle.abort();
+    let _ = std::fs::remove_dir_all(temp_root);
+}
+
+#[tokio::test]
+async fn concurrent_sync_post_returns_conflict() {
+    let (base, temp_root, handle, service, gate) = sync_sse_fixture_server().await;
+    let _write_guard = gate.write().await;
+    let client = reqwest::Client::new();
+    let first_client = client.clone();
+    let url = format!("{base}/knowledge/sync");
+    let first = tokio::spawn(async move {
+        first_client
+            .post(url)
+            .bearer_auth("knowledge-test-token")
+            .send()
+            .await
+            .unwrap()
+    });
+    tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        while !service.is_sync_in_progress() {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("first sync request should claim the sync slot");
+    let second = client
+        .post(format!("{base}/knowledge/sync"))
+        .bearer_auth("knowledge-test-token")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(second.status(), StatusCode::CONFLICT);
+    assert_eq!(
+        second.json::<Value>().await.unwrap()["error"]["code"],
+        "sync_in_progress"
+    );
+    drop(_write_guard);
+    let first = first.await.unwrap();
+    assert_ne!(first.status(), StatusCode::CONFLICT);
+    handle.abort();
+    let _ = std::fs::remove_dir_all(temp_root);
+}
+
+#[tokio::test]
+async fn sync_route_requires_admin_and_reports_disabled_state_without_secret_paths() {
+    let (base, temp_root, handle) = fixture_server().await;
+    let client = reqwest::Client::new();
+    let unauthorized = client
+        .get(format!("{base}/knowledge/sync"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(unauthorized.status(), StatusCode::UNAUTHORIZED);
+
+    let response = client
+        .get(format!("{base}/knowledge/sync"))
+        .bearer_auth("knowledge-test-token")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body: Value = response.json().await.unwrap();
+    assert_eq!(
+        body["status"],
+        serde_json::json!({"type":"disabled","reason":"not_configured"})
+    );
+    assert_eq!(body["configuration"]["auto"], false);
+    assert!(body.to_string().find("ssh_key_path").is_none());
+
+    let disabled = client
+        .post(format!("{base}/knowledge/sync"))
+        .bearer_auth("knowledge-test-token")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(disabled.status(), StatusCode::CONFLICT);
+    assert_eq!(
+        disabled.json::<Value>().await.unwrap()["error"]["code"],
+        "sync_disabled"
+    );
     handle.abort();
     let _ = std::fs::remove_dir_all(temp_root);
 }

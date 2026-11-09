@@ -64,8 +64,8 @@ export function syncStatusLabel(status: SyncStatus, locale: Locale = 'en'): stri
 }
 
 export function syncErrorMessage(error: unknown, locale: Locale = 'en'): string {
-  const value = error && typeof error === 'object' ? error as { type?: unknown; kind?: unknown } : {}
-  const kind = String(value.kind ?? value.type ?? 'git')
+  const value = error && typeof error === 'object' ? error as { type?: unknown; kind?: unknown; code?: unknown } : {}
+  const kind = String(value.kind ?? value.type ?? value.code ?? 'git').replace(/^sync_/, '')
   const keys: Record<string, SyncMessageKey> = {
     auth: 'knowledgeSync.error.auth', git_missing: 'knowledgeSync.error.git_missing',
     no_git: 'knowledgeSync.error.git_missing', unsafe_remote: 'knowledgeSync.error.unsafe_remote',

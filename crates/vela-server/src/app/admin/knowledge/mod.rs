@@ -11,6 +11,7 @@ mod pages;
 pub(super) mod processing;
 mod raw;
 mod sources;
+mod sync_http;
 #[cfg(test)]
 mod tests;
 
@@ -37,6 +38,7 @@ pub(super) use raw::{
 pub(super) use sources::{
     knowledge_chart_read, knowledge_import_source, knowledge_read_source, knowledge_sources,
 };
+pub(super) use sync_http::{knowledge_sync, knowledge_sync_now};
 
 use super::*;
 use llm_wiki::{GetOptions, WikiEngine, WikiError};

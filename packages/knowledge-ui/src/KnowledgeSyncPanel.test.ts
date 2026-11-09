@@ -11,6 +11,7 @@ describe('KnowledgeSyncPanel', () => {
     expect(syncStatusLabel({ type: 'deferred', reason: 'ingest_running', retry_at: 1 })).toContain('ingest job')
     expect(syncStatusLabel({ type: 'conflicted', copies: [] })).toBe('0 conflicts')
     expect(syncErrorMessage({ type: 'auth', detail: 'secret' })).toContain('gh auth setup-git')
+    expect(syncErrorMessage({ code: 'sync_auth' })).toContain('gh auth setup-git')
     expect(syncErrorMessage({ type: 'git_missing' })).toContain('Xcode Command Line Tools')
     expect(syncErrorMessage({ type: 'unsafe_remote' })).toContain('credentials')
   })

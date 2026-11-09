@@ -16,6 +16,9 @@ import RightPanelTabs, { type RightTab } from './RightPanelTabs.vue'
 import { movedOrder, useDragReorder } from './useDragReorder'
 import KnowledgeNoteView, { noteIntroduction } from './KnowledgeNoteView.vue'
 import KnowledgeMarkdownEditor from './KnowledgeMarkdownEditor.vue'
+import KnowledgeSyncBadge from './KnowledgeSyncBadge.vue'
+import KnowledgeSyncPanel from './KnowledgeSyncPanel.vue'
+import type { SyncStatus } from './sync'
 import { useKnowledgeWorkspace, type NoteDoc, type Page, type RawFile, type TabRef, type TreeSpace, type WorkspacePane, type WorkspaceTab } from './useKnowledgeWorkspace'
 import { useKnowledgeBackend, useOptionalAdminKnowledgeBackend, VaultError } from './knowledgeBackend'
 import { docPath, type DocPath, type Scope, type VaultTreeNode } from './knowledgeBackend'
@@ -66,6 +69,10 @@ const { route, router } = useKnowledgeNavigation()
 const knowledgeBackend = useKnowledgeBackend()
 const chatAvailable = computed(() => isKnowledgeChatAvailable(knowledgeBackend.capabilities, chatProvider, WikiChatPanelComponent))
 const adminBackend = useOptionalAdminKnowledgeBackend()
+const syncBackend = computed(() => adminBackend?.sync)
+const syncPanelOpen = ref(false)
+const syncStatus = ref<SyncStatus>({ type: 'disabled', reason: 'not_configured' })
+let stopSyncStatus: (() => void) | undefined
 async function readKnowledge(path: string, space: TreeSpace): Promise<Page | RawFile> {
   if (space === 'drafts') {
     if (!adminBackend) throw new Error('Drafts are available in Admin Web only')
@@ -2283,6 +2290,9 @@ async function openSyncConflictPath(event: Event) {
   const node = tree.value.find(item => item.space === 'wiki' && item.type === 'file' && item.path === path)
   await openPage(node?.id ?? path, node?.path ?? path)
 }
+function openSyncConflict(path: { scope: 'raw' | 'wiki'; relative: string }) {
+  window.dispatchEvent(new CustomEvent(KNOWLEDGE_SYNC_OPEN_CONFLICT_EVENT, { detail: path }))
+}
 watch(() => [route.query.source, route.query.wiki], () => { void openJobLink() })
 function onKnowledgeShortcut(event: KeyboardEvent) {
   if (!(event.metaKey || event.ctrlKey) || event.shiftKey || event.key.toLowerCase() !== 'n') return
@@ -2308,6 +2318,10 @@ onMounted(() => {
       }
     }
   })
+  if (syncBackend.value) {
+    stopSyncStatus = syncBackend.value.onStatus(status => { syncStatus.value = status })
+    void syncBackend.value.status().then(status => { syncStatus.value = status }).catch(() => {})
+  }
   void refreshSources()
   void listPages()
   void refreshTree().then(async () => {
@@ -2323,6 +2337,7 @@ onBeforeUnmount(() => {
   window.removeEventListener('keydown', onKnowledgeShortcut)
   window.removeEventListener(KNOWLEDGE_SYNC_OPEN_CONFLICT_EVENT, openSyncConflictPath)
   stopListeningForKnowledgeChanges?.()
+  stopSyncStatus?.()
 })
 </script>
 
@@ -2339,6 +2354,10 @@ onBeforeUnmount(() => {
     @dragenter.prevent="onPageDragEnter" @dragover.prevent="onPageDragOver"
     @dragleave="onPageDragLeave" @drop.prevent="onFileDrop($event, 'raw')">
     <div v-if="isDraggingFile" class="a-drop-banner" role="status">{{ t('knowledgeV3.dropMarkdownHint') }}</div>
+    <aside v-if="syncPanelOpen && syncBackend" class="knowledge-sync-flyout" aria-label="Knowledge sync">
+      <KnowledgeSyncPanel :backend="syncBackend" @close="syncPanelOpen = false"
+        @open-conflict="openSyncConflict" />
+    </aside>
     <aside id="knowledge-explorer-panel" class="a-explorer"
       :class="{ 'is-collapsed': explorerCollapsed }" :style="panelStyle('explorer', explorerCollapsed)" :aria-hidden="explorerCollapsed">
       <div class="a-pane-heading">
@@ -2352,6 +2371,7 @@ onBeforeUnmount(() => {
           </button>
         </div>
         <div class="a-pane-heading-actions">
+          <KnowledgeSyncBadge v-if="syncBackend" :status="syncStatus" @activate="syncPanelOpen = !syncPanelOpen" />
           <button class="icon-button" :class="{ active: searchOpen }" type="button"
             :title="t('knowledgeV3.search')" :aria-label="t('knowledgeV3.search')"
             :aria-pressed="searchOpen" :disabled="busy" @click="toggleSearch"><Search :size="16" /></button>
@@ -2715,3 +2735,7 @@ onBeforeUnmount(() => {
     </div>
   </section>
 </template>
+
+<style scoped>
+.knowledge-sync-flyout { position: fixed; z-index: 80; top: 4.5rem; right: 1.25rem; width: min(30rem, calc(100vw - 2.5rem)); padding: 1rem; border: 1px solid color-mix(in srgb, currentColor 18%, transparent); border-radius: .75rem; background: var(--background, white); box-shadow: 0 12px 40px #0003; }
+</style>

@@ -1,7 +1,10 @@
 use crate::app::{AppState, KnowledgeWriteGate};
 use orchestrator_flow_rs::{TaskFilter, TaskManager};
 use std::{
-    sync::{Arc, Mutex, atomic::Ordering},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, Ordering},
+    },
     time::{Duration, Instant, SystemTime},
 };
 use tokio::sync::broadcast;
@@ -21,10 +24,11 @@ pub(crate) struct WikiSyncService {
     stopping: CancellationToken,
     status: Mutex<SyncStatus>,
     status_events: broadcast::Sender<SyncStatus>,
+    sync_in_progress: AtomicBool,
 }
 
 impl WikiSyncService {
-    fn new(
+    pub(crate) fn new(
         vault: Arc<Vault>,
         sync: Arc<VaultSync>,
         write_gate: Arc<KnowledgeWriteGate>,
@@ -32,14 +36,16 @@ impl WikiSyncService {
         stopping: CancellationToken,
     ) -> Arc<Self> {
         let (status_events, _) = broadcast::channel(32);
+        let initial_status = safe_status(sync.status());
         Arc::new(Self {
             vault,
-            status: Mutex::new(sync.status()),
+            status: Mutex::new(initial_status),
             sync,
             write_gate,
             task_manager,
             stopping,
             status_events,
+            sync_in_progress: AtomicBool::new(false),
         })
     }
 
@@ -49,7 +55,7 @@ impl WikiSyncService {
         self.status
             .lock()
             .map(|status| status.clone())
-            .unwrap_or_else(|_| self.sync.status())
+            .unwrap_or_else(|_| safe_status(self.sync.status()))
     }
 
     #[allow(dead_code)]
@@ -57,7 +63,8 @@ impl WikiSyncService {
         self.status_events.subscribe()
     }
 
-    fn publish(&self, status: SyncStatus) {
+    pub(crate) fn publish(&self, status: SyncStatus) {
+        let status = safe_status(status);
         if let Ok(mut current) = self.status.lock() {
             *current = status.clone();
         }
@@ -65,6 +72,20 @@ impl WikiSyncService {
     }
 
     pub(crate) async fn sync_now(self: &Arc<Self>) -> Result<SyncReport, SyncError> {
+        if self
+            .sync_in_progress
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .is_err()
+        {
+            return Err(SyncError::Git("sync_in_progress".into()));
+        }
+        struct RunGuard<'a>(&'a AtomicBool);
+        impl Drop for RunGuard<'_> {
+            fn drop(&mut self) {
+                self.0.store(false, Ordering::Release);
+            }
+        }
+        let _run_guard = RunGuard(&self.sync_in_progress);
         let service = Arc::clone(self);
         let idle = wait_for_ingest_idle(
             || service.ingest_job_running(),
@@ -89,6 +110,10 @@ impl WikiSyncService {
         tokio::task::spawn_blocking(move || sync.sync_now())
             .await
             .map_err(|error| SyncError::Git(format!("sync worker failed: {error}")))?
+    }
+
+    pub(crate) fn is_sync_in_progress(&self) -> bool {
+        self.sync_in_progress.load(Ordering::Acquire)
     }
 
     async fn ingest_job_running(&self) -> bool {
@@ -154,7 +179,7 @@ impl WikiSyncService {
                 return;
             }
             if let Err(error) = service.sync_now().await {
-                warn!(error = %error, "initial Wiki vault sync failed");
+                warn!(kind = ?error.kind(), "initial Wiki vault sync failed");
             }
             let mut synced_write = write_gate.last_write();
             let mut next_periodic = Instant::now() + interval;
@@ -172,12 +197,34 @@ impl WikiSyncService {
                     continue;
                 }
                 if let Err(error) = service.sync_now().await {
-                    warn!(error = %error, "scheduled Wiki vault sync failed");
+                    warn!(kind = ?error.kind(), "scheduled Wiki vault sync failed");
                 }
                 synced_write = write_gate.last_write();
                 next_periodic = Instant::now() + interval;
             }
         });
+    }
+}
+
+fn safe_status(status: SyncStatus) -> SyncStatus {
+    match status {
+        SyncStatus::Error { kind, .. } => SyncStatus::Error {
+            kind,
+            message: match kind {
+                wiki_core::SyncErrorKind::Auth => "Authentication failed".into(),
+                wiki_core::SyncErrorKind::Network => "Network operation failed".into(),
+                wiki_core::SyncErrorKind::Timeout => "Git operation timed out".into(),
+                wiki_core::SyncErrorKind::UnsafeRemote => "Remote URL is unsafe".into(),
+                wiki_core::SyncErrorKind::ReadOnly => "Vault is read-only".into(),
+                wiki_core::SyncErrorKind::GitMissing => "Git is unavailable".into(),
+                wiki_core::SyncErrorKind::FileTooLarge => {
+                    "A vault file exceeds the configured size limit".into()
+                }
+                wiki_core::SyncErrorKind::Vault => "Vault operation failed".into(),
+                wiki_core::SyncErrorKind::Git => "Git operation failed".into(),
+            },
+        },
+        status => status,
     }
 }
 
@@ -236,7 +283,7 @@ pub(crate) fn start_if_enabled(state: &AppState) {
             {
                 Ok(Ok(sync)) => Arc::new(sync),
                 Ok(Err(error)) => {
-                    warn!(error = %error, "Wiki sync configuration failed");
+                    warn!(kind = ?error.kind(), "Wiki sync configuration failed");
                     return;
                 }
                 Err(error) => {
@@ -265,6 +312,17 @@ mod tests {
     use super::*;
     use axum::{Router, extract::State, http::StatusCode, middleware, routing::put};
     use std::sync::atomic::{AtomicUsize, Ordering};
+
+    #[test]
+    fn published_sync_errors_do_not_include_git_stderr() {
+        let status = safe_status(SyncStatus::Error {
+            kind: wiki_core::SyncErrorKind::Auth,
+            message: "fatal: Authentication failed for secret-token".into(),
+        });
+        assert!(
+            matches!(status, SyncStatus::Error { message, .. } if message == "Authentication failed")
+        );
+    }
 
     #[tokio::test]
     async fn active_ingest_defers_then_sync_can_continue_when_it_finishes() {

@@ -97,6 +97,30 @@ describe('MemoryKnowledgeBackend', () => {
     expect(signal!.aborted).toBe(true)
   })
 
+  it('maps the HTTP sync routes and forwards sync_status through the shared SSE listener', async () => {
+    let callbacks: import('@/api/knowledge-updates').KnowledgeChangeCallbacks | undefined
+    const paths: string[] = []
+    const status = { type: 'error', kind: 'auth', message: 'safe auth failure' } as const
+    const backend = new HttpKnowledgeBackend(async <T>(path: string, init?: RequestInit) => {
+      paths.push(`${init?.method ?? 'GET'} ${path}`)
+      return (init?.method === 'POST'
+        ? { committed: 1, pulled: [], conflicts: [], pushed: true }
+        : { status, configuration: { remote_url: 'git@github.com:owner/wiki.git', branch: 'main', auto: true, interval_min: 5 } }) as T
+    }, async (next) => { callbacks = next }).admin!
+    const received: unknown[] = []
+    const stop = backend.sync!.onStatus(next => received.push(next))
+
+    expect(await backend.sync!.status()).toEqual(status)
+    expect(await backend.sync!.configuration!()).toMatchObject({ branch: 'main', auto: true, interval_min: 5 })
+    expect(await backend.sync!.syncNow()).toMatchObject({ committed: 1, pushed: true })
+    callbacks!.onSyncStatus?.({ type: 'idle', last_sync: 1, ahead: 0, behind: 0 })
+    stop()
+
+    expect(paths).toContain('GET /api/admin/knowledge/sync')
+    expect(paths).toContain('POST /api/admin/knowledge/sync')
+    expect(received).toEqual([{ type: 'idle', last_sync: 1, ahead: 0, behind: 0 }])
+  })
+
   it('publishes a change after apply and returns a typed conflict for a stale revision', async () => {
     const backend = new MemoryKnowledgeBackend({ pages: [
       { id: 'wiki/gardening.md', path: 'wiki/gardening.md', title: 'Gardening', body: 'Original', revision: 1 },
