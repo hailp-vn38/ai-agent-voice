@@ -1,6 +1,6 @@
 # 01: Seam `Vault::exclusive_external`
 
-Status: ready-for-agent
+Status: resolved
 Spec: ../spec.md (user stories 2, 3, 10)
 Thiết kế: docs/wiki-desktop/git-sync.md#seam-mới-trên-vault
 
@@ -18,7 +18,7 @@ Cho code trong `wiki-core` sửa nhiều file trên đĩa trong lúc giữ write
 
 ## Tiêu chí xong
 
-- [ ] Test: closure ghi hai file → `read`/`search` thấy nội dung mới, `subscribe` nhận một `External` chứa đúng hai path.
-- [ ] Test: vault reader gọi → `ReadOnly`, closure không chạy.
-- [ ] Test: `apply` gọi từ thread khác trong lúc closure chạy phải chờ tới khi closure xong.
-- [ ] `scripts/agent-test.sh` cho `wiki-core` PASS.
+- [x] Test: closure ghi hai file → `read`/`search` thấy nội dung mới, `subscribe` nhận một `External` chứa đúng hai path.
+- [x] Test: vault reader gọi → `ReadOnly`, closure không chạy.
+- [x] Test: `apply` gọi từ thread khác trong lúc closure chạy phải chờ tới khi closure xong.
+- [x] `scripts/agent-test.sh` cho `wiki-core` PASS.
