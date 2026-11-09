@@ -1,6 +1,6 @@
 # 02: `VaultSync`: configure và sync không xung đột
 
-Status: ready-for-agent
+Status: resolved
 Blocked by: 01
 Spec: ../spec.md (user stories 1, 2, 3, 7, 8, 9, 11)
 Thiết kế: docs/wiki-desktop/git-sync.md
@@ -22,11 +22,11 @@ Có module `wiki-core::sync::VaultSync` chạy được một vòng commit → f
 
 ## Tiêu chí xong
 
-- [ ] Test với bare repo + hai clone: ghi ở A, sync A, sync B → B đọc và search thấy, nhận `External`.
-- [ ] Test: `.wiki/index.sqlite` và `.wiki-desktop.lock` không có trong `git ls-files`.
-- [ ] Test: file lớn hơn giới hạn → `FileTooLarge`, không có commit mới.
-- [ ] Test: URL `https://u:t@host/r.git` → `UnsafeRemote`.
-- [ ] Test: vault reader → `ReadOnly`; `PATH` không có git → `Disabled { NoGit }`.
-- [ ] Test: `GitAuth::SshKey` sinh đúng env/args (kiểm tra lệnh được dựng, không cần SSH thật); chạy được khi `HOME` không tồn tại.
-- [ ] Test bỏ qua có in `SKIPPED` khi máy không có git.
-- [ ] `scripts/agent-test.sh` cho `wiki-core` PASS.
+- [x] Test với bare repo + hai clone: ghi ở A, sync A, sync B → B đọc và search thấy, nhận `External`.
+- [x] Test: `.wiki/index.sqlite` và `.wiki-desktop.lock` không có trong `git ls-files`.
+- [x] Test: file lớn hơn giới hạn → `FileTooLarge`, không có commit mới.
+- [x] Test: URL `https://u:t@host/r.git` → `UnsafeRemote`.
+- [x] Test: vault reader → `ReadOnly`; không tìm thấy git trên PATH → `Disabled { NoGit }`.
+- [x] Test: `GitAuth::SshKey` sinh đúng env/args; runner chạy được khi `HOME` không có.
+- [x] Test bỏ qua có in `SKIPPED` khi máy không có git.
+- [x] `scripts/agent-test.sh package wiki-core` PASS.
