@@ -39,10 +39,12 @@ use uuid::Uuid;
 pub(crate) mod admin;
 mod assistant;
 mod enrollment;
+mod knowledge_write_gate;
 pub(crate) mod mcp_server;
 mod state;
 mod transport;
 
+pub(crate) use knowledge_write_gate::{KnowledgeWriteGate, gate_knowledge_writes};
 pub use state::{AppState, SessionProfileAdmissionError};
 
 /// Application seam for tests and other callers that have already initialized providers.
@@ -165,6 +167,11 @@ pub fn router_with_state(mut state: AppState) -> Router {
         && let Ok(engine) = crate::services::task_flow::open_wiki_engine(&state.config.wiki)
     {
         state.wiki_engine = Some(engine);
+    }
+    if state.config.wiki.enabled
+        && let Some(engine) = state.wiki_engine.as_deref()
+    {
+        let _ = state.get_or_init_wiki_vault(engine);
     }
     if state.wiki_engine.is_some() {
         let _ = state.get_or_init_knowledge_mcp();
