@@ -129,6 +129,15 @@ impl WikiSyncService {
             .map_err(|error| SyncError::Git(format!("sync worker failed: {error}")))?
     }
 
+    /// Runs the whole sync in a detached task, so the write gate and the in-progress flag stay
+    /// held until git finishes even if the caller (e.g. an HTTP handler) is cancelled.
+    pub(crate) async fn sync_now_detached(self: &Arc<Self>) -> Result<SyncReport, SyncError> {
+        let service = Arc::clone(self);
+        tokio::spawn(async move { service.sync_now().await })
+            .await
+            .map_err(|error| SyncError::Git(format!("sync task failed: {error}")))?
+    }
+
     pub(crate) fn is_sync_in_progress(&self) -> bool {
         self.sync_in_progress.load(Ordering::Acquire)
     }

@@ -71,7 +71,7 @@ pub(in crate::app::admin) async fn knowledge_sync_now(
     if service.is_sync_in_progress() {
         return error(&req, StatusCode::CONFLICT, "sync_in_progress");
     }
-    match service.sync_now().await {
+    match service.sync_now_detached().await {
         Ok(report) => Json::<SyncReport>(report).into_response(),
         Err(SyncError::Git(message)) if message == "sync_in_progress" => {
             error(&req, StatusCode::CONFLICT, "sync_in_progress")

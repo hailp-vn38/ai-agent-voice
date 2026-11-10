@@ -375,9 +375,44 @@ fn activate_vault(
     path: String,
 ) -> Result<String, CommandError> {
     let result = open_vault_state(state, path)?;
-    let sync = configure_open_vault_sync(state.active_vault()?)
-        .map_err(|error| CommandError::io(error))?;
-    install_sync(&app, state, Arc::new(sync))?;
+    // Sync setup runs git (and may touch the network), so it must never block or fail opening
+    // the vault. Vaults without a configured remote are left untouched.
+    let vault = state.active_vault()?;
+    let sync_app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        let sync_vault = Arc::clone(&vault);
+        let configured = tauri::async_runtime::spawn_blocking(move || {
+            match VaultSync::current_remote(&sync_vault) {
+                Ok(Some(_)) => configure_open_vault_sync(sync_vault).map(Some),
+                Ok(None) => Ok(None),
+                Err(error) => Err(error),
+            }
+        })
+        .await;
+        let sync = match configured {
+            Ok(Ok(Some(sync))) => sync,
+            Ok(Ok(None)) => return,
+            Ok(Err(error)) => {
+                eprintln!("wiki vault sync was not started: {error}");
+                return;
+            }
+            Err(error) => {
+                eprintln!("wiki vault sync setup failed: {error}");
+                return;
+            }
+        };
+        let state = sync_app.state::<DesktopState>();
+        // The user may have switched vaults while git was running.
+        if !state
+            .active_vault()
+            .is_ok_and(|active| Arc::ptr_eq(&active, &vault))
+        {
+            return;
+        }
+        if let Err(error) = install_sync(&sync_app, &state, Arc::new(sync)) {
+            eprintln!("wiki vault sync could not be installed: {error:?}");
+        }
+    });
     forward_vault_events(&app, state)?;
     // MCP is optional: a busy or invalid port must never keep the vault closed.
     if let Err(error) = start_mcp_server(app.clone(), state, None) {
@@ -781,13 +816,12 @@ async fn configure_sync(
         .await
         .map_err(|error| SyncError::Git(error.to_string()))??;
     let status = sync.status();
-    install_sync(&app, state, Arc::new(sync))
-        .map_err(|error| SyncError::Git(format!("{error:?}")))?;
     let path = state
         .current_vault_path()
         .map_err(|error| SyncError::Git(format!("{error:?}")))?
         .to_string_lossy()
         .into_owned();
+    // Settings must be stored before install_sync: the scheduler reads them when it starts.
     state
         .settings
         .lock()
@@ -800,6 +834,8 @@ async fn configure_sync(
                 interval_min: interval_min.max(1),
             },
         );
+    install_sync(&app, state, Arc::new(sync))
+        .map_err(|error| SyncError::Git(format!("{error:?}")))?;
     state
         .persist()
         .map_err(|error| SyncError::Git(format!("{error:?}")))?;

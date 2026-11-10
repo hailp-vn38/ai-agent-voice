@@ -456,7 +456,7 @@ impl KnowledgeMcp {
             Some(tokio::select! {
                 _ = ctx.cancellation.cancelled() => return Err(KnowledgeToolError::Cancelled),
                 _ = tokio::time::sleep_until(ctx.deadline) => return Err(KnowledgeToolError::Timeout),
-                guard = self.write_gate.read() => guard,
+                guard = self.write_gate.writer() => guard,
             })
         } else {
             None

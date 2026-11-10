@@ -46,6 +46,12 @@ pub(super) fn run_git(
             .env("GIT_COMMITTER_NAME", &author.name)
             .env("GIT_COMMITTER_EMAIL", &author.email);
     }
+    // Own process group, so a timeout can also kill ssh and other children that hold the pipes.
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        command.process_group(0);
+    }
     let mut child = command.spawn().map_err(|error| {
         if error.kind() == std::io::ErrorKind::NotFound {
             SyncError::GitMissing
@@ -74,7 +80,7 @@ pub(super) fn run_git(
             break status;
         }
         if started.elapsed() >= config.command_timeout {
-            let _ = child.kill();
+            kill_process_tree(&mut child);
             let _ = child.wait();
             let _ = stdout_reader.join();
             let _ = stderr_reader.join();
@@ -114,6 +120,17 @@ pub(super) fn run_git(
         return Err(error);
     }
     Ok(GitOutput { stdout })
+}
+
+fn kill_process_tree(child: &mut std::process::Child) {
+    #[cfg(unix)]
+    {
+        // The child leads its own group (process_group(0)), so -pid signals the whole tree.
+        unsafe {
+            libc::kill(-(child.id() as libc::pid_t), libc::SIGKILL);
+        }
+    }
+    let _ = child.kill();
 }
 
 pub(super) struct GitOutput {
@@ -156,10 +173,13 @@ pub(super) fn hostname() -> String {
         .unwrap_or_else(|| "unknown-host".into())
 }
 pub(super) fn is_unsafe_remote(remote: &str) -> bool {
-    let has_userinfo = remote.split_once("://").is_some_and(|(_, rest)| {
-        rest.split('/')
-            .next()
-            .is_some_and(|authority| authority.contains('@'))
+    // `ssh://git@host/...` names a user but carries no secret, so it is allowed.
+    let has_userinfo = remote.split_once("://").is_some_and(|(scheme, rest)| {
+        rest.split('/').next().is_some_and(|authority| {
+            authority.rsplit_once('@').is_some_and(|(user, _)| {
+                !(scheme.eq_ignore_ascii_case("ssh") && !user.is_empty() && !user.contains(':'))
+            })
+        })
     });
     let lower = remote.to_ascii_lowercase();
     has_userinfo

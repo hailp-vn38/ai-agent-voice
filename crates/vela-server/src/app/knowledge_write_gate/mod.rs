@@ -7,6 +7,18 @@ use axum::{
 use std::time::Instant;
 use tokio::sync::{OwnedRwLockReadGuard, OwnedRwLockWriteGuard, RwLock};
 
+/// Read guard of a writer that records the time of its last write when dropped.
+pub(crate) struct WriterGuard {
+    _guard: OwnedRwLockReadGuard<()>,
+    gate: Arc<KnowledgeWriteGate>,
+}
+
+impl Drop for WriterGuard {
+    fn drop(&mut self) {
+        self.gate.mark_write();
+    }
+}
+
 /// Coordinates Knowledge writers with a whole-vault operation such as Git sync.
 #[derive(Default)]
 pub(crate) struct KnowledgeWriteGate {
@@ -21,6 +33,13 @@ impl KnowledgeWriteGate {
         Arc::clone(&self.lock).read_owned().await
     }
 
+    pub(crate) async fn writer(self: &Arc<Self>) -> WriterGuard {
+        WriterGuard {
+            _guard: self.read().await,
+            gate: Arc::clone(self),
+        }
+    }
+
     pub(crate) async fn write(&self) -> OwnedRwLockWriteGuard<()> {
         Arc::clone(&self.lock).write_owned().await
     }
@@ -32,7 +51,7 @@ impl KnowledgeWriteGate {
             .and_then(|last_write| *last_write)
     }
 
-    fn mark_write(&self) {
+    pub(crate) fn mark_write(&self) {
         if let Ok(mut last_write) = self.last_write.lock() {
             *last_write = Some(Instant::now());
         }
@@ -55,7 +74,9 @@ pub(crate) async fn gate_knowledge_writes(
 
     let _guard = gate.read().await;
     let response = next.run(request).await;
-    gate.mark_write();
+    if response.status().is_success() {
+        gate.mark_write();
+    }
     response
 }
 

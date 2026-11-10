@@ -135,30 +135,29 @@ impl super::VaultSync {
             )
             .is_ok()
         {
-            if self
+            // A vault that was initialised locally shares no history with a remote that
+            // already holds another machine's vault. Merge them; add/add conflicts keep both.
+            let related = self
                 .git_at(root, &["merge-base", "HEAD", &remote_ref], false)
-                .is_ok()
-            {
-                if let Err(merge_error) =
-                    self.git_at(root, &["merge", "--no-edit", &remote_ref], true)
-                {
-                    let unmerged = match self.unmerged_paths(root) {
-                        Ok(paths) => paths,
-                        Err(error) => {
-                            let _ = self.git_at(root, &["merge", "--abort"], false);
-                            return Err(error);
-                        }
-                    };
-                    if unmerged.is_empty() {
+                .is_ok();
+            let mut args = vec!["merge", "--no-edit"];
+            if !related {
+                args.push("--allow-unrelated-histories");
+            }
+            args.push(&remote_ref);
+            if let Err(merge_error) = self.git_at(root, &args, true) {
+                let unmerged = match self.unmerged_paths(root) {
+                    Ok(paths) => paths,
+                    Err(error) => {
                         let _ = self.git_at(root, &["merge", "--abort"], false);
-                        return Err(merge_error);
+                        return Err(error);
                     }
-                    conflicts = self.resolve_conflicted_merge(root, &unmerged)?;
+                };
+                if unmerged.is_empty() {
+                    let _ = self.git_at(root, &["merge", "--abort"], false);
+                    return Err(merge_error);
                 }
-            } else {
-                return Err(SyncError::Git(
-                    "local and remote histories are unrelated".into(),
-                ));
+                conflicts = self.resolve_conflicted_merge(root, &unmerged)?;
             }
         }
         let diff = self.git_at(root, &["diff", "--name-only", "-z", &old, "HEAD"], false)?;
@@ -217,6 +216,21 @@ impl super::VaultSync {
                         merged.extend_from_slice(&remote);
                     }
                     fs::write(root.join(relative), merged)
+                        .map_err(|error| SyncError::Git(error.to_string()))?;
+                    continue;
+                }
+
+                if relative == Path::new(".gitignore") || relative == Path::new(".gitattributes") {
+                    // Configuration files: keep every distinct line from both sides.
+                    let mut lines: Vec<String> = Vec::new();
+                    for side in [&ours, &theirs].into_iter().flatten() {
+                        for line in String::from_utf8_lossy(side).lines() {
+                            if !lines.iter().any(|existing| existing == line) {
+                                lines.push(line.to_string());
+                            }
+                        }
+                    }
+                    fs::write(root.join(relative), format!("{}\n", lines.join("\n")))
                         .map_err(|error| SyncError::Git(error.to_string()))?;
                     continue;
                 }

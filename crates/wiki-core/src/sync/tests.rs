@@ -582,3 +582,41 @@ fn refresh_status_recovers_when_a_reader_acquires_the_write_lock() {
         SyncStatus::Idle { .. }
     ));
 }
+
+#[test]
+fn ssh_user_without_secret_is_a_safe_remote() {
+    use super::git::is_unsafe_remote;
+    assert!(!is_unsafe_remote("ssh://git@github.com/owner/repo.git"));
+    assert!(!is_unsafe_remote("git@github.com:owner/repo.git"));
+    assert!(is_unsafe_remote("ssh://git:secret@github.com/owner/repo.git"));
+    assert!(is_unsafe_remote("https://git@github.com/owner/repo.git"));
+    assert!(is_unsafe_remote("https://u:t@host/r.git"));
+}
+
+#[test]
+fn second_machine_with_its_own_history_merges_into_existing_remote() {
+    if skip_without_git() {
+        return;
+    }
+    let temp = tempfile::tempdir().unwrap();
+    let remote = new_bare_remote(temp.path());
+    let remote_url = remote.to_string_lossy().into_owned();
+    let vault_a =
+        Arc::new(Vault::open(crate::VaultConfig::new(temp.path().join("vault-a"))).unwrap());
+    let sync_a = VaultSync::configure(Arc::clone(&vault_a), config(remote_url.clone())).unwrap();
+    write_page(&vault_a, "from-a.md", "# A\n");
+    sync_a.sync_now().unwrap();
+
+    // Vault B was initialised independently, so it shares no history with the remote.
+    let vault_b =
+        Arc::new(Vault::open(crate::VaultConfig::new(temp.path().join("vault-b"))).unwrap());
+    let sync_b = VaultSync::configure(Arc::clone(&vault_b), config(remote_url)).unwrap();
+    write_page(&vault_b, "from-b.md", "# B\n");
+    sync_b.sync_now().unwrap();
+
+    for name in ["from-a.md", "from-b.md"] {
+        let path = DocPath::parse(Scope::Wiki, name).unwrap();
+        assert!(vault_b.read(&path, ReadWindow::default()).is_ok(), "{name}");
+    }
+    assert_clean(vault_b.root_path());
+}
