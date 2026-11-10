@@ -56,7 +56,7 @@ export function parseMarkdownProperties(markdown: string): MarkdownProperty[] {
   const entries = new Map<string, string[]>()
   let currentListKey: string | null = null
 
-  for (const line of match[1].split(/\r?\n/)) {
+  for (const line of match[1]!.split(/\r?\n/)) {
     if (!line.trim() || /^\s*#/.test(line)) continue
     const topKey = /^([a-zA-Z0-9_-]+)\s*:\s*(.*)$/.exec(line)
     if (topKey) {
@@ -148,18 +148,18 @@ export function markdownOutline(markdown: string): MarkdownHeading[] {
   for (const line of body.split(/\r?\n/)) {
     const delimiter = /^\s*(\x60{3,}|~{3,})/.exec(line)?.[1]
     if (delimiter) {
-      if (fence === null) fence = delimiter[0]
+      if (fence === null) fence = delimiter.charAt(0)
       else if (delimiter[0] === fence) fence = null
       continue
     }
     if (fence) continue
     const match = /^(#{1,6})\s+(.+?)\s*#*\s*$/.exec(line)
     if (!match) continue
-    const title = match[2].replace(/[*_\x60]/g, '').trim()
+    const title = match[2]!.replace(/[*_\x60]/g, '').trim()
     const base = slug(title)
     const count = used.get(base) ?? 0
     used.set(base, count + 1)
-    result.push({ id: count ? base + '-' + count : base, title, level: match[1].length })
+    result.push({ id: count ? base + '-' + count : base, title, level: match[1]!.length })
   }
   return result
 }
@@ -184,7 +184,7 @@ export function normalizeMediaMarkdownLinks(markdown: string): string {
     .map(line => {
       const delimiter = /^\s*(\x60{3,}|~{3,})/.exec(line)?.[1]
       if (delimiter) {
-        if (fence === null) fence = delimiter[0]
+        if (fence === null) fence = delimiter.charAt(0)
         else if (delimiter[0] === fence) fence = null
         return line
       }
@@ -227,7 +227,7 @@ function inline(value: string): string {
     const token = match[0]
     if (token.startsWith('[[') || token.startsWith('![[')) {
       const parts = token.slice(token.startsWith('!') ? 3 : 2, -2).split(/\\?\|/, 2)
-      const target = parts[0].replace(/\\+$/, '').trim()
+      const target = parts[0]!.replace(/\\+$/, '').trim()
       output += target ? '<a href="#" class="knowledge-wikilink" data-wikilink="' +
         escape(target) + '">' + escape((parts[1] || target).trim()) + '</a>' : escape(token)
     } else if (token.startsWith('![')) {
@@ -346,7 +346,7 @@ export function renderMarkdown(markdown: string): string {
     const line = lines[i]!
     const delimiter = /^\s*(\x60{3,}|~{3,})\s*([\w-]*)/.exec(line)
     if (code !== null) {
-      if (delimiter && delimiter[1][0] === fence) {
+      if (delimiter && delimiter[1]!.charAt(0) === fence) {
         const text = escape(code.join('\n'))
         const lang = language.toLowerCase()
         output += lang === 'mermaid'
@@ -361,23 +361,23 @@ export function renderMarkdown(markdown: string): string {
     }
     if (delimiter) {
       flushParagraph(); flushQuote(); closeList()
-      code = []; fence = delimiter[1][0]; language = delimiter[2] || ''
+      code = []; fence = delimiter[1]!.charAt(0); language = delimiter[2] || ''
       continue
     }
     if (!line.trim()) { flushParagraph(); flushQuote(); closeList(); continue }
     const heading = /^(#{1,6})\s+(.+?)\s*#*\s*$/.exec(line)
     if (heading) {
       flushParagraph(); flushQuote(); closeList()
-      const level = heading[1].length
-      output += '<h' + level + ' id="' + escape(headings[headingIndex++]?.id || slug(heading[2])) +
-        '">' + inline(heading[2]) + '</h' + level + '>'
+      const level = heading[1]!.length
+      output += '<h' + level + ' id="' + escape(headings[headingIndex++]?.id || slug(heading[2]!)) +
+        '">' + inline(heading[2]!) + '</h' + level + '>'
       continue
     }
     if (/^\s*(-{3,}|\*{3,}|_{3,})\s*$/.test(line)) {
       flushParagraph(); flushQuote(); closeList(); output += '<hr>'; continue
     }
     const quoted = /^\s*>\s?(.*)$/.exec(line)
-    if (quoted) { flushParagraph(); closeList(); quote.push(quoted[1]); continue }
+    if (quoted) { flushParagraph(); closeList(); quote.push(quoted[1]!); continue }
     flushQuote()
     if (line.includes('|') && i + 1 < lines.length) {
       const aligns = parseTableAlignments(lines[i + 1]!)
@@ -431,11 +431,11 @@ export function renderMarkdown(markdown: string): string {
       flushParagraph()
       const type = bullet ? 'ul' : 'ol'
       if (list !== type) { closeList(); list = type; output += '<' + type + '>' }
-      let text = (bullet || ordered)![1]
+      let text = (bullet || ordered)![1]!
       const task = /^\[([ xX])\]\s+/.exec(text)
       if (task) {
         text = text.slice(task[0].length)
-        output += '<li>' + (task[1].toLowerCase() === 'x' ? '☑' : '☐') + ' ' + inline(text) + '</li>'
+        output += '<li>' + (task[1]!.toLowerCase() === 'x' ? '☑' : '☐') + ' ' + inline(text) + '</li>'
       } else output += '<li>' + inline(text) + '</li>'
       continue
     }

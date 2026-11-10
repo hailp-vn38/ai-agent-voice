@@ -32,6 +32,7 @@ client-agent-wiki-kit/
 │   ├── wiki-page-format/SKILL.md      bản sao từ skills/ của repo
 │   ├── wiki-taxonomy/SKILL.md         bản sao
 │   ├── wiki-ingest/SKILL.md           bản sao
+│   ├── wiki-ingest-files/SKILL.md     ingest bằng đọc/ghi file, không cần MCP (xem mục 7)
 │   └── wiki-query/SKILL.md            bản sao
 └── clients/
     ├── codex.config.toml              khai báo MCP cho Codex
@@ -92,3 +93,11 @@ Skill của server (`skills/wiki-lint`, bản dùng cho agent nội bộ) chưa 
 - Nhờ thêm một ghi chú nhỏ bằng `30-add-page-from-note.md`, rồi chạy `wiki_lint`: trang mới không được xuất hiện ở `broken_links`, `orphan_wiki_pages` hay `missing_frontmatter_pages`.
 
 Chưa chạy thử end-to-end với Codex/OpenCode thật; cấu hình client ở trên viết theo định dạng thông dụng của từng công cụ.
+
+## 7. Ingest không dùng MCP (`wiki-ingest-files`)
+
+Khi client làm việc thẳng trên thư mục vault (bản git clone của vault, hoặc `data/wiki-vault`) và không có tool `wiki_*`, dùng skill `wiki-ingest-files`. Skill tự chứa: mẫu frontmatter, dạng link, cách thêm dòng vào `wiki/index.md` / `wiki/log.md` và lệnh shell tự kiểm tra, nên không cần nạp kèm `wiki-page-format` hay `wiki-taxonomy` (hai skill đó gọi tool MCP).
+
+- Mở client tại gốc vault (thư mục có `SCHEMA.md`, `sources/`, `wiki/`) và nói "wiki-ingest các nguồn còn tồn" hoặc nêu file nguồn cụ thể.
+- Prompt hệ thống `00-system-wiki-maintainer.md` bắt buộc dùng MCP; với luồng này đừng cài prompt đó, chỉ chép thư mục `skills/wiki-ingest-files/`.
+- Server tự dựng lại `wiki/index.md` và index tìm kiếm từ file khi đồng bộ, nên trạng thái ingest chỉ phụ thuộc frontmatter và `[[link]]` mà agent ghi.

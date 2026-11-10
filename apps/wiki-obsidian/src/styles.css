@@ -1,0 +1,55 @@
+@import '../../../packages/knowledge-ui/src/styles/wiki-chat.css';
+
+.wiki-agent-view {
+  --background: var(--background-primary);
+  --foreground: var(--text-normal);
+  --card: var(--background-primary);
+  --card-foreground: var(--text-normal);
+  --muted: var(--background-modifier-hover);
+  --muted-foreground: var(--text-muted);
+  --border: var(--background-modifier-border);
+  --studio-violet: var(--interactive-accent);
+  --primary-foreground: var(--text-on-accent);
+  --danger: var(--text-error);
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  padding: 0;
+}
+.wiki-agent-chat-root { display: flex; flex-direction: column; flex: 1; min-height: 0; min-width: 0; }
+.wiki-agent-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 8px 10px; border-bottom: 1px solid var(--border); font-size: var(--font-ui-smaller); }
+.wiki-agent-toolbar select { flex: 1; min-width: 120px; max-width: 100%; }
+.wiki-agent-toolbar button { font-size: inherit; }
+.wiki-agent-view .wiki-chat-panel { flex: 1; min-height: 0; width: 100%; border-left: 0; }
+.wiki-agent-view .wiki-chat-panel button { height: auto; box-shadow: none; cursor: pointer; font-family: inherit; }
+.wiki-agent-view .wiki-chat-panel button:disabled { cursor: not-allowed; }
+.wiki-agent-view .wiki-chat-panel textarea { box-shadow: none; }
+.wiki-agent-view .wiki-chat-header { flex-wrap: wrap; gap: 6px; padding: 6px 10px; }
+.wiki-agent-view .wiki-chat-header-actions { margin-left: auto; }
+.wiki-agent-view .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+
+.wiki-agent-confirm {
+  width: min(900px, 92vw);
+}
+
+.wiki-agent-diff {
+  max-height: 60vh;
+  overflow: auto;
+  font-size: var(--font-ui-smaller);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.wiki-agent-diff-add {
+  background-color: rgba(var(--color-green-rgb), 0.18);
+}
+
+.wiki-agent-diff-del {
+  background-color: rgba(var(--color-red-rgb), 0.18);
+}
+
+.wiki-agent-diff-gap {
+  color: var(--text-faint);
+  text-align: center;
+}

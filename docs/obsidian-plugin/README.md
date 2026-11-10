@@ -1,12 +1,12 @@
 # Wiki Obsidian Plugin
 
-Status: **v1 đã có code** (2026-11-10) ở `apps/wiki-obsidian`. Phần lõi có unit test; plugin chưa được chạy thử trong Obsidian.
+Status: **v1 đã có code** (2026-11-10) ở `apps/wiki-obsidian`. Phần lõi và UI có automated test; plugin chưa được chạy thử trong Obsidian.
 
 Plugin Obsidian mang logic LLM Wiki (xem [../llm-wiki.md](../llm-wiki.md)) vào thẳng vault: chat hỏi đáp có trích dẫn, và agent đọc, viết, ingest, lint các file Markdown. Hướng này thay cho việc tự dựng app wiki ([../wiki-desktop/README.md](../wiki-desktop/README.md)): Obsidian đã là editor, cây file, file watcher và graph view.
 
 ## Quyết định chính
 
-- **TypeScript thuần, không có Rust.** Agent loop chạy trong plugin và gọi thẳng API của LLM. Không có sidecar, không có WASM. Plugin chạy được trên mobile và đưa được lên Community Plugins.
+- **TypeScript và Vue, không có Rust.** Agent loop chạy trong plugin và gọi thẳng API của LLM. UI chat dùng cùng component `WikiChatPanel.vue` trong `@vela/knowledge-ui` với web app, được bundle vào plugin. Không có sidecar, không có WASM.
 - **Obsidian sở hữu vault.** Mọi thao tác đọc ghi đi qua `app.vault`, nên editor đang mở luôn đồng bộ. Đây là nguyên tắc một writer của ADR 0005 áp vào Obsidian.
 - **Port phần có giá trị của `llm-wiki-rs`:** prompts, tên và schema của tool, quy trình ingest/query/lint, định dạng `index.md` và `log.md`. Không port fs, path watcher, SQLite, parser Markdown: Obsidian hoặc một index trong bộ nhớ thay thế.
 - **Giữ nguyên tên tool (`wiki_get`, `wiki_query`, ...)** để prompts dùng lại được và vault do `llm-wiki-rs` tạo vẫn mở được bằng plugin.
@@ -32,7 +32,9 @@ Giống `llm-wiki-rs`, đặt trong thư mục gốc cấu hình được (mặc
 
 ```
 src/main.ts ── Plugin: view, lệnh, cài đặt
- ├─ obsidian/chatView.ts      ItemView chat
+ ├─ obsidian/chatView.ts      ItemView mount/unmount Vue, theme, mở file, lưu hội thoại
+ ├─ obsidian/ChatPanel.vue    panel chat dùng chung với web + thanh công cụ Obsidian
+ ├─ obsidian/chatState.ts     nối WikiSession với messages, tools, citations, pinned files
  ├─ obsidian/confirmModal.ts  duyệt thao tác ghi, có diff
  ├─ obsidian/vaultPort.ts     adapter VaultPort trên app.vault
  ├─ obsidian/llmClient.ts     adapter LlmClient trên requestUrl
@@ -54,7 +56,7 @@ Hai seam, mỗi seam có hai adapter (thật và giả trong test):
 
 ## Hành vi
 
-**Chat.** Hai chế độ. *Hỏi* chỉ có tool đọc (`wiki_query`, `wiki_get`, `wiki_multi_get`, `wiki_graph_neighbors`, `wiki_tree`). *Agent* có thêm tool ghi. File đang mở có thể ghim làm ngữ cảnh. Câu trả lời render bằng Markdown của Obsidian nên `[[link]]` bấm được. Nút "Lưu vào wiki" ghi câu trả lời cuối vào `wiki/syntheses/`. Nút "Lưu hội thoại" ghi cả cuộc chat ra `chats/`.
+**Chat.** Hai chế độ. *Hỏi* chỉ có tool đọc (`wiki_query`, `wiki_get`, `wiki_multi_get`, `wiki_graph_neighbors`, `wiki_tree`). *Agent* có thêm tool ghi. UI dùng chung với chat Wiki trên web: màn chào và câu hỏi gợi ý, ô nhập tự giãn, nút dừng, các bước tool thu gọn và danh sách nguồn. Ghim tối đa 4 file làm ngữ cảnh; bỏ ghim từng file ngay trong ô nhập. Markdown dùng renderer chung với web; `[[link]]` tới file có thật trở thành trích dẫn bấm để mở trong Obsidian. Màu theo theme Obsidian. Nút "Lưu vào wiki" ghi câu trả lời cuối vào `wiki/syntheses/`. Nút "Lưu hội thoại" ghi cả cuộc chat ra `chats/`. Plugin chưa có danh sách hội thoại lưu trên server hay graph câu trả lời nên không hiển thị các thao tác đó.
 
 **Ingest.** Lệnh *Ingest file hiện tại* chạy agent với prompt ingest 4 bước của `llm-wiki-rs` trên file trong `sources/`. `wiki_ingest_source` ghi trang tóm tắt cùng tên file, cập nhật `index.md` và `log.md`.
 
@@ -76,14 +78,17 @@ Khoá lưu bằng `app.secretStorage` khi Obsidian hỗ trợ, nếu không thì
 ## Chạy thử
 
 ```bash
-cd apps/wiki-obsidian && npm install && npm run build
+scripts/agent-test.sh run -- npm --prefix apps/wiki-obsidian install
+scripts/agent-test.sh run -- npm --prefix apps/wiki-obsidian run build
 ```
 
 Plugin không nằm trong npm workspace ở gốc repo: thêm nó vào workspace làm npm 11 xoá binding native của rolldown khỏi `package-lock.json` chung. Nó có `package-lock.json` riêng và `.npmrc` bật `legacy-peer-deps`, vì npm 11 lỗi khi giải peer dependency của `vitest` và `obsidian` ở thư mục này.
 
 Chép `main.js`, `manifest.json`, `styles.css` vào `<vault>/.obsidian/plugins/wiki-agent/`, bật plugin, điền Base URL, model và API key, rồi chạy lệnh *Wiki Agent: Khởi tạo cấu trúc wiki*.
 
-Kiểm tra: `scripts/agent-test.sh run -- npm --prefix apps/wiki-obsidian test` và `... run typecheck`.
+`styles.css` là output build từ `src/styles.css` và CSS chat dùng chung; sửa file nguồn rồi build lại. Vue được bundle trong `main.js`, không cần cài thêm runtime trong vault.
+
+Kiểm tra: `scripts/agent-test.sh run -- npm --prefix apps/wiki-obsidian test` và `... run typecheck`. Test UI chạy panel thật với `WikiSession` cục bộ và LLM giả: gửi/ghim file, tool, trích dẫn, dừng, lỗi, reset và hai chế độ. Chạy plugin trong Obsidian với model thật, mobile, đổi theme, duyệt ghi, ingest và lưu hội thoại vẫn cần smoke test thủ công.
 
 ## Sau v1
 

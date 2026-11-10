@@ -11,7 +11,10 @@
     "./components/useDragReorder": "./src/useDragReorder.ts",
     "./components/useKnowledgeWorkspace": "./src/useKnowledgeWorkspace.ts",
     "./styles/*": "./src/styles/*",
-    "./lib/markdown": "./src/lib/markdown.ts"
+    "./lib/markdown": "./src/lib/markdown.ts",
+    "./chat": "./src/chat.ts",
+    "./integration": "./src/integration.ts",
+    "./i18n": "./src/i18n.ts"
   },
   "peerDependencies": {
     "@lucide/vue": "1.48.0",
