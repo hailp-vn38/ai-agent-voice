@@ -2371,7 +2371,7 @@ onBeforeUnmount(() => {
           </button>
         </div>
         <div class="a-pane-heading-actions">
-          <KnowledgeSyncBadge v-if="syncBackend" :status="syncStatus" @activate="syncPanelOpen = !syncPanelOpen" />
+          <KnowledgeSyncBadge v-if="syncBackend" compact :status="syncStatus" @activate="syncPanelOpen = !syncPanelOpen" />
           <button class="icon-button" :class="{ active: searchOpen }" type="button"
             :title="t('knowledgeV3.search')" :aria-label="t('knowledgeV3.search')"
             :aria-pressed="searchOpen" :disabled="busy" @click="toggleSearch"><Search :size="16" /></button>

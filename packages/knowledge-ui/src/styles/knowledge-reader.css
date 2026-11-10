@@ -1665,7 +1665,7 @@
 
 /* Explorer heading: source switch + view actions on top, file actions on their own row. */
 .knowledge-a .a-pane-heading { min-width: 0; }
-.knowledge-a .a-explorer .a-source-tabs { flex: 1 1 auto; min-width: 0; max-width: 132px; }
+.knowledge-a .a-explorer .a-source-tabs { flex: 1 1 auto; min-width: 72px; max-width: 132px; }
 .knowledge-a .a-explorer .a-source-tab { flex: 1 1 0; min-width: 0; padding: 0 8px; }
 .knowledge-a .a-pane-heading-actions { display: flex; align-items: center; gap: 2px; flex: none; }
 .knowledge-a .a-pane-heading-actions .icon-button:disabled,
