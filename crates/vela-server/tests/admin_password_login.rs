@@ -514,3 +514,198 @@ async fn password_change_survives_restart_on_the_same_database() {
         .unwrap();
     assert_eq!(body["must_change_password"], json!(false));
 }
+
+async fn logout_everywhere(client: &Client, base: &str, bearer: &str) -> reqwest::Response {
+    client
+        .post(format!("{base}/auth/logout-all"))
+        .bearer_auth(bearer)
+        .send()
+        .await
+        .unwrap()
+}
+
+async fn set_password_login(
+    client: &Client,
+    base: &str,
+    bearer: Option<&str>,
+    enabled: bool,
+    current: &str,
+) -> reqwest::Response {
+    let mut request = client
+        .post(format!("{base}/auth/password-login"))
+        .json(&json!({ "enabled": enabled, "current_password": current }));
+    if let Some(bearer) = bearer {
+        request = request.bearer_auth(bearer);
+    }
+    request.send().await.unwrap()
+}
+
+async fn status_body(client: &Client, base: &str) -> Value {
+    client
+        .get(format!("{base}/auth/status"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap()
+}
+
+#[tokio::test]
+async fn logout_everywhere_revokes_earlier_tokens_and_returns_a_usable_one() {
+    let base = serve(&database_url(), JWT_SECRET, 3600).await;
+    let client = Client::new();
+    let old = rotated_token(&client, &base).await;
+    let other_browser = login_token(&client, &base, "fresh-admin-pass").await;
+
+    let response = logout_everywhere(&client, &base, &old).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let fresh = response.json::<Value>().await.unwrap()["token"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+
+    assert_eq!(
+        system_status(&client, &base, &old).await,
+        StatusCode::UNAUTHORIZED
+    );
+    assert_eq!(
+        system_status(&client, &base, &other_browser).await,
+        StatusCode::UNAUTHORIZED
+    );
+    assert_eq!(system_status(&client, &base, &fresh).await, StatusCode::OK);
+}
+
+#[tokio::test]
+async fn disabling_password_login_requires_the_current_password() {
+    let base = serve(&database_url(), JWT_SECRET, 3600).await;
+    let client = Client::new();
+    let token = rotated_token(&client, &base).await;
+
+    let wrong = set_password_login(&client, &base, Some(&token), false, "not-the-password").await;
+    assert_eq!(wrong.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(error_code(wrong).await, "invalid_current_password");
+    assert_eq!(status_body(&client, &base).await["password_login_enabled"], json!(true));
+}
+
+#[tokio::test]
+async fn disabling_password_login_is_refused_while_the_forced_change_flag_is_set() {
+    let base = serve(&database_url(), JWT_SECRET, 3600).await;
+    let client = Client::new();
+    let token = login_token(&client, &base, "admin").await;
+
+    let response = set_password_login(&client, &base, Some(&token), false, "admin").await;
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    assert_eq!(error_code(response).await, "password_change_required");
+    assert_eq!(status_body(&client, &base).await["password_login_enabled"], json!(true));
+}
+
+#[tokio::test]
+async fn disabled_password_login_admits_requests_without_credentials_until_reenabled() {
+    let base = serve(&database_url(), JWT_SECRET, 3600).await;
+    let client = Client::new();
+    let token = rotated_token(&client, &base).await;
+
+    let off = set_password_login(&client, &base, Some(&token), false, "fresh-admin-pass").await;
+    assert_eq!(off.status(), StatusCode::OK);
+    assert_eq!(off.json::<Value>().await.unwrap()["password_login_enabled"], json!(false));
+    assert_eq!(status_body(&client, &base).await["password_login_enabled"], json!(false));
+
+    let open = client.get(format!("{base}/system")).send().await.unwrap();
+    assert_eq!(open.status(), StatusCode::OK);
+    let login_response = login(&client, &base, "fresh-admin-pass").await;
+    assert_eq!(login_response.status(), StatusCode::CONFLICT);
+    assert_eq!(error_code(login_response).await, "password_login_disabled");
+
+    let wrong = set_password_login(&client, &base, None, true, "not-the-password").await;
+    assert_eq!(wrong.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    let on = set_password_login(&client, &base, None, true, "fresh-admin-pass").await;
+    assert_eq!(on.status(), StatusCode::OK);
+    assert_eq!(status_body(&client, &base).await["password_login_enabled"], json!(true));
+
+    let anonymous = client.get(format!("{base}/system")).send().await.unwrap();
+    assert_eq!(anonymous.status(), StatusCode::UNAUTHORIZED);
+    let relogin = login_token(&client, &base, "fresh-admin-pass").await;
+    assert_eq!(system_status(&client, &base, &relogin).await, StatusCode::OK);
+}
+
+#[tokio::test]
+async fn duplicate_authorization_headers_are_rejected_in_both_login_states() {
+    let base = serve(&database_url(), JWT_SECRET, 3600).await;
+    let client = Client::new();
+    let token = rotated_token(&client, &base).await;
+    let duplicated = |bearer: &str| {
+        client
+            .get(format!("{base}/system"))
+            .header(reqwest::header::AUTHORIZATION, format!("Bearer {bearer}"))
+            .header(reqwest::header::AUTHORIZATION, format!("Bearer {bearer}"))
+            .send()
+    };
+    assert_eq!(duplicated(&token).await.unwrap().status(), StatusCode::UNAUTHORIZED);
+
+    assert_eq!(
+        set_password_login(&client, &base, Some(&token), false, "fresh-admin-pass")
+            .await
+            .status(),
+        StatusCode::OK
+    );
+    assert_eq!(duplicated(&token).await.unwrap().status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn disabling_password_login_shares_the_login_failure_budget() {
+    let base = serve(&database_url(), JWT_SECRET, 3600).await;
+    let client = Client::new();
+    let token = rotated_token(&client, &base).await;
+
+    for _ in 0..5 {
+        let wrong = set_password_login(&client, &base, Some(&token), false, "not-the-password").await;
+        assert_eq!(wrong.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    }
+    let blocked = set_password_login(&client, &base, Some(&token), false, "fresh-admin-pass").await;
+    assert_eq!(blocked.status(), StatusCode::TOO_MANY_REQUESTS);
+    assert_eq!(error_code(blocked).await, "too_many_attempts");
+}
+
+#[tokio::test]
+async fn logout_and_toggle_each_write_one_audit_event_without_secrets() {
+    let base = serve(&database_url(), JWT_SECRET, 3600).await;
+    let client = Client::new();
+    let token = rotated_token(&client, &base).await;
+    let fresh = logout_everywhere(&client, &base, &token).await;
+    let fresh = fresh.json::<Value>().await.unwrap()["token"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    assert_eq!(
+        set_password_login(&client, &base, Some(&fresh), false, "fresh-admin-pass")
+            .await
+            .status(),
+        StatusCode::OK
+    );
+
+    let page: Value = client
+        .get(format!("{base}/system/audit-logs"))
+        .bearer_auth(ADMIN_TOKEN)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let rows: Vec<&Value> = page["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|row| row["resource_type"] == json!("admin_auth"))
+        .collect();
+    assert_eq!(rows.len(), 3, "one event for each of change, logout and toggle");
+    let logout = rows.iter().find(|row| row["action"] == json!("logout_everywhere")).unwrap();
+    assert_eq!(logout["prior_revision"], json!(2));
+    assert_eq!(logout["new_revision"], json!(3));
+    let toggle = rows.iter().find(|row| row["action"] == json!("password_login_set")).unwrap();
+    assert_eq!(toggle["outcome"], json!("success"));
+    for row in rows {
+        assert!(!row.to_string().contains("fresh-admin-pass"));
+    }
+}
