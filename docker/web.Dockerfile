@@ -10,7 +10,7 @@ COPY docker/smoke.mjs /smoke.mjs
 CMD ["sh", "-c", "npm test && npm run build"]
 
 FROM source AS build
-ENV VITE_API_BASE_URL="" VITE_ADMIN_TOKEN=""
+ENV VITE_API_BASE_URL=""
 RUN npm run build
 
 FROM nginx:1.28-bookworm AS production

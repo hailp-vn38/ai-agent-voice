@@ -35,6 +35,10 @@ pub(super) async fn transport(request: Request, next: Next) -> Response {
             MAX_ASR_TEST_BODY + 80 * 1024
         } else if request.uri().path().ends_with("/knowledge/raw/batch") {
             super::knowledge::MAX_RAW_BATCH_BODY
+        } else if request.uri().path().ends_with("/system/backup/import")
+            || request.uri().path().ends_with("/system/backup/inspect")
+        {
+            crate::database::backup::MAX_BACKUP_BODY_BYTES + 80 * 1024
         } else if request.uri().path().ends_with("/speakers/captures") {
             MAX_QUICK_CAPTURE_BODY
         } else if request.uri().path().contains("/enrollments/")
@@ -85,13 +89,15 @@ pub(super) async fn authenticate(
     {
         return next.run(request).await;
     }
-    let token = if request
+    let header_count = request
         .headers()
         .get_all(header::AUTHORIZATION)
         .iter()
-        .count()
-        == 1
-    {
+        .count();
+    if header_count > 1 {
+        return error(&request, StatusCode::UNAUTHORIZED, "unauthorized");
+    }
+    let token = if header_count == 1 {
         request
             .headers()
             .get(header::AUTHORIZATION)
@@ -101,25 +107,29 @@ pub(super) async fn authenticate(
     } else {
         None
     };
-    let Some(token) = token else {
-        return error(&request, StatusCode::UNAUTHORIZED, "unauthorized");
-    };
     let password_change = super::auth::is_password_change_path(request.uri().path())
         && request.method() == http::Method::POST;
-    // The static admin_token stays usable through the expand step, but it cannot change the
-    // Admin Password, so the password route accepts only Admin Web Tokens.
-    if !password_change
-        && constant_time_eq(token.as_bytes(), state.config.api.admin_token.as_bytes())
-    {
+    if let Some(token) = token {
+        // The static admin_token stays usable through the expand step, but it cannot change the
+        // Admin Password, so the password route accepts only Admin Web Tokens.
+        if !password_change
+            && constant_time_eq(token.as_bytes(), state.config.api.admin_token.as_bytes())
+        {
+            return next.run(request).await;
+        }
+        if state.admin_auth.accepts(token) {
+            if state.admin_auth.status().must_change_password && !password_change {
+                return error(&request, StatusCode::FORBIDDEN, "password_change_required");
+            }
+            return next.run(request).await;
+        }
+    }
+    // Password Login switched off: the Admin API admits requests without a credential, as the
+    // Admin has accepted that anyone who can reach the server has full access.
+    if !state.admin_auth.status().password_login_enabled {
         return next.run(request).await;
     }
-    if !state.admin_auth.accepts(token) {
-        return error(&request, StatusCode::UNAUTHORIZED, "unauthorized");
-    }
-    if state.admin_auth.status().must_change_password && !password_change {
-        return error(&request, StatusCode::FORBIDDEN, "password_change_required");
-    }
-    next.run(request).await
+    error(&request, StatusCode::UNAUTHORIZED, "unauthorized")
 }
 
 fn constant_time_eq(left: &[u8], right: &[u8]) -> bool {
