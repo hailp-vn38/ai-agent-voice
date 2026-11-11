@@ -54,6 +54,9 @@ uuid = { version = "1.26", features = ["v4", "serde"] }
 unicode-normalization = "0.1"
 zeroize = "1.8"
 
+[patch.crates-io]
+orchestrator-agent = { git = "file:///Users/lamphuchai/Desktop/project_rust/libs/orchestrator_agent_rs", branch = "feat/job-skill-catalog-hardening" }
+
 [profile.dev]
 debug = "line-tables-only"
 
