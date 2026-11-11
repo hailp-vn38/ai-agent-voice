@@ -3,7 +3,7 @@
 Status: Accepted, 2026-11-12.
 Extends: [ADR 0128](0128-admin-managed-job-skill-catalog.md).
 
-Job Skill là văn bản hướng dẫn và không cấp quyền thực thi tool. Vì vậy một skill có thể được gán cho Sub-Agent không có tool mà skill bảo gọi, và không ai biết. Ví dụ hiện có: `wiki-query` hướng dẫn ghi synthesis và vá trang Wiki nhưng được gán mặc định cho `wiki_researcher`, vốn chỉ có tool đọc. Spec: [job-skill-catalog-hardening](../../.scratch/job-skill-catalog-hardening/spec.md).
+Job Skill là văn bản hướng dẫn và không cấp quyền thực thi tool. Vì vậy một skill có thể được gán cho Sub-Agent không có tool mà skill bảo gọi, và không ai biết. Trước thay đổi này, `wiki-query` vừa hướng dẫn đọc vừa hướng dẫn ghi synthesis và vá trang Wiki, nhưng được gán mặc định cho `wiki_researcher`, vốn chỉ có tool đọc; ticket 11 đã tách phần ghi thành `wiki-synthesis-filing` và giữ `wiki-query` chỉ dẫn đọc. Spec: [job-skill-catalog-hardening](../../.scratch/job-skill-catalog-hardening/spec.md).
 
 Quyết định: mỗi Job Skill có thể khai báo **Skill Tool Requirement**. Server so khai báo đó với tool hiệu lực của Sub-Agent và báo khoảng trống cho Admin, không chặn.
 
