@@ -8,12 +8,17 @@ Xem spec: [Skill Tool Requirement](../spec.md#skill-tool-requirement-adr-0144).
 
 **Blocked by:** 09
 
-**Status:** ready-for-agent
+**Status:** resolved
 
-- [ ] Tạo Custom Job Skill với `requires_tools`; đọc lại thấy đúng danh sách; ETag đổi khi danh sách đổi
-- [ ] Gán skill đó cho Sub-Agent thiếu một tool: lưu thành công, projection có một mục khoảng trống nêu đúng tool thiếu
-- [ ] Cấp thêm tool còn thiếu cho Sub-Agent: mục khoảng trống biến mất
-- [ ] Gán skill không làm `allowed_tools` hiệu lực của Sub-Agent thay đổi (ngoài tool `skill` như hiện tại)
-- [ ] Skill không khai báo `requires_tools` không bao giờ tạo khoảng trống
-- [ ] `requires_tools` chứa tên sai định dạng bị từ chối với mã lỗi riêng
-- [ ] Custom Sub-Agent cũng có danh sách khoảng trống
+- [x] Tạo Custom Job Skill với `requires_tools`; đọc lại thấy đúng danh sách; ETag đổi khi danh sách đổi
+- [x] Gán skill đó cho Sub-Agent thiếu một tool: lưu thành công, projection có một mục khoảng trống nêu đúng tool thiếu
+- [x] Cấp thêm tool còn thiếu cho Sub-Agent: mục khoảng trống biến mất
+- [x] Gán skill không làm `allowed_tools` hiệu lực của Sub-Agent thay đổi (ngoài tool `skill` như hiện tại)
+- [x] Skill không khai báo `requires_tools` không bao giờ tạo khoảng trống
+- [x] `requires_tools` chứa tên sai định dạng bị từ chối với mã lỗi riêng `invalid_skill_requires_tools`
+- [x] Custom Sub-Agent cũng có danh sách khoảng trống
+
+## Comments
+
+- 2026-11-11: Implemented Admin API fields and tool gap projection. The worktree uses the temporary `[patch.crates-io]` Git branch `feat/job-skill-catalog-hardening` of `orchestrator-agent` at `edef077` to test the unreleased `SkillDocument.requires_tools` API. Publication remains pending reviewer approval for the upstream library tickets.
+- Validation: `scripts/agent-test.sh targeted background_skill_tool_requirements_warn_without_granting_tools vela-server` PASS (1/1); existing skill CRUD and custom Sub-Agent HTTP tests PASS (1/1 each); `scripts/agent-test.sh check vela-server` PASS; scoped rustfmt and `git diff --check` via the wrapper PASS.

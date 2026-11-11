@@ -884,6 +884,263 @@ skills_dir = "{}"
 }
 
 #[tokio::test]
+async fn background_skill_tool_requirements_warn_without_granting_tools() {
+    let temp_root =
+        std::env::temp_dir().join(format!("background-skill-tools-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&temp_root).unwrap();
+    let config: AppConfig = toml::from_str(&format!(
+        r#"
+[server]
+bind = "127.0.0.1:0"
+public_ws_url = "ws://127.0.0.1:0/voice/v1/"
+[provider_defaults]
+vad = "test"
+asr = "test"
+llm = "test"
+tts = "test"
+[database]
+url = "sqlite://{}"
+[api]
+enabled = true
+admin_token = "background-test-token"
+[orchestrator]
+store_dir = "{}"
+prompts_dir = "{}"
+skills_dir = "{}"
+"#,
+        temp_root.join("vela.db").display(),
+        temp_root.join("orch-store").display(),
+        temp_root.join("prompts").display(),
+        temp_root.join("skills").display(),
+    ))
+    .unwrap();
+    let router = bootstrap_with_providers(config, Arc::new(ProviderSet::unavailable()))
+        .await
+        .unwrap();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base = format!("http://{}/api/admin", listener.local_addr().unwrap());
+    let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    let client = Client::new();
+
+    let created = client
+        .put(format!("{base}/background/skills/custom-tool-aware"))
+        .bearer_auth("background-test-token")
+        .header("If-None-Match", "*")
+        .json(&json!({
+            "name": "custom-tool-aware",
+            "description": "Tool-aware workflow",
+            "body": "# Workflow\n\nUse the requested tool.",
+            "requires_tools": ["add_to_sources"]
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(created.status(), StatusCode::CREATED);
+    let created_skill: Value = created.json().await.unwrap();
+    assert_eq!(created_skill["requires_tools"], json!(["add_to_sources"]));
+    let first_etag = created_skill["etag"].as_str().unwrap().to_owned();
+
+    let listed: Value = client
+        .get(format!("{base}/background/settings"))
+        .bearer_auth("background-test-token")
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let listed_skill = listed["skills"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|skill| skill["id"] == "custom-tool-aware")
+        .unwrap();
+    assert_eq!(listed_skill["requires_tools"], json!(["add_to_sources"]));
+
+    let invalid = client
+        .put(format!("{base}/background/skills/invalid-tool-requirement"))
+        .bearer_auth("background-test-token")
+        .header("If-None-Match", "*")
+        .json(&json!({
+            "name": "invalid-tool-requirement",
+            "description": "Invalid tool name",
+            "body": "# Workflow\n\nUse an invalid tool.",
+            "requires_tools": ["not a tool"]
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(invalid.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(
+        invalid.json::<Value>().await.unwrap()["error"]["code"],
+        "invalid_skill_requires_tools"
+    );
+
+    let updated = client
+        .put(format!("{base}/background/skills/custom-tool-aware"))
+        .bearer_auth("background-test-token")
+        .header("If-Match", format!("\"{first_etag}\""))
+        .json(&json!({
+            "name": "custom-tool-aware",
+            "description": "Tool-aware workflow",
+            "body": "# Workflow\n\nUse the requested tool.",
+            "requires_tools": ["wiki_query"]
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(updated.status(), StatusCode::OK);
+    let updated_skill: Value = updated.json().await.unwrap();
+    assert_eq!(updated_skill["requires_tools"], json!(["wiki_query"]));
+    assert_ne!(updated_skill["etag"], first_etag);
+
+    let custom_agent = client
+        .post(format!("{base}/background/agents"))
+        .bearer_auth("background-test-token")
+        .header("If-Match", "\"1\"")
+        .json(&json!({
+            "id": "custom_skill_tool_agent",
+            "flow_id": "daily",
+            "enabled": true,
+            "steps": 10,
+            "allowed_tools": ["fetch_html"],
+            "allowed_skills": ["custom-tool-aware"],
+            "description": "Custom test agent",
+            "system_prompt": "Use the assigned skill."
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(custom_agent.status(), StatusCode::CREATED);
+    let custom_settings: Value = custom_agent.json().await.unwrap();
+    let custom_projection = custom_settings["agents"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|agent| agent["id"] == "custom_skill_tool_agent")
+        .unwrap();
+    assert_eq!(
+        custom_projection["allowed_tools"],
+        json!(["skill", "fetch_html"])
+    );
+    assert_eq!(
+        custom_projection["tool_requirement_gaps"],
+        json!([
+            {"skill_id": "custom-tool-aware", "missing_tools": ["wiki_query"]}
+        ])
+    );
+
+    // A Built-in Sub-Agent can save an incomplete grant; the gap is advisory and disappears
+    // after the missing tool is explicitly added to its effective grants.
+    let incomplete = client
+        .put(format!("{base}/background/settings"))
+        .bearer_auth("background-test-token")
+        .header("If-Match", "\"2\"")
+        .json(&json!({
+            "enabled": true,
+            "agents": {
+                "source_collector": {
+                    "enabled": true,
+                    "allowed_tools": ["skill", "fetch_html"],
+                    "allowed_skills": ["custom-tool-aware"]
+                }
+            }
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(incomplete.status(), StatusCode::OK);
+    let incomplete_settings: Value = incomplete.json().await.unwrap();
+    let source_collector = incomplete_settings["agents"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|agent| agent["id"] == "source_collector")
+        .unwrap();
+    assert_eq!(
+        source_collector["allowed_tools"],
+        json!(["skill", "fetch_html"])
+    );
+    assert_eq!(
+        source_collector["tool_requirement_gaps"],
+        json!([
+            {"skill_id": "custom-tool-aware", "missing_tools": ["wiki_query"]}
+        ])
+    );
+
+    let complete = client
+        .put(format!("{base}/background/settings"))
+        .bearer_auth("background-test-token")
+        .header("If-Match", "\"3\"")
+        .json(&json!({
+            "enabled": true,
+            "agents": {
+                "source_collector": {
+                    "enabled": true,
+                    "allowed_tools": ["skill", "fetch_html", "wiki_query"],
+                    "allowed_skills": ["custom-tool-aware"]
+                }
+            }
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(complete.status(), StatusCode::OK);
+    let complete_settings: Value = complete.json().await.unwrap();
+    let source_collector = complete_settings["agents"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|agent| agent["id"] == "source_collector")
+        .unwrap();
+    assert_eq!(source_collector["tool_requirement_gaps"], json!([]));
+
+    let no_requirements = client
+        .put(format!("{base}/background/skills/custom-no-tools"))
+        .bearer_auth("background-test-token")
+        .header("If-None-Match", "*")
+        .json(&json!({
+            "name": "custom-no-tools",
+            "description": "No tool metadata",
+            "body": "# Workflow\n\nNo tools declared."
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(no_requirements.status(), StatusCode::CREATED);
+    let no_requirements: Value = no_requirements.json().await.unwrap();
+    assert_eq!(no_requirements["requires_tools"], json!([]));
+
+    let no_requirements_assigned = client
+        .put(format!("{base}/background/settings"))
+        .bearer_auth("background-test-token")
+        .header("If-Match", "\"4\"")
+        .json(&json!({
+            "enabled": true,
+            "agents": {
+                "wiki_researcher": {
+                    "enabled": true,
+                    "allowed_skills": ["custom-no-tools"]
+                }
+            }
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(no_requirements_assigned.status(), StatusCode::OK);
+    let no_requirements_assigned: Value = no_requirements_assigned.json().await.unwrap();
+    let researcher = no_requirements_assigned["agents"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|agent| agent["id"] == "wiki_researcher")
+        .unwrap();
+    assert_eq!(researcher["tool_requirement_gaps"], json!([]));
+
+    server.abort();
+}
+
+#[tokio::test]
 async fn background_settings_save_survives_deleted_provider_refs() {
     let temp_root =
         std::env::temp_dir().join(format!("background-stale-refs-{}", uuid::Uuid::new_v4()));
