@@ -27,7 +27,7 @@ beforeEach(async () => {
 afterEach(() => {
   widget.unmount()
   document.body.innerHTML = ''
-  sessionStorage.clear()
+  localStorage.clear()
   vi.restoreAllMocks()
 })
 

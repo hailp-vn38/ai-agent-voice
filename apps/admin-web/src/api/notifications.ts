@@ -17,6 +17,7 @@ import type {
 } from '@/api/types/notifications'
 import { readAdminToken } from '@/stores/auth'
 import { consumeSse, createSseParserState } from './sse'
+import { handleSessionResponse } from './session'
 
 export interface NotificationStreamHandlers {
   onCreated?: (item: NotificationItem) => void
@@ -766,6 +767,7 @@ export async function listenNotificationStream(
       cache: 'no-store',
       signal,
     })
+    await handleSessionResponse(response)
     if (
       !response.ok ||
       !response.body ||
