@@ -19,7 +19,6 @@ Mở `http://localhost:5173`, nhập token vào form Connect. Vite listen trên 
 | --- | --- | --- |
 | `VITE_API_BASE_URL` | Rỗng | Request cùng origin; development đi qua Vite proxy |
 | `VITE_DEV_PROXY_TARGET` | `http://127.0.0.1:8000` | Backend của development proxy |
-| `VITE_ADMIN_TOKEN` | Rỗng | Token fallback được nhúng vào bundle; mọi người tải bundle có thể đọc được |
 
 Ưu tiên nhập token lúc chạy. Token nhập được giữ trong `sessionStorage` với key `voice-agent-admin-token`, ưu tiên hơn fallback env. UI hiện chưa có thao tác logout/đổi token sau khi Connect; cách phục hồi khi nhập sai có trong [hướng dẫn vận hành](docs/development.md#token-sai-hoặc-401).
 

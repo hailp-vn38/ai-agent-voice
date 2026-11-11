@@ -1,6 +1,7 @@
 import { apiUrl } from './client'
 import { consumeSse, createSseParserState } from './sse'
 import { readAdminToken } from '@/stores/auth'
+import { handleSessionResponse } from './session'
 
 export interface JobChangeCallbacks {
   onReady: () => void
@@ -32,6 +33,7 @@ export async function listenJobChanges(callbacks: JobChangeCallbacks, signal: Ab
         cache: 'no-store',
         signal,
       })
+      await handleSessionResponse(response)
       if (response.status === 401 || response.status === 403) {
         callbacks.onResync()
         return

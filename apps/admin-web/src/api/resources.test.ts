@@ -32,7 +32,7 @@ describe('Admin resource APIs', () => {
 
   it('requests resource snapshots with Admin bearer and the caller abort signal', async () => {
     const fetch = installFetch()
-    sessionStorage.setItem('voice-agent-admin-token', 'resource-test-token')
+    localStorage.setItem('voice-agent-admin-token', 'resource-test-token')
     const controller = new AbortController()
     try {
       await systemApi.resources(controller.signal)
@@ -40,7 +40,7 @@ describe('Admin resource APIs', () => {
       expect(call(fetch, 0)[1].signal).toBe(controller.signal)
       expect((call(fetch, 0)[1].headers as Headers).get('Authorization')).toBe('Bearer resource-test-token')
     } finally {
-      sessionStorage.removeItem('voice-agent-admin-token')
+      localStorage.removeItem('voice-agent-admin-token')
     }
   })
 

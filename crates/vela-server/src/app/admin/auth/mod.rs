@@ -167,7 +167,10 @@ pub(super) fn routes() -> Router<AppState> {
 /// Admin routes behind the bearer check. The password change is the one route an Admin Web Token
 /// may call while the forced-change flag is set, so the middleware exempts it by path.
 pub(super) fn protected_routes() -> Router<AppState> {
-    Router::new().route("/auth/password", post(change_password))
+    Router::new()
+        .route("/auth/password", post(change_password))
+        .route("/auth/logout-all", post(logout_everywhere))
+        .route("/auth/password-login", post(set_password_login))
 }
 
 /// The path the middleware lets through while the forced-change flag is set.
@@ -332,6 +335,206 @@ async fn change_password(State(state): State<AppState>, request: Request) -> Res
     response
 }
 
+/// Answers 429 with `Retry-After` while the shared failure budget is spent.
+fn locked_out(state: &AppState, request: &Request) -> Option<Response> {
+    let remaining = state.admin_auth.lockout_remaining()?;
+    let seconds = remaining.as_secs() + u64::from(remaining.subsec_nanos() > 0);
+    let mut response = error(request, StatusCode::TOO_MANY_REQUESTS, "too_many_attempts");
+    if let Ok(value) = axum::http::HeaderValue::from_str(&seconds.max(1).to_string()) {
+        response
+            .headers_mut()
+            .insert(axum::http::header::RETRY_AFTER, value);
+    }
+    Some(response)
+}
+
+fn no_store(mut response: Response) -> Response {
+    response.headers_mut().insert(
+        axum::http::header::CACHE_CONTROL,
+        axum::http::HeaderValue::from_static("no-store"),
+    );
+    response
+}
+
+/// Revokes every Admin Web Token minted so far by bumping the revision, then hands the caller a
+/// token under the new revision. The bump and its audit event commit together.
+async fn logout_everywhere(State(state): State<AppState>, request: Request) -> Response {
+    let Some(key) = state.admin_auth.key.as_ref() else {
+        return error(
+            &request,
+            StatusCode::SERVICE_UNAVAILABLE,
+            "admin_signing_unavailable",
+        );
+    };
+    let Some(database) = state.database.as_ref() else {
+        return error(
+            &request,
+            StatusCode::SERVICE_UNAVAILABLE,
+            "database_unavailable",
+        );
+    };
+    let pool = database.pool();
+    let row = match read_row(pool).await {
+        Ok(row) => row,
+        Err(cause) => return sql_error(&request, &cause),
+    };
+    let new_revision = row.revision.saturating_add(1);
+    let issued_at = unix_now();
+    let mut tx = match pool.begin().await {
+        Ok(tx) => tx,
+        Err(cause) => return sql_error(&request, &cause),
+    };
+    let updated = sqlx::query(
+        "UPDATE admin_auth SET revision = ?, updated_at = ? WHERE id = 1 AND revision = ?",
+    )
+    .bind(new_revision)
+    .bind(issued_at)
+    .bind(row.revision)
+    .execute(&mut *tx)
+    .await;
+    match updated {
+        Ok(result) if result.rows_affected() == 1 => {}
+        Ok(_) => return error(&request, StatusCode::CONFLICT, "revision_conflict"),
+        Err(cause) => return sql_error(&request, &cause),
+    }
+    if let Err(cause) = crate::database::audit::audit(
+        &mut *tx,
+        id(&request),
+        "admin_auth",
+        Some(1),
+        "logout_everywhere",
+        Some(row.revision),
+        Some(new_revision),
+        crate::database::audit::AuditOutcome::Success,
+        1,
+    )
+    .await
+    {
+        return sql_error(&request, &cause);
+    }
+    if let Err(cause) = tx.commit().await {
+        return sql_error(&request, &cause);
+    }
+    let must_change_password = row.must_change_password != 0;
+    state.admin_auth.publish(PasswordLoginStatus {
+        password_login_enabled: row.password_login_enabled != 0,
+        must_change_password,
+        revision: new_revision,
+    });
+    let expires_at = issued_at.saturating_add(state.admin_auth.token_ttl_secs);
+    let token = token::sign(
+        key,
+        &token::Claims {
+            iat: issued_at,
+            exp: expires_at,
+            rev: new_revision,
+        },
+    );
+    no_store(
+        Json(serde_json::json!({
+            "token": token,
+            "token_type": "Bearer",
+            "expires_at": expires_at,
+            "must_change_password": must_change_password,
+        }))
+        .into_response(),
+    )
+}
+
+#[derive(Deserialize)]
+struct SetPasswordLoginRequest {
+    enabled: bool,
+    current_password: String,
+}
+
+/// Switches Password Login on or off. The current Admin Password is required in both directions,
+/// and it is also what lets a caller with no credential switch the login back on. Shares the
+/// login failure budget, because while Password Login is off this route is the only password
+/// check left and it needs no credential.
+async fn set_password_login(State(state): State<AppState>, request: Request) -> Response {
+    let (request, body): (Request, SetPasswordLoginRequest) = match json(request).await {
+        Ok(parsed) => parsed,
+        Err(response) => return response,
+    };
+    if let Some(response) = locked_out(&state, &request) {
+        return response;
+    }
+    let Some(database) = state.database.as_ref() else {
+        return error(
+            &request,
+            StatusCode::SERVICE_UNAVAILABLE,
+            "database_unavailable",
+        );
+    };
+    let pool = database.pool();
+    let row = match read_row(pool).await {
+        Ok(row) => row,
+        Err(cause) => return sql_error(&request, &cause),
+    };
+    let stored = row.password_hash.clone();
+    let candidate = body.current_password;
+    let verified = tokio::task::spawn_blocking(move || password::verify(&stored, &candidate))
+        .await
+        .unwrap_or(false);
+    if !verified {
+        state.admin_auth.record_failure();
+        return error(
+            &request,
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "invalid_current_password",
+        );
+    }
+    let mut tx = match pool.begin().await {
+        Ok(tx) => tx,
+        Err(cause) => return sql_error(&request, &cause),
+    };
+    let updated = sqlx::query(
+        "UPDATE admin_auth SET password_login_enabled = ?, updated_at = ?
+         WHERE id = 1 AND revision = ?",
+    )
+    .bind(i64::from(body.enabled))
+    .bind(unix_now())
+    .bind(row.revision)
+    .execute(&mut *tx)
+    .await;
+    match updated {
+        Ok(result) if result.rows_affected() == 1 => {}
+        Ok(_) => return error(&request, StatusCode::CONFLICT, "revision_conflict"),
+        Err(cause) => return sql_error(&request, &cause),
+    }
+    if let Err(cause) = crate::database::audit::audit(
+        &mut *tx,
+        id(&request),
+        "admin_auth",
+        Some(1),
+        "password_login_set",
+        Some(row.revision),
+        Some(row.revision),
+        crate::database::audit::AuditOutcome::Success,
+        1,
+    )
+    .await
+    {
+        return sql_error(&request, &cause);
+    }
+    if let Err(cause) = tx.commit().await {
+        return sql_error(&request, &cause);
+    }
+    let must_change_password = row.must_change_password != 0;
+    state.admin_auth.publish(PasswordLoginStatus {
+        password_login_enabled: body.enabled,
+        must_change_password,
+        revision: row.revision,
+    });
+    no_store(
+        Json(serde_json::json!({
+            "password_login_enabled": body.enabled,
+            "must_change_password": must_change_password,
+        }))
+        .into_response(),
+    )
+}
+
 #[derive(Deserialize)]
 struct LoginRequest {
     password: String,
@@ -356,14 +559,7 @@ async fn login(State(state): State<AppState>, request: Request) -> Response {
         Ok(parsed) => parsed,
         Err(response) => return response,
     };
-    if let Some(remaining) = state.admin_auth.lockout_remaining() {
-        let seconds = remaining.as_secs() + u64::from(remaining.subsec_nanos() > 0);
-        let mut response = error(&request, StatusCode::TOO_MANY_REQUESTS, "too_many_attempts");
-        if let Ok(value) = axum::http::HeaderValue::from_str(&seconds.max(1).to_string()) {
-            response
-                .headers_mut()
-                .insert(axum::http::header::RETRY_AFTER, value);
-        }
+    if let Some(response) = locked_out(&state, &request) {
         return response;
     }
     let Some(database) = state.database.as_ref() else {

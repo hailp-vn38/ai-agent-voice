@@ -14,6 +14,7 @@ import type {
   SystemLogStreamCallbacks,
 } from '@/api/types/system-logs'
 import { readAdminToken } from '@/stores/auth'
+import { handleSessionResponse } from './session'
 
 const LEVEL_SEVERITY: Record<LogLevel, number> = {
   ERROR: 5,
@@ -538,6 +539,7 @@ export async function listenSystemLogStream(
       signal,
     })
 
+    await handleSessionResponse(response)
     if (response.status === 401 || response.status === 403) {
       callbacks.onError?.(
         new ApiError('Unauthorized log stream request', response.status, 'unauthorized'),

@@ -3,6 +3,7 @@ export type { AnswerGraph, WikiChatTool, WikiConversationSummary } from '@vela/k
 import { apiUrl, jsonRequest, requestJson, withQuery } from './client'
 import { consumeSse, createSseParserState } from './sse'
 import { readAdminToken } from '@/stores/auth'
+import { handleSessionResponse } from './session'
 
 export interface WikiChatInputMessage {
   role: 'user' | 'assistant'
@@ -162,6 +163,7 @@ export async function askWiki(
     body: JSON.stringify(input),
   })
   if (!response.ok) {
+    await handleSessionResponse(response.clone())
     let body: unknown
     try { body = await response.json() } catch { /* keep status fallback */ }
     throw new WikiChatRequestError(apiErrorCode(body, `http_${response.status}`))
