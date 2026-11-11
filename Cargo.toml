@@ -19,14 +19,14 @@ base64 = "0.22"
 clap = { version = "4.6", features = ["derive"] }
 futures-util = "0.3"
 llm = { version = "=1.3.8", default-features = false, features = ["openai", "rustls-tls"] }
-llm-wiki-rs = "0.2.1"
+llm-wiki-rs = "0.2.3"
 ndarray = "0.17"
 ndarray-npy = "0.10"
 http = "1.0"
 hound = "3.5"
 opus2 = { version = "0.4", default-features = false, features = ["backend-libopus", "bundled", "static"] }
-orchestrator-agent = "0.7.0"
-orchestrator-flow = "0.5.0"
+orchestrator-agent = "0.7.1"
+orchestrator-flow = "0.6.1"
 ort = { version = "=2.0.0-rc.15", default-features = false, features = ["load-dynamic"] }
 reqwest = { version = "0.13", default-features = false, features = ["blocking", "json", "multipart", "rustls", "stream", "gzip", "brotli", "deflate"] }
 rustls = { version = "0.23", default-features = false, features = ["ring"] }
@@ -55,7 +55,9 @@ unicode-normalization = "0.1"
 zeroize = "1.8"
 
 [patch.crates-io]
+llm-wiki-rs = { git = "file:///Users/lamphuchai/Desktop/project_rust/libs/llm-wiki-rs", branch = "feat/job-skill-catalog-hardening" }
 orchestrator-agent = { git = "file:///Users/lamphuchai/Desktop/project_rust/libs/orchestrator_agent_rs", branch = "feat/job-skill-catalog-hardening" }
+orchestrator-flow = { git = "file:///Users/lamphuchai/Desktop/project_rust/libs/orchestrator_task_rs", branch = "feat/job-skill-catalog-hardening" }
 
 [profile.dev]
 debug = "line-tables-only"

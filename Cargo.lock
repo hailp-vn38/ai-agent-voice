@@ -2196,9 +2196,8 @@ dependencies = [
 
 [[package]]
 name = "llm-wiki-rs"
-version = "0.2.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a62d9532003ffb93c5efcbd78d453772880c217cafcce0182897fae6bdb0d2bc"
+version = "0.2.3"
+source = "git+file:///Users/lamphuchai/Desktop/project_rust/libs/llm-wiki-rs?branch=feat%2Fjob-skill-catalog-hardening#ce822380f76a55b4a6c0b27c5dfb862ad7d9d6b0"
 dependencies = [
  "blake3",
  "chrono",
@@ -2692,8 +2691,8 @@ dependencies = [
 
 [[package]]
 name = "orchestrator-agent"
-version = "0.7.0"
-source = "git+file:///Users/lamphuchai/Desktop/project_rust/libs/orchestrator_agent_rs?branch=feat%2Fjob-skill-catalog-hardening#edef077bc58128a9ea4fe8037cb5249e349cd062"
+version = "0.7.1"
+source = "git+file:///Users/lamphuchai/Desktop/project_rust/libs/orchestrator_agent_rs?branch=feat%2Fjob-skill-catalog-hardening#e4e08582ab67c498ac0c506d69c3fe92483090b4"
 dependencies = [
  "async-trait",
  "futures",
@@ -2709,9 +2708,8 @@ dependencies = [
 
 [[package]]
 name = "orchestrator-flow"
-version = "0.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "24b3886c84b36808c96e97090c76b7ba45cab46284494bc0a1691b6d8cd3997f"
+version = "0.6.1"
+source = "git+file:///Users/lamphuchai/Desktop/project_rust/libs/orchestrator_task_rs?branch=feat%2Fjob-skill-catalog-hardening#c7bcc2555b01d9bed43992e20373d68b90cb01cb"
 dependencies = [
  "anydoc",
  "async-trait",
