@@ -5,6 +5,9 @@
 //! application lifecycle.  The assertions are about what a process tells its orchestrator and what
 //! it accepts after a shutdown signal, never about which internal field was read to decide.
 
+#[path = "support/admin_web.rs"]
+mod admin_web;
+
 #[path = "lifecycle/harness.rs"]
 mod harness;
 

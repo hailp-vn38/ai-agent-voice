@@ -144,6 +144,7 @@ tts="primary"
 [api]
 enabled=true
 admin_token="admin-test-token"
+jwt_secret="bindings-test-signing-secret-0123456789"
 [providers.vad.instances.vad]
 adapter="silero_onnx"
 [providers.asr.instances.asr]
@@ -177,6 +178,7 @@ INSERT INTO agents (key,name,created_at,updated_at) VALUES ('agent','Agent',1,1)
 INSERT INTO devices (device_id,agent_id,created_at,updated_at) VALUES ('device',1,1,1);
 INSERT INTO agent_template_assignments (agent_id,template_id,is_default,created_at) VALUES (1,1,1,1);
 "#).execute(db.pool()).await.unwrap();
+    crate::admin_web::seed_default_admin(db.pool()).await;
     let builds = Arc::new(AtomicUsize::new(0));
     let mut state = AppState::from_provider_set_with_database(
         config,
@@ -221,11 +223,16 @@ INSERT INTO agent_template_assignments (agent_id,template_id,is_default,created_
     )
 }
 
-pub fn client() -> Client {
+pub async fn client(base: &str) -> Client {
+    let token = crate::admin_web::admin_web_token(
+        &Client::new(),
+        base.trim_end_matches("/api/admin"),
+    )
+    .await;
     let mut headers = reqwest::header::HeaderMap::new();
     headers.insert(
         reqwest::header::AUTHORIZATION,
-        "Bearer admin-test-token".parse().unwrap(),
+        format!("Bearer {token}").parse().unwrap(),
     );
     Client::builder().default_headers(headers).build().unwrap()
 }

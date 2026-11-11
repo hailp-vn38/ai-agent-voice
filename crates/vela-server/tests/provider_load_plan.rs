@@ -1,3 +1,6 @@
+#[path = "support/admin_web.rs"]
+mod admin_web;
+
 use std::sync::Arc;
 
 use axum::Router;
@@ -78,6 +81,7 @@ fn config(url: String) -> AppConfig {
         api: AdminApiConfig {
             enabled: true,
             admin_token: ADMIN_TOKEN.into(),
+            jwt_secret: vela_server::config::SecretString::new("load-plan-signing-secret-0123456789"),
             ..Default::default()
         },
         shutdown: Default::default(),
@@ -223,9 +227,11 @@ async fn serve_with_credentials(url: String) -> (String, JoinHandle<()>) {
 }
 
 async fn provider_view(base: &str, key: &str) -> serde_json::Value {
-    Client::new()
+    let client = Client::new();
+    let admin = admin_web::admin_web_token(&client, base).await;
+    client
         .get(format!("{base}/api/admin/providers/{key}"))
-        .bearer_auth(ADMIN_TOKEN)
+        .bearer_auth(admin)
         .send()
         .await
         .unwrap()
@@ -275,9 +281,11 @@ async fn an_optional_non_default_provider_failure_starts_and_reports_unavailable
     bind_llm(&pool, template, provider).await;
 
     let (base, task) = serve(url).await;
-    let response = Client::new()
+    let client = Client::new();
+    let admin = admin_web::admin_web_token(&client, &base).await;
+    let response = client
         .get(format!("{base}/api/admin/providers/db_llm"))
-        .bearer_auth(ADMIN_TOKEN)
+        .bearer_auth(admin)
         .send()
         .await
         .unwrap();

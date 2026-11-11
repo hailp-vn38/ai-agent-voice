@@ -125,6 +125,7 @@ pub async fn start(config: AppConfig, grace: Duration) -> Voice {
     let address = listener.local_addr().unwrap();
     let url = config.database.url.clone();
     let database = Database::connect(&config.database).await.unwrap();
+    crate::admin_web::seed_default_admin(database.pool()).await;
     let lifecycle = RuntimeLifecycle::new(grace);
     let state = AppState::from_provider_set_with_database_and_shutdown(
         config,
