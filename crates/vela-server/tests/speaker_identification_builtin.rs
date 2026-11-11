@@ -1,5 +1,9 @@
 //! End-to-end Speaker enrollment with the in-process CAM++ interface and SQLite.
 //! No Provider record, Template grant, calibration, or voice authentication required.
+
+#[path = "support/admin_web.rs"]
+mod admin_web;
+
 use reqwest::{Client, StatusCode};
 use serde_json::Value;
 use std::{fs, sync::Arc};
@@ -69,6 +73,7 @@ tts = "test"
 [api]
 enabled = true
 admin_token = "{TOKEN}"
+jwt_secret = "speaker-test-signing-secret-0123456789"
 [speaker_recognition.enrollment]
 min_clip_ms = 2000
 min_speech_ms = 1800
@@ -81,6 +86,7 @@ max_window_ms = 6000
     let config = AppConfig::parse_and_resolve(&path).unwrap();
     fs::remove_file(&path).unwrap();
     let db = Database::connect(&config.database).await.unwrap();
+    crate::admin_web::seed_default_admin(db.pool()).await;
     let pool = db.pool().clone();
     let mut state = AppState::from_provider_set_with_database(
         config,
@@ -104,9 +110,10 @@ max_window_ms = 6000
 async fn single_capture_registers_and_reenrolls_without_a_provider() {
     let (base, task, pool) = harness().await;
     let client = Client::new();
+    let token = admin_web::admin_web_token(&client, &base).await;
     let summary: Value = client
         .get(format!("{base}/api/admin/speaker-recognition"))
-        .bearer_auth(TOKEN)
+        .bearer_auth(&token)
         .send()
         .await
         .unwrap()
@@ -118,7 +125,7 @@ async fn single_capture_registers_and_reenrolls_without_a_provider() {
 
     let capture_result = client
         .post(format!("{base}/api/admin/speakers/captures"))
-        .bearer_auth(TOKEN)
+        .bearer_auth(&token)
         .header("content-type", "audio/wav")
         .body(wav(5))
         .send()
@@ -130,7 +137,7 @@ async fn single_capture_registers_and_reenrolls_without_a_provider() {
 
     let created = client
         .post(format!("{base}/api/admin/speakers/from-capture"))
-        .bearer_auth(TOKEN)
+        .bearer_auth(&token)
         .json(&serde_json::json!({"capture_id":capture_id,"name":"Owner"}))
         .send()
         .await
@@ -145,7 +152,7 @@ async fn single_capture_registers_and_reenrolls_without_a_provider() {
 
     let duplicate = client
         .post(format!("{base}/api/admin/speakers/from-capture"))
-        .bearer_auth(TOKEN)
+        .bearer_auth(&token)
         .json(&serde_json::json!({"capture_id":capture_id,"name":"Owner"}))
         .send()
         .await
@@ -154,7 +161,7 @@ async fn single_capture_registers_and_reenrolls_without_a_provider() {
 
     let agent = client
         .post(format!("{base}/api/admin/agents"))
-        .bearer_auth(TOKEN)
+        .bearer_auth(&token)
         .json(&serde_json::json!({"key":"home","name":"Home"}))
         .send()
         .await
@@ -163,7 +170,7 @@ async fn single_capture_registers_and_reenrolls_without_a_provider() {
 
     let bound = client
         .put(format!("{base}/api/admin/agents/home/speakers/{key}"))
-        .bearer_auth(TOKEN)
+        .bearer_auth(&token)
         .header("if-match", "\"1\"")
         .json(&serde_json::json!({}))
         .send()
@@ -173,7 +180,7 @@ async fn single_capture_registers_and_reenrolls_without_a_provider() {
 
     let policy = client
         .put(format!("{base}/api/admin/agents/home/speaker-policy"))
-        .bearer_auth(TOKEN)
+        .bearer_auth(&token)
         .header("if-match", "\"1\"")
         .json(&serde_json::json!({"mode":"observe"}))
         .send()
@@ -183,7 +190,7 @@ async fn single_capture_registers_and_reenrolls_without_a_provider() {
 
     let agents_speakers: Value = client
         .get(format!("{base}/api/admin/agents/home/speakers"))
-        .bearer_auth(TOKEN)
+        .bearer_auth(&token)
         .send()
         .await
         .unwrap()
@@ -195,7 +202,7 @@ async fn single_capture_registers_and_reenrolls_without_a_provider() {
     // Re-enroll is an explicit user action, not a repeated verification.
     let second = client
         .post(format!("{base}/api/admin/speakers/captures"))
-        .bearer_auth(TOKEN)
+        .bearer_auth(&token)
         .header("content-type", "audio/wav")
         .body(wav(5))
         .send()
@@ -206,7 +213,7 @@ async fn single_capture_registers_and_reenrolls_without_a_provider() {
     let revision = created["speaker"]["revision"].as_i64().unwrap();
     let updated = client
         .put(format!("{base}/api/admin/speakers/{key}/voiceprint"))
-        .bearer_auth(TOKEN)
+        .bearer_auth(&token)
         .header("if-match", format!("\"{revision}\""))
         .json(&serde_json::json!({"capture_id": second_capture["capture_id"]}))
         .send()
@@ -218,7 +225,7 @@ async fn single_capture_registers_and_reenrolls_without_a_provider() {
     let speaker_url = format!("{base}/api/admin/speakers/{key}");
     let blocked = client
         .delete(&speaker_url)
-        .bearer_auth(TOKEN)
+        .bearer_auth(&token)
         .header("if-match", format!("\"{revision}\""))
         .send()
         .await
@@ -231,7 +238,7 @@ async fn single_capture_registers_and_reenrolls_without_a_provider() {
 
     let unlinked = client
         .delete(format!("{base}/api/admin/agents/home/speakers/{key}"))
-        .bearer_auth(TOKEN)
+        .bearer_auth(&token)
         .header("if-match", "\"2\"")
         .send()
         .await
@@ -240,7 +247,7 @@ async fn single_capture_registers_and_reenrolls_without_a_provider() {
 
     let stale = client
         .delete(&speaker_url)
-        .bearer_auth(TOKEN)
+        .bearer_auth(&token)
         .header("if-match", "\"1\"")
         .send()
         .await
@@ -258,7 +265,7 @@ async fn single_capture_registers_and_reenrolls_without_a_provider() {
             .unwrap();
     let deleted = client
         .delete(&speaker_url)
-        .bearer_auth(TOKEN)
+        .bearer_auth(&token)
         .header("if-match", format!("\"{revision}\""))
         .send()
         .await
@@ -278,7 +285,7 @@ async fn single_capture_registers_and_reenrolls_without_a_provider() {
     assert_eq!(
         client
             .get(&speaker_url)
-            .bearer_auth(TOKEN)
+            .bearer_auth(&token)
             .send()
             .await
             .unwrap()
@@ -293,7 +300,7 @@ async fn single_capture_registers_and_reenrolls_without_a_provider() {
     ] {
         let retry = client
             .post(format!("{base}/api/admin/speakers/from-capture"))
-            .bearer_auth(TOKEN)
+            .bearer_auth(&token)
             .json(&serde_json::json!({"capture_id": capture_id, "name": "Owner"}))
             .send()
             .await
@@ -311,16 +318,17 @@ async fn single_capture_registers_and_reenrolls_without_a_provider() {
 async fn required_authentication_and_template_provider_api_are_not_available() {
     let (base, task, _) = harness().await;
     let client = Client::new();
+    let token = admin_web::admin_web_token(&client, &base).await;
     client
         .post(format!("{base}/api/admin/agents"))
-        .bearer_auth(TOKEN)
+        .bearer_auth(&token)
         .json(&serde_json::json!({"key":"home","name":"Home"}))
         .send()
         .await
         .unwrap();
     let required = client
         .put(format!("{base}/api/admin/agents/home/speaker-policy"))
-        .bearer_auth(TOKEN)
+        .bearer_auth(&token)
         .header("if-match", "\"1\"")
         .json(&serde_json::json!({"mode":"required"}))
         .send()
@@ -329,7 +337,7 @@ async fn required_authentication_and_template_provider_api_are_not_available() {
     assert_eq!(required.status(), StatusCode::BAD_REQUEST);
     let provider = client
         .post(format!("{base}/api/admin/providers"))
-        .bearer_auth(TOKEN)
+        .bearer_auth(&token)
         .json(&serde_json::json!({
             "name":"Unwanted speaker provider","type":"speaker",
             "adapter":"campplus_sherpa","config_json":{}
@@ -340,7 +348,7 @@ async fn required_authentication_and_template_provider_api_are_not_available() {
     assert_eq!(provider.status(), StatusCode::BAD_REQUEST);
     let reload = client
         .post(format!("{base}/api/admin/speaker-recognition/reload"))
-        .bearer_auth(TOKEN)
+        .bearer_auth(&token)
         .send()
         .await
         .unwrap();
@@ -352,11 +360,12 @@ async fn required_authentication_and_template_provider_api_are_not_available() {
 async fn capture_accepts_wav_above_json_limit_but_enforces_audio_limit() {
     let (base, task, _) = harness().await;
     let client = Client::new();
+    let token = admin_web::admin_web_token(&client, &base).await;
     let audio = wav(9);
     assert!(audio.len() > 256 * 1024);
     let captured = client
         .post(format!("{base}/api/admin/speakers/captures"))
-        .bearer_auth(TOKEN)
+        .bearer_auth(&token)
         .header("content-type", "audio/wav")
         .body(audio)
         .send()
@@ -366,7 +375,7 @@ async fn capture_accepts_wav_above_json_limit_but_enforces_audio_limit() {
 
     let oversized = client
         .post(format!("{base}/api/admin/speakers/captures"))
-        .bearer_auth(TOKEN)
+        .bearer_auth(&token)
         .header("content-type", "audio/wav")
         .body(vec![0; 512 * 1024 + 1])
         .send()

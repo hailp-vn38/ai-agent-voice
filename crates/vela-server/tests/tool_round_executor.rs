@@ -11,6 +11,9 @@
 //! executor sees first is not something a black-box test gets to choose.  Those two are proven
 //! where they can be made deterministic: on the actor itself, in `session::actor::tools`.
 
+#[path = "support/admin_web.rs"]
+mod admin_web;
+
 #[path = "tool_round_executor/harness.rs"]
 mod harness;
 

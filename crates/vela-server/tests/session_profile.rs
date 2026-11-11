@@ -6,6 +6,9 @@
 //! - Managed Provider Runtimes: dynamic materialization, REST API CRUD, prepare gate, and admission flood control.
 //! - Direct Speech: boundary commit before admin speech injection.
 
+#[path = "support/admin_web.rs"]
+mod admin_web;
+
 #[path = "session_profile/harness.rs"]
 mod harness;
 

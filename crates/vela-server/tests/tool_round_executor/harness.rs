@@ -567,12 +567,14 @@ pub struct Voice {
 pub async fn start(mut app_config: AppConfig, llm: ScriptedLlm) -> Voice {
     app_config.api.enabled = true;
     app_config.api.admin_token = "review-token".into();
+    app_config.api.jwt_secret = vela_server::config::SecretString::new("tool-round-signing-secret-0123456789");
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
     // The advertised URL is what a client reads out of `/voice/ota/`, so it has to name the port
     // this server actually got rather than the ephemeral placeholder in the fixture.
     app_config.server.public_ws_url = Url::parse(&format!("ws://{address}/voice/v1/")).unwrap();
     let database = Database::connect(&app_config.database).await.unwrap();
+    crate::admin_web::seed_default_admin(database.pool()).await;
     let state = AppState::from_provider_set_with_database_resolver_and_shutdown(
         app_config,
         Arc::new(ProviderSet::with_all(
@@ -641,10 +643,11 @@ pub async fn approve_external_tool(base: &str) {
     let observer = Peer::open(base).await;
     drop(observer);
     let client = reqwest::Client::new();
+    let admin = crate::admin_web::admin_web_token(&client, base).await;
     let path = format!("{base}/api/admin/agents/agent/tool-allowlist");
     let observation = client
         .get(&path)
-        .bearer_auth("review-token")
+        .bearer_auth(&admin)
         .send()
         .await
         .unwrap()
@@ -657,7 +660,7 @@ pub async fn approve_external_tool(base: &str) {
     assert_eq!(contract["original_name"], "Forecast");
     let reviewed = client
         .put(&path)
-        .bearer_auth("review-token")
+        .bearer_auth(&admin)
         .header("If-Match", "\"1\"")
         .json(&serde_json::json!({
             "server_key": "weather", "original_name": "Forecast",
