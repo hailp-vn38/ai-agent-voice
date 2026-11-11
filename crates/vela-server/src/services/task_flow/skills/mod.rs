@@ -15,7 +15,10 @@ use super::agent_settings::{
     AGENT_SPECS, PersistedBackgroundSettings, find_agent_spec, save_persisted_settings,
     sync_orchestrator_from_state,
 };
-use super::workspace_seed::{BUILTIN_SKILLS, ensure_builtin_skills};
+use super::workspace_seed::{
+    BUILTIN_SKILLS, builtin_skill_default_has_update, ensure_builtin_skills,
+    record_builtin_skill_base_version,
+};
 
 pub const SKILL_MAX_BYTES: usize = 64 * 1024;
 const SKILL_FILE: &str = "SKILL.md";
@@ -30,6 +33,7 @@ pub struct JobSkillSummary {
     pub description: String,
     pub is_builtin: bool,
     pub is_modified: bool,
+    pub default_has_update: bool,
     pub size_bytes: usize,
     pub etag: String,
     pub used_by_agents: Vec<String>,
@@ -310,6 +314,11 @@ fn build_detail(
             || indexed.doc.description != def.description
             || indexed.doc.body != def.body
     });
+    let default_has_update = is_modified
+        && indexed
+            .dir
+            .parent()
+            .is_some_and(|skills_root| builtin_skill_default_has_update(skills_root, &id));
     let (used_by_agents, suggested_for_agents) = compute_agent_links(&id, settings);
     let related_files = if include_related && !indexed.dir.as_os_str().is_empty() {
         list_related_sync(&indexed.dir)
@@ -324,6 +333,7 @@ fn build_detail(
             description: indexed.doc.description,
             is_builtin,
             is_modified,
+            default_has_update,
             size_bytes: indexed.size_bytes,
             etag: indexed.etag,
             used_by_agents,
@@ -456,6 +466,9 @@ pub async fn save(
     let tmp_file = skill_dir.join(".SKILL.md.tmp");
     std::fs::write(&tmp_file, rendered.as_bytes()).map_err(|_| SkillCatalogError::Io)?;
     std::fs::rename(&tmp_file, &skill_file).map_err(|_| SkillCatalogError::Io)?;
+    if is_builtin_skill(id) {
+        record_builtin_skill_base_version(skills_dir, id).map_err(|_| SkillCatalogError::Io)?;
+    }
 
     if let Some(orch) = state.orchestrator.as_ref()
         && let Err(err) = orch.reload_skills().await

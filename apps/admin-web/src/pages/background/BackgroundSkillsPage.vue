@@ -311,6 +311,14 @@ onBeforeUnmount(() => controller?.abort())
                     >
                       {{ t('jobUi.customizedBadge') }}
                     </Badge>
+                    <Badge
+                      v-if="skill.is_builtin && skill.default_has_update"
+                      variant="outline"
+                      class="border-studio-cyan/40 bg-studio-cyan/10 text-studio-cyan"
+                      :data-skill-default-update="skill.id"
+                    >
+                      {{ t('jobUi.skillDefaultUpdateBadge') }}
+                    </Badge>
                   </div>
                 </td>
 

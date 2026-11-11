@@ -6,11 +6,15 @@ Xem spec: [Nâng cấp Built-in Job Skill](../spec.md#nâng-cấp-built-in-job-s
 
 **Blocked by:** 01
 
-**Status:** ready-for-agent
+**Status:** resolved
 
-- [ ] Skill Admin đã sửa, bản mặc định không đổi từ lúc sửa: "đã sửa" bật, "bản mặc định có cập nhật" tắt
-- [ ] Skill Admin đã sửa, sau đó bản mặc định đổi: cả hai cờ bật
-- [ ] Skill chưa sửa: cả hai cờ tắt, kể cả ngay sau khi được nâng cấp
-- [ ] Admin lưu lại skill (giữ nội dung riêng hoặc khôi phục mặc định): "bản mặc định có cập nhật" tắt
-- [ ] Custom Job Skill luôn có cả hai cờ tắt
-- [ ] Admin Web hiện hai huy hiệu riêng biệt, có chuỗi i18n cho cả hai, và có test component
+- [x] Skill Admin đã sửa, bản mặc định không đổi từ lúc sửa: "đã sửa" bật, "bản mặc định có cập nhật" tắt
+- [x] Skill Admin đã sửa, sau đó bản mặc định đổi: cả hai cờ bật
+- [x] Skill chưa sửa: cả hai cờ tắt, kể cả ngay sau khi được nâng cấp
+- [x] Admin lưu lại skill (giữ nội dung riêng hoặc khôi phục mặc định): "bản mặc định có cập nhật" tắt
+- [x] Custom Job Skill luôn có cả hai cờ tắt
+- [x] Admin Web hiện hai huy hiệu riêng biệt, có chuỗi i18n cho cả hai, và có test component
+
+## Comments
+
+- 2026-11-11: Added `default_has_update` to the Admin skill summary, derived from the normalized current built-in hash and the stored Skill Base Version, and showed a separate badge on the catalog and detail pages. Tests passed: `scripts/agent-test.sh targeted background_skill_summary_reports_default_updates_separately_from_edits vela-server` (1/1), `scripts/agent-test.sh targeted background_skills_crud_etag_preconditions_and_agent_visibility vela-server` (1/1), targeted `BackgroundPage.test.ts` (8/8), and `scripts/agent-test.sh web typecheck`. Scoped rustfmt and `git diff --check` passed. Workspace-wide `cargo fmt --all -- --check` reports formatting differences in unrelated existing files; they were left untouched.
