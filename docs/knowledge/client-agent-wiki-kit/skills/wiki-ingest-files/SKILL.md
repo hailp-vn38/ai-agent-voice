@@ -1,6 +1,6 @@
 ---
 name: wiki-ingest-files
-description: "Ingest nguồn thô trong sources/ thành trang wiki/ của một LLM Wiki vault bằng cách đọc/ghi file trực tiếp (không có tool wiki_* hay MCP knowledge). Dùng khi được yêu cầu wiki-ingest, nạp nguồn mới, hoặc ingest lại nguồn đã sửa trong thư mục vault."
+description: "Ingest nguồn thô trong sources/ thành trang wiki/ của một LLM Wiki vault bằng cách đọc/ghi file trực tiếp (không có tool wiki_* hay MCP knowledge), giữ đủ mọi ý của nguồn. Dùng khi được yêu cầu wiki-ingest một file, cả một folder markdown, nguồn còn tồn, hoặc ingest lại nguồn đã sửa."
 ---
 
 # Wiki Ingest bằng file (`wiki-ingest-files`)
@@ -18,7 +18,11 @@ Trạng thái "đã ingest" **suy ra hoàn toàn từ file**: server đọc lạ
 
 ## Bước 1 — Xác định nguồn cần ingest
 
-Nếu người dùng đã nêu file nguồn, dùng danh sách đó. Nếu không, liệt kê nguồn tồn:
+Ba nhánh theo thứ người dùng đưa:
+
+- **File nguồn cụ thể**: dùng đúng danh sách đó.
+- **Một folder**: danh sách là mọi file `.md` trong folder, kể cả thư mục con (`find <folder> -name '*.md' | sort`). Folder nằm ngoài `sources/` thì trước hết chép nguyên trạng vào `sources/<domain>/<topic>/` bằng `cp -R`, giữ nguyên tên file và cấu trúc thư mục con; chọn `<domain>` đang có trong `sources/` trước khi đặt tên mới. Thứ tự ingest theo tên file; file tổng quan của folder (`index.md`, `README.md`) ingest sau cùng vì nó tóm lại các file kia.
+- **Không nêu gì**: liệt kê nguồn tồn bằng lệnh dưới.
 
 ```bash
 find sources -name '*.md' | sort | while read -r s; do
@@ -32,28 +36,38 @@ done
 - `NEW`: chưa có trang tóm tắt và chưa trang wiki nào trích nguồn này.
 - `STALE`: nguồn được sửa sau trang tóm tắt, ingest lại theo nhánh "trang đã tồn tại". Trong bản git clone mới, mtime không có nghĩa: so `git log -1 --format=%ct -- <file>` của hai file thay cho `-nt`.
 
-Xong khi bạn có danh sách nguồn cụ thể. Làm trọn bước 2–5 cho **một nguồn** rồi mới sang nguồn kế tiếp.
+Xong khi bạn có danh sách nguồn cụ thể và đã báo số file cho người dùng. Làm trọn bước 2–5 cho **một nguồn** rồi mới sang nguồn kế tiếp; mỗi nguồn được ingest sâu như thể nó là nguồn duy nhất, dù danh sách dài bao nhiêu. Khi mất ngữ cảnh giữa chừng, chạy lại lệnh trên để biết nguồn nào còn lại.
 
 ## Bước 2 — Đọc nhà và đọc nguồn
 
 1. Đọc `SCHEMA.md` (thắng skill này khi mâu thuẫn) và `wiki/index.md`.
 2. `find wiki -name '*.md' | sort` để biết các `<domain>` đang có và mọi slug trong `entities/`, `concepts/`.
 3. Đọc **toàn bộ** file nguồn; file dài thì đọc nối tiếp từng đoạn tới dòng cuối.
-4. Lập bản phân tích:
+4. Lập **bản kê ý** của nguồn: danh sách đánh số, đi tuần tự từ dòng đầu tới dòng cuối, mỗi mục một ý kèm số dòng trong nguồn. Một ý là một trong các thứ sau:
+   - luận điểm, kết luận, khuyến nghị;
+   - định nghĩa, quy tắc, điều kiện, bước trong quy trình;
+   - con số, ngày tháng, tên riêng, đơn vị gắn với một nhận định;
+   - ví dụ minh họa mang thông tin mới;
+   - rủi ro, ngoại lệ, giới hạn, điều nguồn nói là chưa chắc;
+   - khối code, công thức, bảng (mỗi khối một mục).
+
+   Nguồn không có heading (báo cáo liền mạch, transcript) thì kê theo từng đoạn văn. Bản kê ý là thước đo ở bước 5: ý nào không vào bản kê thì sẽ mất khỏi wiki.
+5. Lập bản phân tích:
    - `<domain>/<topic>` của nguồn = thư mục chứa nó (`sources/trading/fvg/x.md` → `trading/fvg`).
    - Ứng viên entity (vật có tên riêng: người, tổ chức, sản phẩm, công cụ, model) và concept (ý tưởng, phương pháp, chiến lược, mô hình). Chỉ **page-worthy** khi là trọng tâm của nguồn, lặp lại qua nhiều nguồn, hoặc mang luận điểm/số liệu đáng kể; nhắc thoáng qua thì nằm lại trong trang tóm tắt.
    - Với mỗi ứng viên page-worthy, tìm trang sẵn có: `find wiki/entities wiki/concepts -name '<slug>.md'` và `grep -rli '<tên hoặc viết tắt>' wiki/entities wiki/concepts`. Trùng slug hoặc trùng `aliases` nghĩa là trang đã tồn tại, dùng lại đúng đường dẫn đó.
    - Trang tóm tắt nguồn nào liên quan trực tiếp (cùng topic, cùng concept).
    - Chỗ nguồn này mâu thuẫn hoặc bổ sung giới hạn cho trang đang có.
 
-Xong khi mỗi heading của nguồn đã được ghi nhận trong bản phân tích, và mỗi ứng viên page-worthy đã có nhãn "tạo mới tại `<đường dẫn>`" hoặc "gộp vào `<đường dẫn>`".
+Xong khi bản kê ý phủ tới dòng cuối của nguồn (mỗi heading và mỗi đoạn văn có ít nhất một mục), và mỗi ứng viên page-worthy đã có nhãn "tạo mới tại `<đường dẫn>`" hoặc "gộp vào `<đường dẫn>`".
 
 ## Bước 3 — Viết trang tóm tắt nguồn
 
 Đường dẫn là ảnh gương của nguồn, giữ nguyên tên file: `sources/<rel>.md` → `wiki/sources/<rel>.md`. Viết theo [mẫu Source summary](#source-summary).
 
-Thân bài là một bài viết đầy đủ, không phải dàn ý:
+Trang này là bản **biên soạn lại toàn bộ** nguồn, không phải bản rút gọn: người chỉ đọc trang wiki phải nắm được mọi ý mà người đọc nguồn nắm được. Độ dài theo nguồn; nguồn dài thì trang dài. Chỉ được bỏ lời chào, quảng cáo, câu đệm và chỗ nguồn tự lặp lại.
 
+- Viết lần lượt theo bản kê ý: mỗi mục thành một câu hoặc một gạch đầu dòng có đủ chủ thể, điều kiện và con số của nó. Gom mục vào heading theo chủ đề, giữ trình tự lập luận của nguồn.
 - Giữ nguyên văn code, SQL, công thức, tham số cấu hình, bảng số liệu trong code fence hoặc bảng Markdown.
 - Mỗi luận điểm, con số, giới hạn gắn đúng chủ thể mà nguồn gán cho nó.
 - Lần đầu nhắc tới mỗi entity/concept page-worthy, viết thành `[[link]]` theo [Dạng link](#dạng-link). Mọi trang entity/concept bạn tạo ở bước 4 phải được trang tóm tắt này link tới.
@@ -61,7 +75,7 @@ Thân bài là một bài viết đầy đủ, không phải dàn ý:
 - Ảnh và video viết dạng nhúng `![mô tả](url)`.
 - Sơ đồ quy trình (khi nguồn có): Mermaid `flowchart TD|LR` nhiều dòng, nhãn node trong nháy kép: `A["Vùng cân bằng"] --> B["Cú phá vỡ"]`.
 
-Xong khi mọi heading của nguồn có phần tương ứng trong trang tóm tắt.
+Xong khi mọi mục của bản kê ý đã được viết vào trang.
 
 ## Bước 4 — Tạo hoặc gộp trang entity / concept
 
@@ -119,14 +133,39 @@ for f in <các file đã chạm>; do
 done
 ```
 
+**Kiểm tra độ phủ** — đối chiếu trang tóm tắt với nguồn:
+
+1. Đọc lại trang tóm tắt vừa viết, đi qua từng mục của bản kê ý và chỉ ra heading của trang chứa nó. Mục nào không chỉ ra được thì viết bổ sung ngay.
+2. Chạy lệnh dò con số và ngày tháng:
+
+   ```bash
+   s=sources/<rel>.md; w="wiki/$s"
+   grep -oE '[0-9]+([.,:/-][0-9]+)*%?' "$s" | sort -u | while read -r n; do
+     grep -qF -- "$n" "$w" || echo "MISSING $n"
+   done
+   ```
+
+   Với mỗi dòng `MISSING`, mở nguồn tại chỗ có con số đó: nó thuộc một ý (số liệu, ngày, ngưỡng, tham số) thì thêm ý đó vào trang; nó là nhiễu (số thứ tự, mốc thời gian transcript, ID) thì bỏ qua.
+3. Số khối code và số bảng trong trang không ít hơn trong nguồn (`grep -c '^```'`, `grep -c '^|'` trên hai file).
+
 Nguồn này xong khi:
 
-- lệnh trên không in dòng `BROKEN` nào;
+- mọi mục của bản kê ý có chỗ trong trang tóm tắt, và mọi dòng `MISSING` đã được thêm hoặc xếp vào nhiễu;
+- lệnh kiểm tra link không in dòng `BROKEN` nào;
 - chạy lại lệnh ở bước 1 không còn thấy nguồn này;
 - mỗi file đã chạm bắt đầu bằng `---` ở dòng 1, và `qmd.metadata.tags` trùng khít `tags`;
 - mỗi trang entity/concept mới có ít nhất một trang khác (ngoài `index.md`, `log.md`) link tới.
 
-Sau nguồn cuối cùng, báo cho người dùng: các nguồn đã ingest, trang tạo mới, trang gộp, và các callout mâu thuẫn đã thêm. Git commit/push là việc của người dùng, chỉ làm khi họ yêu cầu.
+## Bước 6 — Khép lại cả lô
+
+Sau nguồn cuối cùng của danh sách:
+
+1. Đếm đối chiếu: số file `.md` dưới `sources/<folder>` bằng số file dưới `wiki/sources/<folder>`, và lệnh ở bước 1 không còn in nguồn nào thuộc danh sách.
+2. Các trang tóm tắt cùng folder link tới nhau: mỗi trang có mục `Nguồn liên quan` trỏ tới các trang cùng folder chia sẻ concept với nó; trang của file tổng quan (`index.md`) link tới mọi trang trong folder.
+3. Mỗi trang entity/concept được nhiều nguồn trong lô bổ sung đọc lên vẫn là một bài thống nhất, không phải các đoạn nối đuôi theo từng nguồn.
+4. Báo cho người dùng một bảng, mỗi nguồn một dòng: số mục trong bản kê ý, số mục đã vào trang, số `MISSING` đã thêm / xếp vào nhiễu; kèm danh sách trang entity/concept tạo mới, trang gộp, và callout mâu thuẫn đã thêm.
+
+Git commit/push là việc của người dùng, chỉ làm khi họ yêu cầu.
 
 ## Mẫu trang
 
