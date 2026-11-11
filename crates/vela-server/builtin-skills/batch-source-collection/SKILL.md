@@ -1,6 +1,7 @@
 ---
 name: batch-source-collection
 description: "Workflow for saving many YouTube videos or documents into sources/ one at a time, in small batches, using the collection ledger so work survives restarts and retries."
+requires_tools: collection_status, add_to_sources
 ---
 
 # Batch Source Collection Skill (`batch-source-collection`)

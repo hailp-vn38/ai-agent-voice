@@ -131,6 +131,7 @@ fn builtin_defaults(id: &str) -> Option<SkillDefaults> {
 
 fn compute_agent_links(
     skill_id: &str,
+    requires_tools: &[String],
     settings: &PersistedBackgroundSettings,
 ) -> (Vec<String>, Vec<String>) {
     let mut used_by = Vec::new();
@@ -139,7 +140,12 @@ fn compute_agent_links(
         if spec.mode == AgentMode::Primary {
             continue;
         }
-        if spec.suggested_skills.contains(&skill_id) {
+        let can_follow_with_default_tools = requires_tools.iter().all(|required| {
+            spec.default_allowed_tools
+                .iter()
+                .any(|available| available == required)
+        });
+        if spec.suggested_skills.contains(&skill_id) && can_follow_with_default_tools {
             suggested_for.push(spec.id.to_owned());
         }
         let is_used = match settings
@@ -398,7 +404,8 @@ fn build_detail(
             .dir
             .parent()
             .is_some_and(|skills_root| builtin_skill_default_has_update(skills_root, &id));
-    let (used_by_agents, suggested_for_agents) = compute_agent_links(&id, settings);
+    let (used_by_agents, suggested_for_agents) =
+        compute_agent_links(&id, &indexed.doc.requires_tools, settings);
     let related_files = if include_related && !indexed.dir.as_os_str().is_empty() {
         list_related_sync(&indexed.dir)
     } else {

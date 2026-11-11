@@ -1,6 +1,7 @@
 ---
 name: wiki-lint
 description: "Health-check for the LLM Wiki: repair structure (broken links, orphans, frontmatter), merge duplicates, flag contradictions, and audit that pages still cover their sources. Load for a maintenance pass or after a batch of ingests."
+requires_tools: wiki_lint
 ---
 
 # Wiki Lint

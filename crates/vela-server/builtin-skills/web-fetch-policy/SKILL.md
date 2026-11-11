@@ -1,6 +1,7 @@
 ---
 name: "web-fetch-policy"
 description: "Decision gate and extraction workflow for fetch_html and html_extract_* tools. Load when inspecting a user-provided http(s) URL, or when escalating to read a concrete external URL after Wiki query or search/synthesis subagents returned no sufficient answer."
+requires_tools: fetch_html, html_extract_article
 ---
 
 # Web HTML Fetch Gate & Extraction Skill (`web-fetch-policy`)
@@ -34,4 +35,4 @@ Call `fetch_html` **ONLY** when **both** a concrete `http://` or `https://` URL 
 
 ## 3. Completion Criteria & Output Rules
 - **Media Links**: Format every image or video URL in Markdown as `![mô tả hoặc tiêu đề](url)` (with a leading `!`), never `[link](url)`.
-- **Read-Only Default**: Return the structured Vietnamese summary (**Tóm tắt cốt lõi**, **Phân tích chuyên sâu**, **Điểm nhấn trực quan**) directly to `daily_root`. Only call `add_to_sources` if the prompt explicitly instructs saving to `sources/` or the Wiki; then `markdown_body` is the full extracted article (title, URL, every heading, paragraph, table, and image), and the summary stays in your reply.
+- **Read-Only Default**: Return the structured Vietnamese summary (**Tóm tắt cốt lõi**, **Phân tích chuyên sâu**, **Điểm nhấn trực quan**) directly to `daily_root`. Saving with `add_to_sources` is available only to agents that have that tool (currently `source_collector`); that agent calls it only when the prompt explicitly instructs saving to `sources/` or the Wiki. When available and requested, `markdown_body` is the full extracted article (title, URL, every heading, paragraph, table, and image), and the summary stays in your reply. `wiki_researcher` returns the extracted content to `daily_root`.

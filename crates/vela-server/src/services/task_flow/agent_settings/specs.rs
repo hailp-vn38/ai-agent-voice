@@ -206,7 +206,6 @@ pub const AGENT_SPECS: &[AgentSpec] = &[
         suggested_skills: &[
             "wiki-taxonomy",
             "web-fetch-policy",
-            "wiki-ingest",
             "batch-source-collection",
         ],
         default_subagents: &[],
@@ -240,12 +239,7 @@ pub const AGENT_SPECS: &[AgentSpec] = &[
         default_allowed_tools: REPORT_STAGER_TOOLS,
         available_tools: REPORT_STAGER_TOOLS,
         default_allowed_skills: &["wiki-taxonomy", "daily-synthesis-staging", "trading-chart"],
-        suggested_skills: &[
-            "wiki-taxonomy",
-            "daily-synthesis-staging",
-            "trading-chart",
-            "wiki-query",
-        ],
+        suggested_skills: &["wiki-taxonomy", "daily-synthesis-staging", "trading-chart"],
         default_subagents: &[],
     },
     AgentSpec {
@@ -261,7 +255,7 @@ pub const AGENT_SPECS: &[AgentSpec] = &[
         default_allowed_tools: &["image_create", "video_create"],
         available_tools: &["skill", "image_create", "video_create"],
         default_allowed_skills: &[],
-        suggested_skills: &["daily-synthesis-staging"],
+        suggested_skills: &[],
         default_subagents: &[],
     },
     AgentSpec {
@@ -288,7 +282,7 @@ pub const AGENT_SPECS: &[AgentSpec] = &[
             "artifact_create",
         ],
         default_allowed_skills: &[],
-        suggested_skills: &["daily-synthesis-staging"],
+        suggested_skills: &[],
         default_subagents: &[],
     },
     AgentSpec {
@@ -360,7 +354,6 @@ pub const AGENT_SPECS: &[AgentSpec] = &[
         ],
         suggested_skills: &[
             "wiki-taxonomy",
-            "wiki-ingest",
             "wiki-page-format",
             "trading-chart",
             "wiki-query",
@@ -382,6 +375,7 @@ pub const AGENT_SPECS: &[AgentSpec] = &[
         default_allowed_skills: &[
             "wiki-taxonomy",
             "wiki-query",
+            "wiki-synthesis-filing",
             "wiki-lint",
             "wiki-page-format",
             "trading-chart",
@@ -389,10 +383,10 @@ pub const AGENT_SPECS: &[AgentSpec] = &[
         suggested_skills: &[
             "wiki-taxonomy",
             "wiki-query",
+            "wiki-synthesis-filing",
             "wiki-lint",
             "wiki-page-format",
             "trading-chart",
-            "wiki-ingest",
         ],
         default_subagents: &[],
     },

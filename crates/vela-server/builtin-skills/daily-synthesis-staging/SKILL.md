@@ -1,6 +1,7 @@
 ---
 name: daily-synthesis-staging
 description: "Workflow for synthesizing a user chat/discussion into a structured Markdown document with provenance, conflict, and open-question guardrails via `add_to_sources` or exporting a standalone report."
+requires_tools: add_to_sources, markdown_create, markdown_read
 ---
 
 # Daily Discussion Synthesis & Wiki Staging Skill (`daily-synthesis-staging`)

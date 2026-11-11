@@ -1,6 +1,7 @@
 ---
 name: daily-task-reminder
 description: "Workflow for extracting actionable tasks, deadlines, recurring schedules, and linked Wiki references to create/manage user reminders."
+requires_tools: reminder_list, reminder_create, reminder_complete, reminder_delete
 ---
 
 # Daily Task & Reminder Planning Skill (`daily-task-reminder`)

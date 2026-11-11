@@ -1,6 +1,7 @@
 ---
 name: wiki-taxonomy
 description: "Decides which subjects from a source get their own wiki page, whether a page is an entity or a concept, and which topic folder it belongs to. Load before creating or routing any wiki/ page."
+requires_tools: wiki_tree
 ---
 
 # Wiki Taxonomy
@@ -14,7 +15,7 @@ This skill decides **whether** a subject gets a page and **where** it belongs. H
 - `wiki/entities/` and `wiki/concepts/` hold the knowledge, merged across sources.
 - `wiki/syntheses/` holds cross-source analyses and filed query answers.
 - `wiki/index.md` and `wiki/log.md` are maintained by the tools.
-- `SCHEMA.md` (`wiki_schema`) holds this vault's own routing rules and wins over this skill, including custom folders such as `wiki/decisions/`.
+- If your assigned tools include `wiki_schema`, read `SCHEMA.md`; its vault-specific routing rules win over this skill, including custom folders such as `wiki/decisions/`. Agents without `wiki_schema` use `wiki/index.md` and `wiki_tree` to follow the visible vault structure.
 
 ## 2. Reuse before creating
 
@@ -45,4 +46,4 @@ A subject lives in exactly one of the two:
 - Reuse an existing `<domain>` and `<topic>` folder from `wiki_tree` before proposing a new one. New names are `kebab-case`, at most two levels (`<domain>/<topic>`).
 - Raw sources and source summaries sit two levels deep (`<domain>/<topic>/<filename>.md`); entities, concepts, and syntheses sit one level deep (`<domain>/<slug>.md`) so topics in one domain share pages. Tools and languages used across domains go in `entities/shared/`.
 - Tags follow the same routing, in three facets: the category tag (`wiki/source` | `wiki/entity` | `wiki/concept` | `wiki/synthesis`), 1–3 `topic/<domain>/<topic>` tags reused from the vault, then 2–5 `kebab-case` subject keywords.
-- For a raw source stored flat at `sources/<filename>.md`, pass `target_wiki_path="sources/<domain>/<topic>/<filename>.md"` to `wiki_ingest_source`.
+- When working as `wiki_ingestor`, for a raw source stored flat at `sources/<filename>.md`, pass `target_wiki_path="sources/<domain>/<topic>/<filename>.md"` to `wiki_ingest_source`. Other agents should return the route recommendation to their parent.
