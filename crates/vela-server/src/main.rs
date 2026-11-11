@@ -16,6 +16,18 @@ async fn main() -> anyhow::Result<()> {
         vela_server::services::system_logs::SystemLogHub::global(),
     );
     let path = vela_server::config::env_var("VELA_CONFIG").unwrap_or_else(|| "config.toml".into());
+    // Password recovery needs only the database section, so it skips provider validation: an
+    // operator whose provider config is broken can still reset the Admin Password.
+    if std::env::args().nth(1).as_deref() == Some("reset-admin-password") {
+        let config = AppConfig::parse_and_resolve(&path).with_context(|| format!("load {path}"))?;
+        vela_server::app::reset_admin_password(&config.database)
+            .await
+            .context("reset Admin Password")?;
+        println!(
+            "Admin Password reset to the default (admin). Password Login is on and the password must be changed at the next sign-in. A running server must be restarted before it uses the reset."
+        );
+        return Ok(());
+    }
     let config = AppConfig::load(&path).with_context(|| format!("load {path}"))?;
     // Built before startup so the listener, every admitted Voice Session and the shutdown sequence
     // all hold the same admission gate and drain registry. Building it afterwards would leave the
