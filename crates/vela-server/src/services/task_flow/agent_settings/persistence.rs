@@ -1,10 +1,10 @@
 //! Persistent `agent_settings.json` storage, partial override merging, and Markdown prompt
-//! materialization (`<prompts_dir>/<id>.md` + `<active_subagents>` injection for Root Orchestrators).
+//! materialization (`<prompts_dir>/<id>.md` plus server-owned Sub-Agent guidance blocks).
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
-use orchestrator_agent_rs::{AgentMode, valid_skill_id};
+use orchestrator_agent_rs::{AgentMode, SkillDocument, valid_skill_id};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
@@ -12,9 +12,14 @@ use super::DEFAULT_ORCHESTRATOR_PROVIDER_REF;
 use super::specs::{
     AGENT_SPECS, custom_subagent_flow_policy, find_agent_spec, valid_custom_subagent_id,
 };
-use crate::services::task_flow::workspace_seed::daily_root_prompt_with_routing_guidance;
+use crate::services::task_flow::workspace_seed::{
+    BUILTIN_SKILLS, daily_root_prompt_with_routing_guidance,
+};
 
 const AGENT_SETTINGS_FILE: &str = "agent_settings.json";
+const REQUIRED_JOB_SKILLS_OPEN: &str = "<required_job_skills>";
+const REQUIRED_JOB_SKILLS_CLOSE: &str = "</required_job_skills>";
+const REQUIRED_SKILL_MAX_BYTES: usize = 1024 * 1024;
 
 /// SHA-256 of the trimmed `cloud_worker` default prompts of earlier releases. The Admin form saves
 /// the prompt it shows, so an unedited copy would otherwise pin an old default forever.
@@ -335,6 +340,14 @@ pub fn write_agent_prompts(
     prompts_dir: &Path,
     settings: &PersistedBackgroundSettings,
 ) -> std::io::Result<()> {
+    write_agent_prompts_with_skills_dir(prompts_dir, settings, None)
+}
+
+pub fn write_agent_prompts_with_skills_dir(
+    prompts_dir: &Path,
+    settings: &PersistedBackgroundSettings,
+    skills_root: Option<&Path>,
+) -> std::io::Result<()> {
     std::fs::create_dir_all(prompts_dir)?;
     let mut expected_files = BTreeSet::new();
 
@@ -368,7 +381,8 @@ pub fn write_agent_prompts(
                 format_active_subagents_block(spec.flow_id, spec.default_subagents, settings);
             std::fs::write(prompts_dir.join(&filename), format!("{prompt}{block}"))?;
         } else {
-            std::fs::write(prompts_dir.join(&filename), base_prompt)?;
+            let prompt = with_required_job_skills(base_prompt, spec.id, skills_root);
+            std::fs::write(prompts_dir.join(&filename), prompt)?;
         }
     }
 
@@ -400,4 +414,98 @@ pub fn write_agent_prompts(
     }
 
     Ok(())
+}
+
+fn with_required_job_skills(
+    base_prompt: &str,
+    agent_id: &str,
+    skills_root: Option<&Path>,
+) -> String {
+    let required = super::specs::required_job_skills(agent_id);
+    if required.is_empty() {
+        return base_prompt.to_owned();
+    }
+
+    let mut prompt = strip_required_job_skills_block(base_prompt);
+    let mut entries = Vec::with_capacity(required.len());
+    for skill_id in required {
+        let Some(body) = required_job_skill_body(skill_id, skills_root) else {
+            tracing::warn!(
+                agent_id,
+                skill_id,
+                "required Job Skill has no valid embedded document"
+            );
+            continue;
+        };
+        entries.push(format!("## {skill_id}\n\n{body}"));
+    }
+    if entries.is_empty() {
+        return prompt;
+    }
+
+    prompt.push_str("\n\n<required_job_skills>\n");
+    prompt.push_str(
+        "The Required Job Skills below are already loaded. Follow their instructions unless they conflict with the instructions above. Do not call the `skill` tool to load them.\n\n",
+    );
+    prompt.push_str(&entries.join("\n\n"));
+    prompt.push_str("\n</required_job_skills>\n");
+    prompt
+}
+
+fn strip_required_job_skills_block(prompt: &str) -> String {
+    let mut cleaned = prompt.to_owned();
+    while let Some(start) = cleaned.find(REQUIRED_JOB_SKILLS_OPEN) {
+        let end = cleaned[start..]
+            .find(REQUIRED_JOB_SKILLS_CLOSE)
+            .map(|relative| start + relative + REQUIRED_JOB_SKILLS_CLOSE.len())
+            .unwrap_or(cleaned.len());
+        cleaned.replace_range(start..end, "");
+    }
+    cleaned
+}
+
+fn required_job_skill_body(skill_id: &str, skills_root: Option<&Path>) -> Option<String> {
+    if let Some(root) = skills_root
+        && let Some(body) = read_valid_skill_body(root, skill_id)
+    {
+        return Some(body);
+    }
+
+    let embedded = BUILTIN_SKILLS
+        .iter()
+        .find_map(|(id, text)| (*id == skill_id).then_some(*text))?;
+    SkillDocument::parse(skill_id, embedded, REQUIRED_SKILL_MAX_BYTES)
+        .ok()
+        .map(|doc| doc.body)
+}
+
+fn read_valid_skill_body(skills_root: &Path, skill_id: &str) -> Option<String> {
+    let canonical_root = std::fs::canonicalize(skills_root).ok()?;
+    if !std::fs::metadata(&canonical_root).ok()?.is_dir() {
+        return None;
+    }
+    let skill_dir = skills_root.join(skill_id);
+    let dir_meta = std::fs::symlink_metadata(&skill_dir).ok()?;
+    if dir_meta.file_type().is_symlink() || !dir_meta.is_dir() {
+        return None;
+    }
+    let canonical_dir = std::fs::canonicalize(&skill_dir).ok()?;
+    if !canonical_dir.starts_with(&canonical_root) {
+        return None;
+    }
+    let skill_file = skill_dir.join("SKILL.md");
+    let file_meta = std::fs::symlink_metadata(&skill_file).ok()?;
+    if file_meta.file_type().is_symlink() || !file_meta.is_file() {
+        return None;
+    }
+    let canonical_file = std::fs::canonicalize(&skill_file).ok()?;
+    if !canonical_file.starts_with(&canonical_dir)
+        || file_meta.len() > REQUIRED_SKILL_MAX_BYTES as u64
+    {
+        return None;
+    }
+    let raw = std::fs::read_to_string(&skill_file).ok()?;
+    SkillDocument::parse(skill_id, &raw, REQUIRED_SKILL_MAX_BYTES)
+        .ok()
+        .map(|doc| doc.body)
 }

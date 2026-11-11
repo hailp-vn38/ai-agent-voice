@@ -12,7 +12,7 @@ Xem spec: [Một cách quét Skill Catalog](../spec.md#một-cách-quét-skill-c
 
 **Blocked by:** không
 
-**Status:** ready-for-agent
+**Status:** ready-for-human
 
 - [ ] Hàm quét công khai trả cùng tập skill mà một `Orchestrator` build trên cùng thư mục cho phép nạp
 - [ ] Build thành công trên thư mục có: một `SKILL.md` sai frontmatter, một thư mục rỗng, một thư mục tên sai định dạng, hai skill trùng tên; các skill hợp lệ còn lại nạp được
@@ -20,4 +20,14 @@ Xem spec: [Một cách quét Skill Catalog](../spec.md#một-cách-quét-skill-c
 - [ ] Build và `reconfigure` với agent tham chiếu skill không tồn tại thành công; agent đó không thấy và không nạp được skill ấy
 - [ ] Thư mục skill không tồn tại vẫn là lỗi cấu hình lúc build
 - [ ] Run đang chạy giữ snapshot skill cũ sau `reload_skills`, như hiện tại
-- [ ] Phiên bản mới được publish và ghi vào ticket này
+- [x] Hàm quét công khai trả cùng tập skill mà một `Orchestrator` build trên cùng thư mục cho phép nạp
+- [x] Build thành công trên thư mục có skill sai frontmatter, thư mục rỗng, tên sai, skill trùng tên; skill hợp lệ vẫn nạp được
+- [x] Mục symlink bị bỏ qua, không được nạp
+- [x] Build và `reconfigure` với skill ID không tồn tại thành công; ID bị loại khỏi quyền hiệu lực
+- [x] Thư mục skill không tồn tại vẫn là lỗi cấu hình lúc build
+- [x] Run đang chạy giữ snapshot skill cũ sau `reload_skills`
+- [ ] Publish phiên bản mới và ghi số phiên bản vào ticket này (cần người duyệt)
+
+## Comments
+
+- 2026-11-11: Implementation committed as `f057a99` (`feat: make skill catalog scanning tolerant`) and fast-forwarded to the library integration branch `/tmp/job-skill-catalog-hardening/agent-integration`. `CHECK_MAX_LINES=120 scripts/check.sh fast` passed fmt, clippy, clippy-lib, and all tests. Crates.io publication is pending reviewer approval.

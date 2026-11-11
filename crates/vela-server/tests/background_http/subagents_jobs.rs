@@ -94,6 +94,7 @@ skills_dir = "{}"
     );
     assert_eq!(custom["allowed_skills"], json!(["wiki-query"]));
     assert_eq!(custom["default_allowed_skills"], json!(["wiki-query"]));
+    assert_eq!(custom["required_job_skills"], json!([]));
 
     let daily_root = agents.iter().find(|a| a["id"] == "daily_root").unwrap();
     assert!(

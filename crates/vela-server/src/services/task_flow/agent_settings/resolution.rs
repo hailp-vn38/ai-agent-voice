@@ -14,7 +14,7 @@ use super::provider_catalog::{
     ResolvedLlmProvider, agent_supports_provider, default_orchestrator_provider,
     find_provider_by_tag,
 };
-use super::specs::AGENT_SPECS;
+use super::specs::{AGENT_SPECS, required_job_skills};
 
 struct ResolvedAgentSettings {
     id: String,
@@ -33,6 +33,7 @@ struct ResolvedAgentSettings {
     available_tools: &'static [&'static str],
     allowed_skills: Vec<String>,
     default_allowed_skills: Vec<String>,
+    required_job_skills: Vec<String>,
     available_skills: Vec<String>,
     allowed_subagents: Vec<String>,
     allowed_capability_tags: &'static [&'static str],
@@ -116,7 +117,7 @@ fn resolve_effective_agents(
                 }
                 avail
             };
-            let allowed_skills: Vec<String> = if spec.mode == AgentMode::Primary {
+            let mut allowed_skills: Vec<String> = if spec.mode == AgentMode::Primary {
                 Vec::new()
             } else {
                 match ovr.and_then(|o| o.allowed_skills.as_ref()) {
@@ -133,7 +134,20 @@ fn resolve_effective_agents(
                         .collect(),
                 }
             };
-            let default_allowed_skills: Vec<String> = if spec.mode == AgentMode::Primary {
+            let required_job_skills: Vec<String> = if spec.mode == AgentMode::Subagent {
+                required_job_skills(spec.id)
+                    .iter()
+                    .map(|id| (*id).to_owned())
+                    .collect()
+            } else {
+                Vec::new()
+            };
+            for required in &required_job_skills {
+                if !allowed_skills.contains(required) {
+                    allowed_skills.push(required.clone());
+                }
+            }
+            let mut default_allowed_skills: Vec<String> = if spec.mode == AgentMode::Primary {
                 Vec::new()
             } else {
                 spec.default_allowed_skills
@@ -142,6 +156,11 @@ fn resolve_effective_agents(
                     .map(|s| (*s).to_owned())
                     .collect()
             };
+            for required in &required_job_skills {
+                if !default_allowed_skills.contains(required) {
+                    default_allowed_skills.push(required.clone());
+                }
+            }
             let default_allowed_tools: Vec<String> = spec
                 .default_allowed_tools
                 .iter()
@@ -231,6 +250,7 @@ fn resolve_effective_agents(
                 available_tools: spec.available_tools,
                 allowed_skills,
                 default_allowed_skills,
+                required_job_skills,
                 available_skills,
                 allowed_subagents,
                 allowed_capability_tags: spec.allowed_capability_tags(),
@@ -307,6 +327,7 @@ fn resolve_effective_agents(
             available_tools: valid.available_tools,
             allowed_skills,
             default_allowed_skills,
+            required_job_skills: Vec::new(),
             available_skills,
             allowed_subagents: Vec::new(),
             allowed_capability_tags: &["chat", "reasoning"],
@@ -488,6 +509,7 @@ pub fn project_agents_json(
                 "available_tools": eff.available_tools,
                 "allowed_skills": eff.allowed_skills,
                 "default_allowed_skills": eff.default_allowed_skills,
+                "required_job_skills": eff.required_job_skills,
                 "available_skills": eff.available_skills,
                 "allowed_subagents": eff.allowed_subagents,
                 "allowed_capability_tags": eff.allowed_capability_tags,

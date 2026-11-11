@@ -402,6 +402,15 @@ pub fn find_agent_spec(id: &str) -> Option<&'static AgentSpec> {
     AGENT_SPECS.iter().find(|s| s.id == id)
 }
 
+/// Job Skills that must be present in a built-in Sub-Agent's system prompt and effective catalog.
+pub fn required_job_skills(agent_id: &str) -> &'static [&'static str] {
+    match agent_id {
+        "wiki_ingestor" => &["wiki-ingest", "wiki-taxonomy", "wiki-page-format"],
+        "wiki_curator" => &["wiki-lint", "wiki-query"],
+        _ => &[],
+    }
+}
+
 /// Finds the Built-in Sub-Agent that owns a given specialized media/audio tool
 /// (`"image_create"` / `"video_create"` -> `media_creator`, `"tts_synthesize"` / `"asr_transcribe"` -> `media_processor`).
 pub fn find_tool_owner_spec(tool_name: &str) -> Option<&'static AgentSpec> {

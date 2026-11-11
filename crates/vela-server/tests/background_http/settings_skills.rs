@@ -239,6 +239,13 @@ prompts_dir = "{}"
         .json()
         .await
         .unwrap();
+    let embedded_ingestor_prompt =
+        std::fs::read_to_string(temp_root.join("prompts/wiki_ingestor.md")).unwrap();
+    assert!(embedded_ingestor_prompt.contains("# Wiki Ingest"));
+    assert!(embedded_ingestor_prompt.contains("# Wiki Taxonomy"));
+    let embedded_curator_prompt =
+        std::fs::read_to_string(temp_root.join("prompts/wiki_curator.md")).unwrap();
+    assert!(embedded_curator_prompt.contains("# Wiki Lint"));
     let llm_providers = initial["llm_providers"].as_array().unwrap();
     assert!(
         llm_providers
@@ -535,6 +542,40 @@ skills_dir = "{}"
     assert_eq!(researcher_avail[1], "web-fetch-policy");
     assert_eq!(researcher_avail[2], "wiki-taxonomy");
 
+    assert_eq!(
+        agents.iter().find(|a| a["id"] == "wiki_ingestor").unwrap()["required_job_skills"],
+        json!(["wiki-ingest", "wiki-taxonomy", "wiki-page-format"])
+    );
+    assert_eq!(
+        agents.iter().find(|a| a["id"] == "wiki_curator").unwrap()["required_job_skills"],
+        json!(["wiki-lint", "wiki-query"])
+    );
+    assert_eq!(researcher["required_job_skills"], json!([]));
+    assert_eq!(daily_root["required_job_skills"], json!([]));
+    for agent in agents {
+        for required in agent["required_job_skills"].as_array().unwrap() {
+            let required_id = required.as_str().unwrap();
+            assert!(
+                skills.iter().any(|skill| skill["id"] == required_id),
+                "required Job Skill {required_id} must exist as a Built-in Job Skill"
+            );
+        }
+    }
+    let ingestor_prompt =
+        std::fs::read_to_string(temp_root.join("prompts/wiki_ingestor.md")).unwrap();
+    assert!(ingestor_prompt.contains("<required_job_skills>"));
+    assert!(ingestor_prompt.contains("already loaded"));
+    assert!(ingestor_prompt.contains("# Wiki Ingest"));
+    assert!(ingestor_prompt.contains("# Wiki Taxonomy"));
+    assert!(ingestor_prompt.contains("# Wiki Page Format"));
+    let curator_prompt =
+        std::fs::read_to_string(temp_root.join("prompts/wiki_curator.md")).unwrap();
+    assert!(curator_prompt.contains("# Wiki Lint"));
+    assert!(curator_prompt.contains("# Universal Wiki Query & Synthesis Skill"));
+    let researcher_prompt =
+        std::fs::read_to_string(temp_root.join("prompts/wiki_researcher.md")).unwrap();
+    assert!(!researcher_prompt.contains("<required_job_skills>"));
+
     // 2. GET /background/skills/wiki-ingest returns detail + default + ETag header
     let detail_resp = client
         .get(format!("{base}/background/skills/wiki-ingest"))
@@ -583,6 +624,9 @@ skills_dir = "{}"
     assert_eq!(edited["description"], "Customized ingest description");
     let etag2 = edited["etag"].as_str().unwrap().to_owned();
     assert_ne!(etag1, etag2);
+    let edited_ingestor_prompt =
+        std::fs::read_to_string(temp_root.join("prompts/wiki_ingestor.md")).unwrap();
+    assert!(edited_ingestor_prompt.contains("# Custom Ingest Workflow"));
 
     // Stale ETag on PUT -> 409 Conflict
     let stale_put = client
@@ -704,6 +748,11 @@ skills_dir = "{}"
                 "wiki_researcher": {
                     "enabled": true,
                     "allowed_skills": ["wiki-query", "custom-seo-audit"]
+                },
+                "wiki_ingestor": {
+                    "enabled": true,
+                    "allowed_skills": [],
+                    "system_prompt": "Admin's Wiki ingestor prompt.\n<required_job_skills>\nOld server snapshot.\n</required_job_skills>\nKeep this ending."
                 }
             }
         }))
@@ -722,6 +771,55 @@ skills_dir = "{}"
         researcher_after["allowed_skills"],
         json!(["wiki-query", "custom-seo-audit"])
     );
+    let ingestor_after = assigned_settings["agents"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|a| a["id"] == "wiki_ingestor")
+        .unwrap();
+    assert_eq!(
+        ingestor_after["allowed_skills"],
+        json!(["wiki-ingest", "wiki-taxonomy", "wiki-page-format"])
+    );
+    assert_eq!(
+        ingestor_after["system_prompt"],
+        "Admin's Wiki ingestor prompt.\n<required_job_skills>\nOld server snapshot.\n</required_job_skills>\nKeep this ending."
+    );
+    let ingestor_custom_prompt =
+        std::fs::read_to_string(temp_root.join("prompts/wiki_ingestor.md")).unwrap();
+    assert!(ingestor_custom_prompt.starts_with("Admin's Wiki ingestor prompt."));
+    assert!(ingestor_custom_prompt.contains("Keep this ending."));
+    assert!(ingestor_custom_prompt.contains("# Wiki Ingest"));
+    assert!(!ingestor_custom_prompt.contains("Old server snapshot."));
+    assert_eq!(
+        ingestor_custom_prompt
+            .matches("<required_job_skills>")
+            .count(),
+        1
+    );
+
+    // An invalid disk copy must fall back to the embedded Required Job Skill when prompts refresh.
+    std::fs::write(
+        temp_root.join("skills/wiki-ingest/SKILL.md"),
+        "malformed required skill on disk",
+    )
+    .unwrap();
+    let fallback_sync = client
+        .put(format!("{base}/background/settings"))
+        .bearer_auth("background-test-token")
+        .header("If-Match", "\"2\"")
+        .json(&json!({
+            "enabled": true,
+            "agents": { "wiki_ingestor": { "enabled": true, "allowed_skills": [] } }
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(fallback_sync.status(), StatusCode::OK);
+    let fallback_prompt =
+        std::fs::read_to_string(temp_root.join("prompts/wiki_ingestor.md")).unwrap();
+    assert!(fallback_prompt.contains("Ingest integrates one raw source"));
+    assert!(!fallback_prompt.contains("malformed required skill on disk"));
 
     let custom_detail: Value = client
         .get(format!("{base}/background/skills/custom-seo-audit"))
