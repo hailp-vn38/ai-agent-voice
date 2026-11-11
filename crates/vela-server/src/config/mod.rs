@@ -1102,7 +1102,7 @@ impl Default for DatabaseHistoryConfig {
 }
 
 /// Optional, separately authenticated administrative control plane.
-#[derive(Clone, Debug, Default, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AdminApiConfig {
     #[serde(default)]
@@ -1119,6 +1119,19 @@ pub struct AdminApiConfig {
     pub provider_tests: ProviderTestsConfig,
     #[serde(default)]
     pub mcp_tests: ProviderTestsConfig,
+}
+
+impl Default for AdminApiConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            admin_token: String::new(),
+            jwt_secret: SecretString::default(),
+            token_ttl_secs: default_admin_token_ttl_secs(),
+            provider_tests: ProviderTestsConfig::default(),
+            mcp_tests: ProviderTestsConfig::default(),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Deserialize)]
