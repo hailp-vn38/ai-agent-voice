@@ -9,6 +9,7 @@ use std::{
 
 use serde_json::Value;
 use sqlx::SqlitePool;
+use tokio_util::sync::CancellationToken;
 
 use crate::{
     config::SecretString,

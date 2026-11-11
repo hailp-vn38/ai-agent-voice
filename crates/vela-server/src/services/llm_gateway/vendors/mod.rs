@@ -173,12 +173,31 @@ pub trait OAuthVendorDriver: Send + Sync {
         default_margin_secs
     }
 
-    fn can_self_heal_reauth(&self, _bundle: &OAuthTokenBundle, _last_error: Option<&str>) -> bool {
-        false
+    /// Whether the watchdog may retry an account parked in `reauth_required`.  By default only
+    /// one parked by a transient failure (`oauth_exchange_failed`) that still holds a credential
+    /// to refresh with; an upstream that rejected the grant needs a real login.
+    fn can_self_heal_reauth(&self, bundle: &OAuthTokenBundle, last_error: Option<&str>) -> bool {
+        last_error == Some(GatewayError::OAuthExchangeFailed(String::new()).code())
+            && (bundle.refresh_token.as_deref().is_some_and(|t| !t.is_empty())
+                || bundle
+                    .upstream_oauth_token
+                    .as_deref()
+                    .is_some_and(|t| !t.is_empty()))
     }
 
-    fn is_transient_refresh_error(&self, _err: &GatewayError) -> bool {
-        false
+    /// Transient failures (network, timeout, 429, 5xx) only cool the account down; anything else
+    /// persists `reauth_required`.
+    fn is_transient_refresh_error(&self, err: &GatewayError) -> bool {
+        matches!(err, GatewayError::OAuthExchangeFailed(_))
+    }
+}
+
+/// Classifies a non-2xx token-refresh response: the upstream rejecting the grant itself
+/// (400/401/403) needs a new login, every other status is worth retrying later.
+pub(crate) fn refresh_failure_for_status(status: u16) -> GatewayError {
+    match status {
+        400 | 401 | 403 => GatewayError::AccountReauthRequired,
+        other => GatewayError::OAuthExchangeFailed(format!("refresh_http_{other}")),
     }
 }
 
@@ -215,6 +234,7 @@ pub struct FakeOAuthVendorDriver {
     next_email: Mutex<Option<String>>,
     next_expires_at: Mutex<Option<i64>>,
     next_quota: Mutex<Option<VendorQuotaSnapshot>>,
+    next_refresh_error: Mutex<Option<GatewayError>>,
 }
 
 impl FakeOAuthVendorDriver {
@@ -229,7 +249,16 @@ impl FakeOAuthVendorDriver {
             next_email: Mutex::new(Some(format!("{}@example.com", vendor.as_str()))),
             next_expires_at: Mutex::new(Some(4_102_444_800)), // 2100-01-01
             next_quota: Mutex::new(None),
+            next_refresh_error: Mutex::new(None),
         }
+    }
+
+    /// Makes every `refresh_token` call fail with `err` until cleared with `None`.
+    pub fn set_next_refresh_error(&self, err: Option<GatewayError>) {
+        *self
+            .next_refresh_error
+            .lock()
+            .expect("next_refresh_error mutex") = err;
     }
 
     pub fn set_device_ready(&self, ready: bool) {
@@ -370,6 +399,14 @@ impl OAuthVendorDriver for FakeOAuthVendorDriver {
     ) -> Result<ExchangedOAuthAccount, GatewayError> {
         let seq = self.refresh_calls.fetch_add(1, Ordering::SeqCst) + 1;
         tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        if let Some(err) = self
+            .next_refresh_error
+            .lock()
+            .expect("next_refresh_error mutex")
+            .clone()
+        {
+            return Err(err);
+        }
         let access_token = if self.vendor == GatewayVendor::Muse {
             format!("{}; refreshed_seq={seq}", current.access_token)
         } else {
