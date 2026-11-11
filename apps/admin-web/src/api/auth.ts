@@ -12,6 +12,11 @@ export interface AdminTokenResponse {
   must_change_password: boolean
 }
 
+export interface PasswordLoginSetResponse {
+  password_login_enabled: boolean
+  must_change_password: boolean
+}
+
 export const authApi = {
   status: () => requestJson<PasswordLoginStatusResponse>('/api/admin/auth/status', {}, { anonymous: true }),
   login: (password: string) => requestJson<AdminTokenResponse>(
@@ -22,5 +27,10 @@ export const authApi = {
   changePassword: (currentPassword: string, newPassword: string) => requestJson<AdminTokenResponse>(
     '/api/admin/auth/password',
     { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ current_password: currentPassword, new_password: newPassword }) },
+  ),
+  logoutEverywhere: () => requestJson<AdminTokenResponse>('/api/admin/auth/logout-all', { method: 'POST' }),
+  setPasswordLogin: (enabled: boolean, currentPassword: string) => requestJson<PasswordLoginSetResponse>(
+    '/api/admin/auth/password-login',
+    { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ enabled, current_password: currentPassword }) },
   ),
 }

@@ -299,6 +299,12 @@ const routes: RouteRecordRaw[] = [
     meta: { titleKey: 'notifications.settings.title' },
   },
   {
+    path: '/system/security',
+    name: 'system-security',
+    component: () => import('@/pages/system/SystemSecurityPage.vue'),
+    meta: { titleKey: 'system.hub.securityTitle' },
+  },
+  {
     path: '/system/logs',
     alias: ['/logs'],
     name: 'system-logs',

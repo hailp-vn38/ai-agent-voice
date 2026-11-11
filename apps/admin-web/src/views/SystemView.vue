@@ -624,6 +624,37 @@ onBeforeUnmount(() => {
             </RouterLink>
           </div>
         </article>
+
+        <!-- 7. Security -->
+        <article
+          role="button"
+          tabindex="0"
+          data-system-card="security"
+          class="group studio-panel flex cursor-pointer flex-col justify-between overflow-hidden transition-all hover:-translate-y-0.5 hover:border-studio-violet/45 hover:shadow-md"
+          @click="router.push({ name: 'system-security' })"
+          @keydown.enter.prevent="router.push({ name: 'system-security' })"
+          @keydown.space.prevent="router.push({ name: 'system-security' })"
+        >
+          <div class="flex items-start gap-3 p-4">
+            <span
+              class="grid size-9 shrink-0 place-items-center rounded-xl bg-studio-violet/12 text-studio-violet"
+            >
+              <ShieldCheck class="size-5" aria-hidden="true" />
+            </span>
+            <div class="min-w-0 flex-1">
+              <div class="flex items-center justify-between gap-2">
+                <h3 class="text-sm font-semibold">{{ t('system.hub.securityTitle') }}</h3>
+                <ArrowRight
+                  class="size-3.5 text-muted-foreground transition-transform group-hover:translate-x-0.5 group-hover:text-studio-violet"
+                  aria-hidden="true"
+                />
+              </div>
+              <p class="mt-1 text-xs leading-relaxed text-muted-foreground">
+                {{ t('system.hub.securityDesc') }}
+              </p>
+            </div>
+          </div>
+        </article>
       </div>
     </div>
 
