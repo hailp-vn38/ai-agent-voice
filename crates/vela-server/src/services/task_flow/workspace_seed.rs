@@ -60,6 +60,8 @@ pub const WIKI_INGEST_SKILL: &str = include_str!("../../../builtin-skills/wiki-i
 pub const WIKI_PAGE_FORMAT_SKILL: &str =
     include_str!("../../../builtin-skills/wiki-page-format/SKILL.md");
 pub const WIKI_QUERY_SKILL: &str = include_str!("../../../builtin-skills/wiki-query/SKILL.md");
+pub const WIKI_SYNTHESIS_FILING_SKILL: &str =
+    include_str!("../../../builtin-skills/wiki-synthesis-filing/SKILL.md");
 pub const WIKI_CHAT_SKILL: &str = include_str!("../../../builtin-skills/wiki-chat/SKILL.md");
 pub const WIKI_LINT_SKILL: &str = include_str!("../../../builtin-skills/wiki-lint/SKILL.md");
 pub const DAILY_SYNTHESIS_STAGING_SKILL: &str =
@@ -80,6 +82,7 @@ pub const BUILTIN_SKILLS: &[(&str, &str)] = &[
     ("wiki-ingest", WIKI_INGEST_SKILL),
     ("wiki-page-format", WIKI_PAGE_FORMAT_SKILL),
     ("wiki-query", WIKI_QUERY_SKILL),
+    ("wiki-synthesis-filing", WIKI_SYNTHESIS_FILING_SKILL),
     ("wiki-chat", WIKI_CHAT_SKILL),
     ("wiki-lint", WIKI_LINT_SKILL),
     ("daily-synthesis-staging", DAILY_SYNTHESIS_STAGING_SKILL),
@@ -380,5 +383,24 @@ mod tests {
         assert_eq!(backups.len(), 1);
         assert_eq!(std::fs::read(backups[0].path()).unwrap(), original);
         assert!(backups[0].file_name().to_string_lossy().contains("corrupt"));
+    }
+
+    #[test]
+    fn startup_upgrades_legacy_wiki_query_default_without_manifest() {
+        let root = TempRoot::new();
+        let legacy_content = include_str!("../../../tests/fixtures/skills/wiki-query-legacy.md");
+        let legacy_hash = builtin_skill_hash("wiki-query", legacy_content).unwrap();
+        assert!(is_known_legacy_builtin_hash("wiki-query", &legacy_hash));
+
+        let legacy_file = root.0.join("wiki-query/SKILL.md");
+        std::fs::create_dir_all(legacy_file.parent().unwrap()).unwrap();
+        std::fs::write(&legacy_file, legacy_content).unwrap();
+
+        ensure_builtin_skills(&root.0).unwrap();
+
+        assert_eq!(
+            std::fs::read_to_string(legacy_file).unwrap(),
+            WIKI_QUERY_SKILL
+        );
     }
 }

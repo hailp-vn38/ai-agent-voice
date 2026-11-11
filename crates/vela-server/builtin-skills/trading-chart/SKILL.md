@@ -1,6 +1,7 @@
 ---
 name: trading-chart
 description: "Draw interactive OHLCV candlestick charts with `chart_write` / `chart_get`. Load when a Wiki page or report needs to illustrate a candlestick pattern, market structure (BOS/CHoCH, Order Block, FVG, Liquidity Sweep), or a trade setup (Entry/SL/TP)."
+requires_tools: chart_write, chart_get
 ---
 
 # Trading Concept Chart Visualization Skill (`trading-chart`)
@@ -38,6 +39,6 @@ Choose **exactly one** candle source mode (or omit both when updating drawings o
 4. **Completion criterion**: `chart_write` succeeds and returns `taggedCandles` with resolved prices and the `markdownFence` snippet (` ```trading-chart\n{"src":"charts/<slug>.chart.json"}\n``` `).
 
 ### Step 3 — Embed `markdownFence` & Align Educational Walkthrough
-1. Insert the returned `markdownFence` verbatim into the Wiki page (`wiki_write_file` / `wiki_patch_file`) or Markdown report (`markdown_create`) directly under the concept explanation.
+1. When filing the chart, insert the returned `markdownFence` verbatim under the concept explanation using the destination tool available to you: `wiki_write_file` / `wiki_patch_file` for a Wiki page, or `markdown_create` for a Markdown report. If neither destination tool is available, return the fence to your parent to place.
 2. Write a structured walkthrough beneath the chart citing the exact labels and resolved price levels from `taggedCandles`.
 3. **Completion criterion**: The Markdown document is saved, and every price level, zone, and pattern name in the prose matches the visual chart annotations.

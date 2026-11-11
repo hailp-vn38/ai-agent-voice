@@ -631,7 +631,7 @@ skills_dir = "{}"
     let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
     let client = Client::new();
 
-    // 1. GET /background/settings includes 8 built-in skills and dynamic subagent available_skills
+    // 1. GET /background/settings includes built-in skills and dynamic subagent available_skills
     let initial: Value = client
         .get(format!("{base}/background/settings"))
         .bearer_auth("background-test-token")
@@ -644,8 +644,9 @@ skills_dir = "{}"
     let skills = initial["skills"]
         .as_array()
         .expect("skills array in settings");
-    assert_eq!(skills.len(), 11);
+    assert_eq!(skills.len(), 12);
     for expected_id in [
+        "batch-source-collection",
         "daily-synthesis-staging",
         "daily-task-reminder",
         "trading-chart",
@@ -655,6 +656,7 @@ skills_dir = "{}"
         "wiki-lint",
         "wiki-page-format",
         "wiki-query",
+        "wiki-synthesis-filing",
         "wiki-taxonomy",
     ] {
         let entry = skills
@@ -674,7 +676,7 @@ skills_dir = "{}"
         .find(|a| a["id"] == "wiki_researcher")
         .unwrap();
     let researcher_avail = researcher["available_skills"].as_array().unwrap();
-    assert_eq!(researcher_avail.len(), 11);
+    assert_eq!(researcher_avail.len(), 12);
     assert_eq!(researcher_avail[0], "wiki-query");
     assert_eq!(researcher_avail[1], "web-fetch-policy");
     assert_eq!(researcher_avail[2], "wiki-taxonomy");
@@ -698,6 +700,121 @@ skills_dir = "{}"
             );
         }
     }
+    for agent in agents.iter().filter(|agent| {
+        agent["mode"] == "subagent" && agent["is_builtin"].as_bool().unwrap_or(false)
+    }) {
+        assert_eq!(
+            agent["tool_requirement_gaps"],
+            json!([]),
+            "default Built-in Sub-Agent {} must have no Job Skill tool gaps",
+            agent["id"]
+        );
+    }
+    for skill in skills {
+        assert!(
+            !skill["requires_tools"].as_array().unwrap().is_empty(),
+            "Built-in Job Skill {} must declare requires_tools",
+            skill["id"]
+        );
+    }
+    let curator = agents.iter().find(|a| a["id"] == "wiki_curator").unwrap();
+    assert!(
+        curator["allowed_skills"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|skill| skill == "wiki-synthesis-filing")
+    );
+    let filing = skills
+        .iter()
+        .find(|skill| skill["id"] == "wiki-synthesis-filing")
+        .unwrap();
+    assert_eq!(filing["is_builtin"], true);
+    assert_eq!(
+        filing["requires_tools"],
+        json!(["wiki_file_synthesis", "wiki_patch_file"])
+    );
+    assert_eq!(filing["used_by_agents"], json!(["wiki_curator"]));
+    let daily_synthesis = skills
+        .iter()
+        .find(|skill| skill["id"] == "daily-synthesis-staging")
+        .unwrap();
+    for agent_id in ["media_creator", "media_processor"] {
+        assert!(
+            !daily_synthesis["suggested_for_agents"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|agent| agent == agent_id)
+        );
+    }
+    assert_eq!(
+        daily_synthesis["requires_tools"],
+        json!(["add_to_sources", "markdown_create", "markdown_read"])
+    );
+    let query_skill =
+        std::fs::read_to_string(temp_root.join("skills/wiki-query/SKILL.md")).unwrap();
+    assert!(!query_skill.contains("wiki_file_synthesis"));
+    assert!(!query_skill.contains("wiki_patch_file"));
+    assert!(query_skill.to_ascii_lowercase().contains("read-only"));
+    let query_summary = skills
+        .iter()
+        .find(|skill| skill["id"] == "wiki-query")
+        .unwrap();
+    assert_eq!(
+        query_summary["requires_tools"],
+        json!(["wiki_get", "wiki_query"])
+    );
+    assert!(
+        !query_summary["suggested_for_agents"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|agent| agent == "report_stager")
+    );
+    let filing_delete = client
+        .delete(format!("{base}/background/skills/wiki-synthesis-filing"))
+        .bearer_auth("background-test-token")
+        .header(
+            "If-Match",
+            format!("\"{}\"", filing["etag"].as_str().unwrap()),
+        )
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(filing_delete.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(
+        filing_delete.json::<Value>().await.unwrap()["error"]["code"],
+        "builtin_skill_cannot_be_deleted"
+    );
+    let filing_detail: Value = client
+        .get(format!("{base}/background/skills/wiki-synthesis-filing"))
+        .bearer_auth("background-test-token")
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let filing_update = client
+        .put(format!("{base}/background/skills/wiki-synthesis-filing"))
+        .bearer_auth("background-test-token")
+        .header(
+            "If-Match",
+            format!("\"{}\"", filing["etag"].as_str().unwrap()),
+        )
+        .json(&json!({
+            "name": filing_detail["name"],
+            "description": filing_detail["description"],
+            "body": filing_detail["body"],
+            "requires_tools": ["wiki_ingest_source"]
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(filing_update.status(), StatusCode::OK);
+    let filing_update: Value = filing_update.json().await.unwrap();
+    assert_eq!(filing_update["suggested_for_agents"], json!([]));
     let ingestor_prompt =
         std::fs::read_to_string(temp_root.join("prompts/wiki_ingestor.md")).unwrap();
     assert!(ingestor_prompt.contains("<required_job_skills>"));
@@ -708,7 +825,7 @@ skills_dir = "{}"
     let curator_prompt =
         std::fs::read_to_string(temp_root.join("prompts/wiki_curator.md")).unwrap();
     assert!(curator_prompt.contains("# Wiki Lint"));
-    assert!(curator_prompt.contains("# Universal Wiki Query & Synthesis Skill"));
+    assert!(curator_prompt.contains("# Read-Only Wiki Query Skill"));
     let researcher_prompt =
         std::fs::read_to_string(temp_root.join("prompts/wiki_researcher.md")).unwrap();
     assert!(!researcher_prompt.contains("<required_job_skills>"));
@@ -739,6 +856,7 @@ skills_dir = "{}"
         .as_str()
         .unwrap()
         .to_owned();
+    let default_requires_tools = detail["default"]["requires_tools"].clone();
     let default_body = detail["default"]["body"].as_str().unwrap().to_owned();
 
     // 3. Edit built-in skill wiki-ingest with If-Match
@@ -806,6 +924,7 @@ skills_dir = "{}"
         .json(&json!({
             "name": default_name,
             "description": default_desc,
+            "requires_tools": default_requires_tools,
             "body": default_body
         }))
         .send()

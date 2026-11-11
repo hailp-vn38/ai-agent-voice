@@ -1,11 +1,12 @@
 ---
 name: wiki-query
-description: "Retrieval and answer workflow for the LLM Wiki: index-first navigation, hybrid search, graph traversal, and filing valuable answers back as syntheses. Load when answering a question from the Wiki."
+description: "Read-only retrieval and answer workflow for the LLM Wiki: index-first navigation, hybrid search, graph traversal, and source-grounded answers. Load when answering a question from the Wiki."
+requires_tools: wiki_get, wiki_query
 ---
 
-# Universal Wiki Query & Synthesis Skill (`wiki-query`)
+# Read-Only Wiki Query Skill (`wiki-query`)
 
-Use this skill when answering questions, exploring connections, or synthesizing multi-source research across the knowledge base.
+Use this skill when answering questions or exploring connections across the knowledge base. This skill is read-only: do not write or patch Wiki pages. When asked to save a synthesis, use `wiki-synthesis-filing` only if it is assigned to you with its required tools; otherwise return the evidence to your parent to route to `wiki_curator`.
 
 ## 1. Retrieval Strategy (`WikiEngine` + QMD Tools)
 Choose the right tool for the question:
@@ -34,13 +35,3 @@ Choose the right tool for the question:
 - **Faithful Mode (Strict Raw-Source Grounding)**:
   - Search and read ONLY raw files under `sources/` (`collections: ["sources"]`).
   - Quote key passages verbatim and cite `[[sources/path/to/file.md|file.md]]` beside every factual claim. Do not rely on unverified claims or external assumptions.
-
-## 3. Compounding Explorations: File Valuable Answers Back (`wiki_file_synthesis`)
-When a query produces a deep comparison, architectural synthesis, multi-source table, or thesis:
-1. Call `wiki_file_synthesis` to save it permanently under `wiki/syntheses/<domain>/<topic>-synthesis.md` with:
-   - Executive thesis & core conclusions
-   - Markdown comparison table across sources/entities/methods (always preceded and followed by a blank line; inside table cells, escape the pipe in aliased WikiLinks as `[[path\|Label]]` so Obsidian and external Markdown apps do not split columns)
-   - Contradictions & caveats (`> [!WARNING] Contradiction / Caveat`)
-   - Mermaid diagram (`flowchart LR` or `flowchart TD` with double-quoted labels `A["..."]`)
-   - Rich `[[entities/...]]`, `[[concepts/...]]`, `[[wiki/sources/...]]`, and `[[sources/...]]` links
-2. Call `wiki_patch_file` on at least one related `wiki/sources/` or `wiki/entities/` page to link to `[[wiki/syntheses/<slug>|<Title>]]` so the synthesis page is connected in Obsidian's Graph View (not an orphan).

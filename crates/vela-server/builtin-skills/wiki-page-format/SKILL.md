@@ -1,6 +1,7 @@
 ---
 name: wiki-page-format
 description: "Page templates for this project's LLM Wiki: exact path, frontmatter, tags, body layout and [[WikiLink]] form for source summaries, entities, concepts and syntheses. Load before writing or patching any wiki/ page."
+requires_tools: wiki_get, wiki_tree, wiki_schema
 ---
 
 # Wiki Page Format
@@ -124,6 +125,8 @@ qmd:
 - `## Liên kết` lists every source summary and raw source the page draws on; one `Source` + `Raw source` pair per source.
 
 ### Source summary — `wiki_ingest_source`
+
+Use this source-summary workflow only with `wiki_ingestor`, which has `wiki_ingest_source`. For page types that use another write tool, follow the corresponding template and tool section instead.
 
 The tool writes the frontmatter (`category`, `source_file`, `source_count`, `sources`, `updated_at`, `qmd`) and the `> **Raw Sources:** … > **Summary:** …` header. You supply arguments only:
 

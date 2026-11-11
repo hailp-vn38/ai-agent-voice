@@ -1,6 +1,7 @@
 ---
 name: wiki-chat
 description: "Wiki Chat answers: search and read Wiki and Source pages within the tool budget, cite only what was found, and draw grounded Mermaid diagrams. The server adds this skill to every Wiki Chat turn."
+requires_tools: wiki_query, wiki_get
 ---
 
 # Wiki Chat Skill (`wiki-chat`)

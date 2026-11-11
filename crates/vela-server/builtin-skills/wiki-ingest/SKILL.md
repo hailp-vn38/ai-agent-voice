@@ -1,6 +1,7 @@
 ---
 name: wiki-ingest
 description: "Ingest workflow for the LLM Wiki: read a raw source in full, write its source summary page, integrate every detail into entity/concept pages, cross-link. Load when ingesting any file under sources/."
+requires_tools: wiki_ingest_source, wiki_write_file, wiki_patch_file
 ---
 
 # Wiki Ingest
