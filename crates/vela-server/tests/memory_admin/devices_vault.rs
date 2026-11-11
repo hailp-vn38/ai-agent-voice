@@ -29,7 +29,7 @@ async fn memory_is_kept_apart_per_device_and_follows_a_device_to_a_new_agent() {
     let moved = ok(server
         .client
         .patch(format!("{}/devices/kitchen", server.base))
-        .bearer_auth(TOKEN)
+        .bearer_auth(&server.token)
         .header("if-match", format!("\"{revision}\""))
         .json(&json!({"agent_key": "office"})))
     .await;

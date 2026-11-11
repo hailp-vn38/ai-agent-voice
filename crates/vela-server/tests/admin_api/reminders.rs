@@ -5,9 +5,10 @@ async fn reminders_create_replay_and_restart_are_saved_not_played() {
     let uri = database_url();
     let (base, task) = server_with_database(true, &uri).await;
     let client = Client::new();
+    let web_token = admin_web_token(&client, &base).await;
     client
         .post(format!("{base}/api/admin/agents"))
-        .bearer_auth("admin-test-token")
+        .bearer_auth(&web_token)
         .json(&serde_json::json!({"key":"reminder_agent","name":"Reminders"}))
         .send()
         .await
@@ -16,7 +17,7 @@ async fn reminders_create_replay_and_restart_are_saved_not_played() {
         .unwrap();
     client
         .post(format!("{base}/api/admin/devices"))
-        .bearer_auth("admin-test-token")
+        .bearer_auth(&web_token)
         .json(&serde_json::json!({"device_id":"clock-device","agent_key":"reminder_agent"}))
         .send()
         .await
@@ -31,7 +32,7 @@ async fn reminders_create_replay_and_restart_are_saved_not_played() {
     let payload = serde_json::json!({"message":"Kiểm tra máy giặt", "delay_seconds":600});
     let created = client
         .post(&url)
-        .bearer_auth("admin-test-token")
+        .bearer_auth(&web_token)
         .header("Idempotency-Key", "create-one")
         .json(&payload)
         .send()
@@ -45,7 +46,7 @@ async fn reminders_create_replay_and_restart_are_saved_not_played() {
     assert_eq!(saved["schedule_revision"], 1);
     let replay: serde_json::Value = client
         .post(&url)
-        .bearer_auth("admin-test-token")
+        .bearer_auth(&web_token)
         .header("Idempotency-Key", "create-one")
         .json(&payload)
         .send()
@@ -62,7 +63,7 @@ async fn reminders_create_replay_and_restart_are_saved_not_played() {
     let url = format!("{base}/api/admin/devices/clock-device/reminders");
     let replay: serde_json::Value = client
         .post(&url)
-        .bearer_auth("admin-test-token")
+        .bearer_auth(&web_token)
         .header("Idempotency-Key", "create-one")
         .json(&payload)
         .send()
@@ -76,7 +77,7 @@ async fn reminders_create_replay_and_restart_are_saved_not_played() {
     assert_eq!(replay, saved);
     let list: serde_json::Value = client
         .get(&url)
-        .bearer_auth("admin-test-token")
+        .bearer_auth(&web_token)
         .send()
         .await
         .unwrap()
@@ -90,7 +91,7 @@ async fn reminders_create_replay_and_restart_are_saved_not_played() {
     assert_eq!(list["schedule_summary"]["last_acked_revision"], 0);
     let conflict = client
         .post(&url)
-        .bearer_auth("admin-test-token")
+        .bearer_auth(&web_token)
         .header("Idempotency-Key", "create-one")
         .json(&serde_json::json!({"message":"changed", "delay_seconds":600}))
         .send()
@@ -106,9 +107,10 @@ async fn reminder_server_clock_validation_quota_and_agent_permission() {
     let uri = database_url();
     let (base, task) = server_with_database(true, &uri).await;
     let client = Client::new();
+    let web_token = admin_web_token(&client, &base).await;
     client
         .post(format!("{base}/api/admin/agents"))
-        .bearer_auth("admin-test-token")
+        .bearer_auth(&web_token)
         .json(&serde_json::json!({"key":"timing_agent","name":"Timing"}))
         .send()
         .await
@@ -117,7 +119,7 @@ async fn reminder_server_clock_validation_quota_and_agent_permission() {
         .unwrap();
     client
         .post(format!("{base}/api/admin/devices"))
-        .bearer_auth("admin-test-token")
+        .bearer_auth(&web_token)
         .json(&serde_json::json!({"device_id":"timing-device","agent_key":"timing_agent"}))
         .send()
         .await
@@ -127,7 +129,7 @@ async fn reminder_server_clock_validation_quota_and_agent_permission() {
     let policy_url = format!("{base}/api/admin/agents/timing_agent/reminder-policy");
     let policy: serde_json::Value = client
         .get(&policy_url)
-        .bearer_auth("admin-test-token")
+        .bearer_auth(&web_token)
         .send()
         .await
         .unwrap()
@@ -140,7 +142,7 @@ async fn reminder_server_clock_validation_quota_and_agent_permission() {
     assert_eq!(
         client
             .patch(&policy_url)
-            .bearer_auth("admin-test-token")
+            .bearer_auth(&web_token)
             .header("if-match", "\"1\"")
             .json(&serde_json::json!({"reminders_enabled":true}))
             .send()
@@ -152,7 +154,7 @@ async fn reminder_server_clock_validation_quota_and_agent_permission() {
     assert_eq!(
         client
             .patch(&policy_url)
-            .bearer_auth("admin-test-token")
+            .bearer_auth(&web_token)
             .header("if-match", "\"1\"")
             .json(&serde_json::json!({"reminders_enabled":false}))
             .send()
@@ -217,7 +219,7 @@ async fn reminder_server_clock_validation_quota_and_agent_permission() {
         assert_eq!(
             client
                 .post(&url)
-                .bearer_auth("admin-test-token")
+                .bearer_auth(&web_token)
                 .header("idempotency-key", uuid::Uuid::new_v4().to_string())
                 .json(&body)
                 .send()
@@ -264,7 +266,7 @@ async fn reminder_server_clock_validation_quota_and_agent_permission() {
     );
     let list: serde_json::Value = client
         .get(format!("{url}?page=10&page_size=50"))
-        .bearer_auth("admin-test-token")
+        .bearer_auth(&web_token)
         .send()
         .await
         .unwrap()
@@ -284,7 +286,8 @@ async fn reminder_server_clock_validation_quota_and_agent_permission() {
 async fn admin_device_memory_mode_is_set_validated_and_returned() {
     let (base, task) = server(true).await;
     let client = Client::new();
-    let token = "admin-test-token";
+    let web_token = admin_web_token(&client, &base).await;
+    let token = &web_token;
     let devices = format!("{base}/api/admin/devices");
     client
         .post(format!("{base}/api/admin/agents"))
@@ -444,10 +447,11 @@ async fn admin_device_memory_mode_is_set_validated_and_returned() {
 async fn reminder_concurrent_retry_and_reassignment_preserve_device_ownership() {
     let (base, task) = server(true).await;
     let client = Client::new();
+    let web_token = admin_web_token(&client, &base).await;
     for key in ["original_agent", "next_agent"] {
         client
             .post(format!("{base}/api/admin/agents"))
-            .bearer_auth("admin-test-token")
+            .bearer_auth(&web_token)
             .json(&serde_json::json!({"key":key,"name":key}))
             .send()
             .await
@@ -457,7 +461,7 @@ async fn reminder_concurrent_retry_and_reassignment_preserve_device_ownership() 
     }
     client
         .post(format!("{base}/api/admin/devices"))
-        .bearer_auth("admin-test-token")
+        .bearer_auth(&web_token)
         .json(&serde_json::json!({"device_id":"owned-device","agent_key":"original_agent"}))
         .send()
         .await
@@ -466,7 +470,7 @@ async fn reminder_concurrent_retry_and_reassignment_preserve_device_ownership() 
         .unwrap();
     let virtual_device: serde_json::Value = client
         .put(format!("{base}/api/admin/system/assistant-device"))
-        .bearer_auth("admin-test-token")
+        .bearer_auth(&web_token)
         .json(&serde_json::json!({"agent_key":"original_agent","enabled":true}))
         .send()
         .await
@@ -482,7 +486,7 @@ async fn reminder_concurrent_retry_and_reassignment_preserve_device_ownership() 
                 "{base}/api/admin/devices/{}/reminders",
                 virtual_device["device_id"].as_str().unwrap()
             ))
-            .bearer_auth("admin-test-token")
+            .bearer_auth(&web_token)
             .header("idempotency-key", "virtual")
             .json(&serde_json::json!({"message":"no wake","delay_seconds":600}))
             .send()
@@ -496,13 +500,13 @@ async fn reminder_concurrent_retry_and_reassignment_preserve_device_ownership() 
     let (left, right) = tokio::join!(
         client
             .post(&url)
-            .bearer_auth("admin-test-token")
+            .bearer_auth(&web_token)
             .header("idempotency-key", "same-concurrent")
             .json(&payload)
             .send(),
         client
             .post(&url)
-            .bearer_auth("admin-test-token")
+            .bearer_auth(&web_token)
             .header("idempotency-key", "same-concurrent")
             .json(&payload)
             .send()
@@ -524,7 +528,7 @@ async fn reminder_concurrent_retry_and_reassignment_preserve_device_ownership() 
     assert_eq!(left, right);
     client
         .patch(format!("{base}/api/admin/devices/owned-device"))
-        .bearer_auth("admin-test-token")
+        .bearer_auth(&web_token)
         .header("if-match", "\"1\"")
         .json(&serde_json::json!({"agent_key":"next_agent"}))
         .send()
@@ -534,7 +538,7 @@ async fn reminder_concurrent_retry_and_reassignment_preserve_device_ownership() 
         .unwrap();
     let list: serde_json::Value = client
         .get(&url)
-        .bearer_auth("admin-test-token")
+        .bearer_auth(&web_token)
         .send()
         .await
         .unwrap()
@@ -549,7 +553,7 @@ async fn reminder_concurrent_retry_and_reassignment_preserve_device_ownership() 
     assert_eq!(
         client
             .get(format!("{url}?page_size=201"))
-            .bearer_auth("admin-test-token")
+            .bearer_auth(&web_token)
             .send()
             .await
             .unwrap()
@@ -559,7 +563,7 @@ async fn reminder_concurrent_retry_and_reassignment_preserve_device_ownership() 
     assert_eq!(
         client
             .post(format!("{base}/api/admin/devices/not-a-device/reminders"))
-            .bearer_auth("admin-test-token")
+            .bearer_auth(&web_token)
             .header("idempotency-key", "missing")
             .json(&payload)
             .send()
@@ -576,9 +580,10 @@ async fn reminder_edit_and_cancel_are_scoped_revisioned_and_replayed_after_resta
     let uri = database_url();
     let (base, task) = server_with_database(true, &uri).await;
     let client = Client::new();
+    let web_token = admin_web_token(&client, &base).await;
     client
         .post(format!("{base}/api/admin/agents"))
-        .bearer_auth("admin-test-token")
+        .bearer_auth(&web_token)
         .json(&serde_json::json!({"key":"edit_agent","name":"Edit"}))
         .send()
         .await
@@ -588,7 +593,7 @@ async fn reminder_edit_and_cancel_are_scoped_revisioned_and_replayed_after_resta
     for device in ["edit-device", "other-device"] {
         client
             .post(format!("{base}/api/admin/devices"))
-            .bearer_auth("admin-test-token")
+            .bearer_auth(&web_token)
             .json(&serde_json::json!({"device_id":device,"agent_key":"edit_agent"}))
             .send()
             .await
@@ -599,7 +604,7 @@ async fn reminder_edit_and_cancel_are_scoped_revisioned_and_replayed_after_resta
     let list_url = format!("{base}/api/admin/devices/edit-device/reminders");
     let saved: serde_json::Value = client
         .post(&list_url)
-        .bearer_auth("admin-test-token")
+        .bearer_auth(&web_token)
         .header("idempotency-key", "new-edit")
         .json(&serde_json::json!({"message":"Before","delay_seconds":600}))
         .send()
@@ -625,7 +630,7 @@ async fn reminder_edit_and_cancel_are_scoped_revisioned_and_replayed_after_resta
     let update = serde_json::json!({"message":"After","scheduled_at":"2030-01-02T07:00:00+07:00"});
     let changed: serde_json::Value = client
         .patch(&url)
-        .bearer_auth("admin-test-token")
+        .bearer_auth(&web_token)
         .header("if-match", "\"1\"")
         .header("idempotency-key", "edit-once")
         .json(&update)
@@ -643,7 +648,7 @@ async fn reminder_edit_and_cancel_are_scoped_revisioned_and_replayed_after_resta
     assert_eq!(
         client
             .patch(&url)
-            .bearer_auth("admin-test-token")
+            .bearer_auth(&web_token)
             .header("if-match", "\"1\"")
             .header("idempotency-key", "stale-writer")
             .json(&update)
@@ -658,7 +663,7 @@ async fn reminder_edit_and_cancel_are_scoped_revisioned_and_replayed_after_resta
             .patch(format!(
                 "{base}/api/admin/devices/other-device/reminders/{reminder}"
             ))
-            .bearer_auth("admin-test-token")
+            .bearer_auth(&web_token)
             .header("if-match", "\"2\"")
             .header("idempotency-key", "wrong-owner")
             .json(&update)
@@ -670,7 +675,7 @@ async fn reminder_edit_and_cancel_are_scoped_revisioned_and_replayed_after_resta
     );
     let cancelled: serde_json::Value = client
         .post(format!("{url}/cancel"))
-        .bearer_auth("admin-test-token")
+        .bearer_auth(&web_token)
         .header("if-match", "\"2\"")
         .header("idempotency-key", "cancel-once")
         .json(&serde_json::json!({}))
@@ -690,7 +695,7 @@ async fn reminder_edit_and_cancel_are_scoped_revisioned_and_replayed_after_resta
     let url = format!("{base}/api/admin/devices/edit-device/reminders/{reminder}");
     let replay: serde_json::Value = client
         .post(format!("{url}/cancel"))
-        .bearer_auth("admin-test-token")
+        .bearer_auth(&web_token)
         .header("if-match", "\"2\"")
         .header("idempotency-key", "cancel-once")
         .json(&serde_json::json!({}))
@@ -705,7 +710,7 @@ async fn reminder_edit_and_cancel_are_scoped_revisioned_and_replayed_after_resta
     assert_eq!(replay, cancelled);
     let edit_replay: serde_json::Value = client
         .patch(&url)
-        .bearer_auth("admin-test-token")
+        .bearer_auth(&web_token)
         .header("if-match", "\"1\"")
         .header("idempotency-key", "edit-once")
         .json(&update)
@@ -721,7 +726,7 @@ async fn reminder_edit_and_cancel_are_scoped_revisioned_and_replayed_after_resta
     assert_eq!(
         client
             .patch(&url)
-            .bearer_auth("admin-test-token")
+            .bearer_auth(&web_token)
             .header("if-match", "\"3\"")
             .header("idempotency-key", "terminal-edit")
             .json(&update)
@@ -735,7 +740,7 @@ async fn reminder_edit_and_cancel_are_scoped_revisioned_and_replayed_after_resta
         .get(format!(
             "{base}/api/admin/devices/edit-device/reminders?status=cancelled"
         ))
-        .bearer_auth("admin-test-token")
+        .bearer_auth(&web_token)
         .send()
         .await
         .unwrap()
@@ -753,10 +758,11 @@ async fn reminder_edit_and_cancel_are_scoped_revisioned_and_replayed_after_resta
 async fn reminder_concurrent_edits_conflict_without_lost_update_and_delete_cascades() {
     let (base, task) = server(true).await;
     let client = Client::new();
+    let web_token = admin_web_token(&client, &base).await;
     for agent in ["owner_before", "owner_after"] {
         client
             .post(format!("{base}/api/admin/agents"))
-            .bearer_auth("admin-test-token")
+            .bearer_auth(&web_token)
             .json(&serde_json::json!({"key":agent,"name":agent}))
             .send()
             .await
@@ -766,7 +772,7 @@ async fn reminder_concurrent_edits_conflict_without_lost_update_and_delete_casca
     }
     client
         .post(format!("{base}/api/admin/devices"))
-        .bearer_auth("admin-test-token")
+        .bearer_auth(&web_token)
         .json(&serde_json::json!({"device_id":"race-edit","agent_key":"owner_before"}))
         .send()
         .await
@@ -776,7 +782,7 @@ async fn reminder_concurrent_edits_conflict_without_lost_update_and_delete_casca
     let list_url = format!("{base}/api/admin/devices/race-edit/reminders");
     let saved: serde_json::Value = client
         .post(&list_url)
-        .bearer_auth("admin-test-token")
+        .bearer_auth(&web_token)
         .header("idempotency-key", "race-new")
         .json(&serde_json::json!({"message":"Before","delay_seconds":600}))
         .send()
@@ -792,14 +798,14 @@ async fn reminder_concurrent_edits_conflict_without_lost_update_and_delete_casca
     let (left, right) = tokio::join!(
         client
             .patch(&url)
-            .bearer_auth("admin-test-token")
+            .bearer_auth(&web_token)
             .header("if-match", "\"1\"")
             .header("idempotency-key", "writer-a")
             .json(&serde_json::json!({"message":"A"}))
             .send(),
         client
             .patch(&url)
-            .bearer_auth("admin-test-token")
+            .bearer_auth(&web_token)
             .header("if-match", "\"1\"")
             .header("idempotency-key", "writer-b")
             .json(&serde_json::json!({"message":"B"}))
@@ -819,7 +825,7 @@ async fn reminder_concurrent_edits_conflict_without_lost_update_and_delete_casca
     assert_eq!(
         client
             .patch(&url)
-            .bearer_auth("admin-test-token")
+            .bearer_auth(&web_token)
             .header("if-match", "\"1\"")
             .header("idempotency-key", key)
             .json(&serde_json::json!({"message":"changed payload"}))
@@ -832,7 +838,7 @@ async fn reminder_concurrent_edits_conflict_without_lost_update_and_delete_casca
     assert_eq!(
         client
             .patch(&url)
-            .bearer_auth("admin-test-token")
+            .bearer_auth(&web_token)
             .header("if-match", "\"2\"")
             .header("idempotency-key", "bad-time")
             .json(&serde_json::json!({"delay_seconds":600,"scheduled_at":"2030-01-02T00:00:00Z"}))
@@ -844,7 +850,7 @@ async fn reminder_concurrent_edits_conflict_without_lost_update_and_delete_casca
     );
     client
         .patch(format!("{base}/api/admin/devices/race-edit"))
-        .bearer_auth("admin-test-token")
+        .bearer_auth(&web_token)
         .header("if-match", "\"1\"")
         .json(&serde_json::json!({"agent_key":"owner_after"}))
         .send()
@@ -854,7 +860,7 @@ async fn reminder_concurrent_edits_conflict_without_lost_update_and_delete_casca
         .unwrap();
     let list: serde_json::Value = client
         .get(&list_url)
-        .bearer_auth("admin-test-token")
+        .bearer_auth(&web_token)
         .send()
         .await
         .unwrap()
@@ -867,7 +873,7 @@ async fn reminder_concurrent_edits_conflict_without_lost_update_and_delete_casca
     assert_eq!(list["schedule_summary"]["schedule_revision"], 2);
     client
         .delete(format!("{base}/api/admin/devices/race-edit"))
-        .bearer_auth("admin-test-token")
+        .bearer_auth(&web_token)
         .header("if-match", "\"2\"")
         .send()
         .await
@@ -876,7 +882,7 @@ async fn reminder_concurrent_edits_conflict_without_lost_update_and_delete_casca
         .unwrap();
     client
         .post(format!("{base}/api/admin/devices"))
-        .bearer_auth("admin-test-token")
+        .bearer_auth(&web_token)
         .json(&serde_json::json!({"device_id":"race-edit","agent_key":"owner_after"}))
         .send()
         .await
@@ -885,7 +891,7 @@ async fn reminder_concurrent_edits_conflict_without_lost_update_and_delete_casca
         .unwrap();
     let list: serde_json::Value = client
         .get(&list_url)
-        .bearer_auth("admin-test-token")
+        .bearer_auth(&web_token)
         .send()
         .await
         .unwrap()
@@ -899,7 +905,7 @@ async fn reminder_concurrent_edits_conflict_without_lost_update_and_delete_casca
     assert_eq!(
         client
             .post(format!("{url}/cancel"))
-            .bearer_auth("admin-test-token")
+            .bearer_auth(&web_token)
             .header("if-match", "\"2\"")
             .header("idempotency-key", "deleted-reminder")
             .json(&serde_json::json!({}))
@@ -916,10 +922,11 @@ async fn reminder_concurrent_edits_conflict_without_lost_update_and_delete_casca
 async fn agent_reminders_join_current_assignment_and_scope_mutations() {
     let (base, task) = server(true).await;
     let client = Client::new();
+    let web_token = admin_web_token(&client, &base).await;
     for key in ["aggregate_a", "aggregate_b"] {
         client
             .post(format!("{base}/api/admin/agents"))
-            .bearer_auth("admin-test-token")
+            .bearer_auth(&web_token)
             .json(&serde_json::json!({"key":key,"name":key}))
             .send()
             .await
@@ -934,7 +941,7 @@ async fn agent_reminders_join_current_assignment_and_scope_mutations() {
     ] {
         client
             .post(format!("{base}/api/admin/devices"))
-            .bearer_auth("admin-test-token")
+            .bearer_auth(&web_token)
             .json(&serde_json::json!({"device_id":device,"agent_key":key}))
             .send()
             .await
@@ -944,7 +951,7 @@ async fn agent_reminders_join_current_assignment_and_scope_mutations() {
     }
     client
         .put(format!("{base}/api/admin/system/assistant-device"))
-        .bearer_auth("admin-test-token")
+        .bearer_auth(&web_token)
         .json(&serde_json::json!({"agent_key":"aggregate_a","enabled":true}))
         .send()
         .await
@@ -960,7 +967,7 @@ async fn agent_reminders_join_current_assignment_and_scope_mutations() {
     for (i, device) in ["agg-one", "agg-two", "agg-other"].into_iter().enumerate() {
         let v: serde_json::Value = client
             .post(format!("{base}/api/admin/devices/{device}/reminders"))
-            .bearer_auth("admin-test-token")
+            .bearer_auth(&web_token)
             .header("idempotency-key", format!("agg-{i}"))
             .json(&serde_json::json!({"message":device,"scheduled_at":"2030-01-02T00:00:00Z"}))
             .send()
@@ -975,7 +982,7 @@ async fn agent_reminders_join_current_assignment_and_scope_mutations() {
     }
     let page: serde_json::Value = client
         .get(format!("{url}?page_size=1"))
-        .bearer_auth("admin-test-token")
+        .bearer_auth(&web_token)
         .send()
         .await
         .unwrap()
@@ -993,7 +1000,7 @@ async fn agent_reminders_join_current_assignment_and_scope_mutations() {
         .get(format!(
             "{url}?device_id=agg-two&due_from_ms=1893542400000&due_to_ms=1893542400000"
         ))
-        .bearer_auth("admin-test-token")
+        .bearer_auth(&web_token)
         .send()
         .await
         .unwrap()
@@ -1006,7 +1013,7 @@ async fn agent_reminders_join_current_assignment_and_scope_mutations() {
     assert_eq!(filtered["total"], 1);
     let second: serde_json::Value = client
         .get(format!("{url}?page=2&page_size=1"))
-        .bearer_auth("admin-test-token")
+        .bearer_auth(&web_token)
         .send()
         .await
         .unwrap()
@@ -1022,7 +1029,7 @@ async fn agent_reminders_join_current_assignment_and_scope_mutations() {
             "{base}/api/admin/agents/aggregate_a/devices/agg-two/reminders/{}/cancel",
             ids[1]
         ))
-        .bearer_auth("admin-test-token")
+        .bearer_auth(&web_token)
         .header("if-match", "\"1\"")
         .header("idempotency-key", "agg-cancel")
         .json(&serde_json::json!({}))
@@ -1033,7 +1040,7 @@ async fn agent_reminders_join_current_assignment_and_scope_mutations() {
         .unwrap();
     let cancelled: serde_json::Value = client
         .get(format!("{url}?status=cancelled"))
-        .bearer_auth("admin-test-token")
+        .bearer_auth(&web_token)
         .send()
         .await
         .unwrap()
@@ -1048,7 +1055,7 @@ async fn agent_reminders_join_current_assignment_and_scope_mutations() {
     assert_eq!(
         client
             .get(format!("{url}?due_from_ms=2&due_to_ms=1"))
-            .bearer_auth("admin-test-token")
+            .bearer_auth(&web_token)
             .send()
             .await
             .unwrap()
@@ -1061,7 +1068,7 @@ async fn agent_reminders_join_current_assignment_and_scope_mutations() {
     );
     client
         .patch(format!("{base}/api/admin/devices/agg-one"))
-        .bearer_auth("admin-test-token")
+        .bearer_auth(&web_token)
         .header("if-match", "\"1\"")
         .json(&serde_json::json!({"agent_key":"aggregate_b"}))
         .send()
@@ -1072,7 +1079,7 @@ async fn agent_reminders_join_current_assignment_and_scope_mutations() {
     assert_eq!(
         client
             .patch(&scoped)
-            .bearer_auth("admin-test-token")
+            .bearer_auth(&web_token)
             .header("if-match", "\"1\"")
             .header("idempotency-key", "stale-agent-edit")
             .json(&serde_json::json!({"message":"wrong"}))
@@ -1087,7 +1094,7 @@ async fn agent_reminders_join_current_assignment_and_scope_mutations() {
             .post(format!(
                 "{base}/api/admin/agents/aggregate_a/devices/agg-other/reminders"
             ))
-            .bearer_auth("admin-test-token")
+            .bearer_auth(&web_token)
             .header("idempotency-key", "wrong-agent-create")
             .json(&serde_json::json!({"message":"wrong","delay_seconds":600}))
             .send()
@@ -1098,7 +1105,7 @@ async fn agent_reminders_join_current_assignment_and_scope_mutations() {
     );
     let moved: serde_json::Value = client
         .get(format!("{base}/api/admin/agents/aggregate_b/reminders"))
-        .bearer_auth("admin-test-token")
+        .bearer_auth(&web_token)
         .send()
         .await
         .unwrap()
@@ -1112,7 +1119,7 @@ async fn agent_reminders_join_current_assignment_and_scope_mutations() {
     assert_eq!(
         client
             .get(format!("{url}?device_id=agg-one"))
-            .bearer_auth("admin-test-token")
+            .bearer_auth(&web_token)
             .send()
             .await
             .unwrap()
@@ -1124,7 +1131,7 @@ async fn agent_reminders_join_current_assignment_and_scope_mutations() {
             .put(format!(
                 "{base}/api/admin/system/assistant-device/reminder-target"
             ))
-            .bearer_auth("admin-test-token")
+            .bearer_auth(&web_token)
             .json(&serde_json::json!({"session_id":"non-existent-session","device_id":"agg-two"}))
             .send()
             .await

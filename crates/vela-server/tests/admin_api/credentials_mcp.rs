@@ -4,10 +4,11 @@ use super::harness::*;
 async fn external_mcp_http_can_be_created_and_updated_without_network_configuration() {
     let (base, task) = server(true).await;
     let client = Client::new();
+    let web_token = admin_web_token(&client, &base).await;
     let servers = format!("{base}/api/admin/mcp-servers");
     let created = client
         .post(&servers)
-        .bearer_auth("admin-test-token")
+        .bearer_auth(&web_token)
         .json(&serde_json::json!({
             "key": "http_mcp", "name": "HTTP MCP",
             "url": "http://192.168.1.157:8080/mcp", "auth": {"type": "none"}
@@ -18,7 +19,7 @@ async fn external_mcp_http_can_be_created_and_updated_without_network_configurat
     assert_eq!(created.status(), StatusCode::CREATED);
     let updated = client
         .patch(format!("{servers}/http_mcp"))
-        .bearer_auth("admin-test-token")
+        .bearer_auth(&web_token)
         .header("if-match", "\"1\"")
         .json(&serde_json::json!({"url": "http://127.0.0.1:8080/mcp"}))
         .send()
@@ -36,7 +37,8 @@ async fn external_mcp_http_can_be_created_and_updated_without_network_configurat
 async fn external_mcp_configuration_is_redacted_validated_and_revisioned() {
     let (base, task) = server(true).await;
     let client = Client::new();
-    let auth = "admin-test-token";
+    let web_token = admin_web_token(&client, &base).await;
+    let auth = &web_token;
     assert_eq!(
         client
             .post(format!("{base}/api/admin/agents"))
@@ -228,8 +230,9 @@ async fn external_mcp_configuration_is_redacted_validated_and_revisioned() {
 async fn provider_credentials_require_encryption_and_never_create_a_partial_resource() {
     let (base, task) = server(true).await;
     let client = Client::new();
+    let web_token = admin_web_token(&client, &base).await;
     let response = client.post(format!("{base}/api/admin/providers"))
-        .bearer_auth("admin-test-token")
+        .bearer_auth(&web_token)
         .json(&serde_json::json!({"name":"Encrypted OpenAI","type":"llm","adapter":"openai","config_json":{"base_url":"https://example.test/v1","model":"test-model","max_tokens":8},"api_key":"sk-test-never-plaintext-7A91"}))
         .send().await.unwrap();
     assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
@@ -237,7 +240,7 @@ async fn provider_credentials_require_encryption_and_never_create_a_partial_reso
     assert!(!body.contains("sk-test-never-plaintext-7A91"));
     let page: serde_json::Value = client
         .get(format!("{base}/api/admin/providers"))
-        .bearer_auth("admin-test-token")
+        .bearer_auth(&web_token)
         .send()
         .await
         .unwrap()
@@ -264,8 +267,9 @@ async fn provider_credentials_are_write_only_masked_and_persist_after_restart() 
     )
     .await;
     let client = Client::new();
+    let web_token = admin_web_token(&client, &base).await;
     let response = client.post(format!("{base}/api/admin/providers"))
-        .bearer_auth("admin-test-token")
+        .bearer_auth(&web_token)
         .json(&serde_json::json!({"name":"Encrypted OpenAI","type":"llm","adapter":"openai","config_json":{"base_url":"https://example.test/v1","model":"test-model","max_tokens":8},"api_key":"sk-test-never-plaintext-7A91"}))
         .send().await.unwrap();
     assert_eq!(response.status(), StatusCode::CREATED);
@@ -287,7 +291,7 @@ async fn provider_credentials_are_write_only_masked_and_persist_after_restart() 
         assert_eq!(
             client
                 .post(format!("{base}/api/admin/{path}"))
-                .bearer_auth("admin-test-token")
+                .bearer_auth(&web_token)
                 .json(&payload)
                 .send()
                 .await
@@ -301,7 +305,7 @@ async fn provider_credentials_are_write_only_masked_and_persist_after_restart() 
             .put(format!(
                 "{base}/api/admin/templates/cipher_template/providers/llm"
             ))
-            .bearer_auth("admin-test-token")
+            .bearer_auth(&web_token)
             .header("if-match", "\"1\"")
             .json(&serde_json::json!({"provider_key":key}))
             .send()
@@ -315,7 +319,7 @@ async fn provider_credentials_are_write_only_masked_and_persist_after_restart() 
             .put(format!(
                 "{base}/api/admin/agents/cipher_agent/default-template/cipher_template"
             ))
-            .bearer_auth("admin-test-token")
+            .bearer_auth(&web_token)
             .header("if-match", "\"1\"")
             .send()
             .await
@@ -332,7 +336,7 @@ async fn provider_credentials_are_write_only_masked_and_persist_after_restart() 
     .await;
     let body = client
         .get(format!("{base}/api/admin/providers/{key}"))
-        .bearer_auth("admin-test-token")
+        .bearer_auth(&web_token)
         .send()
         .await
         .unwrap()
@@ -356,6 +360,7 @@ async fn provider_credentials_replace_only_when_supplied() {
     )
     .await;
     let client = Client::new();
+    let web_token = admin_web_token(&client, &base).await;
     let key = create_provider(&client, &format!("{base}/api/admin/providers"), serde_json::json!({"name":"LLM","type":"llm","adapter":"openai","config_json":{"base_url":"https://example.test/v1","model":"test","max_tokens":8},"api_key":"sk-first-secret-1111"})).await;
     let url = format!("{base}/api/admin/providers/{key}");
     for (revision, patch, hint) in [
@@ -368,7 +373,7 @@ async fn provider_credentials_replace_only_when_supplied() {
     ] {
         let response = client
             .patch(&url)
-            .bearer_auth("admin-test-token")
+            .bearer_auth(&web_token)
             .header("if-match", format!("\"{revision}\""))
             .json(&patch)
             .send()
@@ -387,7 +392,7 @@ async fn provider_credentials_replace_only_when_supplied() {
         assert_eq!(
             client
                 .patch(&url)
-                .bearer_auth("admin-test-token")
+                .bearer_auth(&web_token)
                 .header("if-match", "\"3\"")
                 .json(&serde_json::json!({"api_key":value}))
                 .send()
@@ -399,7 +404,7 @@ async fn provider_credentials_replace_only_when_supplied() {
     }
     let value: serde_json::Value = client
         .get(&url)
-        .bearer_auth("admin-test-token")
+        .bearer_auth(&web_token)
         .send()
         .await
         .unwrap()
@@ -425,10 +430,11 @@ async fn mcp_credentials_require_encryption_and_never_create_a_partial_resource(
     let (base, task) =
         server_with_resolver(true, &database_url(), Arc::new(UnavailableSecrets)).await;
     let client = Client::new();
+    let web_token = admin_web_token(&client, &base).await;
     let servers = format!("{base}/api/admin/mcp-servers");
     let response = client
         .post(&servers)
-        .bearer_auth("admin-test-token")
+        .bearer_auth(&web_token)
         .json(&serde_json::json!({
             "key":"gateway", "name":"Gateway", "url":"http://192.168.1.157:8080/mcp",
             "auth":{"type":"bearer"}, "api_key":"mcp-test-never-plaintext-7A91"
@@ -445,7 +451,7 @@ async fn mcp_credentials_require_encryption_and_never_create_a_partial_resource(
     );
     let page: serde_json::Value = client
         .get(&servers)
-        .bearer_auth("admin-test-token")
+        .bearer_auth(&web_token)
         .send()
         .await
         .unwrap()
@@ -465,7 +471,8 @@ async fn mcp_credentials_are_write_only_replaceable_and_persist_after_restart() 
     };
     let (base, task) = server_with_resolver(true, &uri, cipher()).await;
     let client = Client::new();
-    let response = client.post(format!("{base}/api/admin/mcp-servers")).bearer_auth("admin-test-token")
+    let web_token = admin_web_token(&client, &base).await;
+    let response = client.post(format!("{base}/api/admin/mcp-servers")).bearer_auth(&web_token)
         .json(&serde_json::json!({"key":"weather","name":"Weather","url":"https://mcp.example.test/mcp","auth":{"type":"bearer"},"api_key":"mcp-test-secret-7A91"})).send().await.unwrap();
     assert_eq!(response.status(), StatusCode::CREATED);
     let body = response.text().await.unwrap();
@@ -479,7 +486,7 @@ async fn mcp_credentials_are_write_only_replaceable_and_persist_after_restart() 
     let url = format!("{base}/api/admin/mcp-servers/weather");
     let value: serde_json::Value = client
         .get(&url)
-        .bearer_auth("admin-test-token")
+        .bearer_auth(&web_token)
         .send()
         .await
         .unwrap()
@@ -506,7 +513,7 @@ async fn mcp_credentials_are_write_only_replaceable_and_persist_after_restart() 
     ] {
         let response = client
             .patch(&url)
-            .bearer_auth("admin-test-token")
+            .bearer_auth(&web_token)
             .header("if-match", format!("\"{revision}\""))
             .json(&patch)
             .send()
@@ -523,7 +530,7 @@ async fn mcp_credentials_are_write_only_replaceable_and_persist_after_restart() 
     assert_eq!(
         client
             .patch(&url)
-            .bearer_auth("admin-test-token")
+            .bearer_auth(&web_token)
             .header("if-match", "\"4\"")
             .json(&serde_json::json!({"api_key":"mcp-rejected-secret-3333"}))
             .send()
