@@ -15,27 +15,8 @@ import {
 } from '@/api/wiki-chat'
 import { isApiError } from '@/api/errors'
 
-/** A vault file the user attached to the conversation; `path` is a `wiki/` or `sources/` path. */
-export interface WikiChatFile {
-  path: string
-  title: string
-}
-
-export interface WikiChatMessage {
-  id: string
-  role: 'user' | 'assistant'
-  text: string
-  status: 'streaming' | 'done' | 'stopped' | 'failed' | 'interrupted'
-  tools: WikiChatTool[]
-  graph: AnswerGraph | null
-  citations: string[]
-  errorCode: string | null
-  saved?: boolean
-  contentTruncated?: boolean
-  files?: WikiChatFile[]
-}
-
-export const MAX_PINNED_FILES = 4
+import { MAX_PINNED_FILES, type WikiChatFile, type WikiChatMessage } from '@vela/knowledge-ui/chat'
+export { MAX_PINNED_FILES, type WikiChatFile, type WikiChatMessage } from '@vela/knowledge-ui/chat'
 
 export type ConversationLoadResult = 'loaded' | 'not_found' | 'failed'
 

@@ -1,0 +1,29 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Wiki",
+  "version": "0.1.0",
+  "identifier": "com.vela.wikidesktop",
+  "build": {
+    "beforeDevCommand": "npm run dev --workspace @vela/wiki-desktop",
+    "devUrl": "http://127.0.0.1:5174",
+    "beforeBuildCommand": "npm run build --workspace @vela/wiki-desktop",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "macOSPrivateApi": true,
+    "windows": [],
+    "security": {
+      "csp": "default-src 'self'; img-src 'self' data: asset:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src ipc: http://ipc.localhost"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["app"],
+    "icon": [],
+    "externalBin": ["binaries/wiki-mcp"],
+    "macOS": {
+      "entitlements": "Entitlements.plist",
+      "signingIdentity": null
+    }
+  }
+}

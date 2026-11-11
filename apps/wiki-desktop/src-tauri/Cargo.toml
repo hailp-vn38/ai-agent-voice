@@ -1,0 +1,32 @@
+[package]
+name = "wiki-desktop"
+version = "0.1.0"
+description = "Wiki knowledge vault desktop app"
+authors = ["Vela"]
+edition = "2024"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+axum = { version = "0.8", features = ["macros"] }
+http = "1.0"
+keyring = { version = "3.6.3", features = ["apple-native"] }
+rmcp = { version = "=3.5.0", default-features = false, features = ["client", "server", "transport-streamable-http-client-reqwest", "transport-streamable-http-server"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tauri = { version = "2", features = ["macos-private-api"] }
+tauri-plugin-dialog = "2"
+notify = "8.2.1"
+tokio = { version = "1.53", features = ["macros", "rt-multi-thread", "sync", "net", "time"] }
+tokio-util = { version = "0.7", features = ["rt"] }
+uuid = { version = "1.26", features = ["v4"] }
+wiki-core = { path = "../../../crates/wiki-core" }
+wiki-mcp = { path = "../../../crates/wiki-mcp" }
+
+[dev-dependencies]
+reqwest = { version = "0.13", default-features = false, features = ["json", "rustls"] }
+tempfile = "3.25"
+
+[features]
+custom-protocol = ["tauri/custom-protocol"]

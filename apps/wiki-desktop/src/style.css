@@ -1,0 +1,68 @@
+@import 'tailwindcss';
+@import '@vela/knowledge-ui/styles/theme.css';
+@import '@vela/knowledge-ui/styles/knowledge-reader.css';
+
+:root { color-scheme: light; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+* { box-sizing: border-box; }
+html, body, #app { width: 100%; height: 100%; margin: 0; }
+/* A desktop window never scrolls or rubber-bands as a page; panels scroll inside. */
+html, body { overflow: hidden; overscroll-behavior: none; }
+html.dark { color-scheme: dark; }
+body { color: var(--foreground); background: transparent; }
+* { border-color: var(--border); }
+.app-shell { height: 100%; overflow: hidden; display: flex; flex-direction: column; background: color-mix(in oklab, var(--background) 94%, transparent); }
+/* The title bar keeps the window vibrancy; panels below are opaque surfaces. */
+.titlebar { background: color-mix(in oklab, var(--sidebar) 70%, transparent); }
+.knowledge-frame { background: var(--background); }
+.titlebar { height: 52px; flex: none; display: flex; align-items: center; gap: 10px; padding: 0 18px 0 82px; border-bottom: 1px solid color-mix(in srgb, currentColor 10%, transparent); user-select: none; }
+.app-mark, .welcome-mark { display: grid; place-items: center; border-radius: 10px; color: white; background: #6c6de8; font-weight: 700; }
+.app-mark { width: 24px; height: 24px; font-size: 14px; }
+.vault-location { opacity: .62; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.open-vault { margin-left: auto; border: 0; border-radius: 7px; padding: 7px 10px; background: color-mix(in srgb, currentColor 8%, transparent); color: inherit; cursor: pointer; }
+.knowledge-frame { flex: 1; min-height: 0; overflow: hidden; }
+.welcome { flex: 1; display: grid; place-items: center; padding: 28px; }
+.welcome-card { width: min(100%, 460px); text-align: center; padding: 34px; border: 1px solid color-mix(in srgb, currentColor 13%, transparent); border-radius: 18px; background: color-mix(in srgb, Canvas 95%, transparent); box-shadow: 0 18px 60px #0001; }
+.welcome-mark { width: 52px; height: 52px; margin: 0 auto 14px; font-size: 26px; }
+.welcome-card h1 { margin: 0; font-size: 24px; }
+.welcome-card p { margin: 8px 0 22px; opacity: .68; }
+.primary-button { border: 0; border-radius: 8px; padding: 10px 18px; color: white; background: #595bd4; font-weight: 600; cursor: pointer; }
+.primary-button:disabled { opacity: .55; cursor: progress; }
+.recent-list { margin-top: 25px; text-align: left; }
+.recent-list h2 { font-size: 13px; opacity: .65; }
+.recent-item { display: flex; flex-direction: column; gap: 3px; width: 100%; padding: 10px; border: 0; border-radius: 8px; text-align: left; color: inherit; background: transparent; cursor: pointer; }
+.recent-item:hover { background: color-mix(in srgb, currentColor 8%, transparent); }
+.recent-item small { opacity: .55; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.error-banner { margin: 8px 12px; display: flex; gap: 9px; padding: 9px 12px; border: 1px solid #e4a2a2; border-radius: 8px; color: #a32222; background: #fff2f2; font-size: 13px; }
+.lock-banner { margin: 8px 12px; padding: 9px 12px; border: 1px solid #d6a83f; border-radius: 8px; color: #684c0b; background: #fff8df; font-size: 13px; }
+.mcp-open { margin-left: auto; }
+.mcp-footer { position: fixed; z-index: 2; right: 0; bottom: 0; left: 248px; height: 28px; display: flex; align-items: center; justify-content: flex-end; gap: 18px; padding: 0 18px; border-top: 1px solid color-mix(in srgb, currentColor 10%, transparent); background: color-mix(in srgb, Canvas 85%, transparent); color: color-mix(in srgb, CanvasText 60%, transparent); font-size: 11px; }
+.mcp-footer button { border: 0; background: none; color: inherit; cursor: pointer; }
+.mcp-toast { position: fixed; z-index: 5; right: 24px; bottom: 48px; max-width: min(420px, 80vw); padding: 12px 16px; border-radius: 12px; background: #182b24; color: white; box-shadow: 0 8px 28px #0003; }
+.mcp-overlay { position: fixed; z-index: 10; inset: 0; display: grid; place-items: center; padding: 28px; background: #10141bbb; backdrop-filter: blur(8px); }
+.mcp-settings { width: min(760px, 94vw); max-height: 86vh; overflow: auto; padding: 26px; border: 1px solid color-mix(in srgb, CanvasText 14%, transparent); border-radius: 18px; background: Canvas; color: CanvasText; box-shadow: 0 20px 70px #0005; }
+.mcp-settings > header { display: flex; align-items: flex-start; justify-content: space-between; }
+.mcp-settings > header h1 { margin: 2px 0 16px; font-size: 28px; }
+.mcp-settings > header button { border: 0; background: none; color: inherit; font-size: 26px; cursor: pointer; }
+.mcp-settings .eyebrow { margin: 0; color: #758174; font-size: 11px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; }
+.mcp-endpoint { color: #647067; }
+.mcp-port-field { display: flex; align-items: center; gap: 9px; color: #647067; }
+.mcp-port-field input { width: 108px; padding: 7px; border: 1px solid color-mix(in srgb, CanvasText 18%, transparent); border-radius: 7px; background: Canvas; color: CanvasText; }
+.mcp-port-field button { padding: 7px 10px; border: 1px solid color-mix(in srgb, CanvasText 15%, transparent); border-radius: 8px; background: color-mix(in srgb, CanvasText 6%, Canvas); color: inherit; cursor: pointer; }
+.mcp-write-toggle { display: flex; align-items: center; gap: 9px; margin: 18px 0 24px; font-weight: 650; }
+.mcp-token-row { display: grid; grid-template-columns: 1fr auto auto; align-items: center; gap: 9px; padding: 14px 0; border-top: 1px solid color-mix(in srgb, CanvasText 12%, transparent); }
+.mcp-token-row strong,.mcp-token-row small { display: block; }
+.mcp-token-row small { margin-top: 3px; color: #778078; }
+.mcp-token-row button,.claude-install,.claude-preview button { padding: 8px 11px; border: 1px solid color-mix(in srgb, CanvasText 15%, transparent); border-radius: 8px; background: color-mix(in srgb, CanvasText 6%, Canvas); color: inherit; cursor: pointer; }
+.mcp-token-row button:disabled { opacity: .45; cursor: not-allowed; }
+.claude-install { margin-top: 16px; background: #315d47; color: white; }
+.mcp-error { padding: 10px; border-radius: 8px; background: #fee2e2; color: #991b1b; }
+.mcp-empty { padding: 18px; color: #778078; }
+.claude-preview { margin-top: 22px; padding-top: 18px; border-top: 2px solid color-mix(in srgb, CanvasText 16%, transparent); }
+.claude-preview h2 { font-size: 16px; }
+.claude-preview > p { color: #778078; font-size: 12px; }
+.config-diff { max-height: 280px; overflow: auto; margin: 0; padding: 12px; border-radius: 8px; background: color-mix(in srgb, CanvasText 6%, Canvas); font-size: 11px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.config-diff span { display: block; }
+.diff-same { opacity: .6; }
+.diff-added { color: #1d7a35; background: color-mix(in srgb, #2ea043 14%, transparent); }
+.diff-removed { color: #b42318; background: color-mix(in srgb, #f04438 14%, transparent); }
+@media (max-width: 700px) { .mcp-footer { left: 0; } .mcp-token-row { grid-template-columns: 1fr 1fr; } .mcp-token-row > div { grid-column: 1 / -1; } }

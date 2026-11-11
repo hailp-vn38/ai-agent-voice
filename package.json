@@ -1,0 +1,9 @@
+{
+  "name": "vela-workspace",
+  "private": true,
+  "workspaces": [
+    "apps/admin-web",
+    "apps/wiki-desktop",
+    "packages/knowledge-ui"
+  ]
+}

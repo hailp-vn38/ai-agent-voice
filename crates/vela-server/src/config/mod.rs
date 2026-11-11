@@ -9,7 +9,9 @@ mod memory;
 mod orchestrator_wiki;
 mod validation;
 pub use memory::MemorySectionConfig;
-pub use orchestrator_wiki::{OrchestratorSectionConfig, WikiMcpConfig, WikiSectionConfig};
+pub use orchestrator_wiki::{
+    OrchestratorSectionConfig, WikiMcpConfig, WikiSectionConfig, WikiSyncConfig,
+};
 
 pub use validation::{BenchmarkTarget, ConfigError};
 

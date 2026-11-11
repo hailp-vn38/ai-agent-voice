@@ -45,7 +45,9 @@ Cursor / Vela ─streamable HTTP─► app 127.0.0.1:<port>/mcp ─► ToolHost
 
 - **HTTP (trong app):** dùng `rmcp` 3.5 với `transport-streamable-http-server` (workspace đã có sẵn feature). Chỉ bind `127.0.0.1`. Header `Authorization: Bearer <token>` quyết định `Access`. App tự sinh token và lưu trong Keychain.
 - **stdio (`wiki-mcp` binary):** đi kèm trong bundle tại `Wiki.app/Contents/MacOS/wiki-mcp`. Có hai chế độ:
-  - **bridge** (mặc định khi app đang chạy): đọc `~/Library/Application Support/<bundle-id>/runtime.json` (port và token, quyền file `0600`), rồi chuyển tiếp JSON-RPC sang HTTP. Dùng `rmcp` client.
+  - **bridge** (mặc định khi app đang chạy): đọc `~/Library/Application Support/<bundle-id>/runtime.json` (port, đường dẫn vault đang mở và token, quyền file `0600`), rồi chuyển tiếp JSON-RPC sang HTTP. Dùng `rmcp` client với một session HTTP duy nhất cho cả vòng đời stdio; cancel của client stdio được chuyển thành `notifications/cancelled` tới app. `<bundle-id>` đọc từ `Info.plist` của `Wiki.app` chứa binary.
+    - Chỉ bridge khi `--vault` (nếu có) trùng vault app đang mở; nếu khác thì chạy direct trên `--vault`.
+    - Dùng token ghi chỉ khi có `--allow-write`, ngược lại dùng token đọc, để quyền giống hệt chế độ direct.
   - **direct** (khi app không chạy): tự `Vault::open`. Nếu lấy được lock thì có quyền ghi, nếu không thì chỉ đọc.
 
 ## Một writer <a id="mot-writer"></a>
@@ -82,7 +84,12 @@ pub struct Policy {
 ## Cấu hình client (tài liệu cho người dùng)
 
 ```json
-{ "mcpServers": { "wiki": { "command": "/Applications/Wiki.app/Contents/MacOS/wiki-mcp" } } }
+{ "mcpServers": { "wiki": {
+  "command": "/Applications/Wiki.app/Contents/MacOS/wiki-mcp",
+  "args": ["--vault", "/Users/me/Documents/Wiki", "--allow-write"]
+} } }
 ```
+
+`--vault` cho phép chạy direct khi app đóng và chặn bridge sang vault khác. `--allow-write` chỉ có khi Settings → MCP đang bật quyền ghi. Không có `args` thì binary bridge sang vault đang mở và chỉ đọc.
 
 App có màn Settings → MCP để hiện đoạn cấu hình này, nút copy URL HTTP kèm token, và nút "Cài vào Claude Desktop". Nút này ghi vào `claude_desktop_config.json` và phải hỏi người dùng xác nhận trước.

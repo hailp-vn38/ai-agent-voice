@@ -5,7 +5,7 @@ import {
   type NormalizedTradingChartModel,
   renderTradingChartBlocks,
   type TradingChartDocument,
-} from './tradingChartRenderer'
+} from '@vela/knowledge-ui/components/tradingChartRenderer'
 
 function makeSampleChartDocument(overrides: Partial<TradingChartDocument> = {}): TradingChartDocument {
   return {

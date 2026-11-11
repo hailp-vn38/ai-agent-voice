@@ -2,7 +2,7 @@ import { flushPromises, mount } from '@vue/test-utils'
 import { beforeEach, expect, it, vi } from 'vitest'
 import { ApiError } from '@/api/errors'
 import { setLocale, translate } from '@/composables/useI18n'
-import KnowledgeGraph from './KnowledgeGraph.vue'
+import KnowledgeGraph from '@vela/knowledge-ui/components/KnowledgeGraph.vue'
 import { KNOWLEDGE_BACKEND_KEY, MemoryKnowledgeBackend, type KnowledgeGraph as KnowledgeGraphData } from './knowledgeBackend'
 
 const { events, drawMock, fitMock, centerMock } = vi.hoisted(() => ({
@@ -29,11 +29,11 @@ vi.mock('cytoscape', () => ({
 
 const snapshot = {
   nodes: [
-    { id: 'wiki_agent', path: 'wiki/AI/Agent.md', title: 'Agent', status: 'verified', revision: 2 },
-    { id: 'wiki_llm', path: 'wiki/AI/LLM.md', title: 'LLM', status: 'verified', revision: 1 },
+    { id: 'wiki/AI/Agent.md', path: 'wiki/AI/Agent.md', title: 'Agent', status: 'verified', revision: 2 },
+    { id: 'wiki/AI/LLM.md', path: 'wiki/AI/LLM.md', title: 'LLM', status: 'verified', revision: 1 },
   ],
   edges: [{
-    source_id: 'wiki_agent', target_id: 'wiki_llm', kind: 'wikilink', lines: [8],
+    source_id: 'wiki/AI/Agent.md', target_id: 'wiki/AI/LLM.md', kind: 'wikilink', lines: [8],
     references: [{ line: 8, raw_target: 'AI/LLM#Inference|Language Model',
       alias: 'Language Model', anchor: 'Inference' }],
   }],
@@ -61,7 +61,7 @@ function mountGraph(
 }
 
 it('selects an edge and exposes the original Wikilink alias and anchor', async () => {
-  const { wrapper } = mountGraph({ centerId: 'wiki_agent', reloadToken: 0 })
+  const { wrapper } = mountGraph({ centerId: 'wiki/AI/Agent.md', reloadToken: 0 })
   try {
     await flushPromises()
     expect(drawMock).toHaveBeenCalledOnce()
@@ -77,7 +77,7 @@ it('selects an edge and exposes the original Wikilink alias and anchor', async (
       button.text() === translate('knowledgeV3.graphOpenSource'))
     expect(open?.exists()).toBe(true)
     await open!.trigger('click')
-    expect(wrapper.emitted('open')?.[0]).toEqual(['wiki_agent'])
+    expect(wrapper.emitted('open')?.[0]).toEqual(['wiki/AI/Agent.md'])
   } finally { wrapper.unmount() }
 })
 
@@ -85,16 +85,16 @@ it('opens a node beside Graph on Ctrl or Cmd click', async () => {
   const { wrapper } = mountGraph({ reloadToken: 0 })
   try {
     await flushPromises()
-    events['tap:node']({ target: { id: () => 'wiki_agent' }, originalEvent: { metaKey: true } })
-    expect(wrapper.emitted('open-side')?.[0]).toEqual(['wiki_agent'])
+    events['tap:node']({ target: { id: () => 'wiki/AI/Agent.md' }, originalEvent: { metaKey: true } })
+    expect(wrapper.emitted('open-side')?.[0]).toEqual(['wiki/AI/Agent.md'])
     expect(wrapper.emitted('open')).toBeUndefined()
-    events['tap:node']({ target: { id: () => 'wiki_agent' }, originalEvent: {} })
-    expect(wrapper.emitted('open')?.[0]).toEqual(['wiki_agent'])
+    events['tap:node']({ target: { id: () => 'wiki/AI/Agent.md' }, originalEvent: {} })
+    expect(wrapper.emitted('open')?.[0]).toEqual(['wiki/AI/Agent.md'])
   } finally { wrapper.unmount() }
 })
 
 it('queries the selected one-hop local neighborhood and can re-layout', async () => {
-  const { wrapper, backend } = mountGraph({ centerId: 'wiki_agent', reloadToken: 0 })
+  const { wrapper, backend } = mountGraph({ centerId: 'wiki/AI/Agent.md', reloadToken: 0 })
   const graph = vi.spyOn(backend, 'graph')
   try {
     await flushPromises()
@@ -102,7 +102,7 @@ it('queries the selected one-hop local neighborhood and can re-layout', async ()
       button.text() === translate('knowledgeV3.graphLocal'))!
     await local.trigger('click')
     await flushPromises()
-    expect(graph).toHaveBeenLastCalledWith({ scope: 'local', centerId: 'wiki_agent', depth: 1, limit: 500 })
+    expect(graph).toHaveBeenLastCalledWith({ scope: 'wiki', relative: 'AI/Agent.md' })
     const relayout = wrapper.findAll('button').find(button =>
       button.text() === translate('knowledgeV3.graphRelayout'))
     await relayout!.trigger('click')
@@ -120,8 +120,8 @@ it('queries a topic and styles retrieved tiers without changing the node type co
       })),
       truncated: true,
     }
-  const { wrapper, backend } = mountGraph({ centerId: 'wiki_agent', reloadToken: 0 }, querySnapshot)
-  const graph = vi.spyOn(backend, 'graph')
+  const { wrapper, backend } = mountGraph({ centerId: 'wiki/AI/Agent.md', reloadToken: 0 }, querySnapshot)
+  const graph = vi.spyOn(backend.admin!, 'graph')
   try {
     await flushPromises()
     const query = wrapper.findAll('button').find(button =>
@@ -156,25 +156,25 @@ it('draws an answer graph from its prop, avoids API reloads, and opens node deta
   const { wrapper, backend } = mountGraph({ centerId: null, reloadToken: 0, answerGraph })
   try {
     await flushPromises()
-    const graph = vi.spyOn(backend, 'graph')
+    const graph = vi.spyOn(backend.admin!, 'graph')
     expect(drawMock).toHaveBeenCalledOnce()
     expect(wrapper.text()).toContain(translate('knowledgeV3.graphAnswer'))
     expect(drawMock.mock.calls[0]?.[0].elements[0]?.data.tier).toBe('read')
 
-    events['tap:node']?.({ target: { id: () => 'wiki_agent' } })
+    events['tap:node']?.({ target: { id: () => 'wiki/AI/Agent.md' } })
     await flushPromises()
     expect(wrapper.get('aside.kg-inspect').classes()).not.toContain('is-hidden')
     expect(wrapper.emitted('open')).toBeUndefined()
     const openPage = wrapper.get('.kg-inspect-actions .kg-btn-primary')
     await openPage.trigger('click')
-    expect(wrapper.emitted('open')?.[0]).toEqual(['wiki_agent'])
+    expect(wrapper.emitted('open')?.[0]).toEqual(['wiki/AI/Agent.md'])
 
     const exposed = wrapper.vm as unknown as {
       focusNode: (id: string) => void
       highlightNode: (id: string | null) => void
     }
-    exposed.focusNode('wiki_agent')
-    exposed.highlightNode('wiki_agent')
+    exposed.focusNode('wiki/AI/Agent.md')
+    exposed.highlightNode('wiki/AI/Agent.md')
     exposed.highlightNode(null)
     expect(centerMock).toHaveBeenCalledOnce()
 
@@ -203,7 +203,7 @@ it('leaves Global nodes without a tier so answer styling cannot change them', as
 })
 
 it('offers an index rebuild when Graph is stale', async () => {
-  const { wrapper } = mountGraph({ centerId: 'wiki_agent', reloadToken: 0 }, snapshot,
+  const { wrapper } = mountGraph({ centerId: 'wiki/AI/Agent.md', reloadToken: 0 }, snapshot,
     new ApiError('index_stale', 503, 'index_stale'))
   try {
     await flushPromises()
@@ -218,27 +218,27 @@ it('offers an index rebuild when Graph is stale', async () => {
 it('keeps non-zero flex sizing when Cytoscape applies position:relative and drops dangling or duplicate edges', async () => {
   const danglingSnapshot = {
     nodes: [
-      { id: 'wiki_agent', path: 'wiki/AI/Agent.md', title: 'Agent', status: 'verified', revision: 2 },
-      { id: 'wiki_llm', path: 'wiki/AI/LLM.md', title: 'LLM', status: 'verified', revision: 1 },
+      { id: 'wiki/AI/Agent.md', path: 'wiki/AI/Agent.md', title: 'Agent', status: 'verified', revision: 2 },
+      { id: 'wiki/AI/LLM.md', path: 'wiki/AI/LLM.md', title: 'LLM', status: 'verified', revision: 1 },
     ],
     edges: [
       {
-        source_id: 'wiki_agent',
+        source_id: 'wiki/AI/Agent.md',
         target_id: 'sources/missing-node.md',
         kind: 'wikilink',
         lines: [3],
         references: [{ line: 3, raw_target: 'sources/missing-node.md' }],
       },
       {
-        source_id: 'wiki_agent',
-        target_id: 'wiki_llm',
+        source_id: 'wiki/AI/Agent.md',
+        target_id: 'wiki/AI/LLM.md',
         kind: 'wikilink',
         lines: [8],
         references: [{ line: 8, raw_target: 'AI/LLM', alias: 'LLM 1' }],
       },
       {
-        source_id: 'wiki_agent',
-        target_id: 'wiki_llm',
+        source_id: 'wiki/AI/Agent.md',
+        target_id: 'wiki/AI/LLM.md',
         kind: 'wikilink',
         lines: [14],
         references: [{ line: 14, raw_target: 'AI/LLM', alias: 'LLM 2' }],
@@ -247,7 +247,7 @@ it('keeps non-zero flex sizing when Cytoscape applies position:relative and drop
     unresolved: [],
     truncated: false,
   }
-  const { wrapper } = mountGraph({ centerId: 'wiki_agent', reloadToken: 0 }, danglingSnapshot)
+  const { wrapper } = mountGraph({ centerId: 'wiki/AI/Agent.md', reloadToken: 0 }, danglingSnapshot)
   try {
     await flushPromises()
     const canvas = wrapper.find('[role="img"]')
@@ -264,8 +264,8 @@ it('keeps non-zero flex sizing when Cytoscape applies position:relative and drop
       {
         data: {
           id: 'link_0',
-          source: 'wiki_agent',
-          target: 'wiki_llm',
+          source: 'wiki/AI/Agent.md',
+          target: 'wiki/AI/LLM.md',
           kind: 'wikilink',
         },
       },
@@ -278,17 +278,17 @@ it('keeps non-zero flex sizing when Cytoscape applies position:relative and drop
 })
 
 it('opens the note directly without showing the graph node info card when a node is clicked, and supports increasing/decreasing font size', async () => {
-  const { wrapper } = mountGraph({ centerId: 'wiki_agent', reloadToken: 0 })
+  const { wrapper } = mountGraph({ centerId: 'wiki/AI/Agent.md', reloadToken: 0 })
   try {
     await flushPromises()
     const inspect = wrapper.get('aside.kg-inspect')
     expect(inspect.classes()).toContain('is-hidden')
 
     // Tapping a node opens the note directly instead of showing the node inspector card
-    events['tap:node']?.({ target: { id: () => 'wiki_agent' } })
+    events['tap:node']?.({ target: { id: () => 'wiki/AI/Agent.md' } })
     await flushPromises()
     expect(inspect.classes()).toContain('is-hidden')
-    expect(wrapper.emitted('open')?.[0]).toEqual(['wiki_agent'])
+    expect(wrapper.emitted('open')?.[0]).toEqual(['wiki/AI/Agent.md'])
 
     // Increasing and decreasing font size updates the Cytoscape node style
     const initialOptions = drawMock.mock.calls.at(-1)?.[0] as {
@@ -317,14 +317,14 @@ it('opens the note directly without showing the graph node info card when a node
 })
 
 it('supports floating node search, display settings menu, and centers computed node positions around (0, 0)', async () => {
-  const { wrapper } = mountGraph({ centerId: 'wiki_agent', reloadToken: 0 })
+  const { wrapper } = mountGraph({ centerId: 'wiki/AI/Agent.md', reloadToken: 0 })
   try {
     await flushPromises()
     const options = drawMock.mock.calls[0]?.[0] as {
       layout: { positions: (node: { id: () => string }) => { x: number; y: number } }
     }
-    const p1 = options.layout.positions({ id: () => 'wiki_agent' })
-    const p2 = options.layout.positions({ id: () => 'wiki_llm' })
+    const p1 = options.layout.positions({ id: () => 'wiki/AI/Agent.md' })
+    const p2 = options.layout.positions({ id: () => 'wiki/AI/LLM.md' })
     // Bounding box center is centered at (0, 0)
     expect(Math.abs((p1.x + p2.x) / 2)).toBeLessThanOrEqual(1)
     expect(Math.abs((p1.y + p2.y) / 2)).toBeLessThanOrEqual(1)
@@ -340,7 +340,7 @@ it('supports floating node search, display settings menu, and centers computed n
     await results[0]!.trigger('click')
     await flushPromises()
     expect(wrapper.get('.kg-search').classes()).not.toContain('open')
-    expect(wrapper.emitted('open')?.[0]).toEqual(['wiki_llm'])
+    expect(wrapper.emitted('open')?.[0]).toEqual(['wiki/AI/LLM.md'])
 
     // Display settings menu toggles legend
     await wrapper.get('button[aria-label="Display settings"]').trigger('click')

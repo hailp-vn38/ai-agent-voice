@@ -2,7 +2,7 @@ import { flushPromises, mount } from '@vue/test-utils'
 import { beforeEach, expect, it, vi } from 'vitest'
 import { setLocale } from '@/composables/useI18n'
 import KnowledgePage from './KnowledgePage.vue'
-import { KNOWLEDGE_BACKEND_KEY, MemoryKnowledgeBackend } from './knowledgeBackend'
+import { docPath, KNOWLEDGE_BACKEND_KEY, MemoryKnowledgeBackend, type KnowledgeBackend } from './knowledgeBackend'
 
 vi.mock('vue-router', () => ({
   useRoute: () => ({ query: {} }),
@@ -46,6 +46,19 @@ function mountKnowledgePage(backend = new MemoryKnowledgeBackend({
   return { wrapper, backend }
 }
 
+function commonOnly(backend: MemoryKnowledgeBackend): KnowledgeBackend {
+  return {
+    capabilities: backend.capabilities,
+    tree: scope => backend.tree(scope),
+    read: (path, window) => backend.read(path, window),
+    search: query => backend.search(query),
+    graph: focus => backend.graph(focus),
+    status: () => backend.status(),
+    apply: change => backend.apply(change),
+    onChange: listener => backend.onChange(listener),
+  }
+}
+
 it('loads and opens a Wiki Page through MemoryKnowledgeBackend without HTTP fetch mocks', async () => {
   const fetchSpy = vi.spyOn(globalThis, 'fetch')
   const { wrapper } = mountKnowledgePage()
@@ -58,6 +71,40 @@ it('loads and opens a Wiki Page through MemoryKnowledgeBackend without HTTP fetc
     wrapper.unmount()
     fetchSpy.mockRestore()
   }
+})
+
+it('mounts and browses with the common backend even when Admin extensions are absent', async () => {
+  const fetchSpy = vi.spyOn(globalThis, 'fetch')
+  const backend = commonOnly(new MemoryKnowledgeBackend({ pages: [
+    { id: 'wiki/gardening.md', path: 'wiki/gardening.md', title: 'Gardening', body: '# Gardening\n\nCommon Vault backend.', revision: 1 },
+  ] }))
+  const wrapper = mount(KnowledgePage, { global: { provide: { [KNOWLEDGE_BACKEND_KEY as symbol]: backend } } })
+  try {
+    await flushPromises()
+    expect(wrapper.get('.doc h1').text()).toBe('Gardening')
+    expect(wrapper.get('.markdown-body').text()).toContain('Common Vault backend.')
+    expect(wrapper.get('[role="tablist"][aria-label="Right panel"]').findAll('[role="tab"]')
+      .map(tab => tab.attributes('data-tab'))).toEqual(['outline'])
+    expect(fetchSpy).not.toHaveBeenCalled()
+  } finally { wrapper.unmount(); fetchSpy.mockRestore() }
+})
+
+it('creates a Wiki Page through the common Vault backend without Admin extensions', async () => {
+  const backend = commonOnly(new MemoryKnowledgeBackend())
+  const apply = vi.spyOn(backend, 'apply')
+  const prompt = vi.spyOn(window, 'prompt').mockReturnValue('Fresh Notes')
+  const wrapper = mount(KnowledgePage, { global: { provide: { [KNOWLEDGE_BACKEND_KEY as symbol]: backend } } })
+  try {
+    await flushPromises()
+    await wrapper.get('button[aria-label="Create Wiki page"]').trigger('click')
+    await wrapper.get('textarea#knowledge-note-body').setValue('# Fresh Notes\n\nCreated in the desktop shell.')
+    await wrapper.get('form.knowledge-note-editor').trigger('submit')
+    await flushPromises()
+
+    expect(prompt).toHaveBeenCalledWith('Title', 'Untitled')
+    expect(apply).toHaveBeenCalled()
+    expect((await backend.read(docPath('wiki', 'Fresh-Notes.md'))).content).toContain('Created in the desktop shell.')
+  } finally { wrapper.unmount(); prompt.mockRestore() }
 })
 
 it('loads a Raw Working Note through MemoryKnowledgeBackend', async () => {
@@ -85,4 +132,87 @@ it('searches without Vietnamese diacritics and opens the matching page through M
     expect(wrapper.get('.doc h1').text()).toBe('Gardening')
     expect(fetchSpy).not.toHaveBeenCalled()
   } finally { wrapper.unmount(); fetchSpy.mockRestore() }
+})
+
+it('saves an edited Wiki Page through the common Vault Change contract', async () => {
+  const fetchSpy = vi.spyOn(globalThis, 'fetch')
+  const { wrapper, backend } = mountKnowledgePage()
+  const apply = vi.spyOn(backend, 'apply')
+  try {
+    await flushPromises()
+    await wrapper.get('.path-actions button[aria-label="Edit Wiki draft"]').trigger('click')
+    await wrapper.get('textarea#knowledge-note-body').setValue('# Gardening\n\nSaved through the Vault contract.')
+    await wrapper.get('form.knowledge-note-editor').trigger('submit')
+    await flushPromises()
+
+    expect(apply).toHaveBeenCalledWith({ type: 'write', path: { scope: 'wiki', relative: 'gardening.md' },
+      content: '# Gardening\n\nSaved through the Vault contract.', expect: '1' })
+    expect((await backend.read(docPath('wiki', 'gardening.md'))).content).toContain('Saved through the Vault contract.')
+    expect(fetchSpy).not.toHaveBeenCalled()
+  } finally { wrapper.unmount(); fetchSpy.mockRestore() }
+})
+
+it('offers safe choices for a conflicting Wiki Page edit', async () => {
+  const path = docPath('wiki', 'gardening.md')
+  const first = mountKnowledgePage()
+  try {
+    await flushPromises()
+    const apply = vi.spyOn(first.backend, 'apply')
+    await first.wrapper.get('.path-actions button[aria-label="Edit Wiki draft"]').trigger('click')
+    await first.wrapper.get('textarea#knowledge-note-body').setValue('# Gardening\n\nMy version.')
+    await first.backend.apply({ type: 'write', path, content: '# Gardening\n\nAgent version.', expect: '1' })
+    await first.wrapper.get('form.knowledge-note-editor').trigger('submit')
+    await flushPromises()
+
+    expect(apply).toHaveBeenLastCalledWith({ type: 'write', path, content: '# Gardening\n\nMy version.', expect: '1' })
+    expect(first.wrapper.find('[role="dialog"][aria-label="Document changed"]').exists()).toBe(true)
+    await first.wrapper.get('button[aria-label="Keep my version"]').trigger('click')
+    await flushPromises()
+    expect((await first.backend.read(path)).content).toContain('My version.')
+  } finally { first.wrapper.unmount() }
+
+  const latest = mountKnowledgePage()
+  try {
+    await flushPromises()
+    await latest.wrapper.get('.path-actions button[aria-label="Edit Wiki draft"]').trigger('click')
+    await latest.wrapper.get('textarea#knowledge-note-body').setValue('# Gardening\n\nMy version.')
+    await latest.backend.apply({ type: 'write', path, content: '# Gardening\n\nAgent version.', expect: '1' })
+    await latest.wrapper.get('form.knowledge-note-editor').trigger('submit')
+    await flushPromises()
+    await latest.wrapper.get('button[aria-label="Load latest version"]').trigger('click')
+    await flushPromises()
+    expect(latest.wrapper.find<HTMLTextAreaElement>('textarea#knowledge-note-body').element.value).toContain('Agent version.')
+    expect(latest.wrapper.find('form.knowledge-note-editor').exists()).toBe(true)
+  } finally { latest.wrapper.unmount() }
+})
+
+it('imports a picked folder through the common backend without overwriting existing sources', async () => {
+  window.localStorage.setItem('voice-agent-knowledge-vault-space', 'raw')
+  const memory = new MemoryKnowledgeBackend({ rawFiles: [
+    { path: 'raw/trip/existing.md', body: '# Existing\n\nKeep me.', sha256: 'raw-rev-1' },
+  ] })
+  const backend = commonOnly(memory)
+  const mounted = mount(KnowledgePage, { global: { provide: { [KNOWLEDGE_BACKEND_KEY as symbol]: backend } } })
+  try {
+    await flushPromises()
+    const picked = (name: string, body: string) => {
+      const file = new File([body], name.split('/').pop()!, { type: 'text/markdown' })
+      Object.defineProperty(file, 'webkitRelativePath', { value: name })
+      return file
+    }
+    const input = mounted.get('input[type="file"][webkitdirectory]')
+    Object.defineProperty(input.element, 'files', { value: [
+      // The opened source makes raw/trip the upload folder.
+      picked('existing.md', '# Replaced'),
+      picked('new.md', '# New\n\nImported.'),
+    ] })
+    await input.trigger('change')
+    await flushPromises()
+
+    expect((await backend.read(docPath('raw', 'trip/new.md'))).content).toContain('Imported.')
+    expect((await backend.read(docPath('raw', 'trip/existing.md'))).content).toContain('Keep me.')
+    expect(mounted.text()).toContain('Uploaded 1 files, skipped 1 existing')
+  } finally {
+    mounted.unmount()
+  }
 })

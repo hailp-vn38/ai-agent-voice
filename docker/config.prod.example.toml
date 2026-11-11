@@ -16,6 +16,23 @@ admin_token = "REPLACE_WITH_ADMIN_TOKEN"
 [database]
 url = "sqlite://data/vela.db"
 
+[wiki]
+enabled = false
+vault_dir = "/app/data/wiki-vault"
+template = "research"
+
+[wiki.sync]
+enabled = false
+remote_url = "git@github.com:<owner>/<repo>.git"
+branch = "main"
+ssh_key_path = "/app/docker/wiki-deploy-key"
+known_hosts_path = "/app/docker/github-known-hosts"
+author_name = "Vela Server"
+author_email = "vela@localhost"
+interval_min = 5
+debounce_sec = 30
+max_file_mb = 50
+
 [shutdown]
 grace_ms = 15000
 

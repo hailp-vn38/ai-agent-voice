@@ -34,6 +34,10 @@ use std::{
 use tokio::sync::Notify;
 use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
+use wiki_core::Vault;
+use wiki_mcp::{
+    Access as ToolAccess, CallCtx as ToolCallCtx, Policy as ToolPolicy, ToolError, ToolHost,
+};
 
 /// Per-request execution context for Knowledge MCP tool calls.
 #[derive(Clone)]
@@ -57,6 +61,8 @@ pub(crate) enum KnowledgeToolError {
     Cancelled,
     #[error("knowledge_tool_timeout")]
     Timeout,
+    #[error("knowledge_tool_read_only")]
+    ReadOnly,
 }
 
 impl From<WikiError> for KnowledgeToolError {
@@ -82,12 +88,12 @@ impl Drop for KnowledgeConcurrencyPermit {
 
 pub(crate) struct KnowledgeMcp {
     engine: Arc<WikiEngine>,
+    tool_host: Arc<ToolHost>,
     autoflow_notify: Option<Arc<Notify>>,
     settings: RwLock<PersistedKnowledgeMcpSettings>,
     store_path: Option<PathBuf>,
     active_requests: Arc<AtomicUsize>,
-    read_only_tools: Vec<ToolDefinition>,
-    read_write_tools: Vec<ToolDefinition>,
+    write_gate: Arc<crate::app::KnowledgeWriteGate>,
 }
 
 impl KnowledgeMcp {
@@ -110,48 +116,49 @@ impl KnowledgeMcp {
             max_result_chars: max_result_chars
                 .clamp(*RESULT_CHARS_RANGE.start(), *RESULT_CHARS_RANGE.end()),
         };
-        Self::from_config(engine, autoflow_notify, &cfg, None)
+        let vault = Arc::new(
+            Vault::open(wiki_core::VaultConfig::new(&engine.config().data_root))
+                .expect("test WikiEngine fixture vault should open"),
+        );
+        Self::from_config(
+            engine,
+            vault,
+            Arc::new(crate::app::KnowledgeWriteGate::default()),
+            autoflow_notify,
+            &cfg,
+            None,
+        )
     }
 
     pub(crate) fn from_config(
         engine: Arc<WikiEngine>,
+        vault: Arc<Vault>,
+        write_gate: Arc<crate::app::KnowledgeWriteGate>,
         autoflow_notify: Option<Arc<Notify>>,
         cfg: &WikiMcpConfig,
         store_dir: Option<&Path>,
     ) -> Self {
-        let specs = engine.llm_tool_definitions();
-        let mut read_only_tools = Vec::new();
-        let mut read_write_tools = Vec::new();
-
-        for spec in specs {
-            let mut parameters = spec.parameters;
-            sanitize_schema_node(&mut parameters);
-            let def = ToolDefinition {
-                name: spec.name.clone(),
-                description: spec.description,
-                parameters,
-            };
-            if is_read_only_wiki_tool(&spec.name) {
-                read_only_tools.push(def.clone());
-            }
-            read_write_tools.push(def);
-        }
-
-        let mut add_sources = add_to_sources_tool_definition();
-        sanitize_schema_node(&mut add_sources.parameters);
-        read_write_tools.push(add_sources);
+        let tool_host = Arc::new(ToolHost::new(
+            Arc::clone(&vault),
+            ToolPolicy {
+                allow_write: cfg.allow_write,
+                max_concurrency: cfg.max_concurrency,
+                call_timeout: Duration::from_millis(cfg.call_timeout_ms),
+                max_result_chars: cfg.max_result_chars,
+            },
+        ));
 
         let store_path = store_dir.map(|d| d.join(SETTINGS_FILENAME));
         let settings = load_or_seed_settings(cfg, store_path.as_ref());
 
         Self {
             engine,
+            tool_host,
             autoflow_notify,
             settings: RwLock::new(settings),
             store_path,
             active_requests: Arc::new(AtomicUsize::new(0)),
-            read_only_tools,
-            read_write_tools,
+            write_gate,
         }
     }
 
@@ -163,6 +170,12 @@ impl KnowledgeMcp {
         let refreshed = load_or_seed_settings(cfg, self.store_path.as_ref());
         let mut guard = self.settings.write().expect("settings lock");
         *guard = refreshed;
+        self.tool_host.update_policy(ToolPolicy {
+            allow_write: guard.allow_write,
+            max_concurrency: guard.max_concurrency,
+            call_timeout: Duration::from_millis(guard.call_timeout_ms),
+            max_result_chars: guard.max_result_chars,
+        });
     }
 
     pub(crate) fn max_concurrency(&self) -> usize {
@@ -240,30 +253,47 @@ impl KnowledgeMcp {
     }
 
     pub(crate) fn list_tools(&self, ctx: &KnowledgeToolContext) -> Vec<ToolDefinition> {
-        if self.effective_write_allowed(ctx) {
-            self.read_write_tools.clone()
+        let access = if self.effective_write_allowed(ctx) {
+            ToolAccess::ReadWrite
         } else {
-            self.read_only_tools.clone()
+            ToolAccess::ReadOnly
+        };
+        let mut tools: Vec<ToolDefinition> = self
+            .tool_host
+            .list_tools(access)
+            .into_iter()
+            .map(|tool| ToolDefinition {
+                name: tool.name,
+                description: tool.description,
+                parameters: tool.parameters,
+            })
+            .collect();
+        if access == ToolAccess::ReadWrite {
+            let mut add_sources = add_to_sources_tool_definition();
+            sanitize_schema_node(&mut add_sources.parameters);
+            tools.push(add_sources);
         }
+        tools
     }
 
     fn is_tool_allowed(&self, ctx: &KnowledgeToolContext, name: &str) -> bool {
-        if self.effective_write_allowed(ctx) {
-            self.read_write_tools.iter().any(|t| t.name == name)
-        } else {
-            self.read_only_tools.iter().any(|t| t.name == name)
-        }
+        self.list_tools(ctx).iter().any(|tool| tool.name == name)
     }
 
     pub(crate) fn admin_snapshot(&self) -> Value {
         let guard = self.settings.read().expect("settings lock").clone();
-        let ro_names: Vec<&str> = self
-            .read_only_tools
-            .iter()
-            .map(|t| t.name.as_str())
-            .collect();
-        let tools_view: Vec<Value> = self
-            .read_write_tools
+        let read_only_tools = self.list_tools(&KnowledgeToolContext {
+            access: KnowledgeMcpAccess::ReadOnly,
+            cancellation: CancellationToken::new(),
+            deadline: Instant::now(),
+        });
+        let write_tools = self.list_tools(&KnowledgeToolContext {
+            access: KnowledgeMcpAccess::ReadWrite,
+            cancellation: CancellationToken::new(),
+            deadline: Instant::now(),
+        });
+        let ro_names: Vec<&str> = read_only_tools.iter().map(|t| t.name.as_str()).collect();
+        let tools_view: Vec<Value> = write_tools
             .iter()
             .map(|t| {
                 let is_ro = ro_names.contains(&t.name.as_str());
@@ -298,8 +328,8 @@ impl KnowledgeMcp {
             "max_result_chars": guard.max_result_chars,
             "tokens": token_summaries,
             "tools": tools_view,
-            "read_only_tools_count": self.read_only_tools.len(),
-            "read_write_tools_count": self.read_write_tools.len(),
+            "read_only_tools_count": read_only_tools.len(),
+            "read_write_tools_count": write_tools.len(),
             "wiki_status": wiki_status,
         })
     }
@@ -337,6 +367,12 @@ impl KnowledgeMcp {
         guard.allow_write = input.allow_write;
         guard.revision = guard.revision.saturating_add(1);
         persist_settings(self.store_path.as_ref(), &guard);
+        self.tool_host.update_policy(ToolPolicy {
+            allow_write: guard.allow_write,
+            max_concurrency: guard.max_concurrency,
+            call_timeout: Duration::from_millis(guard.call_timeout_ms),
+            max_result_chars: guard.max_result_chars,
+        });
         drop(guard);
         Ok(self.admin_snapshot())
     }
@@ -416,6 +452,15 @@ impl KnowledgeMcp {
         if Instant::now() >= ctx.deadline {
             return Err(KnowledgeToolError::Timeout);
         }
+        let _write_guard = if self.effective_write_allowed(ctx) && !is_read_only_wiki_tool(name) {
+            Some(tokio::select! {
+                _ = ctx.cancellation.cancelled() => return Err(KnowledgeToolError::Cancelled),
+                _ = tokio::time::sleep_until(ctx.deadline) => return Err(KnowledgeToolError::Timeout),
+                guard = self.write_gate.writer() => guard,
+            })
+        } else {
+            None
+        };
         if !arguments.is_object() {
             return Err(KnowledgeToolError::InvalidArguments(
                 "tool arguments must be a JSON object".into(),
@@ -439,48 +484,84 @@ impl KnowledgeMcp {
             .expect("settings lock")
             .max_result_chars
             .clamp(*RESULT_CHARS_RANGE.start(), *RESULT_CHARS_RANGE.end());
+        if name == "add_to_sources" {
+            let engine = Arc::clone(&self.engine);
+            let notify = self.autoflow_notify.clone();
+            let raw = tokio::task::spawn_blocking(move || {
+                execute_add_to_sources(&engine, notify.as_ref(), arguments)
+            })
+            .await
+            .map_err(|_| KnowledgeToolError::Unavailable)??;
+            return Ok(bound_result_chars(raw, max_chars));
+        }
+        if matches!(name, "wiki_lint" | "wiki_log" | "wiki_schema") {
+            return self.call_legacy_tool(ctx, name, arguments, max_chars).await;
+        }
+        let access = if self.effective_write_allowed(ctx) {
+            ToolAccess::ReadWrite
+        } else {
+            ToolAccess::ReadOnly
+        };
+        self.tool_host
+            .call(
+                ToolCallCtx {
+                    access,
+                    cancel: ctx.cancellation.clone(),
+                    deadline: ctx.deadline,
+                },
+                name,
+                arguments,
+            )
+            .await
+            .map_err(map_tool_error)
+    }
+
+    async fn call_legacy_tool(
+        &self,
+        ctx: &KnowledgeToolContext,
+        name: &str,
+        arguments: Value,
+        max_chars: usize,
+    ) -> Result<Value, KnowledgeToolError> {
         let engine = Arc::clone(&self.engine);
-        let autoflow_notify = self.autoflow_notify.clone();
-        let tool_name = name.to_owned();
-
-        let mut handle =
-            tokio::task::spawn_blocking(move || -> Result<Value, KnowledgeToolError> {
-                if tool_name == "add_to_sources" {
-                    execute_add_to_sources(&engine, autoflow_notify.as_ref(), arguments)
-                } else {
-                    let budget = AdaptiveReadBudget {
-                        default_lines: 160,
-                        max_window_chars: max_chars.saturating_sub(1024).max(1024),
-                        compact_index_max_chars: max_chars.saturating_sub(1024).max(1024),
-                    };
-                    let outcome =
-                        engine.execute_llm_tool_with_budget(&tool_name, arguments, budget)?;
-                    Ok(json!({
-                        "tool": tool_name,
-                        "content": outcome.content,
-                        "metadata": outcome.metadata,
-                    }))
-                }
-            });
-
-        let raw_value = tokio::select! {
+        let name = name.to_owned();
+        let budget = AdaptiveReadBudget {
+            default_lines: 160,
+            max_window_chars: max_chars.saturating_sub(1024).max(1024),
+            compact_index_max_chars: max_chars.saturating_sub(1024).max(1024),
+        };
+        let mut task = tokio::task::spawn_blocking(move || {
+            let outcome = engine.execute_llm_tool_with_budget(&name, arguments, budget)?;
+            Ok::<_, KnowledgeToolError>(json!({
+                "tool": name,
+                "content": outcome.content,
+                "metadata": outcome.metadata,
+            }))
+        });
+        let value = tokio::select! {
             biased;
             _ = ctx.cancellation.cancelled() => {
-                handle.abort();
+                task.abort();
                 return Err(KnowledgeToolError::Cancelled);
             }
             _ = tokio::time::sleep_until(ctx.deadline) => {
-                handle.abort();
+                task.abort();
                 return Err(KnowledgeToolError::Timeout);
             }
-            joined = &mut handle => {
-                match joined {
-                    Ok(res) => res?,
-                    Err(_) => return Err(KnowledgeToolError::Unavailable),
-                }
-            }
+            result = &mut task => result.map_err(|_| KnowledgeToolError::Unavailable)??,
         };
+        Ok(bound_result_chars(value, max_chars))
+    }
+}
 
-        Ok(bound_result_chars(raw_value, max_chars))
+fn map_tool_error(error: ToolError) -> KnowledgeToolError {
+    match error {
+        ToolError::Denied => KnowledgeToolError::Denied,
+        ToolError::InvalidArguments(message) => KnowledgeToolError::InvalidArguments(message),
+        ToolError::ExecutionFailed(message) => KnowledgeToolError::ExecutionFailed(message),
+        ToolError::Unavailable => KnowledgeToolError::Unavailable,
+        ToolError::Cancelled => KnowledgeToolError::Cancelled,
+        ToolError::Timeout => KnowledgeToolError::Timeout,
+        ToolError::ReadOnly => KnowledgeToolError::ReadOnly,
     }
 }

@@ -6,6 +6,8 @@
 /docker/config.prod.toml
 /docker/secrets.env
 /docker/credential-keys.json
+/docker/wiki-deploy-key
+/docker/github-known-hosts
 models/
 /runtime/**
 .DS_Store
@@ -16,12 +18,21 @@ models/
 # Vue Admin local build and development state.
 /apps/admin-web/node_modules/
 /apps/admin-web/dist/
+/apps/wiki-desktop/dist/
+/apps/wiki-desktop/src-tauri/target/
+/apps/wiki-desktop/src-tauri/binaries/
+/apps/wiki-desktop/src-tauri/gen/schemas/
 /apps/admin-web/.env
 /apps/admin-web/.vite/
 /apps/admin-web/*.tsbuildinfo
+/apps/admin-web/test-results/
 
 # Python bytecode cache.
 __pycache__/
 
 # Claude Code worktrees.
 /.claude/worktrees/
+
+# Root npm workspace install tree.
+/node_modules/
+/packages/knowledge-ui/node_modules/

@@ -981,6 +981,72 @@ url = "sqlite://data/vela.db"
     }
 
     #[test]
+    fn wiki_sync_defaults_off_for_existing_configs_without_the_section() {
+        let wiki = config("").wiki;
+        assert!(!wiki.sync.enabled);
+        assert_eq!(wiki.sync.interval_min, 5);
+        assert_eq!(wiki.sync.debounce_sec, 30);
+    }
+
+    #[test]
+    fn wiki_sync_rejects_credentials_and_missing_or_permissive_ssh_keys() {
+        let missing_key = config(
+            r#"
+[wiki.sync]
+enabled = true
+remote_url = "git@github.com:owner/repo.git"
+"#,
+        );
+        assert!(!missing_key.wiki.sync.valid());
+
+        let credential_remote = config(
+            r#"
+[wiki.sync]
+enabled = true
+remote_url = "https://user:token@example.com/repo.git"
+ssh_key_path = "/tmp/key"
+known_hosts_path = "/tmp/known_hosts"
+"#,
+        );
+        assert!(!credential_remote.wiki.sync.valid());
+
+        let dir = std::env::temp_dir().join(format!("wiki-sync-config-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let key = dir.join("deploy-key");
+        let known_hosts = dir.join("known_hosts");
+        std::fs::write(&key, "private key fixture").unwrap();
+        std::fs::write(&known_hosts, "github.com ssh-ed25519 fixture").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&key, std::fs::Permissions::from_mode(0o644)).unwrap();
+        }
+        let permissive_key = config(&format!(
+            "[wiki.sync]\nenabled = true\nremote_url = \"git@github.com:owner/repo.git\"\nssh_key_path = {:?}\nknown_hosts_path = {:?}\n",
+            key, known_hosts
+        ));
+        #[cfg(unix)]
+        assert!(!permissive_key.wiki.sync.valid());
+        #[cfg(not(unix))]
+        assert!(permissive_key.wiki.sync.valid());
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&key, std::fs::Permissions::from_mode(0o600)).unwrap();
+        }
+        let private_key = config(&format!(
+            "[wiki.sync]\nenabled = true\nremote_url = \"git@github.com:owner/repo.git\"\nssh_key_path = {:?}\nknown_hosts_path = {:?}\n",
+            key, known_hosts
+        ));
+        assert!(private_key.wiki.sync.valid());
+        let mapped = private_key.wiki.sync.to_core_config();
+        assert_eq!(mapped.max_file_bytes, 50 * 1024 * 1024);
+        assert_eq!(mapped.branch, "main");
+        assert!(matches!(mapped.auth, wiki_core::GitAuth::SshKey { .. }));
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
     fn memory_section_rejects_zero_limits_even_while_disabled() {
         for field in [
             "voice_summary_max_bytes",

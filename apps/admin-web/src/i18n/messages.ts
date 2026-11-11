@@ -2,6 +2,8 @@
  * UI message catalog. `en` owns the key set, so a missing translation is a
  * compile error rather than a blank string at runtime.
  */
+import { knowledgeMessages } from '@vela/knowledge-ui'
+
 export interface PluralMessage {
   one: string
   other: string
@@ -10,224 +12,225 @@ export interface PluralMessage {
 export type MessageValue = string | PluralMessage
 
 export const en = {
-  'knowledgeV3.sources': "Sources",
-  'knowledgeV3.markdownOnly': "Immutable Markdown text sources only",
-  'knowledgeV3.sourceName': "Source filename",
-  'knowledgeV3.sourceProvenance': "Source provenance",
-  'knowledgeV3.sourceContent': "Original Markdown text",
-  'knowledgeV3.importSource': "Import source",
-  'knowledgeV3.sourceImported': "Immutable Source imported. You can select it for Wiki publication.",
-  'knowledgeV3.publish': "Publish verified Wiki",
-  'knowledgeV3.published': "Wiki page published with verified source.",
+  ...knowledgeMessages.en,
+
+
+
+
+
+
+
+
+
   'nav.knowledge': "Knowledge",
   'nav.memory': "Memory",
-  'knowledgeV3.subtitle': "Wiki drafts, evidence references, and a rebuildable Markdown search index.",
-  'knowledgeV3.search': "Search",
-  'knowledgeV3.searchHint': "Find Wiki documents",
-  'knowledgeV3.searchMode': "Search mode",
-  'knowledgeV3.searchModeHybrid': "Hybrid",
-  'knowledgeV3.searchModeLex': "Keyword",
-  'knowledgeV3.searchModeVec': "Semantic",
-  'knowledgeV3.noSearchResults': "No matching documents found.",
-  'knowledgeV3.loadMore': "Load more Wiki pages",
-  'knowledgeV3.new': "New Wiki draft",
-  'knowledgeV3.edit': "Edit Wiki draft",
-  'knowledgeV3.readingView': 'Reading view',
-  'knowledgeV3.noteActions': 'Note actions',
-  'knowledgeV3.downloadNote': 'Download',
-  'knowledgeV3.copyNoteLink': 'Copy note link',
-  'knowledgeV3.copyNoteContent': 'Copy Markdown content',
-  'knowledgeV3.title': "Title",
-  'knowledgeV3.source': "Source reference (optional for drafts)",
-  'knowledgeV3.markdown': "Markdown content",
-  'knowledgeV3.save': "Save draft",
-  'knowledgeV3.saved': "Draft saved.",
-  'knowledgeV3.rebuild': "Rebuild index",
-  'knowledgeV3.rebuilt': "Knowledge index rebuilt.",
-  'knowledgeV3.index': "Index",
-  'knowledgeV3.documents': "Documents",
-  'knowledgeV3.draftNotice': "Drafts only. Verified publication requires source validation.",
-  'knowledgeV3.empty': "Enter a search phrase to find Wiki pages.",
-  'knowledgeV3.refresh': "Refresh tree",
-  'knowledgeV3.physicalNotice': "Markdown files live in real folders. Imported Source bundles are read-only.",
-  'knowledgeV3.explorer': "Knowledge Explorer",
-  'knowledgeV3.displaySpace': "Show storage root",
-  'knowledgeV3.viewRaw': "File",
-  'knowledgeV3.viewWiki': "Knowledge",
-  'knowledgeV3.viewDrafts': "Drafts",
-  'knowledgeV3.graph': "Graph",
-  'knowledgeV3.processing.sourceUnavailable': 'Source is unavailable in the vault.',
-  'knowledgeV3.graphEditor': "Editor",
-  'knowledgeV3.graphGlobal': "Global",
-  'knowledgeV3.graphLocal': "Local",
-  'knowledgeV3.graphQuery': "Query",
-  'knowledgeV3.graphQueryInput': "Graph query",
-  'knowledgeV3.graphQueryPlaceholder': "Search the Wiki and Sources",
-  'knowledgeV3.graphQueryRun': "Search",
-  'knowledgeV3.graphAnswer': "Answer",
-  'knowledgeV3.graphQueryNoResults': "No matching pages",
-  'knowledgeV3.graphTierLegend': "Match levels: cited · read · retrieved · nearby",
-  'knowledgeV3.graphAnswerNode': "Answer graph node",
-  'knowledgeV3.chatTitle': "Ask the Wiki",
-  'knowledgeV3.chatDescription': "Answers use only pages in this Knowledge vault.",
-  'knowledgeV3.chatConversation': "Wiki conversation",
-  'knowledgeV3.chatEmpty': "Ask a question about your Wiki.",
-  'knowledgeV3.chatSuggestions': "Suggested questions",
-  'knowledgeV3.chatSuggestionQuestion': "What do we know about {folder}?",
-  'knowledgeV3.chatSources': "Sources",
-  'knowledgeV3.chatYou': "You",
-  'knowledgeV3.chatAssistant': "Wiki assistant",
-  'knowledgeV3.chatPlaceholder': "Ask the Wiki…",
-  'knowledgeV3.chatInputLabel': "Question for the Wiki",
-  'knowledgeV3.chatSend': "Ask",
-  'knowledgeV3.chatStop': "Stop",
-  'knowledgeV3.chatStopped': "Stopped. The partial answer is kept.",
-  'knowledgeV3.chatInterrupted': "This answer was interrupted before it finished.",
-  'knowledgeV3.chatConversationBusy': "This conversation is already answering in another tab.",
-  'knowledgeV3.chatConversationRunningReadOnly': "This conversation is answering in another tab. Reload it after the answer finishes.",
-  'knowledgeV3.chatConversationLoadFailed': "This conversation could not be loaded. Try reloading it.",
-  'knowledgeV3.chatReloadConversation': "Reload conversation",
-  'knowledgeV3.chatToolActivity': "Tool activity",
-  'knowledgeV3.rightPanel': "Right panel",
-  'knowledgeV3.rightOutline': "Outline",
-  'knowledgeV3.rightTabReorderHint': "Press and hold to drag and reorder · Alt+←/→",
-  'knowledgeV3.chatTrail': "Research steps · {count}",
-  'knowledgeV3.chatToolSearch': "Search",
-  'knowledgeV3.chatToolRead': "Read page",
-  'knowledgeV3.chatToolReadMany': "Read pages",
-  'knowledgeV3.chatThinking': "Searching the Wiki…",
-  'knowledgeV3.chatConversations': "Conversations",
-  'knowledgeV3.chatNewConversation': "New conversation",
-  'knowledgeV3.chatRefreshConversations': "Refresh",
-  'knowledgeV3.chatLoadingConversations': "Loading conversations…",
-  'knowledgeV3.chatNoConversations': "No saved conversations yet.",
-  'knowledgeV3.chatConversationTitle': "Conversation title",
-  'knowledgeV3.chatSaveRename': "Save title",
-  'knowledgeV3.chatCancelRename': "Cancel rename",
-  'knowledgeV3.chatRenameConversation': "Rename",
-  'knowledgeV3.chatDeleteConversation': "Delete",
-  'knowledgeV3.chatDeleteConversationTitle': "Delete conversation?",
-  'knowledgeV3.chatDeleteConversationConfirm': "Delete “{title}” and its messages? This cannot be undone.",
-  'knowledgeV3.chatConversationMessageCount': "{count} messages",
-  'knowledgeV3.chatConversationRunning': "Answering in another tab",
-  'knowledgeV3.chatDeleteConversationBusy': "This conversation is answering. Stop it before deleting.",
-  'knowledgeV3.chatConversationTitleInvalid': "Enter a title between 1 and 120 characters.",
-  'knowledgeV3.chatConversationListFailed': "Could not load conversations. Try again.",
-  'knowledgeV3.chatPinnedFiles': "Files attached to this conversation",
-  'knowledgeV3.chatPinFile': "Add {title} to this conversation",
-  'knowledgeV3.chatUnpinFile': "Remove {title} from this conversation",
-  'knowledgeV3.chatPinLimit': "You can attach up to {count} files",
-  'knowledgeV3.chatRetry': "Try again",
-  'knowledgeV3.chatShowGraph': "Show on Graph",
-  'knowledgeV3.chatNotConfigured': "Choose a chat provider in Background Settings to ask the Wiki.",
-  'knowledgeV3.chatOpenSettings': "Open provider settings",
-  'knowledgeV3.chatBusy': "Too many Wiki answers are running. Try again shortly.",
-  'knowledgeV3.chatConversationFull': "This conversation has reached its message limit. Start a new conversation to continue.",
-  'knowledgeV3.chatAnswerTruncated': "This answer was shortened to fit the storage limit.",
-  'knowledgeV3.chatSaveFailed': "This answer could not be saved. Refresh or open the conversation again to check its stored status.",
-  'knowledgeV3.chatPageMissing': "This Wiki page no longer exists. The saved answer and graph are still available.",
-  'knowledgeV3.chatConnectionLost': "The connection was lost. Your partial answer is kept.",
-  'knowledgeV3.chatFailed': "The Wiki answer could not be completed.",
-  'knowledgeV3.chatCollapse': "Collapse chat",
-  'knowledgeV3.chatExpand': "Expand chat",
-  'knowledgeV3.chatOpenDrawer': "Open Wiki chat",
-  'knowledgeV3.chatCloseDrawer': "Close Wiki chat",
-  'knowledgeV3.graphDepth': "Depth",
-  'knowledgeV3.graphRefresh': "Refresh graph",
-  'knowledgeV3.graphFit': "Fit",
-  'knowledgeV3.graphTruncated': "Graph truncated; refine scope",
-  'knowledgeV3.graphChooseWiki': "Select a Wiki page",
-  'knowledgeV3.graphLoading': "Loading Graph…",
-  'knowledgeV3.graphEmpty': "No Wiki pages in graph",
-  'knowledgeV3.graphOpen': "Open Wiki",
-  'knowledgeV3.graphHelp': "Click a node to open it in a new tab · Cmd/Ctrl+Click to open it to the side · Drag to pan · Scroll to zoom",
-  'knowledgeV3.openInNewTab': "Open in new tab",
-  'knowledgeV3.openToSide': "Open to the side",
-  'knowledgeV3.showInExplorer': "Show in Explorer",
-  'knowledgeV3.closeTab': "Close tab",
-  'knowledgeV3.splitRight': "Split right",
-  'knowledgeV3.closePane': "Close pane",
-  'knowledgeV3.resizeExplorer': "Resize explorer",
-  'knowledgeV3.resizeRightPanel': "Resize right panel",
-  'knowledgeV3.graphOutgoing': "Outgoing",
-  'knowledgeV3.graphBacklinks': "Backlinks",
-  'knowledgeV3.graphUnresolved': "Unresolved links",
-  'knowledgeV3.graphNodes': "Wiki pages",
-  'knowledgeV3.graphLinkTarget': "Link to Wiki page",
-  'knowledgeV3.graphInsertLink': "Insert [[Link]]",
-  'knowledgeV3.graphMoveBlocked': "Cannot move Wiki: these existing backlinks would break.",
-  'knowledgeV3.graphAlias': "Display alias",
-  'knowledgeV3.graphAliasHint': "Optional displayed title",
-  'knowledgeV3.graphAnchor': "Section",
-  'knowledgeV3.graphLine': "Line",
-  'knowledgeV3.graphLinkDetails': "Link details",
-  'knowledgeV3.graphOpenSource': "Open source Wiki",
-  'knowledgeV3.graphRelayout': "Re-layout",
-  'knowledgeV3.graphRebuild': "Rebuild index",
-  'knowledgeV3.filterHint': "Filter files in this root",
-  'knowledgeV3.newFolder': "New folder",
-  'knowledgeV3.newRaw': "New Raw note",
-  'knowledgeV3.createNote': "New note",
-  'knowledgeV3.invalidFileName': "Enter a valid Markdown file name (without folders).",
-  'knowledgeV3.fileExists': "A note with that name already exists in this folder.",
-  'knowledgeV3.uploadFolder': "Upload Markdown folder",
-  'knowledgeV3.folderUploadEmpty': "The folder has no Markdown (.md) files.",
-  'knowledgeV3.folderUploadResult': "Uploaded {created} files, skipped {skipped} existing, ignored {ignored} non-Markdown. Auto-Flow will ingest them in batches.",
-  'knowledgeV3.folderUploadFailed': "Could not upload:",
-  'knowledgeV3.draftStatus': "Draft",
-  'knowledgeV3.unsaved': "Unsaved changes",
-  'knowledgeV3.savedStatus': "Saved",
-  'knowledgeV3.hidePreview': "Hide preview",
-  'knowledgeV3.saveRaw': "Save note",
-  'knowledgeV3.rawSaved': "Note saved.",
-  'knowledgeV3.closeEditor': "Close editor",
-  'knowledgeV3.startWriting': "Start writing Markdown…",
-  'knowledgeEditor.viewMode': 'Editor view',
-  'knowledgeEditor.modeWrite': 'Write',
-  'knowledgeEditor.modeSplit': 'Split',
-  'knowledgeEditor.modePreview': 'Preview',
-  'knowledgeEditor.focusMode': 'Focus mode',
-  'knowledgeEditor.formatting': 'Formatting',
-  'knowledgeEditor.heading1': 'Heading 1',
-  'knowledgeEditor.heading2': 'Heading 2',
-  'knowledgeEditor.heading3': 'Heading 3',
-  'knowledgeEditor.bold': 'Bold',
-  'knowledgeEditor.italic': 'Italic',
-  'knowledgeEditor.strike': 'Strikethrough',
-  'knowledgeEditor.inlineCode': 'Inline code',
-  'knowledgeEditor.boldText': 'bold text',
-  'knowledgeEditor.italicText': 'italic text',
-  'knowledgeEditor.bulletList': 'Bulleted list',
-  'knowledgeEditor.numberedList': 'Numbered list',
-  'knowledgeEditor.taskList': 'Checklist',
-  'knowledgeEditor.quote': 'Quote',
-  'knowledgeEditor.link': 'Link',
-  'knowledgeEditor.linkText': 'link text',
-  'knowledgeEditor.wikiLink': 'Wiki link',
-  'knowledgeEditor.codeBlock': 'Code block',
-  'knowledgeEditor.table': 'Table',
-  'knowledgeEditor.divider': 'Divider',
-  'knowledgeEditor.nothingToPreview': 'Nothing to preview yet.',
-  'knowledgeEditor.words': '{count} words',
-  'knowledgeEditor.chars': '{count} characters',
-  'knowledgeEditor.readTime': '{count} min read',
-  'knowledgeEditor.position': 'Ln {line}, Col {col}',
-  'knowledgeV3.discardChanges': "Discard unsaved changes?",
-  'knowledgeV3.searchResults': "Wiki search results",
-  'knowledgeV3.preview': "Preview",
-  'knowledgeV3.move': "Move / rename",
-  'knowledgeV3.fileName': "File name",
-  'knowledgeV3.newFilenameHint': "Optional: session-notes.md (default is stable ID)",
-  'knowledgeV3.details': "File details",
-  'knowledgeV3.physicalPath': "Physical path",
-  'knowledgeV3.space': "Storage root",
-  'knowledgeV3.immutableSource': "Immutable Source snapshot — read only",
-  'knowledgeV3.targetFolder': "Destination folder (raw/… or wiki/…)",
-  'knowledgeV3.moved': "File moved to its new physical folder.",
-  'knowledgeV3.folderName': "Folder name",
-  'knowledgeV3.dropMarkdownHint': "Drop Markdown (.md) files to add",
-  'knowledgeV3.recent': "Recent",
-  'knowledgeV3.recentEmpty': "No recent notes",
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
   'memoryV3.subtitle': "Facts kept per Device, in a vault separate from the Wiki.",
   'memoryV3.eyebrow': "Voice studio / Personal memory",
   'memoryV3.liveContext': "Live context preview",
@@ -2269,224 +2272,225 @@ export const en = {
 export type MessageKey = keyof typeof en
 
 export const vi: Record<MessageKey, MessageValue> = {
-  'knowledgeV3.sources': "Nguồn tài liệu",
-  'knowledgeV3.markdownOnly': "Chỉ hỗ trợ nguồn Markdown dạng văn bản bất biến",
-  'knowledgeV3.sourceName': "Tên tệp nguồn",
-  'knowledgeV3.sourceProvenance': "Xuất xứ nguồn",
-  'knowledgeV3.sourceContent': "Nội dung Markdown gốc",
-  'knowledgeV3.importSource': "Nhập nguồn",
-  'knowledgeV3.sourceImported': "Đã lưu Source bất biến. Có thể chọn Source để xuất bản Wiki.",
-  'knowledgeV3.publish': "Xuất bản Wiki đã xác minh",
-  'knowledgeV3.published': "Đã xuất bản Wiki sau khi xác minh Source.",
+  ...knowledgeMessages.vi,
+
+
+
+
+
+
+
+
+
   'nav.knowledge': "Tri thức",
   'nav.memory': "Bộ nhớ",
-  'knowledgeV3.subtitle': "Bản nháp Wiki, tham chiếu nguồn và chỉ mục Markdown có thể tái tạo.",
-  'knowledgeV3.search': "Tìm kiếm",
-  'knowledgeV3.searchHint': "Tìm nội dung Wiki",
-  'knowledgeV3.searchMode': "Chế độ tìm kiếm",
-  'knowledgeV3.searchModeHybrid': "Kết hợp",
-  'knowledgeV3.searchModeLex': "Từ khóa",
-  'knowledgeV3.searchModeVec': "Ngữ nghĩa",
-  'knowledgeV3.noSearchResults': "Không tìm thấy tài liệu phù hợp.",
-  'knowledgeV3.loadMore': "Tải thêm trang Wiki",
-  'knowledgeV3.new': "Tạo bản nháp Wiki",
-  'knowledgeV3.edit': "Chỉnh sửa bản nháp",
-  'knowledgeV3.readingView': 'Chế độ đọc',
-  'knowledgeV3.noteActions': 'Thao tác tài liệu',
-  'knowledgeV3.downloadNote': 'Tải xuống',
-  'knowledgeV3.copyNoteLink': 'Sao chép liên kết',
-  'knowledgeV3.copyNoteContent': 'Sao chép nội dung Markdown',
-  'knowledgeV3.title': "Tiêu đề",
-  'knowledgeV3.source': "Nguồn tham chiếu (không bắt buộc với bản nháp)",
-  'knowledgeV3.markdown': "Nội dung Markdown",
-  'knowledgeV3.save': "Lưu bản nháp",
-  'knowledgeV3.saved': "Đã lưu bản nháp.",
-  'knowledgeV3.rebuild': "Tạo lại chỉ mục",
-  'knowledgeV3.rebuilt': "Đã tạo lại chỉ mục Knowledge.",
-  'knowledgeV3.index': "Chỉ mục",
-  'knowledgeV3.documents': "Tài liệu",
-  'knowledgeV3.draftNotice': "Chỉ lưu bản nháp; xuất bản cần xác minh nguồn.",
-  'knowledgeV3.empty': "Nhập từ khóa để tìm trang Wiki.",
-  'knowledgeV3.refresh': "Tải lại cây thư mục",
-  'knowledgeV3.physicalNotice': "Markdown lưu trong thư mục thật. Source đã nhập chỉ đọc.",
-  'knowledgeV3.explorer': "Cây thư mục Knowledge",
-  'knowledgeV3.displaySpace': "Nguồn hiển thị",
-  'knowledgeV3.viewRaw': "File",
-  'knowledgeV3.viewWiki': "Knowledge",
-  'knowledgeV3.viewDrafts': "Bản nháp",
-  'knowledgeV3.graph': "Sơ đồ liên kết",
-  'knowledgeV3.processing.sourceUnavailable': 'Source hiện không có trong vault.',
-  'knowledgeV3.graphEditor': "Trình soạn thảo",
-  'knowledgeV3.graphGlobal': "Toàn bộ",
-  'knowledgeV3.graphLocal': "Cục bộ",
-  'knowledgeV3.graphQuery': "Truy vấn",
-  'knowledgeV3.graphQueryInput': "Từ khóa đồ thị",
-  'knowledgeV3.graphQueryPlaceholder': "Tìm trong Wiki và Nguồn",
-  'knowledgeV3.graphQueryRun': "Tìm",
-  'knowledgeV3.graphAnswer': "Câu trả lời",
-  'knowledgeV3.graphQueryNoResults': "Không tìm thấy trang phù hợp",
-  'knowledgeV3.graphTierLegend': "Mức khớp: được trích dẫn · đã đọc · đã tìm · lân cận",
-  'knowledgeV3.graphAnswerNode': "Nút trong đồ thị câu trả lời",
-  'knowledgeV3.chatTitle': "Hỏi Wiki",
-  'knowledgeV3.chatDescription': "Câu trả lời chỉ dùng các trang trong kho Knowledge này.",
-  'knowledgeV3.chatConversation': "Hội thoại với Wiki",
-  'knowledgeV3.chatEmpty': "Đặt câu hỏi về Wiki của bạn.",
-  'knowledgeV3.chatSuggestions': "Gợi ý câu hỏi",
-  'knowledgeV3.chatSuggestionQuestion': "Wiki có gì về {folder}?",
-  'knowledgeV3.chatSources': "Nguồn",
-  'knowledgeV3.chatYou': "Bạn",
-  'knowledgeV3.chatAssistant': "Trợ lý Wiki",
-  'knowledgeV3.chatPlaceholder': "Hỏi Wiki…",
-  'knowledgeV3.chatInputLabel': "Câu hỏi cho Wiki",
-  'knowledgeV3.chatSend': "Hỏi",
-  'knowledgeV3.chatStop': "Dừng",
-  'knowledgeV3.chatStopped': "Đã dừng. Phần câu trả lời đã nhận vẫn được giữ.",
-  'knowledgeV3.chatInterrupted': "Câu trả lời bị gián đoạn trước khi hoàn tất.",
-  'knowledgeV3.chatConversationBusy': "Hội thoại này đang được trả lời ở tab khác.",
-  'knowledgeV3.chatConversationRunningReadOnly': "Hội thoại này đang được trả lời ở tab khác. Tải lại sau khi câu trả lời hoàn tất.",
-  'knowledgeV3.chatConversationLoadFailed': "Không tải được hội thoại này. Hãy thử tải lại.",
-  'knowledgeV3.chatReloadConversation': "Tải lại hội thoại",
-  'knowledgeV3.chatToolActivity': "Hoạt động công cụ",
-  'knowledgeV3.rightPanel': "Panel bên phải",
-  'knowledgeV3.rightOutline': "Mục lục",
-  'knowledgeV3.rightTabReorderHint': "Nhấn giữ rồi kéo để sắp xếp · Alt+←/→",
-  'knowledgeV3.chatTrail': "Các bước tra cứu · {count}",
-  'knowledgeV3.chatToolSearch': "Tìm kiếm",
-  'knowledgeV3.chatToolRead': "Đọc trang",
-  'knowledgeV3.chatToolReadMany': "Đọc nhiều trang",
-  'knowledgeV3.chatThinking': "Đang tìm trong Wiki…",
-  'knowledgeV3.chatConversations': "Hội thoại",
-  'knowledgeV3.chatNewConversation': "Hội thoại mới",
-  'knowledgeV3.chatRefreshConversations': "Tải lại",
-  'knowledgeV3.chatLoadingConversations': "Đang tải hội thoại…",
-  'knowledgeV3.chatNoConversations': "Chưa có hội thoại nào được lưu.",
-  'knowledgeV3.chatConversationTitle': "Tiêu đề hội thoại",
-  'knowledgeV3.chatSaveRename': "Lưu tiêu đề",
-  'knowledgeV3.chatCancelRename': "Hủy đổi tên",
-  'knowledgeV3.chatRenameConversation': "Đổi tên",
-  'knowledgeV3.chatDeleteConversation': "Xóa",
-  'knowledgeV3.chatDeleteConversationTitle': "Xóa hội thoại?",
-  'knowledgeV3.chatDeleteConversationConfirm': "Xóa “{title}” cùng các tin nhắn? Thao tác này không thể hoàn tác.",
-  'knowledgeV3.chatConversationMessageCount': "{count} tin nhắn",
-  'knowledgeV3.chatConversationRunning': "Đang trả lời ở tab khác",
-  'knowledgeV3.chatDeleteConversationBusy': "Hội thoại này đang trả lời. Hãy dừng trước khi xóa.",
-  'knowledgeV3.chatConversationTitleInvalid': "Nhập tiêu đề từ 1 đến 120 ký tự.",
-  'knowledgeV3.chatConversationListFailed': "Không tải được danh sách hội thoại. Hãy thử lại.",
-  'knowledgeV3.chatPinnedFiles': "File đính kèm trong hội thoại này",
-  'knowledgeV3.chatPinFile': "Thêm {title} vào hội thoại này",
-  'knowledgeV3.chatUnpinFile': "Bỏ {title} khỏi hội thoại này",
-  'knowledgeV3.chatPinLimit': "Chỉ đính kèm được tối đa {count} file",
-  'knowledgeV3.chatRetry': "Thử lại",
-  'knowledgeV3.chatShowGraph': "Xem trên Graph",
-  'knowledgeV3.chatNotConfigured': "Hãy chọn nhà cung cấp chat trong Cài đặt Background để hỏi Wiki.",
-  'knowledgeV3.chatOpenSettings': "Mở cài đặt provider",
-  'knowledgeV3.chatBusy': "Đang có quá nhiều lượt hỏi Wiki. Hãy thử lại sau ít phút.",
-  'knowledgeV3.chatConversationFull': "Hội thoại đã đạt giới hạn số tin nhắn. Hãy mở hội thoại mới để tiếp tục.",
-  'knowledgeV3.chatAnswerTruncated': "Câu trả lời đã được rút ngắn để vừa giới hạn lưu trữ.",
-  'knowledgeV3.chatSaveFailed': "Không lưu được câu trả lời này. Hãy tải lại hoặc mở lại hội thoại để kiểm tra trạng thái đã lưu.",
-  'knowledgeV3.chatPageMissing': "Trang Wiki này không còn tồn tại. Câu trả lời và đồ thị đã lưu vẫn được giữ.",
-  'knowledgeV3.chatConnectionLost': "Mất kết nối. Phần câu trả lời đã nhận vẫn được giữ.",
-  'knowledgeV3.chatFailed': "Không thể hoàn tất câu trả lời từ Wiki.",
-  'knowledgeV3.chatCollapse': "Thu gọn chat",
-  'knowledgeV3.chatExpand': "Mở rộng chat",
-  'knowledgeV3.chatOpenDrawer': "Mở khung hỏi Wiki",
-  'knowledgeV3.chatCloseDrawer': "Đóng khung hỏi Wiki",
-  'knowledgeV3.graphDepth': "Độ sâu",
-  'knowledgeV3.graphRefresh': "Làm mới sơ đồ",
-  'knowledgeV3.graphFit': "Vừa khung",
-  'knowledgeV3.graphTruncated': "Sơ đồ bị giới hạn; hãy thu hẹp phạm vi",
-  'knowledgeV3.graphChooseWiki': "Chọn bài Wiki",
-  'knowledgeV3.graphLoading': "Đang tải sơ đồ…",
-  'knowledgeV3.graphEmpty': "Chưa có bài Wiki trong sơ đồ",
-  'knowledgeV3.graphOpen': "Mở bài Wiki",
-  'knowledgeV3.graphHelp': "Nhấn node để mở trong tab mới · Cmd/Ctrl+nhấn để mở bên cạnh · Kéo để di chuyển · Cuộn để phóng to",
-  'knowledgeV3.openInNewTab': "Mở trong tab mới",
-  'knowledgeV3.openToSide': "Mở bên cạnh",
-  'knowledgeV3.showInExplorer': "Hiện trong thư mục",
-  'knowledgeV3.closeTab': "Đóng tab",
-  'knowledgeV3.splitRight': "Chia sang phải",
-  'knowledgeV3.closePane': "Đóng khung",
-  'knowledgeV3.resizeExplorer': "Đổi độ rộng cây thư mục",
-  'knowledgeV3.resizeRightPanel': "Đổi độ rộng panel bên phải",
-  'knowledgeV3.graphOutgoing': "Liên kết đi",
-  'knowledgeV3.graphBacklinks': "Liên kết đến",
-  'knowledgeV3.graphUnresolved': "Liên kết chưa xác định",
-  'knowledgeV3.graphNodes': "Bài Wiki",
-  'knowledgeV3.graphLinkTarget': "Liên kết tới bài Wiki",
-  'knowledgeV3.graphInsertLink': "Chèn [[Link]]",
-  'knowledgeV3.graphMoveBlocked': "Không thể di chuyển Wiki vì các liên kết sau sẽ bị hỏng.",
-  'knowledgeV3.graphAlias': "Tên hiển thị",
-  'knowledgeV3.graphAliasHint': "Tên hiển thị tùy chọn",
-  'knowledgeV3.graphAnchor': "Đề mục",
-  'knowledgeV3.graphLine': "Dòng",
-  'knowledgeV3.graphLinkDetails': "Chi tiết liên kết",
-  'knowledgeV3.graphOpenSource': "Mở Wiki nguồn",
-  'knowledgeV3.graphRelayout': "Bố trí lại",
-  'knowledgeV3.graphRebuild': "Xây dựng lại chỉ mục",
-  'knowledgeV3.filterHint': "Lọc file trong nguồn này",
-  'knowledgeV3.newFolder': "Tạo thư mục",
-  'knowledgeV3.newRaw': "Tạo Raw",
-  'knowledgeV3.createNote': "Tạo ghi chú",
-  'knowledgeV3.invalidFileName': "Tên file Markdown không hợp lệ (không nhập đường dẫn thư mục).",
-  'knowledgeV3.fileExists': "Thư mục đã có ghi chú cùng tên.",
-  'knowledgeV3.uploadFolder': "Tải lên folder Markdown",
-  'knowledgeV3.folderUploadEmpty': "Folder không có file Markdown (.md) nào.",
-  'knowledgeV3.folderUploadResult': "Đã tải lên {created} file, bỏ qua {skipped} file đã có, bỏ {ignored} file không phải Markdown. Auto-Flow sẽ ingest theo từng lô.",
-  'knowledgeV3.folderUploadFailed': "Không tải lên được:",
-  'knowledgeV3.draftStatus': "Bản nháp",
-  'knowledgeV3.unsaved': "Chưa lưu thay đổi",
-  'knowledgeV3.savedStatus': "Đã lưu",
-  'knowledgeV3.hidePreview': "Ẩn xem trước",
-  'knowledgeV3.saveRaw': "Lưu ghi chú",
-  'knowledgeV3.rawSaved': "Đã lưu ghi chú.",
-  'knowledgeV3.closeEditor': "Đóng trình soạn thảo",
-  'knowledgeV3.startWriting': "Bắt đầu viết Markdown…",
-  'knowledgeEditor.viewMode': 'Chế độ hiển thị',
-  'knowledgeEditor.modeWrite': 'Viết',
-  'knowledgeEditor.modeSplit': 'Chia đôi',
-  'knowledgeEditor.modePreview': 'Xem trước',
-  'knowledgeEditor.focusMode': 'Chế độ tập trung',
-  'knowledgeEditor.formatting': 'Định dạng',
-  'knowledgeEditor.heading1': 'Tiêu đề 1',
-  'knowledgeEditor.heading2': 'Tiêu đề 2',
-  'knowledgeEditor.heading3': 'Tiêu đề 3',
-  'knowledgeEditor.bold': 'In đậm',
-  'knowledgeEditor.italic': 'In nghiêng',
-  'knowledgeEditor.strike': 'Gạch ngang',
-  'knowledgeEditor.inlineCode': 'Mã nội dòng',
-  'knowledgeEditor.boldText': 'chữ đậm',
-  'knowledgeEditor.italicText': 'chữ nghiêng',
-  'knowledgeEditor.bulletList': 'Danh sách dấu chấm',
-  'knowledgeEditor.numberedList': 'Danh sách đánh số',
-  'knowledgeEditor.taskList': 'Danh sách việc',
-  'knowledgeEditor.quote': 'Trích dẫn',
-  'knowledgeEditor.link': 'Liên kết',
-  'knowledgeEditor.linkText': 'văn bản liên kết',
-  'knowledgeEditor.wikiLink': 'Liên kết wiki',
-  'knowledgeEditor.codeBlock': 'Khối mã',
-  'knowledgeEditor.table': 'Bảng',
-  'knowledgeEditor.divider': 'Đường phân cách',
-  'knowledgeEditor.nothingToPreview': 'Chưa có nội dung để xem trước.',
-  'knowledgeEditor.words': '{count} từ',
-  'knowledgeEditor.chars': '{count} ký tự',
-  'knowledgeEditor.readTime': '{count} phút đọc',
-  'knowledgeEditor.position': 'Dòng {line}, Cột {col}',
-  'knowledgeV3.discardChanges': "Bỏ những thay đổi chưa lưu?",
-  'knowledgeV3.searchResults': "Kết quả tìm Wiki",
-  'knowledgeV3.preview': "Xem trước",
-  'knowledgeV3.move': "Di chuyển / đổi tên",
-  'knowledgeV3.fileName': "Tên file",
-  'knowledgeV3.newFilenameHint': "Tuỳ chọn: session-notes.md (mặc định dùng stable ID)",
-  'knowledgeV3.details': "Chi tiết file",
-  'knowledgeV3.physicalPath': "Đường dẫn vật lý",
-  'knowledgeV3.space': "Thư mục gốc",
-  'knowledgeV3.immutableSource': "Bản Source bất biến — chỉ đọc",
-  'knowledgeV3.targetFolder': "Thư mục đích (raw/… hoặc wiki/…)",
-  'knowledgeV3.moved': "Đã di chuyển file trong thư mục vật lý.",
-  'knowledgeV3.folderName': "Tên thư mục",
-  'knowledgeV3.dropMarkdownHint': "Thả file Markdown (.md) vào đây để thêm",
-  'knowledgeV3.recent': "Gần đây",
-  'knowledgeV3.recentEmpty': "Chưa có ghi chú gần đây",
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
   'memoryV3.subtitle': "Thông tin lưu theo từng Device, trong kho riêng, tách khỏi Wiki.",
   'memoryV3.eyebrow': "Voice studio / Trí nhớ cá nhân",
   'memoryV3.liveContext': "Xem trước ngữ cảnh",

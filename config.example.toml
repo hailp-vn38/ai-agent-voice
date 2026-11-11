@@ -405,6 +405,18 @@ enabled = false
 vault_dir = "data/wiki-vault"
 template = "research"
 
+[wiki.sync]
+enabled = false
+remote_url = "git@github.com:<owner>/<repo>.git"
+branch = "main"
+ssh_key_path = "docker/wiki-deploy-key"
+known_hosts_path = "docker/github-known-hosts"
+author_name = "Vela Server"
+author_email = "vela@localhost"
+interval_min = 5
+debounce_sec = 30
+max_file_mb = 50
+
 [wiki.mcp]
 enabled = false
 path = "/mcp/knowledge"

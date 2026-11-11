@@ -1,6 +1,6 @@
 # 06: Seam KnowledgeBackend trong Admin Web
 
-Status: ready-for-agent
+Status: resolved
 Blocked by: none
 Spec: ../spec.md (user stories 49)
 
@@ -18,14 +18,19 @@ Gom mọi lệnh gọi dữ liệu của trang Knowledge về sau một interfac
 
 ## Tiêu chí xong
 
-- [ ] Test Knowledge hiện có (`KnowledgePage`, `KnowledgeGraph`, `RightPanelTabs`, `useWikiChat`, …) chuyển từ mock `fetch` sang `MemoryBackend` và pass.
+- [x] Test Knowledge workspace (`KnowledgePage`, `KnowledgeGraph`, `RightPanelTabs`, …) dùng `MemoryBackend` cho tree/read/search/graph và hành vi workspace. HTTP mocks chỉ còn ở kiểm tra Admin-specific như chat/SSE, hội thoại, CRUD/import/upload và lỗi route.
 - [x] Một bộ contract test chạy cho cả `MemoryBackend` và `HttpBackend` (với server giả) cho thấy hai adapter hành xử giống nhau.
-- [ ] E2E trang Knowledge pass, giao diện không đổi.
+- [x] E2E trang Knowledge pass, giao diện không đổi.
 
 ## Cập nhật tiến độ
 
-- Đã thêm `KnowledgeBackend` cùng `HttpKnowledgeBackend` và `MemoryKnowledgeBackend`; Admin Web inject backend ở cấp ứng dụng. Các luồng cây, đọc, tìm kiếm, đồ thị, trạng thái, thay đổi và khả năng chat đi qua seam này.
-- Contract test hiện chạy cùng kịch bản đọc, tìm kiếm không dấu và ghi có revision cho cả hai adapter; test HTTP dùng server giả.
-- Đã thêm test KnowledgePage qua `MemoryKnowledgeBackend`, gồm Wiki Page, Raw Working Note và tìm kiếm, đồng thời xác nhận các luồng này không gọi `fetch`.
-- Còn thiếu: chuyển bộ `KnowledgePage.test.ts` hiện hữu khỏi mock `requestJson` sang `MemoryKnowledgeBackend` và xác nhận toàn bộ suite đó pass. Chưa có gate E2E trang Knowledge để chạy và ghi nhận kết quả.
-- Vì vậy ticket vẫn `ready-for-agent`; tiêu chí chuyển test hiện hữu và E2E chưa hoàn tất.
+- 2026-11-08: Hợp đồng common dùng `Scope`, validated `DocPath { scope, relative }`, `ReadWindow`, cây lồng nhau, `Page { content, revision }`, `Hit[]`, `VaultStatus`, các `VaultChange` của wiki-core và `Applied`. HTTP DTO được chuyển đổi ở adapter; DTO/routes riêng của Admin nằm trong `AdminKnowledgeBackend` extension.
+- 2026-11-08: `knowledgeBackend.vault.test.ts` chạy contract chung trên Memory và Http (server giả) cho tree, read window, search, status, graph và write. `knowledgeBackend.admin.test.ts` giữ contract route/DTO Admin. `KnowledgePage.backend.test.ts` kiểm tra mở Wiki, Raw, search, sửa Wiki và chạy Page không có Admin extension.
+- E2E Chromium chạy qua Vite và mock Admin API xác nhận đọc Wiki Page, chuyển Knowledge/File, mở Raw Working Note và quay lại cây Knowledge.
+- 2026-11-08: Chuyển thêm Recent, khôi phục tab/pane, Graph navigation, chuyển nguồn, path bar và panel layout trong `KnowledgePage.test.ts` sang Memory. Suite mục tiêu 57/57; các test HTTP còn lại giữ lại cho API Admin-specific.
+- 2026-11-08: Xác minh lại toàn bộ frontend: Vitest 95 files/550 tests, typecheck, build và Playwright Chromium E2E đều PASS.
+
+## Comments
+
+- 2026-11-08: `KnowledgeGraph.test.ts` dùng MemoryKnowledgeBackend cho global/focused graph; query graph còn đi qua Admin extension. `RightPanelTabs.test.ts` không gọi backend; `useWikiChat.test.ts` kiểm tra API/SSE Admin nên vẫn giữ server-specific.
+- 2026-11-08: Phần E2E Chromium chạy qua Vite với Admin API mock, xác nhận đọc Wiki Page, chuyển Knowledge/File, mở Raw Working Note và quay lại cây Knowledge.

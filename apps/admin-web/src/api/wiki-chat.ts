@@ -1,3 +1,5 @@
+import type { AnswerGraph, WikiChatTool, WikiConversationSummary } from '@vela/knowledge-ui/chat'
+export type { AnswerGraph, WikiChatTool, WikiConversationSummary } from '@vela/knowledge-ui/chat'
 import { apiUrl, jsonRequest, requestJson, withQuery } from './client'
 import { consumeSse, createSseParserState } from './sse'
 import { readAdminToken } from '@/stores/auth'
@@ -31,14 +33,6 @@ export interface WikiConversationDetail {
   messages: WikiConversationMessage[]
 }
 
-export interface WikiConversationSummary {
-  id: string
-  title: string
-  updated_at_ms: number
-  message_count: number
-  running: boolean
-}
-
 export type WikiChatAskInput = {
   conversation_id?: string
   question: string
@@ -54,37 +48,6 @@ export interface WikiChatTurn {
   assistant_message_id: string
 }
 
-export interface WikiChatTool {
-  call_id: string
-  name: string
-  state: 'running' | 'completed' | 'failed'
-  query?: string
-  pages: string[]
-}
-
-export interface AnswerGraph {
-  revision: number
-  nodes: Array<{
-    id: string
-    path: string
-    title: string
-    status: string
-    revision: number
-    category?: string
-    tags?: string[]
-    tier?: 'cited' | 'read' | 'retrieved' | 'context'
-    score?: number | null
-  }>
-  edges: Array<{
-    source_id: string
-    target_id: string
-    kind: string
-    lines: number[]
-    references: Array<{ line: number; raw_target: string; alias?: string; anchor?: string }>
-  }>
-  unresolved: Array<{ source_id: string; source_line: number; raw_target: string; reason: string }>
-  truncated: boolean
-}
 
 export interface WikiChatHandlers {
   onTurn: (turn: WikiChatTurn) => void

@@ -9,10 +9,12 @@ use axum::{
     Router,
     routing::{get, put},
 };
+use std::sync::Arc;
 
 pub(in crate::app) fn router(state: AppState) -> Router<AppState> {
     Router::new()
-        .merge(knowledge_routes())
+        .merge(knowledge_routes(Arc::clone(&state.knowledge_write_gate)))
+        .merge(wiki_sync_routes())
         .merge(background_routes())
         .merge(notification_routes())
         .merge(mcp_routes())
@@ -30,7 +32,7 @@ pub(in crate::app) fn router(state: AppState) -> Router<AppState> {
         .with_state(state)
 }
 
-fn knowledge_routes() -> Router<AppState> {
+fn knowledge_routes(gate: Arc<super::super::KnowledgeWriteGate>) -> Router<AppState> {
     Router::new()
         // Knowledge and Memory are two authenticated Admin workspaces, not Plugin Store data.
         .route(
@@ -131,6 +133,7 @@ fn knowledge_routes() -> Router<AppState> {
             get(knowledge::knowledge_read_source),
         )
         .route("/knowledge/index", get(knowledge::knowledge_health))
+        .route("/knowledge/events", get(knowledge::knowledge_events))
         .route(
             "/knowledge/index/rebuild",
             axum::routing::post(knowledge::knowledge_rebuild),
@@ -165,6 +168,19 @@ fn knowledge_routes() -> Router<AppState> {
             "/memory/index/rebuild",
             axum::routing::post(knowledge::memory_rebuild),
         )
+        .route_layer(axum::middleware::from_fn_with_state(
+            gate,
+            super::super::gate_knowledge_writes,
+        ))
+}
+
+fn wiki_sync_routes() -> Router<AppState> {
+    // The sync handler takes the write side of KnowledgeWriteGate itself. Excluding it from the
+    // normal request writer middleware prevents acquiring a read guard before the write guard.
+    Router::new().route(
+        "/knowledge/sync",
+        get(knowledge::knowledge_sync).post(knowledge::knowledge_sync_now),
+    )
 }
 
 fn background_routes() -> Router<AppState> {

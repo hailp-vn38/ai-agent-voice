@@ -76,6 +76,10 @@ All paths below are relative to `/api/admin`; every request requires `Authorizat
 | Browse | `GET /knowledge/pages?limit=100`, `GET /knowledge/pages/{id}` | `{items:[overview]}`; individual read returns the full editable record, including a staged draft when present |
 | Search | `GET /knowledge/pages?q=term&limit=20` | Admin search returns `{items:[hit]}`, including drafts; Job search serves verified pages only |
 | Check / repair index | `GET /knowledge/index`, `POST /knowledge/index/rebuild` | Index health; explicit rebuild returns `{indexed}` |
+| Watch for changes | `GET /knowledge/events` (SSE) | `ready` once, then `knowledge_changed` `{paths, truncated}` when files under `wiki/`, `sources/` (reported as `raw/...`) or the index database change. Change hints only; read state over REST. |
+| Check or run Git sync | `GET /knowledge/sync`, `POST /knowledge/sync` | Reads status and safe configuration, or starts one sync. Concurrent POST returns `409 sync_in_progress`; SSE also emits `sync_status`. |
+
+Git sync uses the server's `[wiki.sync]` configuration and never returns private key paths. See the [Admin Wiki Git sync API](../api/knowledge-git-sync.md) for the response shape and typed errors.
 
 Import accepts UTF-8 Markdown **inside JSON**, not multipart upload, a local filesystem path or a URL to fetch. `content` must be nonblank and at most 256 KiB; `name` must be nonblank, at most 255 bytes and contain no control characters; `provenance` must be nonblank and at most 1024 bytes. The Admin JSON body limit also applies. PDF/DOCX/image/audio/video extraction is not implemented. Each import creates a new Source ID at version `1`; there is no Source update endpoint or import deduplication.
 

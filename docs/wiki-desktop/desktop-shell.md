@@ -9,13 +9,13 @@ apps/wiki-desktop/
 ├─ package.json            # Vite + Vue 3, import knowledge UI (xem ui-reuse.md)
 ├─ src/                    # main.ts, TauriBackend adapter, Settings view
 └─ src-tauri/
-   ├─ Cargo.toml           # member của workspace; deps: tauri 2, wiki-core, wiki-mcp, notify
+   ├─ Cargo.toml           # crate độc lập, bị exclude khỏi workspace gốc; có Cargo.lock riêng
    ├─ tauri.conf.json
    ├─ capabilities/default.json
    └─ src/
-      ├─ main.rs           # setup: mở Vault, start MCP, start watcher
-      ├─ commands.rs       # #[tauri::command] → Vault
-      ├─ events.rs         # VaultEvent → emit("vault://changed")
+      ├─ main.rs           # setup, cửa sổ, kích hoạt Vault, chuyển tiếp event, watcher và lock retry
+      ├─ mcp_commands.rs   # lệnh MCP (mỏng, gọi mcp_server/claude_config)
+      ├─ claude_config.rs  # merge, diff và cài cấu hình Claude Desktop theo bản đã preview
       ├─ mcp_server.rs     # rmcp HTTP + runtime.json
       └─ watcher.rs        # notify → Vault::notice_external
 ```
@@ -33,20 +33,21 @@ Chỉ có đúng sáu command, tương ứng với interface `Vault`:
 | `vault_status()` | `Vault::status` | — |
 | `vault_apply(change)` | `Vault::apply_from(Origin::Ui, …)` | `PUT/POST/DELETE pages`, `/raw/batch`, `/raw/move`, `/raw/import-source`, `/index/rebuild` |
 
-Thêm vài command của riêng shell: `vault_open(dir)` / `vault_pick()` (hộp thoại chọn thư mục), `mcp_info()` (port, trạng thái, đoạn cấu hình client), `mcp_rotate_token()`.
+Thêm command của riêng shell: `vault_open(dir)` / `vault_pick()` (hộp thoại chọn thư mục), `vault_session()` (vault đang mở, danh sách gần đây và quyền ghi, đọc lúc cửa sổ tải), `vault_is_writable()`, `window_new()` (⌘⇧N, mở cửa sổ `wiki-*`), `mcp_info()` (port, trạng thái, đoạn cấu hình client), `mcp_set_allow_write()`, `mcp_set_port()`, `mcp_rotate_token()`, `mcp_claude_config_preview()` và `mcp_claude_config_install()`.
 
 `Change` và `VaultError` derive `serde`, nên frontend nhận lỗi có kiểu (`{ kind: "Conflict", current }`) thay vì chuỗi văn bản.
 
 ## Events (Rust → WebView)
 
-- `vault://changed`: `VaultEvent` đã serialize. UI tải lại cây thư mục hoặc trang đang mở. Nếu `origin = Mcp` thì hiện toast "Agent đã cập nhật …".
-- `vault://lock`: `{ writable: bool }`, dùng khi `wiki-mcp` direct đang giữ lock.
-- `mcp://status`: số client đang kết nối và lần gọi gần nhất. Hiện trong footer.
+- `vault://changed`: `VaultEvent` đã serialize. UI tải lại cây thư mục hoặc trang đang mở. Nếu `origin` là `"mcp"` thì hiện toast "Agent đã cập nhật …".
+- `vault://lock`: `{ writable: bool }`, báo quyền ghi hiện tại. Nếu `wiki-mcp` direct giữ lock, app vào chế độ chỉ đọc, hiện banner và thử giành lại lock mỗi giây. UI cũng đọc `vault_is_writable()` lúc mở để không bỏ lỡ event phát trong startup.
+- `mcp://status`: số phiên MCP đang kết nối và lần gọi gần nhất. Phiên được đếm theo `Mcp-Session-Id` từ handshake đến request `DELETE`; footer không dùng số request đang xử lý làm số client.
 
 ## File watcher <a id="file-watcher"></a>
 
 - Dùng `notify` (FSEvents trên macOS), debounce khoảng 300 ms, bỏ qua `.wiki-desktop.lock`, file SQLite và file tạm của chính `Vault`.
-- Gom các path thay đổi rồi gọi `Vault::notice_external(paths)`.
+- Bỏ qua thêm `wiki/index.md` và `wiki/log.md`: đây là file dẫn xuất do `Vault` (của app hoặc của `wiki-mcp`) tự ghi lại sau mỗi thay đổi, nên báo lại chúng chỉ sinh vòng lặp reindex.
+- Gom các path thay đổi rồi gọi `Vault::notice_external(paths)`. Khi app đang chỉ đọc (process khác giữ lock), `notice_external` vẫn cập nhật index riêng của reader và phát `vault://changed`, nhưng không ghi lại `wiki/index.md`.
 - Thay đổi do `Vault::apply` gây ra thì không phát lại lần nữa. `Vault` giữ một tập "path vừa ghi kèm hash", watcher so với tập đó để lọc.
 
 ## Cấu hình và dữ liệu
@@ -62,7 +63,7 @@ Thêm vài command của riêng shell: `vault_open(dir)` / `vault_pick()` (hộp
 
 - MCP HTTP chỉ bind `127.0.0.1` và luôn yêu cầu token, kể cả với loopback. Lý do: trang web độc hại vẫn có thể gửi request tới localhost.
 - Kiểm tra header `Origin`/`Host` để chặn DNS rebinding.
-- Capabilities Tauri chỉ cấp `dialog:open`, `event` và các command ở trên. Không cấp `fs` hay `shell` cho WebView. WebView không đọc file trực tiếp mà luôn đi qua `Vault`, nhờ đó kiểm tra `DocPath` có hiệu lực ở mọi lối vào.
+- Capabilities Tauri (`capabilities/default.json`, áp cho cửa sổ `main` và `wiki-*`) chỉ cấp `dialog:allow-open`, `core:event:default` và các command ở trên. Cửa sổ do Rust tạo (`window_new`), nên WebView không cần quyền tạo cửa sổ. Không cấp `fs` hay `shell` cho WebView. WebView không đọc file trực tiếp mà luôn đi qua `Vault`, nhờ đó kiểm tra `DocPath` có hiệu lực ở mọi lối vào.
 - CSP cấm script ngoài. Mermaid và chart renderer được bundle sẵn.
 
 ## Đóng gói

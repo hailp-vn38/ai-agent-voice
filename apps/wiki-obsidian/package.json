@@ -1,0 +1,30 @@
+{
+  "name": "wiki-obsidian",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "node esbuild.config.mjs",
+    "build": "npm run typecheck && node esbuild.config.mjs production",
+    "typecheck": "vue-tsc -p tsconfig.json --noEmit",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "esbuild": "^0.28.0",
+    "obsidian": "^1.8.7",
+    "typescript": "5.9.3",
+    "vite": "8.3.1",
+    "vitest": "5.0.3",
+    "@vue/compiler-sfc": "3.5.43",
+    "@vue/test-utils": "2.4.6",
+    "jsdom": "28.1.0",
+    "vue-tsc": "3.3.11",
+    "@vitejs/plugin-vue": "6.0.9"
+  },
+  "dependencies": {
+    "@vela/knowledge-ui": "file:../../packages/knowledge-ui",
+    "@lucide/vue": "1.48.0",
+    "vue": "3.5.43"
+  }
+}

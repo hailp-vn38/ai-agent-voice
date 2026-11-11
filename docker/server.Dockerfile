@@ -29,7 +29,7 @@ RUN --mount=type=cache,id=vela-cargo,target=/usr/local/cargo/registry,sharing=lo
     && cp /mnt/storage/ai-agent-voice/target/debug/vela-server /vela-server
 
 FROM debian:bookworm-slim AS runtime
-RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl libstdc++6 libgomp1 xz-utils \
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl git openssh-client libstdc++6 libgomp1 xz-utils \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY assets/enrollment assets/enrollment

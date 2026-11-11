@@ -223,7 +223,9 @@ pub(in crate::app::admin) async fn knowledge_health(
         (Ok(status), Ok(lint)) => Json(serde_json::json!({
             "health": if lint.is_healthy { "ready" } else { "needs_attention" },
             "document_count": status.total_documents,
-            "last_complete_scan_at": now(),
+            // The engine does not record scan times. Reporting the request time made every
+            // poll look like a change, so clients reloaded the workspace every interval.
+            "last_complete_scan_at": serde_json::Value::Null,
             "healthy": lint.is_healthy,
             "indexed_documents": status.total_documents,
             "sources_count": status.sources_count,

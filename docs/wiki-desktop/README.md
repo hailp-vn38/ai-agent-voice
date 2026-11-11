@@ -33,6 +33,7 @@ crates/vela-server ──► wiki-mcp::ToolHost (thay knowledge_mcp hiện tại
 | [desktop-shell.md](desktop-shell.md) | Tauri shell: commands, events, file watcher, cấu hình, đóng gói và ký app |
 | [ui-reuse.md](ui-reuse.md) | Dùng lại UI Vue: seam `KnowledgeBackend` với hai adapter (HTTP và Tauri) |
 | [implementation-plan.md](implementation-plan.md) | Các giai đoạn, tiêu chí nghiệm thu, rủi ro |
+| [git-sync.md](git-sync.md) | Đồng bộ vault lên GitHub bằng `git` CLI cho desktop và `vela-server`/Admin Web: module `VaultSync`, write gate phía server, xử lý xung đột, UI dùng chung (proposed) |
 
 ## Thuật ngữ
 
@@ -42,4 +43,4 @@ Thiết kế dùng từ vựng của skill `codebase-design`: **module**, **inte
 
 - Wiki Chat (`/api/admin/knowledge/ask`, `conversations`): cần LLM provider và lưu hội thoại. Để v2, xem [implementation-plan.md](implementation-plan.md#v2).
 - AI ingest tự động và embeddings/reranking. `WikiEngine::with_embedder` để dành cho sau.
-- Đồng bộ nhiều máy. Vault là thư mục thường nên người dùng có thể tự đồng bộ bằng iCloud hoặc Git.
+- Đồng bộ nhiều máy. Vault là thư mục thường nên người dùng có thể tự đồng bộ bằng iCloud hoặc Git. Đồng bộ GitHub tích hợp trong app được đề xuất riêng ở [git-sync.md](git-sync.md).

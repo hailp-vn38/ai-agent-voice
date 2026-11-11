@@ -5,7 +5,7 @@ import {
   parseMarkdownProperties,
   renderMarkdown,
 } from '@/lib/markdown'
-import { canLoadRemoteContent } from './mermaidRenderer'
+import { canLoadRemoteContent } from '@vela/knowledge-ui/components/mermaidRenderer'
 
 it('renders Mermaid fences as escaped, detectable diagram source', () => {
   const body = '## Flow\n\n' +

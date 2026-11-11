@@ -1,0 +1,9 @@
+{
+  "id": "wiki-agent",
+  "name": "Wiki Agent",
+  "version": "0.1.0",
+  "minAppVersion": "1.6.6",
+  "description": "LLM Wiki in your vault: chat with citations and an agent that ingests, writes and lints Markdown pages.",
+  "author": "LamPhucHai",
+  "isDesktopOnly": false
+}

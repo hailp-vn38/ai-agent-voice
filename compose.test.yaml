@@ -43,6 +43,22 @@ services:
         bind:
           create_host_path: false
 
+  git-sync-smoke:
+    profiles: [checks]
+    build:
+      context: .
+      dockerfile: docker/server.Dockerfile
+      target: qualification
+    user: "1000:1000"
+    entrypoint: [/bin/sh, /tmp/wiki-git-smoke.sh]
+    volumes:
+      - type: bind
+        source: ./scripts/docker/wiki-git-smoke.sh
+        target: /tmp/wiki-git-smoke.sh
+        read_only: true
+        bind:
+          create_host_path: false
+
   web-check:
     profiles: [checks]
     image: vela-web:checks

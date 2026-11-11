@@ -1,0 +1,10 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Knowledge UI windows: app, sync status/configuration events, vault commands, and folder selection",
+  "windows": ["main", "wiki-*"],
+  "permissions": [
+    "core:event:default",
+    "dialog:allow-open"
+  ]
+}

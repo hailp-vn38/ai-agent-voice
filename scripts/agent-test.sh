@@ -11,7 +11,7 @@ Usage:
   scripts/agent-test.sh full
   scripts/agent-test.sh check [crate]
   scripts/agent-test.sh prune
-  scripts/agent-test.sh web [test|typecheck|build]
+  scripts/agent-test.sh web [test|e2e|typecheck|build]
   scripts/agent-test.sh run -- <command> [arguments...]
 
 Examples:
@@ -167,9 +167,10 @@ case "$mode" in
     task="${1:-test}"
     case "$task" in
       test)      command_args=(npm --prefix "$web_root" run test -- --reporter=dot) ;;
+      e2e)       command_args=(npm --prefix "$web_root" run test:e2e) ;;
       typecheck) command_args=(npm --prefix "$web_root" run typecheck) ;;
       build)     command_args=(npm --prefix "$web_root" run build) ;;
-      *) fail_usage 'web task must be test, typecheck, or build' ;;
+      *) fail_usage 'web task must be test, e2e, typecheck, or build' ;;
     esac
     ;;
   run)

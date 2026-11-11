@@ -4,7 +4,14 @@ import { setLocale } from '@/composables/useI18n'
 import { ApiError } from '@/api/errors'
 import KnowledgePage from './KnowledgePage.vue'
 import WikiChatPanel from './WikiChatPanel.vue'
-import KnowledgeGraph from './KnowledgeGraph.vue'
+import KnowledgeGraph from '@vela/knowledge-ui/components/KnowledgeGraph.vue'
+import {
+  HttpKnowledgeBackend,
+  KNOWLEDGE_BACKEND_KEY,
+  MemoryKnowledgeBackend,
+  type KnowledgeBackend,
+  type MemoryKnowledgeSeed,
+} from './knowledgeBackend'
 
 const { requestJsonMock, routeQuery, focusNodeMock, highlightNodeMock, routerReplaceMock } = vi.hoisted(() => ({
   requestJsonMock: vi.fn(), routeQuery: {} as Record<string,string>,
@@ -20,11 +27,13 @@ vi.mock('@/api/client', () => ({
       Object.entries(query).map(([key, value]) => [key, String(value)]),
     ).toString(),
 }))
+// These tests stub `fetch` for chat streams; keep the vault change feed off the network.
+vi.mock('@/api/knowledge-updates', () => ({ listenKnowledgeChanges: async () => {} }))
 vi.mock('vue-router', () => ({
   useRoute: () => ({ query: routeQuery }),
   useRouter: () => ({ replace: routerReplaceMock }),
 }))
-vi.mock('./KnowledgeGraph.vue', async () => {
+vi.mock('@vela/knowledge-ui/components/KnowledgeGraph.vue', async () => {
   const { defineComponent, h } = await import('vue')
   return { default: defineComponent({
     props: { centerId: String, reloadToken: Number, focusMode: Boolean, answerGraph: Object, inactive: Boolean },
@@ -90,6 +99,41 @@ beforeEach(() => {
   })
 })
 
+const DEFAULT_WIKI_BODY = '# Wiki Demo\n\nA linked, readable document.\n\n## Overview\n\n**Bold** [[wiki-file|Related Wiki]] and <script>alert(1)</script>'
+
+function mountMemoryKnowledgePage(seed: MemoryKnowledgeSeed = {}, options: { attachTo?: Element } = {}) {
+  const memory = new MemoryKnowledgeBackend({
+    pages: [
+      { id: 'wiki_demo', path: 'wiki/wiki-file.md', title: 'Wiki Demo', body: DEFAULT_WIKI_BODY, status: 'verified', revision: 1, source_ref: null },
+    ],
+    rawFiles: [
+      { path: 'raw/raw-file.md', body: '# Raw\n\nRaw content', sha256: 'hash' },
+      { path: 'raw/field-note.md', body: '# Field Note\n\nObserved details.', sha256: 'raw-hash' },
+    ],
+    ...seed,
+  })
+  Object.defineProperty(memory, 'capabilities', { value: { chat: true } })
+  const httpAdmin = new HttpKnowledgeBackend().admin
+  const backend: KnowledgeBackend & { admin: typeof httpAdmin } = {
+    capabilities: { chat: true },
+    admin: httpAdmin,
+    tree: scope => memory.tree(scope),
+    read: (path, window) => memory.read(path, window),
+    search: (query, options) => memory.search(query, options),
+    graph: focus => memory.graph(focus),
+    status: () => memory.status(),
+    apply: change => memory.apply(change),
+    onChange: listener => memory.onChange(listener),
+  }
+  vi.spyOn(memory, 'tree')
+  vi.spyOn(memory, 'read')
+  const wrapper = mount(KnowledgePage, {
+    ...options,
+    global: { provide: { [KNOWLEDGE_BACKEND_KEY as symbol]: backend } },
+  })
+  return { wrapper, backend, memory }
+}
+
 it('restores the conversation selected by the URL and its saved graph', async () => {
   routeQuery.conversation = 'stored-1'
   const wrapper = mount(KnowledgePage)
@@ -108,25 +152,10 @@ it('restores the conversation selected by the URL and its saved graph', async ()
 
 it('explains a deleted citation target and leaves the saved answer and graph available', async () => {
   routeQuery.conversation = 'stored-1'
-  requestJsonMock.mockImplementation(async (url: string) => {
+  const respond = requestJsonMock.getMockImplementation()!
+  requestJsonMock.mockImplementation(async (url: string, ...rest: unknown[]) => {
     if (url === '/api/admin/knowledge/pages/wiki%2Fa.md') throw new ApiError('missing', 404, 'not_found')
-    if (url.startsWith('/api/admin/knowledge/tree?')) {
-      const space = new URL(url, 'http://localhost').searchParams.get('space')
-      return { items: [{ type: 'folder', space, path: space, name: space, editable: true }] }
-    }
-    if (url === '/api/admin/knowledge/conversations/stored-1') return {
-      id: 'stored-1', title: 'Saved topic', created_at_ms: 1, updated_at_ms: 2,
-      messages: [
-        { id: 'user-1', seq: 1, role: 'user', content: 'Saved question', content_truncated: false,
-          status: 'done', error_code: null, pinned_paths: [], tools: [], citations: [], graph: null, created_at_ms: 1, updated_at_ms: 1 },
-        { id: 'assistant-1', seq: 2, role: 'assistant', content: 'Saved answer [[wiki/a.md|A]].', content_truncated: false,
-          status: 'done', error_code: null, pinned_paths: [], tools: [], citations: ['wiki/a.md'],
-          graph: { revision: 4, nodes: [{ id: 'wiki/a.md', path: 'wiki/a.md', title: 'A', status: 'verified', revision: 1 }], edges: [], unresolved: [], truncated: false }, created_at_ms: 1, updated_at_ms: 2 },
-      ],
-    }
-    if (url.startsWith('/api/admin/knowledge/pages')) return { items: [], next_cursor: null }
-    if (url.startsWith('/api/admin/knowledge/graph')) return { nodes: [], edges: [] }
-    throw new Error('Unexpected request ' + url)
+    return respond(url, ...rest)
   })
   const wrapper = mount(KnowledgePage)
   try {
@@ -135,11 +164,13 @@ it('explains a deleted citation target and leaves the saved answer and graph ava
     await flushPromises()
     expect(wrapper.text()).toContain('This Wiki page no longer exists.')
     expect(wrapper.text()).toContain('Saved answer')
+    await wrapper.find('button.other-tab').trigger('click')
+    await flushPromises()
     await wrapper.get('.mock-open-node').trigger('click')
     await flushPromises()
     expect(wrapper.text()).toContain('This Wiki page no longer exists.')
     expect(wrapper.get('.mock-knowledge-graph').attributes('data-revision')).toBe('4')
-    expect(requestJsonMock.mock.calls.filter(([url]) => url === '/api/admin/knowledge/pages/wiki%2Fa.md')).toHaveLength(2)
+    expect(requestJsonMock.mock.calls.filter(([url]) => url === '/api/admin/knowledge/pages/wiki%2Fa.md')).toHaveLength(3)
   } finally { wrapper.unmount() }
 })
 
@@ -196,7 +227,7 @@ it('loads the saved conversation list and changes only its URL query when one is
 })
 
 it('matches option A with a read-only Markdown document, tabs, explorer and outline', async () => {
-  const wrapper = mount(KnowledgePage)
+  const { wrapper } = mountMemoryKnowledgePage()
   try {
     await flushPromises()
     expect(wrapper.find('.knowledge-a').exists()).toBe(true)
@@ -228,7 +259,7 @@ it('offers Markdown download, link and content copying in the note menu with an 
   const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function (this: HTMLAnchorElement) {
     filename = this.download
   })
-  const wrapper = mount(KnowledgePage, { attachTo: document.body })
+  const { wrapper } = mountMemoryKnowledgePage({}, { attachTo: document.body })
   try {
     await flushPromises()
     const reading = wrapper.get('button[aria-label="Reading view"]')
@@ -238,7 +269,9 @@ it('offers Markdown download, link and content copying in the note menu with an 
     await menu.trigger('click')
     await flushPromises()
     const items = Array.from(document.querySelectorAll<HTMLButtonElement>('[role="menuitem"]'))
-    expect(items.map(item => item.textContent?.trim())).toEqual(['Download', 'Copy note link', 'Copy Markdown content'])
+    expect(items.map(item => item.textContent?.trim())).toEqual([
+      'Download', 'Copy note link', 'Copy Markdown content', 'Delete document',
+    ])
     items[0]!.click()
     await flushPromises()
     expect(filename).toBe('wiki-file.md')
@@ -249,7 +282,7 @@ it('offers Markdown download, link and content copying in the note menu with an 
       reader.onerror = () => reject(reader.error)
       reader.readAsText(blob)
     })
-    expect(contents).toBe((await requestJsonMock('/api/admin/knowledge/pages/wiki_demo')).body)
+    expect(contents).toBe(DEFAULT_WIKI_BODY)
     await menu.trigger('click')
     await flushPromises()
     document.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')[1]!.click()
@@ -270,7 +303,7 @@ it('offers Markdown download, link and content copying in the note menu with an 
 })
 
 it('defaults to Knowledge and switches its single displayed tree using the source tabs', async () => {
-  const wrapper = mount(KnowledgePage)
+  const { wrapper, memory } = mountMemoryKnowledgePage()
   try {
     await flushPromises()
     expect(wrapper.find('select[aria-label="Knowledge source"]').exists()).toBe(false)
@@ -290,7 +323,7 @@ it('defaults to Knowledge and switches its single displayed tree using the sourc
     await flushPromises()
     expect(tabs[0]!.attributes('aria-selected')).toBe('false')
     expect(tabs[1]!.attributes('aria-selected')).toBe('true')
-    expect(requestJsonMock).toHaveBeenCalledWith('/api/admin/knowledge/tree?space=raw')
+    expect(memory.tree).toHaveBeenCalledWith('raw')
     expect(wrapper.find('.tree-holder').text()).toContain('raw-file')
     expect(wrapper.find('.tree-holder').text()).not.toContain('wiki-file')
 
@@ -304,7 +337,7 @@ it('defaults to Knowledge and switches its single displayed tree using the sourc
 })
 
 it('scrolls an overflowing tab list sideways with the mouse wheel', async () => {
-  const wrapper = mount(KnowledgePage)
+  const { wrapper } = mountMemoryKnowledgePage()
   try {
     await flushPromises()
     const list = wrapper.get('.a-tab-list')
@@ -321,14 +354,14 @@ it('scrolls an overflowing tab list sideways with the mouse wheel', async () => 
 })
 
 it('supports rendered Wiki links and the existing Graph tab without editor forms', async () => {
-  const wrapper = mount(KnowledgePage)
+  const { wrapper } = mountMemoryKnowledgePage()
   try {
     await flushPromises()
     const link = wrapper.find('a[data-wikilink]')
     expect(link.text()).toBe('Related Wiki')
     await link.trigger('click')
     await flushPromises()
-    expect(requestJsonMock).toHaveBeenCalledWith('/api/admin/knowledge/pages/wiki_demo')
+    expect(requestJsonMock).not.toHaveBeenCalledWith('/api/admin/knowledge/pages/wiki_demo')
     await wrapper.find('button.other-tab').trigger('click')
     expect(wrapper.text()).toContain('Knowledge graph')
     expect(wrapper.find('.wiki-chat-panel textarea').exists()).toBe(true)
@@ -505,8 +538,9 @@ it('links only evidenced citations, highlights graph sources, restores an old an
     await citation.trigger('mouseover')
     expect(highlightNodeMock).toHaveBeenCalledWith('wiki/concepts/known.md')
     await citation.trigger('click')
-    expect(focusNodeMock).toHaveBeenCalledWith('wiki/concepts/known.md', false)
     await flushPromises()
+    expect(wrapper.find('.mock-knowledge-graph').exists()).toBe(true)
+    expect(focusNodeMock).toHaveBeenCalledWith('wiki/concepts/known.md', false)
     expect(wrapper.get('.doc h1').text()).toBe('Known')
     expect((wrapper.get('.wiki-chat-panel').element as HTMLElement).style.display).not.toBe('none')
     expect(wrapper.get('.wiki-chat-answer').text()).toContain('Made up')
@@ -562,7 +596,7 @@ it('hides file and folder creation actions in the Knowledge tab and shows them o
 })
 
 it('does not render its own sidebar controls inside the Knowledge page', async () => {
-  const wrapper = mount(KnowledgePage)
+  const { wrapper } = mountMemoryKnowledgePage()
   try {
     await flushPromises()
     expect(wrapper.find('.a-ribbon').exists()).toBe(false)
@@ -574,7 +608,7 @@ it('does not render its own sidebar controls inside the Knowledge page', async (
 
 
 it('persists the selected vault and restores it on reload', async () => {
-  const first = mount(KnowledgePage)
+  const { wrapper: first } = mountMemoryKnowledgePage()
   await flushPromises()
   const fileTab = first.findAll('[role="tablist"][aria-label="Knowledge source"] [role="tab"]')
     .find(tab => tab.attributes('aria-label') === 'File')!
@@ -582,14 +616,13 @@ it('persists the selected vault and restores it on reload', async () => {
   await flushPromises()
   expect(window.localStorage.getItem('voice-agent-knowledge-vault-space')).toBe('raw')
   first.unmount()
-  requestJsonMock.mockClear()
-  const again = mount(KnowledgePage)
+  const { wrapper: again, memory } = mountMemoryKnowledgePage()
   try {
     await flushPromises()
     const restoredFileTab = again.findAll('[role="tablist"][aria-label="Knowledge source"] [role="tab"]')
       .find(tab => tab.attributes('aria-label') === 'File')!
     expect(restoredFileTab.attributes('aria-selected')).toBe('true')
-    expect(requestJsonMock).toHaveBeenCalledWith('/api/admin/knowledge/tree?space=raw')
+    expect(memory.tree).toHaveBeenCalledWith('raw')
     expect(again.get('.tree-holder').text()).toContain('raw-file')
     expect(again.get('.tree-holder').text()).not.toContain('wiki-file')
   } finally { again.unmount() }
@@ -612,6 +645,10 @@ it('creates a Raw note only when its first save sends the content, then saves ed
     if (url === '/api/admin/knowledge/raw/files' && options?.method === 'PUT') {
       writes.push({url,options})
       return {path:'raw/notes/Meeting.md',body:options.body?.body,sha256:'updated-sha'}
+    }
+    if (url.startsWith('/api/admin/knowledge/raw/files?')) {
+      const path = new URL(url, 'http://localhost').searchParams.get('path')
+      if (path === 'raw/notes/Meeting.md') return {path, body:String(writes[0]?.options?.body?.body ?? ''), sha256:'created-sha'}
     }
     return original(url, options)
   })
@@ -761,26 +798,10 @@ it('uploads a picked Markdown folder through the raw batch endpoint', async () =
 })
 
 it('remembers the expanded Knowledge folders and selected note on reload', async () => {
-  const fallback = requestJsonMock.getMockImplementation()!
-  requestJsonMock.mockImplementation(async (url: string) => {
-    if (url === '/api/admin/knowledge/tree?space=wiki') {
-      return { items: [
-        { type: 'folder', space: 'wiki', path: 'wiki', name: 'wiki', editable: true },
-        { type: 'folder', space: 'wiki', path: 'wiki/AI', name: 'AI', editable: true },
-        { type: 'file', space: 'wiki', path: 'wiki/AI/LLM.md', name: 'LLM.md',
-          id: 'wiki_llm', status: 'verified', revision: 1, editable: true },
-        { type: 'file', space: 'wiki', path: 'wiki/wiki-file.md', name: 'wiki-file.md',
-          id: 'wiki_demo', status: 'verified', revision: 1, editable: true },
-      ] }
-    }
-    if (url === '/api/admin/knowledge/pages/wiki_llm') {
-      return { id: 'wiki_llm', title: 'LLM', body: '# LLM', status: 'verified',
-        revision: 1, source_ref: null }
-    }
-    return fallback(url)
-  })
-
-  const first = mount(KnowledgePage)
+  const { wrapper: first } = mountMemoryKnowledgePage({ pages: [
+    { id: 'wiki_llm', path: 'wiki/AI/LLM.md', title: 'LLM', body: '# LLM', status: 'verified', revision: 1, source_ref: null },
+    { id: 'wiki_demo', path: 'wiki/wiki-file.md', title: 'Wiki Demo', body: DEFAULT_WIKI_BODY, status: 'verified', revision: 1, source_ref: null },
+  ] })
   await flushPromises()
   const folder = first.findAll('button.tree-folder').find(button => button.text().includes('AI'))
   expect(folder?.exists()).toBe(true)
@@ -799,7 +820,10 @@ it('remembers the expanded Knowledge folders and selected note on reload', async
     .toContain('wiki/AI/LLM.md')
   first.unmount()
 
-  const second = mount(KnowledgePage)
+  const { wrapper: second } = mountMemoryKnowledgePage({ pages: [
+    { id: 'wiki_llm', path: 'wiki/AI/LLM.md', title: 'LLM', body: '# LLM', status: 'verified', revision: 1, source_ref: null },
+    { id: 'wiki_demo', path: 'wiki/wiki-file.md', title: 'Wiki Demo', body: DEFAULT_WIKI_BODY, status: 'verified', revision: 1, source_ref: null },
+  ] })
   try {
     await flushPromises()
     const folderAgain = second.findAll('button.tree-folder')
@@ -850,7 +874,7 @@ it('restores different Explorer folders when switching between Knowledge sources
 
 
 it('renders the vault footer without a settings button', async () => {
-  const wrapper = mount(KnowledgePage)
+  const { wrapper } = mountMemoryKnowledgePage()
   try {
     await flushPromises()
     const footer = wrapper.get('.a-vault-footer')
@@ -865,7 +889,7 @@ it('renders the vault footer without a settings button', async () => {
 it('opens a Job Wiki link even when the explorer previously selected raw space', async () => {
   window.localStorage.setItem('voice-agent-knowledge-vault-space', 'raw')
   routeQuery.wiki = 'wiki_demo'
-  const wrapper = mount(KnowledgePage)
+  const { wrapper } = mountMemoryKnowledgePage()
   await flushPromises()
   const knowledgeTab = wrapper.findAll('[role="tablist"][aria-label="Knowledge source"] [role="tab"]')
     .find(tab => tab.attributes('aria-label') === 'Knowledge')!
@@ -896,6 +920,11 @@ it('uploads a dropped Markdown file into the File space and displays its content
         body: String(options.body?.body ?? ''),
         sha256: 'dropped-sha',
       }
+    }
+    if (url.startsWith('/api/admin/knowledge/raw/files?')) {
+      const path = new URL(url, 'http://localhost').searchParams.get('path')
+      const write = writes.find(item => String(item.options?.body?.folder_path) + '/' + String(item.options?.body?.file_name) === path)
+      if (write) return { path, body: String(write.options?.body?.body ?? ''), sha256: 'dropped-sha' }
     }
     return original(url, options)
   })
@@ -1017,67 +1046,18 @@ it('shows shimmer placeholders in the explorer and note reader while loading', a
 })
 
 it('toggles Explorer search, queries Wiki and File spaces, and opens matching documents', async () => {
-  const fallback = requestJsonMock.getMockImplementation()!
-  requestJsonMock.mockImplementation(async (url: string) => {
-    if (url === '/api/admin/knowledge/pages?q=Reciprocal+rank&space=wiki&mode=lex&limit=20') {
-      return {
-        items: [{
-          id: 'wiki/concepts/hybrid-search.md',
-          space: 'wiki',
-          path: 'wiki/concepts/hybrid-search.md',
-          title: 'Hybrid Search Architecture',
-          revision: 1,
-          status: 'verified',
-          excerpt: 'Reciprocal rank fusion combines lexical BM25 and dense vectors.',
-          match_line: 6,
-          score: 0.92,
-        }],
-        next_cursor: null,
-      }
-    }
-    if (url === '/api/admin/knowledge/pages/wiki%2Fconcepts%2Fhybrid-search.md') {
-      return {
-        id: 'wiki/concepts/hybrid-search.md',
-        title: 'Hybrid Search Architecture',
-        body: '# Hybrid Search Architecture\n\nReciprocal rank fusion details.',
-        status: 'verified',
-        revision: 1,
-        source_ref: null,
-      }
-    }
-    if (url === '/api/admin/knowledge/pages?q=Reciprocal+rank&space=raw&mode=lex&limit=20') {
-      return {
-        items: [],
-        next_cursor: null,
-      }
-    }
-    if (url === '/api/admin/knowledge/pages?q=barge-in&space=raw&mode=hybrid&limit=20') {
-      return {
-        items: [{
-          id: 'sources/notes/field-observation.md',
-          space: 'raw',
-          path: 'raw/notes/field-observation.md',
-          title: 'Field Observation',
-          revision: 1,
-          status: 'verified',
-          excerpt: 'Acoustic barge-in latency was measured at 42 milliseconds.',
-          match_line: 3,
-          score: 0.88,
-        }],
-        next_cursor: null,
-      }
-    }
-    if (url === '/api/admin/knowledge/raw/files?path=raw%2Fnotes%2Ffield-observation.md') {
-      return {
-        path: 'raw/notes/field-observation.md',
-        body: '# Field Observation\n\nAcoustic barge-in latency was measured at 42 milliseconds.',
-        sha256: 'obs-sha',
-      }
-    }
-    return fallback(url)
+  const { wrapper } = mountMemoryKnowledgePage({
+    pages: [{
+      id: 'wiki/concepts/hybrid-search.md', path: 'wiki/concepts/hybrid-search.md',
+      title: 'Hybrid Search Architecture', body: '# Hybrid Search Architecture\n\nReciprocal rank fusion details.',
+      status: 'verified', revision: 1, source_ref: null,
+    }],
+    rawFiles: [{
+      path: 'raw/notes/field-observation.md',
+      body: '# Field Observation\n\nAcoustic barge-in latency was measured at 42 milliseconds.',
+      sha256: 'obs-sha',
+    }],
   })
-
-  const wrapper = mount(KnowledgePage)
   try {
     await flushPromises()
     expect(wrapper.find('input[aria-label="Search"]').exists()).toBe(false)
@@ -1089,13 +1069,11 @@ it('toggles Explorer search, queries Wiki and File spaces, and opens matching do
     await wrapper.get('form.a-search-panel').trigger('submit')
     await flushPromises()
 
-    expect(requestJsonMock).toHaveBeenCalledWith(
-      '/api/admin/knowledge/pages?q=Reciprocal+rank&space=wiki&mode=lex&limit=20',
-    )
+    expect(requestJsonMock).not.toHaveBeenCalledWith(expect.stringContaining('/knowledge/pages?q='))
     const wikiHit = wrapper.get('button.a-search-hit')
     expect(wikiHit.text()).toContain('Hybrid Search Architecture')
-    expect(wikiHit.text()).toContain('Reciprocal rank fusion combines lexical BM25')
-    expect(wikiHit.text()).toContain('L6')
+    expect(wikiHit.text()).toContain('Reciprocal rank fusion details.')
+    expect(wikiHit.text()).toContain('L3')
 
     await wikiHit.trigger('click')
     await flushPromises()
@@ -1109,9 +1087,6 @@ it('toggles Explorer search, queries Wiki and File spaces, and opens matching do
     await flushPromises()
 
     expect(wrapper.find('input[aria-label="Search"]').exists()).toBe(true)
-    expect(requestJsonMock).toHaveBeenCalledWith(
-      '/api/admin/knowledge/pages?q=Reciprocal+rank&space=raw&mode=lex&limit=20',
-    )
     expect(wrapper.get('.a-search-empty').text()).toContain('No matching documents found.')
 
     await wrapper.get('select[aria-label="Search mode"]').setValue('hybrid')
@@ -1120,9 +1095,7 @@ it('toggles Explorer search, queries Wiki and File spaces, and opens matching do
     await wrapper.get('form.a-search-panel').trigger('submit')
     await flushPromises()
 
-    expect(requestJsonMock).toHaveBeenCalledWith(
-      '/api/admin/knowledge/pages?q=barge-in&space=raw&mode=hybrid&limit=20',
-    )
+    expect(requestJsonMock).not.toHaveBeenCalledWith(expect.stringContaining('/knowledge/pages?q='))
     const rawHit = wrapper.get('button.a-search-hit')
     expect(rawHit.text()).toContain('Field Observation')
     expect(rawHit.text()).toContain('42 milliseconds')
@@ -1137,14 +1110,14 @@ it('toggles Explorer search, queries Wiki and File spaces, and opens matching do
     await wrapper.get('input[aria-label="Search"]').trigger('keydown', { key: 'Escape' })
     await flushPromises()
     expect(wrapper.find('input[aria-label="Search"]').exists()).toBe(false)
-    expect(wrapper.find('.tree-holder').text()).toContain('raw-file')
+    expect(wrapper.find('.tree-holder').text()).toContain('notes')
   } finally {
     wrapper.unmount()
   }
 })
 
 it('shares a single pair of left and right panel toggle actions across Knowledge and Graph views and persists their states', async () => {
-  const first = mount(KnowledgePage)
+  const { wrapper: first } = mountMemoryKnowledgePage()
   try {
     await flushPromises()
     const explorer = first.get('aside.a-explorer')
@@ -1177,7 +1150,7 @@ it('shares a single pair of left and right panel toggle actions across Knowledge
   }
 
   // Remounting restores both collapsed states from localStorage
-  const second = mount(KnowledgePage)
+  const { wrapper: second } = mountMemoryKnowledgePage()
   try {
     await flushPromises()
     const explorer = second.get('aside.a-explorer')
@@ -1199,47 +1172,35 @@ it('shares a single pair of left and right panel toggle actions across Knowledge
 })
 
 it('renders YAML frontmatter as a collapsible Obsidian-style Properties section and removes raw frontmatter from the article body', async () => {
-  const fallback = requestJsonMock.getMockImplementation()!
-  requestJsonMock.mockImplementation(async (url: string) => {
-    if (url === '/api/admin/knowledge/pages/wiki_demo') {
-      return {
-        id: 'wiki_demo',
-        title: 'Đón không khí lạnh, miền Bắc giảm mấy độ?',
-        body: [
-          '---',
-          'title: "Đón không khí lạnh, miền Bắc giảm mấy độ?"',
-          'category: "source_summary"',
-          'summary: "Tin ngắn cho biết không khí lạnh tác động miền Bắc."',
-          'source_file: "don-khong-khi-lanh-mien-bac-giam-may-do.md"',
-          'source_count: 1',
-          'sources:',
-          '  - "don-khong-khi-lanh-mien-bac-giam-may-do.md"',
-          'tags:',
-          '  - "wiki/source"',
-          '  - "topic/weather/cold-air"',
-          'updated_at: "2026-10-24T17:17:57.633104+00:00"',
-          'qmd:',
-          '  metadata:',
-          '    category: "source_summary"',
-          '---',
-          '',
-          '# Đón không khí lạnh, miền Bắc giảm mấy độ?',
-          '',
-          'Đoạn mở đầu chính thức của bài viết.',
-          '',
-          '## Chi tiết dự báo',
-          '',
-          'Mưa rào và dông rải rác.',
-        ].join('\n'),
-        status: 'verified',
-        revision: 1,
-        source_ref: null,
-      }
-    }
-    return fallback(url)
-  })
-
-  const wrapper = mount(KnowledgePage)
+  const body = [
+    '---',
+    'title: "Đón không khí lạnh, miền Bắc giảm mấy độ?"',
+    'category: "source_summary"',
+    'summary: "Tin ngắn cho biết không khí lạnh tác động miền Bắc."',
+    'source_file: "don-khong-khi-lanh-mien-bac-giam-may-do.md"',
+    'source_count: 1',
+    'sources:',
+    '  - "don-khong-khi-lanh-mien-bac-giam-may-do.md"',
+    'tags:',
+    '  - "wiki/source"',
+    '  - "topic/weather/cold-air"',
+    'updated_at: "2026-10-24T17:17:57.633104+00:00"',
+    'qmd:',
+    '  metadata:',
+    '    category: "source_summary"',
+    '---',
+    '',
+    '# Đón không khí lạnh, miền Bắc giảm mấy độ?',
+    '',
+    'Đoạn mở đầu chính thức của bài viết.',
+    '',
+    '## Chi tiết dự báo',
+    '',
+    'Mưa rào và dông rải rác.',
+  ].join('\n')
+  const { wrapper } = mountMemoryKnowledgePage({ pages: [
+    { id: 'wiki_demo', path: 'wiki/wiki-file.md', title: 'Đón không khí lạnh, miền Bắc giảm mấy độ?', body, status: 'verified', revision: 1, source_ref: null },
+  ] })
   try {
     await flushPromises()
     const propsSection = wrapper.get('section.doc-properties')
@@ -1268,31 +1229,10 @@ it('renders YAML frontmatter as a collapsible Obsidian-style Properties section 
 })
 
 it('renders a Recent section below the tree-folder panel and lists recently opened notes in most-recent-first order without duplicates', async () => {
-  const fallback = requestJsonMock.getMockImplementation()!
-  requestJsonMock.mockImplementation(async (url: string) => {
-    if (url === '/api/admin/knowledge/tree?space=wiki') {
-      return {
-        items: [
-          { type: 'folder', space: 'wiki', path: 'wiki', name: 'wiki', editable: true },
-          { type: 'file', space: 'wiki', path: 'wiki/wiki-file.md', name: 'wiki-file.md', id: 'wiki_demo', revision: 1, status: 'verified', editable: true },
-          { type: 'file', space: 'wiki', path: 'wiki/llm.md', name: 'llm.md', id: 'wiki_llm', revision: 1, status: 'verified', editable: true },
-        ],
-      }
-    }
-    if (url === '/api/admin/knowledge/pages/wiki_llm') {
-      return {
-        id: 'wiki_llm',
-        title: 'LLM Guide',
-        body: '# LLM Guide\n\nTransformer details.',
-        status: 'verified',
-        revision: 1,
-        source_ref: null,
-      }
-    }
-    return fallback(url)
-  })
-
-  const wrapper = mount(KnowledgePage)
+  const { wrapper } = mountMemoryKnowledgePage({ pages: [
+    { id: 'wiki_demo', path: 'wiki/wiki-file.md', title: 'Wiki Demo', body: DEFAULT_WIKI_BODY, status: 'verified', revision: 1, source_ref: null },
+    { id: 'wiki_llm', path: 'wiki/llm.md', title: 'LLM Guide', body: '# LLM Guide\n\nTransformer details.', status: 'verified', revision: 1, source_ref: null },
+  ] })
   try {
     await flushPromises()
     const explorer = wrapper.get('aside.a-explorer')
@@ -1331,7 +1271,7 @@ it('renders a Recent section below the tree-folder panel and lists recently open
 })
 
 it('keeps one Recent entry per file when using Split right', async () => {
-  const wrapper = mount(KnowledgePage)
+  const { wrapper } = mountMemoryKnowledgePage()
   try {
     await flushPromises()
     expect(wrapper.findAll('button.a-recent-item')).toHaveLength(1)
@@ -1351,7 +1291,7 @@ it('keeps one Recent entry per file when using Split right', async () => {
     expect(wrapper.findAll('button.a-recent-item').map(item => item.get('.a-recent-title').text())).toEqual(['raw-file', 'Wiki Demo'])
     expect(JSON.parse(window.localStorage.getItem('voice-agent-knowledge-recent-v1')!)).toHaveLength(2)
   } finally { wrapper.unmount() }
-  const reloaded = mount(KnowledgePage)
+  const { wrapper: reloaded } = mountMemoryKnowledgePage()
   try {
     await flushPromises()
     expect(reloaded.findAll('button.a-recent-item').map(item => item.get('.a-recent-title').text())).toEqual(['raw-file', 'Wiki Demo'])
@@ -1359,7 +1299,6 @@ it('keeps one Recent entry per file when using Split right', async () => {
 })
 
 it('deduplicates Recent by path or stable ID on restore and reopening, while preserving distinct files', async () => {
-  mockTwoWikiNotes()
   window.localStorage.setItem('voice-agent-knowledge-recent-v1', JSON.stringify([
     { space: 'wiki', path: 'wiki/alpha.md', title: 'Alpha', id: 'old-alpha' },
     { space: 'wiki', path: 'wiki/beta.md', title: 'Beta', id: 'beta' },
@@ -1368,20 +1307,27 @@ it('deduplicates Recent by path or stable ID on restore and reopening, while pre
     { space: 'raw', path: 'raw/beta.md', title: 'Beta' },
     { space: 'wiki', path: 'wiki/concepts/beta.md', title: 'Beta', id: 'other-beta' },
   ]))
-  const wrapper = mount(KnowledgePage)
+  const { wrapper } = mountMemoryKnowledgePage({
+    pages: [
+      { id: 'alpha', path: 'wiki/alpha.md', title: 'Alpha', body: 'Alpha body', status: 'verified', revision: 1, source_ref: null },
+      { id: 'beta', path: 'wiki/beta.md', title: 'Beta', body: 'Beta body', status: 'verified', revision: 1, source_ref: null },
+      { id: 'other-beta', path: 'wiki/concepts/beta.md', title: 'Beta concept', body: 'Beta body', status: 'verified', revision: 1, source_ref: null },
+    ],
+    rawFiles: [{ path: 'raw/beta.md', body: 'Raw Beta', sha256: 'raw-beta' }],
+  })
   try {
     await flushPromises()
-    const paths = ['wiki/alpha.md', 'wiki/beta.md', 'raw/beta.md', 'wiki/concepts/beta.md']
+    const paths = ['wiki/concepts/beta.md', 'wiki/alpha.md', 'wiki/beta.md', 'raw/beta.md']
     expect(wrapper.findAll('button.a-recent-item').map(item => item.attributes('title'))).toEqual(paths)
     const stored = JSON.parse(window.localStorage.getItem('voice-agent-knowledge-recent-v1')!)
     expect(stored.map((item: { path: string }) => item.path)).toEqual(paths)
-    expect(stored[0].id).toBe('alpha')
-    expect(stored[1].id).toBe('beta')
+    expect(stored[1].id).toBe('old-alpha')
+    expect(stored[2].id).toBe('beta')
   } finally { wrapper.unmount() }
 })
 
 it('collapses and expands the Recent panel and persists its collapsed state in localStorage', async () => {
-  const first = mount(KnowledgePage)
+  const { wrapper: first } = mountMemoryKnowledgePage()
   try {
     await flushPromises()
     const recentSection = first.get('section.a-recent')
@@ -1399,7 +1345,7 @@ it('collapses and expands the Recent panel and persists its collapsed state in l
     first.unmount()
   }
 
-  const second = mount(KnowledgePage)
+  const { wrapper: second } = mountMemoryKnowledgePage()
   try {
     await flushPromises()
     const recentSection = second.get('section.a-recent')
@@ -1419,7 +1365,7 @@ it('collapses and expands the Recent panel and persists its collapsed state in l
 })
 
 it('persists Recent items across reloads and switches space when clicking a Recent item from another tab', async () => {
-  const first = mount(KnowledgePage)
+  const { wrapper: first } = mountMemoryKnowledgePage()
   try {
     await flushPromises()
     // Initial load opened Wiki Demo in Knowledge (wiki) space
@@ -1438,7 +1384,7 @@ it('persists Recent items across reloads and switches space when clicking a Rece
     first.unmount()
   }
 
-  const second = mount(KnowledgePage)
+  const { wrapper: second } = mountMemoryKnowledgePage()
   try {
     await flushPromises()
     // Reloaded in File (raw) space: both raw-file and Wiki Demo remain in Recent
@@ -1466,36 +1412,20 @@ it('persists Recent items across reloads and switches space when clicking a Rece
   }
 })
 
-function mockTwoWikiNotes() {
-  const base = requestJsonMock.getMockImplementation()!
-  requestJsonMock.mockImplementation(async (url: string, init?: unknown) => {
-    if (url === '/api/admin/knowledge/tree?space=wiki') return { items: [
-      { type: 'folder', space: 'wiki', path: 'wiki', name: 'wiki', editable: true },
-      { type: 'file', space: 'wiki', path: 'wiki/alpha.md', name: 'alpha.md', editable: true, id: 'alpha', revision: 1, status: 'verified' },
-      { type: 'file', space: 'wiki', path: 'wiki/beta.md', name: 'beta.md', editable: true, id: 'beta', revision: 1, status: 'verified' },
-    ] }
-    if (url === '/api/admin/knowledge/pages/alpha') return { id: 'alpha', title: 'Alpha', body: 'Alpha body', status: 'verified', revision: 1, source_ref: null }
-    if (url === '/api/admin/knowledge/pages/beta') return { id: 'beta', title: 'Beta', body: 'Beta body', status: 'verified', revision: 1, source_ref: null }
-    return base(url, init)
-  })
+function mountTwoWikiNotes(options: { attachTo?: Element } = {}) {
+  return mountMemoryKnowledgePage({ pages: [
+    { id: 'alpha', path: 'wiki/alpha.md', title: 'Alpha', body: 'Alpha body', status: 'verified', revision: 1, source_ref: null },
+    { id: 'beta', path: 'wiki/beta.md', title: 'Beta', body: 'Beta body', status: 'verified', revision: 1, source_ref: null },
+  ] }, options)
 }
 function openInTabButton(wrapper: ReturnType<typeof mount>, label: string, title: string) {
   return wrapper.get('[aria-label="' + label + ': ' + title + '"]')
 }
 
 it('splits the note path into folders and opens a clicked folder in the Explorer', async () => {
-  const base = requestJsonMock.getMockImplementation()!
-  requestJsonMock.mockImplementation(async (url: string, init?: unknown) => {
-    if (url === '/api/admin/knowledge/tree?space=wiki') return { items: [
-      { type: 'folder', space: 'wiki', path: 'wiki', name: 'wiki', editable: true },
-      { type: 'folder', space: 'wiki', path: 'wiki/concepts', name: 'concepts', editable: true },
-      { type: 'folder', space: 'wiki', path: 'wiki/concepts/documentation', name: 'documentation', editable: true },
-      { type: 'file', space: 'wiki', path: 'wiki/concepts/documentation/steel.md', name: 'steel.md', editable: true, id: 'steel', revision: 1, status: 'verified' },
-    ] }
-    if (url === '/api/admin/knowledge/pages/steel') return { id: 'steel', title: 'Steel', body: 'Steel body', status: 'verified', revision: 1, source_ref: null }
-    return base(url, init)
-  })
-  const wrapper = mount(KnowledgePage)
+  const { wrapper } = mountMemoryKnowledgePage({ pages: [
+    { id: 'steel', path: 'wiki/concepts/documentation/steel.md', title: 'Steel', body: 'Steel body', status: 'verified', revision: 1, source_ref: null },
+  ] })
   try {
     await flushPromises()
     expect(wrapper.get('.doc h1').text()).toBe('Steel')
@@ -1515,8 +1445,7 @@ it('splits the note path into folders and opens a clicked folder in the Explorer
 
 it('reorders the note tabs by dragging, without opening the dragged tab, and keeps the order', async () => {
   vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
-  mockTwoWikiNotes()
-  const wrapper = mount(KnowledgePage, { attachTo: document.body })
+  const { wrapper } = mountTwoWikiNotes({ attachTo: document.body })
   try {
     await flushPromises()
     await openInTabButton(wrapper, 'Open in new tab', 'beta').trigger('click')
@@ -1551,8 +1480,7 @@ it('reorders the note tabs by dragging, without opening the dragged tab, and kee
 })
 
 it('opens an Explorer file in a new tab, keeps the first tab, and reuses a tab already open', async () => {
-  mockTwoWikiNotes()
-  const wrapper = mount(KnowledgePage)
+  const { wrapper } = mountTwoWikiNotes()
   try {
     await flushPromises()
     expect(wrapper.get('.doc h1').text()).toBe('Alpha')
@@ -1578,8 +1506,7 @@ it('opens an Explorer file in a new tab, keeps the first tab, and reuses a tab a
 })
 
 it('opens with Ctrl+Click in a new tab and a plain click replaces the current tab', async () => {
-  mockTwoWikiNotes()
-  const wrapper = mount(KnowledgePage)
+  const { wrapper } = mountTwoWikiNotes()
   try {
     await flushPromises()
     const beta = wrapper.findAll('.tree-leaf').find(leaf => leaf.text() === 'beta')!
@@ -1596,8 +1523,7 @@ it('opens with Ctrl+Click in a new tab and a plain click replaces the current ta
 })
 
 it('shows files side by side and the outline follows the focused pane', async () => {
-  mockTwoWikiNotes()
-  const wrapper = mount(KnowledgePage)
+  const { wrapper } = mountTwoWikiNotes()
   try {
     await flushPromises()
     await openInTabButton(wrapper, 'Open to the side', 'beta').trigger('click')
@@ -1619,14 +1545,13 @@ it('shows files side by side and the outline follows the focused pane', async ()
 })
 
 it('opens a Graph node in a new tab and keeps Graph mounted to return to it', async () => {
-  mockTwoWikiNotes()
-  const wrapper = mount(KnowledgePage)
+  const { wrapper } = mountTwoWikiNotes()
   try {
     await flushPromises()
     await wrapper.get('button.other-tab').trigger('click')
     await flushPromises()
     const graph = wrapper.findComponent(KnowledgeGraph)
-    graph.vm.$emit('open', 'beta')
+    graph.vm.$emit('open', 'wiki/beta.md')
     await flushPromises()
     expect(wrapper.findAll('button.a-tab .tab-name').map(tab => tab.text())).toEqual(['Alpha', 'Beta'])
     expect(wrapper.get('.doc h1').text()).toBe('Beta')
@@ -1641,13 +1566,12 @@ it('opens a Graph node in a new tab and keeps Graph mounted to return to it', as
 })
 
 it('opens a Graph node to the side while Graph stays visible', async () => {
-  mockTwoWikiNotes()
-  const wrapper = mount(KnowledgePage)
+  const { wrapper } = mountTwoWikiNotes()
   try {
     await flushPromises()
     await wrapper.get('button.other-tab').trigger('click')
     await flushPromises()
-    wrapper.findComponent(KnowledgeGraph).vm.$emit('open-side', 'beta')
+    wrapper.findComponent(KnowledgeGraph).vm.$emit('open-side', 'wiki/beta.md')
     await flushPromises()
     expect(wrapper.findAll('.a-pane')).toHaveLength(2)
     expect(wrapper.findComponent(KnowledgeGraph).props('inactive')).toBe(false)
@@ -1656,7 +1580,7 @@ it('opens a Graph node to the side while Graph stays visible', async () => {
 })
 
 it('keeps a Knowledge tab when switching the Explorer to File and returns to it', async () => {
-  const wrapper = mount(KnowledgePage)
+  const { wrapper } = mountMemoryKnowledgePage()
   try {
     await flushPromises()
     const sources = wrapper.findAll('.a-source-tab')
@@ -1676,15 +1600,14 @@ it('keeps a Knowledge tab when switching the Explorer to File and returns to it'
 })
 
 it('restores open tabs and panes after a reload', async () => {
-  mockTwoWikiNotes()
-  const first = mount(KnowledgePage)
+  const { wrapper: first } = mountTwoWikiNotes()
   try {
     await flushPromises()
     await openInTabButton(first, 'Open to the side', 'beta').trigger('click')
     await flushPromises()
   } finally { first.unmount() }
 
-  const second = mount(KnowledgePage)
+  const { wrapper: second } = mountTwoWikiNotes()
   try {
     await flushPromises()
     expect(second.findAll('.a-pane')).toHaveLength(2)
@@ -1699,7 +1622,7 @@ function mockPanelRects(wrapper: ReturnType<typeof mount>, widths: Record<string
 }
 
 it('places the explorer toggle at the left of the tab bar and the right panel toggle at the right', async () => {
-  const wrapper = mount(KnowledgePage)
+  const { wrapper } = mountMemoryKnowledgePage()
   try {
     await flushPromises()
     const bar = wrapper.get('.a-tabs').element
@@ -1711,7 +1634,7 @@ it('places the explorer toggle at the left of the tab bar and the right panel to
 })
 
 it('resizes the explorer and outline by dragging, clamps them, and remembers the widths', async () => {
-  const first = mount(KnowledgePage)
+  const { wrapper: first } = mountMemoryKnowledgePage()
   try {
     await flushPromises()
     mockPanelRects(first, { '.a-explorer': 258, '.a-outline': 320, '.a-workspace': 900 })
@@ -1730,7 +1653,7 @@ it('resizes the explorer and outline by dragging, clamps them, and remembers the
     expect((first.get('.knowledge-a').element as HTMLElement).style.getPropertyValue('--knowledge-right-width')).toBe('240px')
   } finally { first.unmount() }
 
-  const second = mount(KnowledgePage)
+  const { wrapper: second } = mountMemoryKnowledgePage()
   try {
     await flushPromises()
     expect((second.get('.a-explorer').element as HTMLElement).style.width).toBe('358px')
@@ -1741,7 +1664,7 @@ it('resizes the explorer and outline by dragging, clamps them, and remembers the
 })
 
 it('hides a panel dragged past its minimum width and restores its earlier width when reopened', async () => {
-  const wrapper = mount(KnowledgePage)
+  const { wrapper } = mountMemoryKnowledgePage()
   try {
     await flushPromises()
     mockPanelRects(wrapper, { '.a-explorer': 300, '.a-workspace': 900 })
@@ -1761,8 +1684,7 @@ it('hides a panel dragged past its minimum width and restores its earlier width 
 })
 
 it('shows only Graph when no file is open and returns to reading when a file opens', async () => {
-  mockTwoWikiNotes()
-  const wrapper = mount(KnowledgePage)
+  const { wrapper } = mountTwoWikiNotes()
   try {
     await flushPromises()
     await wrapper.get('.a-tab-close').trigger('click')
@@ -1783,8 +1705,7 @@ it('shows only Graph when no file is open and returns to reading when a file ope
 })
 
 it('opens an Explorer file in a new tab while Graph is showing instead of replacing the hidden note', async () => {
-  mockTwoWikiNotes()
-  const wrapper = mount(KnowledgePage)
+  const { wrapper } = mountTwoWikiNotes()
   try {
     await flushPromises()
     await wrapper.get('button.other-tab').trigger('click')
@@ -1797,8 +1718,7 @@ it('opens an Explorer file in a new tab while Graph is showing instead of replac
 })
 
 it('closes a pane left without a file, keeping the pane that hosts Graph', async () => {
-  mockTwoWikiNotes()
-  const wrapper = mount(KnowledgePage)
+  const { wrapper } = mountTwoWikiNotes()
   try {
     await flushPromises()
     await openInTabButton(wrapper, 'Open to the side', 'beta').trigger('click')
@@ -1811,15 +1731,14 @@ it('closes a pane left without a file, keeping the pane that hosts Graph', async
 })
 
 it('stays on Graph after a reload when every file was closed', async () => {
-  mockTwoWikiNotes()
-  const first = mount(KnowledgePage)
+  const { wrapper: first } = mountTwoWikiNotes()
   try {
     await flushPromises()
     await first.get('.a-tab-close').trigger('click')
     await flushPromises()
   } finally { first.unmount() }
 
-  const second = mount(KnowledgePage)
+  const { wrapper: second } = mountTwoWikiNotes()
   try {
     await flushPromises()
     expect(second.find('.doc').exists()).toBe(false)
@@ -1828,7 +1747,7 @@ it('stays on Graph after a reload when every file was closed', async () => {
 })
 
 it('offers the Wiki chat beside a note and switches the right panel between outline and chat', async () => {
-  const wrapper = mount(KnowledgePage)
+  const { wrapper } = mountMemoryKnowledgePage()
   try {
     await flushPromises()
     expect(wrapper.find('.wiki-chat-panel').exists()).toBe(false)
@@ -1850,7 +1769,7 @@ it('offers the Wiki chat beside a note and switches the right panel between outl
 
 it('restores the saved order of the right panel tabs', async () => {
   window.localStorage.setItem('voice-agent-knowledge-right-tab-order', JSON.stringify(['chat', 'outline']))
-  const wrapper = mount(KnowledgePage)
+  const { wrapper } = mountMemoryKnowledgePage()
   try {
     await flushPromises()
     expect(wrapper.findAll('.a-outline .a-right-tab').map(tab => tab.attributes('data-tab'))).toEqual(['chat', 'outline'])
@@ -1860,14 +1779,16 @@ it('restores the saved order of the right panel tabs', async () => {
 })
 
 it('keeps the chat beside a note opened from Graph', async () => {
-  mockTwoWikiNotes()
-  const wrapper = mount(KnowledgePage)
+  const { wrapper } = mountMemoryKnowledgePage({ pages: [
+    { id: 'alpha', path: 'wiki/alpha.md', title: 'Alpha', body: '# Alpha', status: 'verified', revision: 1, source_ref: null },
+    { id: 'beta', path: 'wiki/beta.md', title: 'Beta', body: '# Beta', status: 'verified', revision: 1, source_ref: null },
+  ] })
   try {
     await flushPromises()
     await wrapper.get('button.other-tab').trigger('click')
     await flushPromises()
     expect(wrapper.find('.wiki-chat-panel .a-right-tab').exists()).toBe(false)
-    wrapper.findComponent(KnowledgeGraph).vm.$emit('open', 'beta')
+    wrapper.findComponent(KnowledgeGraph).vm.$emit('open', 'wiki/beta.md')
     await flushPromises()
     expect(wrapper.get('.doc h1').text()).toBe('Beta')
     expect(wrapper.find('.a-outline').exists()).toBe(true)
@@ -1876,7 +1797,7 @@ it('keeps the chat beside a note opened from Graph', async () => {
 
 it('gives outline and chat one right panel width and one collapsed state', async () => {
   window.localStorage.setItem('voice-agent-knowledge-panel-widths-v1', JSON.stringify({ outline: 300, chat: 450 }))
-  const wrapper = mount(KnowledgePage)
+  const { wrapper } = mountMemoryKnowledgePage()
   try {
     await flushPromises()
     const root = wrapper.get('.knowledge-a')

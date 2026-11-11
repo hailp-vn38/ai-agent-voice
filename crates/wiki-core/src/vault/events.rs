@@ -1,0 +1,172 @@
+//! Vault notifications and suppression of filesystem events from our own writes.
+
+use super::Vault;
+use crate::{DocPath, ReindexStats, Revision, Scope, VaultError, VaultEvent};
+use llm_wiki::SyncStats;
+use std::path::{Path, PathBuf};
+use tokio::sync::broadcast;
+
+impl Vault {
+    pub fn subscribe(&self) -> broadcast::Receiver<VaultEvent> {
+        self.events.subscribe()
+    }
+
+    /// Run an external multi-file update while excluding normal vault writes.
+    pub(crate) fn exclusive_external<F>(&self, f: F) -> Result<Vec<DocPath>, VaultError>
+    where
+        F: FnOnce(&Path) -> Result<Vec<PathBuf>, VaultError>,
+    {
+        if !self.is_writable() {
+            return Err(VaultError::ReadOnly);
+        }
+        let _guard = self
+            .write_lock
+            .lock()
+            .map_err(|_| VaultError::Io("vault write lock poisoned".into()))?;
+        if !self.is_writable() {
+            return Err(VaultError::ReadOnly);
+        }
+
+        let result = f(&self.root);
+        let paths: Vec<DocPath> = result
+            .as_ref()
+            .map(|paths| {
+                paths
+                    .iter()
+                    .filter_map(|path| self.doc_path(path))
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        let refresh = (|| {
+            self.engine()?.sync_index()?;
+            self.engine()?.rebuild_or_sync_index_md()?;
+            self.record_self_writes(&["wiki/index.md".into()])
+        })();
+        if let Err(error) = result {
+            refresh?;
+            return Err(error);
+        }
+        refresh?;
+
+        let relative_paths: Vec<String> = paths
+            .iter()
+            .map(|path| path.vault_relative().display().to_string())
+            .collect();
+        self.record_self_writes(&relative_paths)?;
+        if !relative_paths.is_empty() {
+            let _ = self.events.send(VaultEvent::External {
+                paths: relative_paths,
+            });
+        }
+        Ok(paths)
+    }
+
+    /// Rebuild the search projection while `exclusive_external` already holds
+    /// the vault write lock. Callers must not route this through `apply`, which
+    /// would try to acquire the same lock again.
+    pub(crate) fn reindex_exclusive_external(&self) -> Result<(), VaultError> {
+        let stats = self.engine()?.sync_index()?;
+        self.engine()?.rebuild_or_sync_index_md()?;
+        self.publish_reindexed(stats);
+        Ok(())
+    }
+
+    fn doc_path(&self, path: &Path) -> Option<DocPath> {
+        let (scope, root) = if let Ok(relative) = path.strip_prefix("sources") {
+            (Scope::Raw, relative)
+        } else if let Ok(relative) = path.strip_prefix("wiki") {
+            (Scope::Wiki, relative)
+        } else {
+            return None;
+        };
+        DocPath::parse(scope, root).ok()
+    }
+
+    pub fn notice_external(
+        &self,
+        paths: impl IntoIterator<Item = DocPath>,
+    ) -> Result<bool, VaultError> {
+        // A reader still refreshes its private index and tells the UI; only the
+        // lock holder may rewrite `wiki/index.md` inside the vault.
+        let writable = self.is_writable();
+        let _guard = self
+            .write_lock
+            .lock()
+            .map_err(|_| VaultError::Io("vault write lock poisoned".into()))?;
+        let paths: Vec<PathBuf> = paths
+            .into_iter()
+            .map(|path| path.vault_relative())
+            .collect();
+        if paths.is_empty() {
+            return Ok(false);
+        }
+        let mut external = Vec::new();
+        let mut self_writes = self
+            .self_writes
+            .lock()
+            .map_err(|_| VaultError::Io("vault self-write set poisoned".into()))?;
+        for relative in paths {
+            let current = match std::fs::read(self.root.join(&relative)) {
+                Ok(content) => Some(Revision::of(&content)),
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+                Err(error) => return Err(VaultError::Io(error.to_string())),
+            };
+            match self_writes.get(&relative) {
+                Some(written) if written == &current => continue,
+                Some(_) => {
+                    self_writes.remove(&relative);
+                }
+                None => {}
+            }
+            external.push(relative);
+        }
+        drop(self_writes);
+        if external.is_empty() {
+            return Ok(false);
+        }
+        self.engine()?.sync_index()?;
+        if writable {
+            self.engine()?.rebuild_or_sync_index_md()?;
+            let _ = self.record_self_writes(&["wiki/index.md".into()]);
+        }
+        let external: Vec<String> = external
+            .iter()
+            .map(|path| path.display().to_string())
+            .collect();
+        let _ = self.events.send(VaultEvent::External { paths: external });
+        Ok(true)
+    }
+
+    pub(super) fn record_self_writes(&self, paths: &[String]) -> Result<(), VaultError> {
+        let mut self_writes = self
+            .self_writes
+            .lock()
+            .map_err(|_| VaultError::Io("vault self-write set poisoned".into()))?;
+        for path in paths {
+            let relative = PathBuf::from(path);
+            let revision = match std::fs::read(self.root.join(&relative)) {
+                Ok(content) => Some(Revision::of(&content)),
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+                Err(error) => return Err(VaultError::Io(error.to_string())),
+            };
+            self_writes.insert(relative, revision);
+        }
+        Ok(())
+    }
+
+    pub(super) fn publish_reindexed(&self, stats: SyncStats) {
+        let Ok(engine) = self.engine() else {
+            return;
+        };
+        if let Ok(status) = engine.status() {
+            let _ = self.events.send(VaultEvent::Reindexed {
+                stats: ReindexStats {
+                    raw_documents: status.sources_count,
+                    wiki_pages: status.wiki_count,
+                    total_chunks: stats.total_chunks,
+                },
+            });
+        }
+    }
+}

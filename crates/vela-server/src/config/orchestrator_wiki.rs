@@ -1,6 +1,6 @@
 use llm_wiki::WikiTemplateId;
 use serde::Deserialize;
-use std::path::PathBuf;
+use std::{fs, path::PathBuf};
 
 /// Deployment configuration for the unified `orchestrator-flow` + `orchestrator-agent` engine (`[orchestrator]`).
 #[derive(Clone, Deserialize)]
@@ -96,6 +96,8 @@ pub struct WikiSectionConfig {
     pub template: WikiTemplateId,
     #[serde(default)]
     pub mcp: WikiMcpConfig,
+    #[serde(default)]
+    pub sync: WikiSyncConfig,
 }
 
 impl Default for WikiSectionConfig {
@@ -105,6 +107,7 @@ impl Default for WikiSectionConfig {
             vault_dir: PathBuf::from("data/wiki-vault"),
             template: WikiTemplateId::Research,
             mcp: WikiMcpConfig::default(),
+            sync: WikiSyncConfig::default(),
         }
     }
 }
@@ -114,11 +117,148 @@ impl WikiSectionConfig {
         if !self.mcp.valid() {
             return false;
         }
-        if !self.enabled && !self.mcp.enabled {
+        if !self.enabled && !self.mcp.enabled && !self.sync.enabled {
             return true;
         }
-        !self.vault_dir.as_os_str().is_empty()
+        !self.vault_dir.as_os_str().is_empty() && self.sync.valid()
     }
+}
+
+/// Git-backed vault replication configuration (`[wiki.sync]`).
+#[derive(Clone, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct WikiSyncConfig {
+    pub enabled: bool,
+    pub remote_url: String,
+    pub branch: String,
+    pub ssh_key_path: PathBuf,
+    pub known_hosts_path: PathBuf,
+    pub author_name: String,
+    pub author_email: String,
+    pub interval_min: u64,
+    pub debounce_sec: u64,
+    pub max_file_mb: u64,
+}
+
+impl std::fmt::Debug for WikiSyncConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("WikiSyncConfig")
+            .field("enabled", &self.enabled)
+            .field("remote_url", &redact_remote(&self.remote_url))
+            .field("branch", &self.branch)
+            .field("ssh_key_path", &self.ssh_key_path)
+            .field("known_hosts_path", &self.known_hosts_path)
+            .field("author_name", &self.author_name)
+            .field("author_email", &self.author_email)
+            .field("interval_min", &self.interval_min)
+            .field("debounce_sec", &self.debounce_sec)
+            .field("max_file_mb", &self.max_file_mb)
+            .finish()
+    }
+}
+
+impl Default for WikiSyncConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            remote_url: String::new(),
+            branch: "main".into(),
+            ssh_key_path: PathBuf::from("/app/docker/wiki-deploy-key"),
+            known_hosts_path: PathBuf::from("/app/docker/github-known-hosts"),
+            author_name: "Vela Server".into(),
+            author_email: "vela@localhost".into(),
+            interval_min: 5,
+            debounce_sec: 30,
+            max_file_mb: 50,
+        }
+    }
+}
+
+impl WikiSyncConfig {
+    pub fn valid(&self) -> bool {
+        if !(1..=10_080).contains(&self.interval_min)
+            || !(1..=3_600).contains(&self.debounce_sec)
+            || !(1..=1_024).contains(&self.max_file_mb)
+            || self.branch.trim().is_empty()
+            || self.branch.starts_with('-')
+            || self.branch.chars().any(char::is_control)
+        {
+            return false;
+        }
+        if !self.enabled {
+            return true;
+        }
+        if self.remote_url.trim().is_empty()
+            || remote_has_credentials(&self.remote_url)
+            || self.author_name.trim().is_empty()
+            || self.author_email.trim().is_empty()
+        {
+            return false;
+        }
+        let Ok(key_metadata) = fs::metadata(&self.ssh_key_path) else {
+            return false;
+        };
+        let Ok(known_hosts_metadata) = fs::metadata(&self.known_hosts_path) else {
+            return false;
+        };
+        if !key_metadata.is_file() || !known_hosts_metadata.is_file() {
+            return false;
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            if key_metadata.permissions().mode() & 0o077 != 0 {
+                return false;
+            }
+        }
+        true
+    }
+
+    pub(crate) fn to_core_config(&self) -> wiki_core::SyncConfig {
+        wiki_core::SyncConfig {
+            remote_url: Some(self.remote_url.clone()),
+            branch: self.branch.clone(),
+            author: Some(wiki_core::GitAuthor {
+                name: self.author_name.clone(),
+                email: self.author_email.clone(),
+            }),
+            auth: wiki_core::GitAuth::SshKey {
+                key: self.ssh_key_path.clone(),
+                known_hosts: self.known_hosts_path.clone(),
+            },
+            max_file_bytes: self.max_file_mb.saturating_mul(1024 * 1024),
+            command_timeout: std::time::Duration::from_secs(60),
+        }
+    }
+}
+
+fn remote_has_credentials(remote: &str) -> bool {
+    let Some((scheme, authority_and_path)) = remote.split_once("://") else {
+        // GitHub's SCP-style SSH URL (git@github.com:owner/repo.git) is not a password URL.
+        return false;
+    };
+    let authority = authority_and_path.split('/').next().unwrap_or_default();
+    let Some((user, _host)) = authority.rsplit_once('@') else {
+        return false;
+    };
+    if user.is_empty() {
+        return true;
+    }
+    scheme.eq_ignore_ascii_case("http")
+        || scheme.eq_ignore_ascii_case("https")
+        || user.contains(':')
+        || !scheme.eq_ignore_ascii_case("ssh")
+        || user != "git"
+}
+
+fn redact_remote(remote: &str) -> String {
+    let Some((scheme, rest)) = remote.split_once("://") else {
+        return remote.into();
+    };
+    let Some((_, host_and_path)) = rest.rsplit_once('@') else {
+        return remote.into();
+    };
+    format!("{scheme}://[redacted]@{host_and_path}")
 }
 
 /// Streamable HTTP MCP Server configuration for Knowledge/Wiki (`[wiki.mcp]`).
