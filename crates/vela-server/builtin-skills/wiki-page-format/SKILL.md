@@ -26,7 +26,7 @@ Done when you know, for the page you are about to write: its `<domain>`, its `<t
 | `system` | `wiki/index.md`, `wiki/log.md` | tools only — never hand-edit |
 
 - `<domain>`, `<topic>`, `<slug>`: `kebab-case` ASCII. Vietnamese names are de-accented (`khong-khi-lanh`, `trung-tam-du-bao-khi-tuong-thuy-van-quoc-gia`).
-- One `<domain>` per page, reused from the existing folder list. Current domains: `ai`, `documentation`, `media`, `news`, `robotics`, `trading`, `weather`.
+- One `<domain>` per page, reused from the existing folder list.
 - A slug is globally unique across `entities/` and `concepts/`. If it exists, patch that page.
 - Pass the full path to `wiki_write_file`: `rel_path="concepts/trading/fair-value-gap.md"`.
 
@@ -141,10 +141,11 @@ wiki_markdown_body: <body below, no frontmatter>
 # <Title>
 
 ## Định vị và luận điểm cốt lõi
-## 1. <Phần kỹ thuật/dữ kiện>   (code, công thức, bảng giữ nguyên văn)
-## 2. ...
-## Bảng điều kiện / số liệu      (khi nguồn có)
-## Điểm cốt lõi, rủi ro và giới hạn
+## Dàn ý nguồn
+### 1. <Tên mục trong nguồn>
+<1–3 câu: mục này xác lập điều gì, chứa gì (bảng, code, số liệu)>. Chi tiết: [[concepts/<domain>/<slug>|Label]]
+### 2. ...
+## Giới hạn và mâu thuẫn
 > [!WARNING] Contradiction / Caveat
 ## Nguồn và liên kết
 - Nguồn gốc: [[sources/<domain>/<topic>/<filename>.md|<filename>.md]]
@@ -175,7 +176,8 @@ Use a multi-line `flowchart TD` or `flowchart LR`, with every node label double-
 
 ## 6. Updating an existing page
 
-- Append a new source's contribution with `wiki_patch_file(append_text=...)`: one bullet `- [[wiki/sources/...|Title]] (Nguồn: [[sources/....md|file.md]]) — <đóng góp mới>`.
+- When the page is a home for a new source's detail, append it with `wiki_patch_file(append_text=...)` as a full section `## <Chủ đề> (theo [[wiki/sources/...|Title]])` carrying the tables, numbers and code, plus a `Source` + `Raw source` pair for `## Liên kết`.
+- When the page is only related to the new source, append one bullet: `- [[wiki/sources/...|Title]] (Nguồn: [[sources/....md|file.md]]) — <liên hệ>`.
 - On a full rewrite, keep `title`, `category`, `domain` and the path; union `sources`, `aliases` and `tags` (top-level and `qmd.metadata` together); set `updated_at` to now; keep every prior claim and write one unified article.
 - When a new source links to a related existing source summary, patch that summary to link back.
 

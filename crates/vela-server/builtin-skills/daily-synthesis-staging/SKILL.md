@@ -15,7 +15,12 @@ Use this skill when the user asks to summarize/synthesize a conversation, resear
 2. **Case B — User wants a standalone Daily/Weekly Report file**:
    - Call `markdown_create` to write the report file, then call `markdown_read` to verify.
 
-## 2. Provenance, Conflict & Anti-Hallucination Rules (Javis OS Discipline)
+## 2. Raw content stays raw
+`sources/` is the source of truth the Wiki is built from, so what goes in must be complete.
+- **A discussion** (Case A): the synthesis carries every decision, number, example, and open point raised, organized by topic.
+- **An external video, article, or document**: `markdown_body` is its full content (the whole transcript or article text, with its URL), and your own analysis goes under a final `## Nhận định` section. When you hold only a digest of it, report that to the root so `source_collector` saves the raw content.
+
+## 3. Provenance, Conflict & Anti-Hallucination Rules (Javis OS Discipline)
 1. **Provenance Gate (`provenance`)**:
    - Use `"user"` for explicit user decisions/preferences, `"source"` for external document/web findings, or `"verified_synthesis"` for confirmed technical conclusions.
    - **NEVER** promote unverified assistant-only speculation as established Wiki truth (`provenance="assistant"` is hard-blocked by `add_to_sources`). Put unverified hypotheses into `open_questions: [...]`.

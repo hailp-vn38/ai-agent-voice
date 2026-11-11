@@ -19,7 +19,7 @@ Write prose in the user's requested language (default: the source's language). K
 ## 1. Read the whole source and build an inventory
 
 1. Read `wiki/index.md` and `wiki_tree(scope="wiki")` to learn existing pages, slugs, aliases, and topic folders.
-2. Read the source with `wiki_get(file="sources/<source_rel_path>", from_line=1, max_lines=110)`. While the output ends with a continuation footer, call again with the `from_line` it names until the last line is read.
+2. Read the source with `wiki_get(file="sources/<source_rel_path>")`. While the output ends with a continuation footer, call again with the `from_line` it names until the last line is read.
 3. Build the **inventory** as you read: every H2/H3 section in order (for a source without headings, every distinct topic), with the tables, code blocks, number sets, and rule lists each one contains.
 4. Assign each inventory item a **home**: an existing or new page-worthy entity/concept page. Reuse existing slugs. An item with no page-worthy home is marked `raw-only`.
 
