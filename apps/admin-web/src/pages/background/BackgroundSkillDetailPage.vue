@@ -15,7 +15,7 @@ import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
 import { agentJobsApi } from '@/api/agent-jobs'
-import { formatApiError } from '@/api/errors'
+import { formatApiError, isApiError } from '@/api/errors'
 import type { BackgroundSettings, JobSkillDetail } from '@/api/types/agent-jobs'
 import DetailHeader from '@/components/admin/DetailHeader.vue'
 import { Badge } from '@/components/ui/badge'
@@ -39,6 +39,7 @@ const loading = ref(false)
 const saving = ref(false)
 const deleting = ref(false)
 const error = ref('')
+const requiresToolsError = ref('')
 const notice = ref('')
 const detail = ref<JobSkillDetail | null>(null)
 const settings = ref<BackgroundSettings | null>(null)
@@ -48,6 +49,7 @@ const form = ref({
   id: '',
   name: '',
   description: '',
+  requiresTools: '',
   body: '',
 })
 
@@ -89,6 +91,7 @@ const hasChangesFromDefault = computed(() => {
   return (
     form.value.name.trim() !== def.name.trim() ||
     form.value.description.trim() !== def.description.trim() ||
+    form.value.requiresTools !== (def.requires_tools ?? []).join(', ') ||
     form.value.body.trim() !== def.body.trim()
   )
 })
@@ -104,6 +107,7 @@ async function loadSkill(id: string) {
   controller = pending
   loading.value = true
   error.value = ''
+  requiresToolsError.value = ''
   notice.value = ''
   try {
     const loaded = await agentJobsApi.skill(id, pending.signal)
@@ -113,6 +117,7 @@ async function loadSkill(id: string) {
       id: loaded.id,
       name: loaded.name,
       description: loaded.description,
+      requiresTools: (loaded.requires_tools ?? []).join(', '),
       body: loaded.body,
     }
     try {
@@ -134,6 +139,7 @@ watch(
   () => [isCreateMode.value, routeSkillId.value] as const,
   ([createMode, skillId]) => {
     error.value = ''
+    requiresToolsError.value = ''
     notice.value = ''
     editorMode.value = 'edit'
     if (createMode) {
@@ -142,6 +148,7 @@ watch(
         id: '',
         name: '',
         description: '',
+        requiresTools: '',
         body: '',
       }
     } else if (skillId) {
@@ -156,12 +163,14 @@ function restoreDefault() {
   if (!def) return
   form.value.name = def.name
   form.value.description = def.description
+  form.value.requiresTools = (def.requires_tools ?? []).join(', ')
   form.value.body = def.body
 }
 
 async function save() {
   error.value = ''
   notice.value = ''
+  requiresToolsError.value = ''
   if (!isValidId.value) {
     error.value = t('jobUi.skillValidationId')
     return
@@ -176,6 +185,10 @@ async function save() {
       name: form.value.name.trim(),
       description: form.value.description.trim(),
       body: form.value.body,
+      requires_tools: form.value.requiresTools
+        .split(',')
+        .map(tool => tool.trim())
+        .filter(Boolean),
     }
     const saved = isCreateMode.value
       ? await agentJobsApi.createSkill(effectiveId.value, payload)
@@ -185,6 +198,7 @@ async function save() {
       id: saved.id,
       name: saved.name,
       description: saved.description,
+      requiresTools: (saved.requires_tools ?? []).join(', '),
       body: saved.body,
     }
     notice.value = t('jobUi.skillSaved')
@@ -192,7 +206,11 @@ async function save() {
       await router.replace({ name: 'jobs-settings-skill', params: { skillId: saved.id } })
     }
   } catch (err) {
-    error.value = formatApiError(err)
+    if (isApiError(err) && err.code === 'invalid_skill_requires_tools') {
+      requiresToolsError.value = t('jobUi.skillValidationRequiresTools')
+    } else {
+      error.value = formatApiError(err)
+    }
   } finally {
     saving.value = false
   }
@@ -395,6 +413,44 @@ onBeforeUnmount(() => controller?.abort())
                 :disabled="saving || deleting"
                 data-skill-description-input
               />
+            </label>
+
+            <div class="space-y-1.5 text-xs" data-skill-required-tools>
+              <div class="font-semibold">{{ t('jobUi.skillRequiresToolsLabel') }}</div>
+              <div v-if="(detail?.requires_tools ?? []).length" class="flex flex-wrap gap-1.5">
+                <code
+                  v-for="tool in detail?.requires_tools"
+                  :key="tool"
+                  class="rounded border border-border bg-muted px-2 py-0.5 font-mono text-[11px]"
+                >{{ tool }}</code>
+              </div>
+              <span v-else class="text-muted-foreground">
+                {{ t('jobUi.skillRequiresToolsEmpty') }}
+              </span>
+            </div>
+
+            <label class="block space-y-1.5">
+              <span class="block text-xs font-semibold">{{ t('jobUi.skillRequiresToolsEditLabel') }}</span>
+              <input
+                v-model="form.requiresTools"
+                type="text"
+                class="admin-input h-9 font-mono text-xs"
+                :placeholder="t('jobUi.skillRequiresToolsPlaceholder')"
+                :disabled="saving || deleting"
+                data-skill-requires-tools
+                @input="requiresToolsError = ''"
+              />
+              <span class="block text-[11px] text-muted-foreground">
+                {{ t('jobUi.skillRequiresToolsHint') }}
+              </span>
+              <span
+                v-if="requiresToolsError"
+                class="block text-[11px] text-danger"
+                role="alert"
+                data-skill-requires-tools-error
+              >
+                {{ requiresToolsError }}
+              </span>
             </label>
           </div>
 

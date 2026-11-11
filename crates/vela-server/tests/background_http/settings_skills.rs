@@ -456,6 +456,142 @@ prompts_dir = "{}"
 }
 
 #[tokio::test]
+async fn saved_untouched_wiki_default_prompts_follow_new_required_skill_prompts() {
+    let temp_root = std::env::temp_dir().join(format!(
+        "background-wiki-prompt-migration-{}",
+        uuid::Uuid::new_v4()
+    ));
+    let store_dir = temp_root.join("orch-store");
+    std::fs::create_dir_all(&store_dir).unwrap();
+    std::fs::write(
+        store_dir.join("agent_settings.json"),
+        json!({
+            "revision": 3,
+            "agents": {
+                "wiki_ingestor": {
+                    "enabled": true,
+                    "system_prompt": include_str!("../fixtures/legacy-wiki_ingestor_prompt.txt")
+                },
+                "wiki_curator": {
+                    "enabled": true,
+                    "system_prompt": include_str!("../fixtures/legacy-wiki_curator_prompt.txt")
+                },
+                "wiki_researcher": {
+                    "enabled": true,
+                    "system_prompt": "Admin's saved researcher prompt."
+                }
+            }
+        })
+        .to_string(),
+    )
+    .unwrap();
+    let config: AppConfig = toml::from_str(&format!(
+        r#"
+[server]
+bind = "127.0.0.1:0"
+public_ws_url = "ws://127.0.0.1:0/voice/v1/"
+[provider_defaults]
+vad = "test"
+asr = "test"
+llm = "test"
+tts = "test"
+[database]
+url = "sqlite://{}"
+[api]
+enabled = true
+admin_token = "background-test-token"
+[orchestrator]
+store_dir = "{}"
+prompts_dir = "{}"
+"#,
+        temp_root.join("vela.db").display(),
+        store_dir.display(),
+        temp_root.join("prompts").display(),
+    ))
+    .unwrap();
+    let router = bootstrap_with_providers(config, Arc::new(ProviderSet::unavailable()))
+        .await
+        .unwrap();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base = format!("http://{}/api/admin", listener.local_addr().unwrap());
+    let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    let client = Client::new();
+    let initial_resp = client
+        .get(format!("{base}/background/settings"))
+        .bearer_auth("background-test-token")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(initial_resp.status(), StatusCode::OK);
+    let initial: Value = initial_resp.json().await.unwrap();
+    let agent_prompt = |settings: &Value, id: &str| {
+        settings["agents"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|agent| agent["id"] == id)
+            .unwrap()["system_prompt"]
+            .as_str()
+            .unwrap()
+            .to_owned()
+    };
+    assert!(agent_prompt(&initial, "wiki_ingestor").contains("already loaded below this prompt"));
+    assert!(agent_prompt(&initial, "wiki_curator").contains("already loaded below this prompt"));
+    assert_eq!(
+        agent_prompt(&initial, "wiki_researcher"),
+        "Admin's saved researcher prompt."
+    );
+
+    let ingestor_prompt =
+        std::fs::read_to_string(temp_root.join("prompts/wiki_ingestor.md")).unwrap();
+    assert!(ingestor_prompt.contains("already loaded below this prompt"));
+    assert!(ingestor_prompt.contains("wiki_get(file=\"wiki/index.md\")"));
+    assert!(ingestor_prompt.contains("wiki_get(file=\"sources/<source_rel_path>\")"));
+    assert!(!ingestor_prompt.contains("skill(id=\"wiki-ingest\")"));
+    assert!(!ingestor_prompt.contains("skill(id=\"wiki-taxonomy\")"));
+    assert!(!ingestor_prompt.contains("skill(id=\"wiki-page-format\")"));
+
+    let curator_prompt =
+        std::fs::read_to_string(temp_root.join("prompts/wiki_curator.md")).unwrap();
+    assert!(curator_prompt.contains("already loaded below this prompt"));
+    assert!(curator_prompt.contains("wiki_get(file=\"wiki/index.md\")"));
+    assert!(!curator_prompt.contains("skill` with `id=\"wiki-lint\"`"));
+    assert!(!curator_prompt.contains("skill` with `id=\"wiki-query\"`"));
+    let researcher_prompt =
+        std::fs::read_to_string(temp_root.join("prompts/wiki_researcher.md")).unwrap();
+    assert_eq!(researcher_prompt, "Admin's saved researcher prompt.");
+
+    let custom = client
+        .put(format!("{base}/background/settings"))
+        .bearer_auth("background-test-token")
+        .header(
+            "If-Match",
+            format!("\"{}\"", initial["revision"].as_i64().unwrap()),
+        )
+        .json(&json!({
+            "enabled": true,
+            "agents": {"wiki_curator": {
+                "enabled": true,
+                "system_prompt": "Admin's custom curator instructions."
+            }}
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(custom.status(), StatusCode::OK);
+    let custom: Value = custom.json().await.unwrap();
+    assert_eq!(
+        agent_prompt(&custom, "wiki_curator"),
+        "Admin's custom curator instructions."
+    );
+    let custom_curator_prompt =
+        std::fs::read_to_string(temp_root.join("prompts/wiki_curator.md")).unwrap();
+    assert!(custom_curator_prompt.starts_with("Admin's custom curator instructions."));
+    assert!(custom_curator_prompt.contains("<required_job_skills>"));
+    server.abort();
+}
+
+#[tokio::test]
 async fn background_skills_crud_etag_preconditions_and_agent_visibility() {
     let temp_root =
         std::env::temp_dir().join(format!("background-skills-{}", uuid::Uuid::new_v4()));

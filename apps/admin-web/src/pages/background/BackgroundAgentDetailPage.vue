@@ -159,6 +159,11 @@ const skillOptions = computed(() =>
 function isRequiredJobSkill(skillId: string) {
   return requiredJobSkillSet.value.has(skillId)
 }
+function missingToolsForSkill(skillId: string) {
+  return (
+    agentSpec.value?.tool_requirement_gaps?.find(gap => gap.skill_id === skillId)?.missing_tools ?? []
+  )
+}
 function openSkillDetails(skillId: string) {
   void router.push({ name: 'jobs-settings-skill', params: { skillId } })
 }
@@ -1080,6 +1085,7 @@ onBeforeUnmount(() => controller?.abort())
                     class="size-3.5 shrink-0 accent-primary"
                     :checked="form.allowed_tools.includes(tool)"
                     :disabled="saving"
+                    :data-agent-tool="tool"
                     @change="toggleTool(tool, ($event.target as HTMLInputElement).checked)"
                   />
                   <code class="font-mono text-[11px]">{{ tool }}</code>
@@ -1300,6 +1306,17 @@ onBeforeUnmount(() => controller?.abort())
                   data-agent-required-skill-note
                 >
                   {{ t('jobUi.requiredJobSkillLockedHint') }}
+                </small>
+                <small
+                  v-if="missingToolsForSkill(skill).length > 0"
+                  class="basis-full text-[11px] font-normal text-amber-700 dark:text-amber-300"
+                  :data-agent-skill-tool-gap="skill"
+                >
+                  {{
+                    t('jobUi.skillMissingToolsWarning', {
+                      tools: missingToolsForSkill(skill).join(', '),
+                    })
+                  }}
                 </small>
                 <button
                   v-if="isRequiredJobSkill(skill)"

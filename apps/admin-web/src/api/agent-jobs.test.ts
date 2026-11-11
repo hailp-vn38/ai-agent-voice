@@ -150,6 +150,7 @@ describe('Agent Job admin clients', () => {
       id: 'seo-audit',
       name: 'SEO Audit',
       description: 'Audit SEO structure.',
+      requires_tools: ['wiki_get'],
       body: '## Steps\n- Check headings.',
       is_builtin: false,
       is_modified: true,
@@ -173,6 +174,7 @@ describe('Agent Job admin clients', () => {
       name: detail.name,
       description: detail.description,
       body: detail.body,
+      requires_tools: detail.requires_tools,
     })
     const createInit = fetch.mock.calls[1]?.[1] as RequestInit
     expect(createInit.method).toBe('PUT')
@@ -180,7 +182,12 @@ describe('Agent Job admin clients', () => {
 
     await agentJobsApi.updateSkill(
       'seo-audit',
-      { name: detail.name, description: detail.description, body: detail.body },
+      {
+        name: detail.name,
+        description: detail.description,
+        body: detail.body,
+        requires_tools: detail.requires_tools,
+      },
       'abc123etag',
     )
     const updateInit = fetch.mock.calls[2]?.[1] as RequestInit
