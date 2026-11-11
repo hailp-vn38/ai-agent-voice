@@ -1,4 +1,5 @@
 use super::harness::*;
+use crate::admin_web_token_support::admin_web_token;
 
 #[tokio::test]
 async fn background_custom_subagents_crud_flow_isolation_and_concurrency() {
@@ -21,6 +22,7 @@ url = "sqlite://{}"
 [api]
 enabled = true
 admin_token = "background-test-token"
+jwt_secret = "background-test-jwt-signing-secret-0123456789"
 [orchestrator]
 store_dir = "{}"
 prompts_dir = "{}"
@@ -38,12 +40,13 @@ skills_dir = "{}"
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let base = format!("http://{}/api/admin", listener.local_addr().unwrap());
     let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    let web_token = admin_web_token(&reqwest::Client::new(), base.trim_end_matches("/api/admin")).await;
     let client = Client::new();
 
     // 1. Initial settings has 10 built-in agents with `is_builtin: true`
     let initial: Value = client
         .get(format!("{base}/background/settings"))
-        .bearer_auth("background-test-token")
+        .bearer_auth(&web_token)
         .send()
         .await
         .unwrap()
@@ -58,7 +61,7 @@ skills_dir = "{}"
     // 2. Create a Custom Sub-Agent in Flow 1 (`daily`) via POST /api/admin/background/agents
     let create_resp = client
         .post(format!("{base}/background/agents"))
-        .bearer_auth("background-test-token")
+        .bearer_auth(&web_token)
         .header("If-Match", "\"1\"")
         .json(&json!({
             "id": "custom_arxiv_digest",
@@ -109,7 +112,7 @@ skills_dir = "{}"
     // 3. Reject duplicate ID, built-in ID collision, invalid flow, or Flow 2 tool violation
     let dup_resp = client
         .post(format!("{base}/background/agents"))
-        .bearer_auth("background-test-token")
+        .bearer_auth(&web_token)
         .header("If-Match", "\"2\"")
         .json(&json!({
             "id": "custom_arxiv_digest",
@@ -128,7 +131,7 @@ skills_dir = "{}"
 
     let builtin_dup = client
         .post(format!("{base}/background/agents"))
-        .bearer_auth("background-test-token")
+        .bearer_auth(&web_token)
         .header("If-Match", "\"2\"")
         .json(&json!({
             "id": "source_collector",
@@ -147,7 +150,7 @@ skills_dir = "{}"
 
     let bad_wiki_tool = client
         .post(format!("{base}/background/agents"))
-        .bearer_auth("background-test-token")
+        .bearer_auth(&web_token)
         .header("If-Match", "\"2\"")
         .json(&json!({
             "id": "wiki_bad_collector",
@@ -168,7 +171,7 @@ skills_dir = "{}"
     // 4. Partial toggle via PUT /api/admin/background/settings preserves flow_id & prompt
     let toggle_resp = client
         .put(format!("{base}/background/settings"))
-        .bearer_auth("background-test-token")
+        .bearer_auth(&web_token)
         .header("If-Match", "\"2\"")
         .json(&json!({
             "enabled": true,
@@ -208,7 +211,7 @@ skills_dir = "{}"
     // 5. Deleting a Built-in Sub-Agent is rejected with 400 builtin_agent_cannot_be_deleted
     let del_builtin = client
         .delete(format!("{base}/background/agents/source_collector"))
-        .bearer_auth("background-test-token")
+        .bearer_auth(&web_token)
         .header("If-Match", "\"3\"")
         .send()
         .await
@@ -222,7 +225,7 @@ skills_dir = "{}"
     // 6. Delete Custom Sub-Agent with If-Match -> 200 OK, removes agent & prompt file
     let del_custom = client
         .delete(format!("{base}/background/agents/custom_arxiv_digest"))
-        .bearer_auth("background-test-token")
+        .bearer_auth(&web_token)
         .header("If-Match", "\"3\"")
         .send()
         .await
@@ -259,6 +262,7 @@ url = "sqlite://{}"
 [api]
 enabled = true
 admin_token = "background-test-token"
+jwt_secret = "background-test-jwt-signing-secret-0123456789"
 [orchestrator]
 enabled = true
 endpoint = "http://127.0.0.1:9/v1"
@@ -289,6 +293,7 @@ vault_dir = "{}"
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let base = format!("http://{}/api/admin", listener.local_addr().unwrap());
     let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    let web_token = admin_web_token(&reqwest::Client::new(), base.trim_end_matches("/api/admin")).await;
     let client = Client::new();
 
     // Helper to build a valid canonical 16 kHz mono 16-bit PCM WAV with `sample_count` samples
@@ -317,7 +322,7 @@ vault_dir = "{}"
 
     let created_resp = client
         .post(format!("{base}/jobs"))
-        .bearer_auth("background-test-token")
+        .bearer_auth(&web_token)
         .header("Idempotency-Key", "idem-wav-1")
         .json(&json!({
             "goal": "Transcribe this meeting recording",
@@ -369,7 +374,7 @@ vault_dir = "{}"
     let mp4_b64 = base64::engine::general_purpose::STANDARD.encode(&mp4_bytes);
     let mp4_resp = client
         .post(format!("{base}/jobs"))
-        .bearer_auth("background-test-token")
+        .bearer_auth(&web_token)
         .header("Idempotency-Key", "idem-mp4-1")
         .json(&json!({
             "goal": "Transcribe and summarize this attached MP4 video",
@@ -396,7 +401,7 @@ vault_dir = "{}"
     let wav_b_b64 = base64::engine::general_purpose::STANDARD.encode(&wav_b);
     let idem_conflict = client
         .post(format!("{base}/jobs"))
-        .bearer_auth("background-test-token")
+        .bearer_auth(&web_token)
         .header("Idempotency-Key", "idem-wav-1")
         .json(&json!({
             "goal": "Transcribe this meeting recording",
@@ -418,7 +423,7 @@ vault_dir = "{}"
     // 3. Non-`.wav`/`.mp4` attachment -> 400 invalid_attachment
     let bad_file = client
         .post(format!("{base}/jobs"))
-        .bearer_auth("background-test-token")
+        .bearer_auth(&web_token)
         .json(&json!({
             "goal": "Analyze file",
             "attachments": [{
@@ -441,7 +446,7 @@ vault_dir = "{}"
     let oversized_b64 = base64::engine::general_purpose::STANDARD.encode(&oversized_bytes);
     let too_large = client
         .post(format!("{base}/jobs"))
-        .bearer_auth("background-test-token")
+        .bearer_auth(&web_token)
         .json(&json!({
             "goal": "Oversized wav",
             "attachments": [{
@@ -463,7 +468,7 @@ vault_dir = "{}"
     let huge_followup = "x".repeat(300 * 1024);
     let followup_resp = client
         .post(format!("{base}/jobs/{job_id}/followup"))
-        .bearer_auth("background-test-token")
+        .bearer_auth(&web_token)
         .json(&json!({ "input": huge_followup }))
         .send()
         .await
@@ -497,6 +502,7 @@ url = "sqlite://{}"
 [api]
 enabled = true
 admin_token = "background-test-token"
+jwt_secret = "background-test-jwt-signing-secret-0123456789"
 [orchestrator]
 enabled = true
 endpoint = "http://127.0.0.1:9/v1"
@@ -527,6 +533,7 @@ vault_dir = "{}"
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let base = format!("http://{}/api/admin", listener.local_addr().unwrap());
     let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    let web_token = admin_web_token(&reqwest::Client::new(), base.trim_end_matches("/api/admin")).await;
     let client = Client::new();
 
     // 1. Unauthenticated request is rejected
@@ -542,7 +549,7 @@ vault_dir = "{}"
     for bad_payload in [json!({ "ids": [] }), json!({ "ids": ["   "] })] {
         let bad_resp = client
             .post(format!("{base}/jobs/batch-delete"))
-            .bearer_auth("background-test-token")
+            .bearer_auth(&web_token)
             .json(&bad_payload)
             .send()
             .await
@@ -559,7 +566,7 @@ vault_dir = "{}"
     for idx in 1..=3 {
         let resp = client
             .post(format!("{base}/jobs"))
-            .bearer_auth("background-test-token")
+            .bearer_auth(&web_token)
             .json(&json!({ "goal": format!("Batch delete test job #{idx}") }))
             .send()
             .await
@@ -571,7 +578,7 @@ vault_dir = "{}"
 
     let del_resp = client
         .post(format!("{base}/jobs/batch-delete"))
-        .bearer_auth("background-test-token")
+        .bearer_auth(&web_token)
         .json(&json!({
             "ids": [
                 &created_ids[0],
@@ -595,7 +602,7 @@ vault_dir = "{}"
     for deleted_id in [&created_ids[0], &created_ids[1]] {
         let get_resp = client
             .get(format!("{base}/jobs/{deleted_id}"))
-            .bearer_auth("background-test-token")
+            .bearer_auth(&web_token)
             .send()
             .await
             .unwrap();
@@ -604,7 +611,7 @@ vault_dir = "{}"
 
     let list_resp = client
         .get(format!("{base}/jobs"))
-        .bearer_auth("background-test-token")
+        .bearer_auth(&web_token)
         .send()
         .await
         .unwrap();
@@ -635,6 +642,7 @@ url = "sqlite://{}"
 [api]
 enabled = true
 admin_token = "background-test-token"
+jwt_secret = "background-test-jwt-signing-secret-0123456789"
 [orchestrator]
 store_dir = "{}"
 prompts_dir = "{}"
@@ -650,6 +658,7 @@ prompts_dir = "{}"
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let base = format!("http://{}/api/admin", listener.local_addr().unwrap());
     let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    let web_token = admin_web_token(&reqwest::Client::new(), base.trim_end_matches("/api/admin")).await;
     let client = Client::new();
 
     let quarantine = format!("{base}/knowledge/quarantined-sources");
@@ -672,7 +681,7 @@ prompts_dir = "{}"
         StatusCode::UNAUTHORIZED
     );
 
-    let token = "background-test-token";
+    let token = web_token.as_str();
     assert_eq!(
         client
             .get(&quarantine)
