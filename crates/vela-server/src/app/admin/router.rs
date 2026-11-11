@@ -1,9 +1,9 @@
 //! Admin HTTP router wiring across all admin feature modules.
 
 use super::{
-    AppState, MAX_ASR_TEST_BODY, agents, authenticate, background, deletion, devices, history,
-    knowledge, llm_gateway, mcp, notifications, providers, request_id, speakers, system, templates,
-    transport,
+    AppState, MAX_ASR_TEST_BODY, agents, auth, authenticate, background, deletion, devices,
+    history, knowledge, llm_gateway, mcp, notifications, providers, request_id, speakers, system,
+    templates, transport,
 };
 use axum::{
     Router,
@@ -12,6 +12,12 @@ use axum::{
 use std::sync::Arc;
 
 pub(in crate::app) fn router(state: AppState) -> Router<AppState> {
+    // Login and status carry no bearer credential, so they merge after the authenticate layer.
+    let public = if state.config.api.jwt_secret.expose().trim().is_empty() {
+        Router::new()
+    } else {
+        auth::routes()
+    };
     Router::new()
         .merge(knowledge_routes(Arc::clone(&state.knowledge_write_gate)))
         .merge(wiki_sync_routes())
@@ -27,6 +33,7 @@ pub(in crate::app) fn router(state: AppState) -> Router<AppState> {
             state.clone(),
             authenticate,
         ))
+        .merge(public)
         .layer(axum::middleware::from_fn(transport))
         .layer(axum::middleware::from_fn(request_id))
         .with_state(state)

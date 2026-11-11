@@ -104,6 +104,8 @@ pub struct AppState {
     pub system_metrics: Arc<crate::services::system_metrics::SystemMetrics>,
     pub system_logs: Arc<crate::services::system_logs::SystemLogHub>,
     pub(crate) web_assistant: Arc<super::assistant::WebAssistantAuth>,
+    /// Admin Password login status mirrored in memory for the Admin token check.
+    pub(crate) admin_auth: Arc<super::admin::auth::AdminAuthState>,
     /// Identity of this process incarnation, pinned into enrollment drafts as provenance so a
     /// restart can detect a stale runtime and repin a still-compatible draft.
     pub runtime_id: String,
@@ -874,6 +876,7 @@ impl AppState {
             database.as_ref().map(|db| db.pool().clone()),
             Arc::clone(&secret_resolver),
         ));
+        let admin_auth = Arc::new(super::admin::auth::AdminAuthState::from_config(&config));
         let state = Self {
             wiki_engine: None,
             wiki_vault: Arc::new(std::sync::OnceLock::new()),
@@ -898,6 +901,7 @@ impl AppState {
             system_metrics: Arc::new(crate::services::system_metrics::SystemMetrics::new()),
             system_logs: crate::services::system_logs::SystemLogHub::global(),
             web_assistant: Arc::new(Default::default()),
+            admin_auth,
             runtime_id: format!("vela-server-{}", uuid::Uuid::new_v4()),
             deployment_snapshots: Vec::new(),
             provider_prewarm: None,

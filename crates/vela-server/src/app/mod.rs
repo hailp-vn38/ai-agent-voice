@@ -96,6 +96,9 @@ pub async fn bootstrap_with_providers_and_secret_resolver(
     prepare_memory(&mut state);
     prepare_background(&mut state).await?;
     prepare_enrollment(&mut state).await?;
+    admin::auth::prepare(&state)
+        .await
+        .map_err(|_| DatabaseError::Unavailable)?;
     Ok(router_with_state(state))
 }
 

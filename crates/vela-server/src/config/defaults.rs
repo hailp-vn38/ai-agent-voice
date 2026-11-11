@@ -21,6 +21,9 @@ pub(super) fn default_database_busy_timeout_ms() -> u64 {
 pub(super) fn default_shutdown_grace_ms() -> u64 {
     15_000
 }
+pub(super) fn default_admin_token_ttl_secs() -> u64 {
+    7 * 24 * 60 * 60
+}
 pub(super) fn default_provider_test_concurrency() -> usize {
     2
 }

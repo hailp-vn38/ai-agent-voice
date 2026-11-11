@@ -41,6 +41,7 @@ impl Verifier {
         if !config.system_mcp.enabled
             || key.len() < 32
             || key == config.api.admin_token
+            || key == config.api.jwt_secret.expose().trim()
             || key == config.auth.token
             || !valid_https(&http.issuer, false)
             || !valid_https(&http.audience, true)

@@ -105,6 +105,11 @@ impl AppConfig {
         {
             self.api.admin_token = token;
         }
+        if let Ok(secret) = std::env::var("VOICE_ADMIN_JWT_SECRET")
+            && !secret.is_empty()
+        {
+            self.api.jwt_secret = crate::config::SecretString::new(secret);
+        }
         if let Ok(db_url) = std::env::var("VOICE_DATABASE_URL")
             && !db_url.trim().is_empty()
         {
@@ -238,9 +243,29 @@ fn apply_provider_env_secret(id: &str, adapter: &str, target: &mut crate::config
 }
 
 fn validate_admin_api(config: &AppConfig) -> Result<(), ConfigError> {
-    if config.api.enabled && config.api.admin_token.trim().is_empty() {
+    let jwt_secret = config.api.jwt_secret.expose().trim();
+    if config.api.enabled && config.api.admin_token.trim().is_empty() && jwt_secret.is_empty() {
         return Err(ConfigError::Validation(
             "api.enabled requires a non-empty admin_token".into(),
+        ));
+    }
+    if !jwt_secret.is_empty() {
+        if jwt_secret.len() < 32 {
+            return Err(ConfigError::Validation(
+                "api.jwt_secret must be at least 32 characters".into(),
+            ));
+        }
+        if jwt_secret == config.auth.token.trim()
+            || std::env::var("VOICE_SYSTEM_MCP_JWT_KEY").is_ok_and(|key| key.trim() == jwt_secret)
+        {
+            return Err(ConfigError::Validation(
+                "api.jwt_secret must not reuse auth.token or the System MCP JWT key".into(),
+            ));
+        }
+    }
+    if !(1..=2_592_000).contains(&config.api.token_ttl_secs) {
+        return Err(ConfigError::Validation(
+            "api.token_ttl_secs must be between 1 and 2592000".into(),
         ));
     }
     if !(1..=8).contains(&config.api.mcp_tests.max_concurrency)

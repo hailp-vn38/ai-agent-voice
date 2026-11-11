@@ -98,7 +98,8 @@ pub(super) async fn authenticate(
             .and_then(|value| value.strip_prefix("Bearer "))
             .is_some_and(|token| {
                 !token.is_empty()
-                    && constant_time_eq(token.as_bytes(), state.config.api.admin_token.as_bytes())
+                    && (constant_time_eq(token.as_bytes(), state.config.api.admin_token.as_bytes())
+                        || state.admin_auth.accepts(token))
             });
     if valid {
         next.run(request).await

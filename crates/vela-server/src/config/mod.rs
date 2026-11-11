@@ -1109,6 +1109,12 @@ pub struct AdminApiConfig {
     pub enabled: bool,
     #[serde(default)]
     pub admin_token: String,
+    /// Admin Signing Secret: HS256 key for Admin Web Tokens. Kept out of SQLite on purpose.
+    #[serde(default)]
+    pub jwt_secret: SecretString,
+    /// Lifetime of an Admin Web Token issued by password login, in seconds.
+    #[serde(default = "default_admin_token_ttl_secs")]
+    pub token_ttl_secs: u64,
     #[serde(default)]
     pub provider_tests: ProviderTestsConfig,
     #[serde(default)]

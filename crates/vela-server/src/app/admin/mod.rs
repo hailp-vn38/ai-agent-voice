@@ -1,6 +1,7 @@
 //! Bounded, separately authenticated Admin HTTP surface.
 
 mod agents;
+pub(crate) mod auth;
 mod background;
 mod common;
 mod deletion;
