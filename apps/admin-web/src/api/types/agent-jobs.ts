@@ -79,6 +79,8 @@ export interface JobSkillSummary {
   etag: string
   used_by_agents: string[]
   suggested_for_agents: string[]
+  status?: 'ok' | 'invalid'
+  invalid_reason?: string | null
 }
 export interface SkillDefaults {
   name: string

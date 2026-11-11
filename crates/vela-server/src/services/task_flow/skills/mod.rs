@@ -41,6 +41,14 @@ pub struct JobSkillSummary {
     pub etag: String,
     pub used_by_agents: Vec<String>,
     pub suggested_for_agents: Vec<String>,
+    #[serde(default = "default_skill_status")]
+    pub status: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub invalid_reason: Option<String>,
+}
+
+fn default_skill_status() -> String {
+    "ok".to_owned()
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -256,9 +264,17 @@ fn builtin_indexed(id: &str) -> Option<IndexedDiskSkill> {
 /// `build_agent_definitions` and Admin projections are synchronous APIs. Bridge the library's
 /// async scanner on a short-lived thread so those callers still use the same catalog rules as
 /// Orchestrator build/reload, without nesting a Tokio runtime on the caller's runtime thread.
-fn scan_catalog_from_dir(skills_dir: Option<&Path>) -> BTreeMap<String, IndexedDiskSkill> {
+struct ScannedCatalog {
+    valid: BTreeMap<String, IndexedDiskSkill>,
+    skipped: Vec<(String, String)>,
+}
+
+fn scan_catalog(skills_dir: Option<&Path>) -> ScannedCatalog {
     let Some(root) = skills_dir else {
-        return BTreeMap::new();
+        return ScannedCatalog {
+            valid: BTreeMap::new(),
+            skipped: Vec::new(),
+        };
     };
     let root = root.to_path_buf();
     let scan_root = root.clone();
@@ -274,9 +290,12 @@ fn scan_catalog_from_dir(skills_dir: Option<&Path>) -> BTreeMap<String, IndexedD
     .ok()
     .flatten();
     let Some(scanned) = scanned else {
-        return BTreeMap::new();
+        return ScannedCatalog {
+            valid: BTreeMap::new(),
+            skipped: Vec::new(),
+        };
     };
-    scanned
+    let valid = scanned
         .skills
         .into_iter()
         .filter_map(|summary| {
@@ -284,7 +303,55 @@ fn scan_catalog_from_dir(skills_dir: Option<&Path>) -> BTreeMap<String, IndexedD
                 .ok()
                 .map(|indexed| (summary.id, indexed))
         })
-        .collect()
+        .collect();
+    ScannedCatalog {
+        valid,
+        skipped: scanned.skipped,
+    }
+}
+
+fn scan_catalog_from_dir(skills_dir: Option<&Path>) -> BTreeMap<String, IndexedDiskSkill> {
+    scan_catalog(skills_dir).valid
+}
+
+fn raw_skipped_skill_file(root: &Path, id: &str) -> Result<(PathBuf, Vec<u8>), SkillCatalogError> {
+    let id_path = Path::new(id);
+    if id_path.components().count() != 1
+        || !matches!(
+            id_path.components().next(),
+            Some(std::path::Component::Normal(_))
+        )
+    {
+        return Err(SkillCatalogError::InvalidId);
+    }
+    let root = std::fs::canonicalize(root).map_err(|_| SkillCatalogError::NotFound)?;
+    let dir = root.join(id_path);
+    let meta = std::fs::symlink_metadata(&dir).map_err(|_| SkillCatalogError::NotFound)?;
+    if meta.file_type().is_symlink() || !meta.is_dir() {
+        return Err(SkillCatalogError::NotFound);
+    }
+    let dir = std::fs::canonicalize(&dir).map_err(|_| SkillCatalogError::NotFound)?;
+    if !dir.starts_with(&root) {
+        return Err(SkillCatalogError::NotFound);
+    }
+    let file = dir.join(SKILL_FILE);
+    let meta = match std::fs::symlink_metadata(&file) {
+        Ok(meta) => meta,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok((dir, Vec::new())),
+        Err(_) => return Err(SkillCatalogError::Io),
+    };
+    if meta.file_type().is_symlink() || !meta.is_file() {
+        return Err(SkillCatalogError::NotFound);
+    }
+    let bytes = std::fs::read(&file).map_err(|_| SkillCatalogError::Io)?;
+    Ok((dir, bytes))
+}
+
+fn raw_skill_file(root: &Path, id: &str) -> Result<(PathBuf, Vec<u8>), SkillCatalogError> {
+    if !valid_skill_id(id) {
+        return Err(SkillCatalogError::InvalidId);
+    }
+    raw_skipped_skill_file(root, id)
 }
 
 /// Returns a skill's body: the workspace copy when it is valid, otherwise the Built-in default.
@@ -351,6 +418,8 @@ fn build_detail(
             etag: indexed.etag,
             used_by_agents,
             suggested_for_agents,
+            status: "ok".into(),
+            invalid_reason: None,
         },
         body: indexed.doc.body,
         related_files,
@@ -369,11 +438,38 @@ fn current_settings(state: &AppState) -> PersistedBackgroundSettings {
 
 pub fn list(state: &AppState) -> Result<Vec<JobSkillSummary>, SkillCatalogError> {
     let settings = current_settings(state);
-    let scanned = scan_catalog_from_dir(state.config.orchestrator.skills_dir.as_deref());
-    Ok(scanned
+    let catalog = scan_catalog(state.config.orchestrator.skills_dir.as_deref());
+    let mut items: Vec<_> = catalog
+        .valid
         .into_values()
         .map(|indexed| build_detail(indexed, &settings, false).summary)
-        .collect())
+        .collect();
+    if let Some(root) = state.config.orchestrator.skills_dir.as_deref() {
+        for (id, reason) in catalog.skipped {
+            let raw = raw_skipped_skill_file(root, &id).ok();
+            let (etag, size_bytes) = raw
+                .as_ref()
+                .map(|(_, bytes)| (sha256_hex(bytes), bytes.len()))
+                .unwrap_or_else(|| (sha256_hex(&[]), 0));
+            items.push(JobSkillSummary {
+                id: id.clone(),
+                name: id,
+                description: String::new(),
+                requires_tools: Vec::new(),
+                is_builtin: false,
+                is_modified: false,
+                default_has_update: false,
+                size_bytes,
+                etag,
+                used_by_agents: Vec::new(),
+                suggested_for_agents: Vec::new(),
+                status: "invalid".into(),
+                invalid_reason: Some(reason),
+            });
+        }
+    }
+    items.sort_by(|a, b| a.id.cmp(&b.id));
+    Ok(items)
 }
 
 pub fn get(state: &AppState, id: &str) -> Result<JobSkillDetail, SkillCatalogError> {
@@ -384,7 +480,36 @@ pub fn get(state: &AppState, id: &str) -> Result<JobSkillDetail, SkillCatalogErr
         return Err(SkillCatalogError::NotFound);
     };
     if !catalog_ids_from_dir(Some(skills_dir)).contains(id) {
-        return Err(SkillCatalogError::NotFound);
+        let (dir, bytes) = raw_skill_file(skills_dir, id)?;
+        let text = String::from_utf8_lossy(&bytes).into_owned();
+        let reason = scan_catalog(Some(skills_dir))
+            .skipped
+            .into_iter()
+            .find(|(skipped_id, _)| skipped_id == id)
+            .map(|(_, reason)| reason)
+            .unwrap_or_else(|| "invalid skill document".into());
+        let settings = current_settings(state);
+        let (used_by_agents, suggested_for_agents) = compute_agent_links(id, &settings);
+        return Ok(JobSkillDetail {
+            summary: JobSkillSummary {
+                id: id.to_owned(),
+                name: id.to_owned(),
+                description: String::new(),
+                requires_tools: Vec::new(),
+                is_builtin: false,
+                is_modified: false,
+                default_has_update: false,
+                size_bytes: bytes.len(),
+                etag: sha256_hex(&bytes),
+                used_by_agents,
+                suggested_for_agents,
+                status: "invalid".into(),
+                invalid_reason: Some(reason),
+            },
+            body: text,
+            related_files: list_related_sync(&dir),
+            default: None,
+        });
     }
     let indexed = read_one_skill_from_dir(skills_dir, id)?;
     let settings = current_settings(state);
@@ -477,14 +602,19 @@ pub async fn save(
         return Err(SkillCatalogError::InvalidArguments("duplicate_skill_name"));
     }
 
-    let current_etag = read_one_skill_from_dir(skills_dir, id).ok().map(|s| s.etag);
+    let raw_existing = raw_skill_file(skills_dir, id)
+        .ok()
+        .map(|(_, bytes)| sha256_hex(&bytes));
+    let current_etag =
+        raw_existing.or_else(|| read_one_skill_from_dir(skills_dir, id).ok().map(|s| s.etag));
     let created = match (&precondition, current_etag) {
         (Precondition::IfNoneMatchStar, Some(_)) => return Err(SkillCatalogError::AlreadyExists),
         (Precondition::IfMatch(_), None) => return Err(SkillCatalogError::NotFound),
         (Precondition::IfMatch(expected), Some(actual)) if *expected != actual => {
             return Err(SkillCatalogError::RevisionConflict);
         }
-        (Precondition::IfNoneMatchStar, None) => true,
+        (Precondition::IfNoneMatchStar, None) if !skills_dir.join(id).exists() => true,
+        (Precondition::IfNoneMatchStar, None) => return Err(SkillCatalogError::AlreadyExists),
         (Precondition::IfMatch(_), Some(_)) => false,
     };
 
@@ -533,12 +663,12 @@ pub async fn delete(
 
     let _write_guard = state.skill_write_lock.lock().await;
     ensure_builtin_skills(skills_dir).map_err(|_| SkillCatalogError::Io)?;
-    let indexed = read_one_skill_from_dir(skills_dir, id)?;
-    if indexed.etag != expected_etag {
+    let (dir, bytes) = raw_skill_file(skills_dir, id)?;
+    if sha256_hex(&bytes) != expected_etag {
         return Err(SkillCatalogError::RevisionConflict);
     }
 
-    std::fs::remove_dir_all(&indexed.dir).map_err(|_| SkillCatalogError::Io)?;
+    std::fs::remove_dir_all(&dir).map_err(|_| SkillCatalogError::Io)?;
 
     // Prune deleted custom skill ID from persisted agent settings if referenced
     let maybe_updated_settings = {
@@ -626,6 +756,17 @@ mod tests {
 
         let ids = catalog_ids_from_dir(Some(&root.0));
         assert_eq!(ids, BTreeSet::from(["custom-skill".to_owned()]));
+        let skipped: BTreeMap<_, _> = scan_catalog(Some(&root.0)).skipped.into_iter().collect();
+        assert!(
+            skipped
+                .get("malformed")
+                .is_some_and(|reason| reason.contains("frontmatter"))
+        );
+        assert_eq!(
+            skipped.get("empty-skill-dir").map(String::as_str),
+            Some("SKILL.md is missing")
+        );
+        assert!(skipped.contains_key("Bad ID"));
     }
 
     #[test]

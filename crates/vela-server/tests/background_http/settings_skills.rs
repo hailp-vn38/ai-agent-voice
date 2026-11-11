@@ -1123,8 +1123,34 @@ skills_dir = "{}"
         .await
         .unwrap();
     let skills = settings["skills"].as_array().unwrap();
-    assert!(skills.iter().any(|skill| skill["id"] == "wiki-chat"));
-    assert!(!skills.iter().any(|skill| skill["id"] == "custom-broken"));
+    assert!(
+        skills
+            .iter()
+            .any(|skill| skill["id"] == "wiki-chat" && skill["status"] == "ok")
+    );
+    let broken = skills
+        .iter()
+        .find(|skill| skill["id"] == "custom-broken")
+        .unwrap();
+    assert_eq!(broken["status"], "invalid");
+    assert!(!broken["invalid_reason"].as_str().unwrap().is_empty());
+    assert!(!broken["etag"].as_str().unwrap().is_empty());
+    assert!(
+        skills
+            .iter()
+            .any(|skill| skill["id"] == "empty-skill-dir" && skill["status"] == "invalid")
+    );
+    assert!(
+        skills
+            .iter()
+            .any(|skill| skill["id"] == "Bad ID" && skill["status"] == "invalid")
+    );
+    assert!(
+        skills
+            .iter()
+            .filter(|skill| skill["is_builtin"] == true)
+            .all(|skill| skill["status"] == "ok")
+    );
     let researcher = settings["agents"]
         .as_array()
         .unwrap()
@@ -1133,13 +1159,124 @@ skills_dir = "{}"
         .unwrap();
     assert_eq!(researcher["allowed_skills"], json!(["wiki-query"]));
 
-    let broken_detail = client
+    let broken_detail_response = client
         .get(format!("{base}/background/skills/custom-broken"))
         .bearer_auth("background-test-token")
         .send()
         .await
         .unwrap();
-    assert_eq!(broken_detail.status(), StatusCode::NOT_FOUND);
+    assert_eq!(broken_detail_response.status(), StatusCode::OK);
+    let broken_etag = broken_detail_response
+        .headers()
+        .get("etag")
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .trim_matches('"')
+        .to_owned();
+    let broken_detail: Value = broken_detail_response.json().await.unwrap();
+    assert_eq!(broken_detail["status"], "invalid");
+    assert_eq!(broken_detail["etag"], broken_etag);
+
+    let create_over_broken = client
+        .put(format!("{base}/background/skills/custom-broken"))
+        .bearer_auth("background-test-token")
+        .header("If-None-Match", "*")
+        .json(&json!({"name":"Repaired", "description":"Valid", "body":"Valid body"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(create_over_broken.status(), StatusCode::CONFLICT);
+    assert_eq!(
+        create_over_broken.json::<Value>().await.unwrap()["error"]["code"],
+        "already_exists"
+    );
+
+    let stale_repair = client
+        .put(format!("{base}/background/skills/custom-broken"))
+        .bearer_auth("background-test-token")
+        .header("If-Match", "\"stale\"")
+        .json(&json!({"name":"Repaired", "description":"Valid", "body":"Valid body"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(stale_repair.status(), StatusCode::CONFLICT);
+    assert_eq!(
+        stale_repair.json::<Value>().await.unwrap()["error"]["code"],
+        "revision_conflict"
+    );
+
+    let invalid_assignment = client
+        .put(format!("{base}/background/settings"))
+        .bearer_auth("background-test-token")
+        .header("If-Match", "\"1\"")
+        .json(&json!({"enabled": true, "agents": {"wiki_researcher": {"enabled": true, "allowed_skills": ["custom-broken"]}}}))
+        .send().await.unwrap();
+    assert_eq!(invalid_assignment.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(
+        invalid_assignment.json::<Value>().await.unwrap()["error"]["code"],
+        "invalid_arguments"
+    );
+
+    let repair = client
+        .put(format!("{base}/background/skills/custom-broken"))
+        .bearer_auth("background-test-token")
+        .header("If-Match", format!("\"{broken_etag}\""))
+        .json(&json!({"name":"Repaired", "description":"Valid", "body":"Valid body"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(repair.status(), StatusCode::OK);
+    assert_eq!(repair.json::<Value>().await.unwrap()["status"], "ok");
+
+    let after_repair_settings: Value = client
+        .get(format!("{base}/background/settings"))
+        .bearer_auth("background-test-token")
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let repaired_researcher = after_repair_settings["agents"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|agent| agent["id"] == "wiki_researcher")
+        .unwrap();
+    assert!(
+        repaired_researcher["allowed_skills"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|skill| skill == "custom-broken")
+    );
+
+    let empty = skills
+        .iter()
+        .find(|skill| skill["id"] == "empty-skill-dir")
+        .unwrap();
+    let empty_etag = empty["etag"].as_str().unwrap();
+    let stale_empty_delete = client
+        .delete(format!("{base}/background/skills/empty-skill-dir"))
+        .bearer_auth("background-test-token")
+        .header("If-Match", "\"stale\"")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(stale_empty_delete.status(), StatusCode::CONFLICT);
+    assert_eq!(
+        stale_empty_delete.json::<Value>().await.unwrap()["error"]["code"],
+        "revision_conflict"
+    );
+    let delete_empty = client
+        .delete(format!("{base}/background/skills/empty-skill-dir"))
+        .bearer_auth("background-test-token")
+        .header("If-Match", format!("\"{empty_etag}\""))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(delete_empty.status(), StatusCode::NO_CONTENT);
     let builtin_detail: Value = client
         .get(format!("{base}/background/skills/wiki-chat"))
         .bearer_auth("background-test-token")

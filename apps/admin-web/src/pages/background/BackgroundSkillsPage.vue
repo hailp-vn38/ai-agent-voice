@@ -59,6 +59,24 @@ function openSkillDetail(id: string) {
   void router.push({ name: 'jobs-settings-skill', params: { skillId: id } })
 }
 
+function isManageableSkillId(id: string) {
+  return /^[a-z0-9][a-z0-9_-]{0,63}$/.test(id)
+}
+
+function openSkillEditor(id: string) {
+  skillModalMode.value = 'edit'
+  activeSkillId.value = id
+  skillModalOpen.value = true
+}
+
+function openSkillFromRow(skill: JobSkillSummary) {
+  if (skill.status === 'invalid') {
+    if (isManageableSkillId(skill.id)) openSkillEditor(skill.id)
+    return
+  }
+  openSkillDetail(skill.id)
+}
+
 async function onSkillSaved() {
   skillModalOpen.value = false
   await load()
@@ -281,7 +299,7 @@ onBeforeUnmount(() => controller?.abort())
                 class="cursor-pointer transition-colors hover:bg-accent/30"
                 :data-skill="skill.id"
                 :data-skill-card="skill.id"
-                @click="openSkillDetail(skill.id)"
+                @click="openSkillFromRow(skill)"
               >
                 <td class="px-4 py-3">
                   <div class="flex items-center gap-2.5">
@@ -297,7 +315,10 @@ onBeforeUnmount(() => controller?.abort())
 
                 <td class="px-4 py-3 whitespace-nowrap">
                   <div class="flex flex-wrap items-center gap-1">
-                    <Badge :variant="skill.is_builtin ? 'secondary' : 'default'">
+                    <Badge v-if="skill.status === 'invalid'" variant="outline" class="border-danger/40 text-danger">
+                      {{ t('jobUi.skillInvalidBadge') }}
+                    </Badge>
+                    <Badge v-else :variant="skill.is_builtin ? 'secondary' : 'default'">
                       {{
                         skill.is_builtin
                           ? t('jobUi.skillBuiltinBadge')
@@ -323,7 +344,10 @@ onBeforeUnmount(() => controller?.abort())
                 </td>
 
                 <td class="max-w-md px-4 py-3 text-muted-foreground">
-                  {{ skill.description }}
+                  <span v-if="skill.status === 'invalid'" class="text-danger" :data-skill-invalid-reason="skill.id">
+                    {{ skill.invalid_reason || t('jobUi.skillInvalidFallback') }}
+                  </span>
+                  <span v-else>{{ skill.description }}</span>
                 </td>
 
                 <td class="px-4 py-3 whitespace-nowrap text-muted-foreground">
@@ -333,7 +357,7 @@ onBeforeUnmount(() => controller?.abort())
                 <td class="px-4 py-3 text-right whitespace-nowrap">
                   <div class="inline-flex items-center gap-1.5">
                     <Button
-                      v-if="!skill.is_builtin"
+                      v-if="!skill.is_builtin && isManageableSkillId(skill.id)"
                       size="sm"
                       variant="outline"
                       type="button"
@@ -345,13 +369,25 @@ onBeforeUnmount(() => controller?.abort())
                       <Trash2 class="size-3.5" aria-hidden="true" />
                     </Button>
                     <Button
+                      v-if="skill.status === 'invalid' && isManageableSkillId(skill.id)"
+                      size="sm"
+                      variant="outline"
+                      type="button"
+                      class="h-7 px-2.5 text-xs"
+                      :data-skill-repair="skill.id"
+                      @click.stop="openSkillEditor(skill.id)"
+                    >
+                      {{ t('jobUi.skillRepair') }}
+                    </Button>
+                    <Button
+                      v-if="skill.status !== 'invalid' || isManageableSkillId(skill.id)"
                       size="sm"
                       variant="outline"
                       type="button"
                       class="h-7 px-2.5 text-xs"
                       :data-skill-edit="skill.id"
                       :data-skill-detail="skill.id"
-                      @click.stop="openSkillDetail(skill.id)"
+                      @click.stop="openSkillFromRow(skill)"
                     >
                       {{ t('jobUi.details') }}
                       <ArrowRight class="size-3.5" aria-hidden="true" />

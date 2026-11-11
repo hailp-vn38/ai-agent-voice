@@ -970,4 +970,45 @@ describe('Jobs Settings Hub (Variant A) & Sub-pages', () => {
     expect(detailWrapper.find('[data-delete-subagent]').exists()).toBe(true)
     expect(detailWrapper.find('[data-delete-custom-subagent]').exists()).toBe(true)
   })
+
+  it('shows invalid custom skill reasons and opens the editor with its raw ETag for repair', async () => {
+    const invalid = {
+      id: 'broken-skill', name: 'broken-skill', description: '', requires_tools: [],
+      is_builtin: false, is_modified: false, default_has_update: false,
+      etag: 'raw-invalid-etag', used_by_agents: [], suggested_for_agents: [],
+      status: 'invalid' as const, invalid_reason: 'missing name frontmatter', body: 'bad content',
+      related_files: [], default: null,
+    }
+    const settings = fixtureSettings()
+    settings.skills.push(invalid)
+    requestMock.mockImplementation((path: string, init?: RequestInit) => {
+      if (path === '/api/admin/background/settings') return Promise.resolve(settings)
+      if (path === '/api/admin/background/skills/broken-skill' && (!init || !init.method)) {
+        return Promise.resolve(invalid)
+      }
+      if (path === '/api/admin/background/skills/broken-skill' && init?.method === 'PUT') {
+        return Promise.resolve({ ...invalid, status: 'ok', invalid_reason: null })
+      }
+      return Promise.resolve(undefined)
+    })
+
+    const wrapper = mount(BackgroundSkillsPage)
+    await flushPromises()
+    expect(wrapper.get('[data-skill-invalid-reason="broken-skill"]').text()).toContain(
+      'missing name frontmatter',
+    )
+    expect(wrapper.find('[data-skill-repair="broken-skill"]').exists()).toBe(true)
+    await wrapper.get('[data-skill-repair="broken-skill"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('[data-skill-editor-modal]').exists()).toBe(true)
+    await wrapper.get('[data-skill-name-input]').setValue('Repaired skill')
+    await wrapper.get('[data-skill-description-input]').setValue('Repaired description')
+    await wrapper.get('[data-skill-body-textarea]').setValue('Valid body')
+    await wrapper.get('[data-skill-save]').trigger('click')
+    await flushPromises()
+    const put = requestMock.mock.calls.find(
+      call => call[0] === '/api/admin/background/skills/broken-skill' && call[1]?.method === 'PUT',
+    )
+    expect(put?.[2]?.headers).toEqual({ 'If-Match': '"raw-invalid-etag"' })
+  })
 })
