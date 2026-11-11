@@ -476,6 +476,7 @@ url = "sqlite://{}"
 enabled = true
 admin_token = "background-test-token"
 [orchestrator]
+enabled = true
 store_dir = "{}"
 prompts_dir = "{}"
 skills_dir = "{}"
@@ -881,6 +882,249 @@ skills_dir = "{}"
     );
 
     server.abort();
+}
+
+#[tokio::test]
+async fn malformed_skill_files_do_not_block_startup_settings_or_provider_saves() {
+    let temp_root = std::env::temp_dir().join(format!(
+        "background-skills-recovery-{}",
+        uuid::Uuid::new_v4()
+    ));
+    let skills_dir = temp_root.join("skills");
+    let broken_custom = skills_dir.join("custom-broken");
+    let broken_builtin = skills_dir.join("wiki-chat");
+    std::fs::create_dir_all(&broken_custom).unwrap();
+    std::fs::create_dir_all(&broken_builtin).unwrap();
+    let custom_bad_bytes = b"---\nname: broken\n";
+    let builtin_bad_bytes = b"not valid built-in frontmatter\n";
+    std::fs::write(broken_custom.join("SKILL.md"), custom_bad_bytes).unwrap();
+    std::fs::write(broken_builtin.join("SKILL.md"), builtin_bad_bytes).unwrap();
+    std::fs::create_dir_all(skills_dir.join("empty-skill-dir")).unwrap();
+    std::fs::create_dir_all(skills_dir.join("Bad ID")).unwrap();
+
+    let store_dir = temp_root.join("orch-store");
+    std::fs::create_dir_all(&store_dir).unwrap();
+    std::fs::write(
+        store_dir.join("agent_settings.json"),
+        r#"{
+          "revision": 1,
+          "orchestrator_llm_provider": "orchestrator:default",
+          "worker_llm_provider": "orchestrator:default",
+          "agents": {
+            "wiki_researcher": {
+              "enabled": true,
+              "allowed_skills": ["custom-broken", "wiki-query"]
+            }
+          }
+        }"#,
+    )
+    .unwrap();
+    let config: AppConfig = toml::from_str(&format!(
+        r#"
+[server]
+bind = "127.0.0.1:0"
+public_ws_url = "ws://127.0.0.1:0/voice/v1/"
+[provider_defaults]
+vad = "test"
+asr = "test"
+llm = "test"
+tts = "test"
+[database]
+url = "sqlite://{}"
+[api]
+enabled = true
+admin_token = "background-test-token"
+[orchestrator]
+enabled = true
+store_dir = "{}"
+prompts_dir = "{}"
+skills_dir = "{}"
+"#,
+        temp_root.join("vela.db").display(),
+        store_dir.display(),
+        temp_root.join("prompts").display(),
+        skills_dir.display(),
+    ))
+    .unwrap();
+    let router = bootstrap_with_providers(config, Arc::new(ProviderSet::unavailable()))
+        .await
+        .expect("malformed custom and built-in skills must not prevent startup");
+
+    let default_builtin = std::fs::read(skills_dir.join("wiki-chat/SKILL.md")).unwrap();
+    assert_eq!(
+        default_builtin,
+        include_bytes!("../../builtin-skills/wiki-chat/SKILL.md")
+    );
+    assert_eq!(
+        std::fs::read(broken_custom.join("SKILL.md")).unwrap(),
+        custom_bad_bytes
+    );
+    let backups = std::fs::read_dir(&broken_builtin)
+        .unwrap()
+        .flatten()
+        .filter(|entry| {
+            entry
+                .file_name()
+                .to_string_lossy()
+                .starts_with(".SKILL.md.corrupt-")
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(backups.len(), 1);
+    assert_eq!(std::fs::read(backups[0].path()).unwrap(), builtin_bad_bytes);
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base = format!("http://{}/api/admin", listener.local_addr().unwrap());
+    let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    let client = Client::new();
+
+    let settings: Value = client
+        .get(format!("{base}/background/settings"))
+        .bearer_auth("background-test-token")
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let skills = settings["skills"].as_array().unwrap();
+    assert!(skills.iter().any(|skill| skill["id"] == "wiki-chat"));
+    assert!(!skills.iter().any(|skill| skill["id"] == "custom-broken"));
+    let researcher = settings["agents"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|agent| agent["id"] == "wiki_researcher")
+        .unwrap();
+    assert_eq!(researcher["allowed_skills"], json!(["wiki-query"]));
+
+    let broken_detail = client
+        .get(format!("{base}/background/skills/custom-broken"))
+        .bearer_auth("background-test-token")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(broken_detail.status(), StatusCode::NOT_FOUND);
+    let builtin_detail: Value = client
+        .get(format!("{base}/background/skills/wiki-chat"))
+        .bearer_auth("background-test-token")
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert!(
+        builtin_detail["related_files"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|file| !file.as_str().unwrap().contains("corrupt"))
+    );
+
+    let settings_save = client
+        .put(format!("{base}/background/settings"))
+        .bearer_auth("background-test-token")
+        .header("If-Match", "\"1\"")
+        .json(&json!({
+            "enabled": true,
+            "orchestrator_llm_provider": "orchestrator:default",
+            "worker_llm_provider": "orchestrator:default",
+            "agents": {
+                "wiki_researcher": {"enabled": true, "allowed_skills": ["wiki-query"]}
+            }
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        settings_save.status(),
+        StatusCode::OK,
+        "settings save response: {}",
+        settings_save.text().await.unwrap()
+    );
+
+    let provider_save = client
+        .post(format!("{base}/providers"))
+        .bearer_auth("background-test-token")
+        .json(&json!({
+            "name": "Malformed Skill Resilience Provider",
+            "type": "llm",
+            "adapter": "openai",
+            "config_json": {
+                "base_url": "https://api.example.invalid/v1",
+                "model": "test-model",
+                "timeout_ms": 30_000,
+                "max_tokens": 2048,
+                "context_limit_tokens": 32_000
+            }
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(provider_save.status(), StatusCode::CREATED);
+
+    server.abort();
+    let _ = std::fs::remove_dir_all(temp_root);
+}
+
+#[tokio::test]
+async fn no_configured_skill_directory_has_empty_admin_catalog() {
+    let temp_root =
+        std::env::temp_dir().join(format!("background-skills-no-dir-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&temp_root).unwrap();
+    let mut config: AppConfig = toml::from_str(&format!(
+        r#"
+[server]
+bind = "127.0.0.1:0"
+public_ws_url = "ws://127.0.0.1:0/voice/v1/"
+[provider_defaults]
+vad = "test"
+asr = "test"
+llm = "test"
+tts = "test"
+[database]
+url = "sqlite://{}"
+[api]
+enabled = true
+admin_token = "background-test-token"
+[orchestrator]
+store_dir = "{}"
+prompts_dir = "{}"
+"#,
+        temp_root.join("vela.db").display(),
+        temp_root.join("orch-store").display(),
+        temp_root.join("prompts").display(),
+    ))
+    .unwrap();
+    config.orchestrator.skills_dir = None;
+    let router = bootstrap_with_providers(config, Arc::new(ProviderSet::unavailable()))
+        .await
+        .unwrap();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base = format!("http://{}/api/admin", listener.local_addr().unwrap());
+    let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    let client = Client::new();
+
+    let settings: Value = client
+        .get(format!("{base}/background/settings"))
+        .bearer_auth("background-test-token")
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(settings["skills"], json!([]));
+    let detail = client
+        .get(format!("{base}/background/skills/wiki-chat"))
+        .bearer_auth("background-test-token")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(detail.status(), StatusCode::NOT_FOUND);
+
+    server.abort();
+    let _ = std::fs::remove_dir_all(temp_root);
 }
 
 #[tokio::test]

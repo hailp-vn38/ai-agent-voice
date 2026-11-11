@@ -212,7 +212,7 @@ pub(crate) fn ensure_builtin_skills(skills_root: &Path) -> Result<(), std::io::E
         let dir = skills_root.join(skill_name);
         std::fs::create_dir_all(&dir)?;
         let skill_file = dir.join("SKILL.md");
-        let disk_content = match std::fs::read_to_string(&skill_file) {
+        let disk_bytes = match std::fs::read(&skill_file) {
             Ok(existing) => existing,
             Err(err) if err.kind() == io::ErrorKind::NotFound => {
                 std::fs::write(&skill_file, content)?;
@@ -221,8 +221,16 @@ pub(crate) fn ensure_builtin_skills(skills_root: &Path) -> Result<(), std::io::E
             }
             Err(err) => return Err(err),
         };
+        let Some(disk_content) = std::str::from_utf8(&disk_bytes).ok() else {
+            backup_malformed_builtin_skill(&dir, &disk_bytes)?;
+            std::fs::write(&skill_file, content)?;
+            versions.0.insert((*skill_name).to_owned(), current_hash);
+            continue;
+        };
         let Some(disk_hash) = builtin_skill_hash(skill_name, &disk_content) else {
-            // Ticket 04 owns recovery for malformed built-in files. Keep their bytes intact here.
+            backup_malformed_builtin_skill(&dir, &disk_bytes)?;
+            std::fs::write(&skill_file, content)?;
+            versions.0.insert((*skill_name).to_owned(), current_hash);
             continue;
         };
 
@@ -255,6 +263,32 @@ pub(crate) fn ensure_builtin_skills(skills_root: &Path) -> Result<(), std::io::E
         write_builtin_skill_versions(skills_root, &versions)?;
     }
     Ok(())
+}
+
+fn backup_malformed_builtin_skill(skill_dir: &Path, bytes: &[u8]) -> Result<(), io::Error> {
+    use std::io::Write;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    let stamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    for attempt in 0..100u8 {
+        let backup = skill_dir.join(format!(".SKILL.md.corrupt-{stamp}-{attempt}"));
+        match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&backup)
+        {
+            Ok(mut file) => return file.write_all(bytes),
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(error),
+        }
+    }
+    Err(io::Error::new(
+        io::ErrorKind::AlreadyExists,
+        "could not choose a unique hidden backup name for malformed built-in skill",
+    ))
 }
 
 pub(crate) fn ensure_prompts_and_skills(
@@ -290,4 +324,61 @@ pub(crate) fn ensure_prompts_and_skills(
         ensure_builtin_skills(skills_root)?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static NEXT_TEMP: AtomicU64 = AtomicU64::new(0);
+
+    struct TempRoot(PathBuf);
+
+    impl TempRoot {
+        fn new() -> Self {
+            let path = std::env::temp_dir().join(format!(
+                "vela-workspace-seed-{}-{}",
+                std::process::id(),
+                NEXT_TEMP.fetch_add(1, Ordering::Relaxed)
+            ));
+            std::fs::create_dir_all(&path).unwrap();
+            Self(path)
+        }
+    }
+
+    impl Drop for TempRoot {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[test]
+    fn catalog_malformed_builtin_is_replaced_and_original_bytes_are_hidden_backup() {
+        let root = TempRoot::new();
+        let id = "wiki-chat";
+        let dir = root.0.join(id);
+        std::fs::create_dir_all(&dir).unwrap();
+        let original = b"---\nname: broken\n";
+        std::fs::write(dir.join("SKILL.md"), original).unwrap();
+
+        ensure_builtin_skills(&root.0).unwrap();
+
+        assert_eq!(
+            std::fs::read_to_string(dir.join("SKILL.md")).unwrap(),
+            BUILTIN_SKILLS
+                .iter()
+                .find_map(|(builtin_id, raw)| (*builtin_id == id).then_some(*raw))
+                .unwrap()
+        );
+        let backups = std::fs::read_dir(&dir)
+            .unwrap()
+            .flatten()
+            .filter(|entry| entry.file_name().to_string_lossy().starts_with('.'))
+            .collect::<Vec<_>>();
+        assert_eq!(backups.len(), 1);
+        assert_eq!(std::fs::read(backups[0].path()).unwrap(), original);
+        assert!(backups[0].file_name().to_string_lossy().contains("corrupt"));
+    }
 }

@@ -78,7 +78,7 @@ use tokio::sync::Notify;
 
 use crate::config::{AppConfig, OrchestratorSectionConfig, WikiSectionConfig};
 use crate::tools::knowledge_mcp::normalize_wiki_tool_arguments;
-use workspace_seed::ensure_prompts_and_skills;
+use workspace_seed::{ensure_builtin_skills, ensure_prompts_and_skills};
 
 pub(crate) struct NormalizedWikiHostTool {
     inner: Arc<dyn HostTool>,
@@ -285,6 +285,9 @@ pub async fn init_from_app_config_with_catalog(
     let mut wiki_engine = init_wiki_engine(&config.wiki)?;
 
     if !config.orchestrator.enabled {
+        if let Some(skills_dir) = config.orchestrator.skills_dir.as_deref() {
+            ensure_builtin_skills(skills_dir)?;
+        }
         return Ok(TaskFlowRuntime {
             wiki_engine,
             orchestrator: None,

@@ -5,7 +5,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
-use orchestrator_agent_rs::{AgentMode, SkillDocument, SkillDocumentError, valid_skill_id};
+use orchestrator_agent_rs::{
+    AgentMode, SkillDocument, SkillDocumentError, scan_skill_catalog, valid_skill_id,
+};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
@@ -251,41 +253,38 @@ fn builtin_indexed(id: &str) -> Option<IndexedDiskSkill> {
     })
 }
 
-fn scan_skills_dir(skills_dir: Option<&Path>) -> BTreeMap<String, IndexedDiskSkill> {
-    let mut map = BTreeMap::new();
-    let mut seen_names: BTreeSet<String> = BTreeSet::new();
-
-    if let Some(root) = skills_dir
-        && let Ok(rd) = std::fs::read_dir(root)
-    {
-        let mut names: Vec<String> = rd
-            .flatten()
-            .filter_map(|e| e.file_name().into_string().ok())
-            .collect();
-        names.sort();
-
-        for id in names {
-            if !valid_skill_id(&id) {
-                continue;
-            }
-            if let Ok(indexed) = read_one_skill_from_dir(root, &id)
-                && seen_names.insert(indexed.doc.name.clone())
-            {
-                map.insert(id, indexed);
-            }
-        }
-    }
-
-    for (id, _) in BUILTIN_SKILLS {
-        if !map.contains_key(*id)
-            && let Some(indexed) = builtin_indexed(id)
-            && seen_names.insert(indexed.doc.name.clone())
-        {
-            map.insert((*id).to_owned(), indexed);
-        }
-    }
-
-    map
+/// `build_agent_definitions` and Admin projections are synchronous APIs. Bridge the library's
+/// async scanner on a short-lived thread so those callers still use the same catalog rules as
+/// Orchestrator build/reload, without nesting a Tokio runtime on the caller's runtime thread.
+fn scan_catalog_from_dir(skills_dir: Option<&Path>) -> BTreeMap<String, IndexedDiskSkill> {
+    let Some(root) = skills_dir else {
+        return BTreeMap::new();
+    };
+    let root = root.to_path_buf();
+    let scan_root = root.clone();
+    let scanned = std::thread::spawn(move || {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .ok()?
+            .block_on(scan_skill_catalog(&scan_root, SKILL_MAX_BYTES))
+            .ok()
+    })
+    .join()
+    .ok()
+    .flatten();
+    let Some(scanned) = scanned else {
+        return BTreeMap::new();
+    };
+    scanned
+        .skills
+        .into_iter()
+        .filter_map(|summary| {
+            read_one_skill_from_dir(&root, &summary.id)
+                .ok()
+                .map(|indexed| (summary.id, indexed))
+        })
+        .collect()
 }
 
 /// Returns a skill's body: the workspace copy when it is valid, otherwise the Built-in default.
@@ -298,7 +297,7 @@ pub fn active_body(skills_dir: Option<&Path>, id: &str) -> Option<String> {
 
 /// Returns the sorted set of valid skill IDs currently available in `skills_dir`.
 pub fn catalog_ids_from_dir(skills_dir: Option<&Path>) -> BTreeSet<String> {
-    scan_skills_dir(skills_dir).into_keys().collect()
+    scan_catalog_from_dir(skills_dir).into_keys().collect()
 }
 
 /// Returns the sorted set of valid skill IDs currently available in the server's `skills_dir`.
@@ -307,7 +306,7 @@ pub fn catalog_ids(state: &AppState) -> BTreeSet<String> {
 }
 
 pub fn catalog_tool_requirements(skills_dir: Option<&Path>) -> BTreeMap<String, Vec<String>> {
-    scan_skills_dir(skills_dir)
+    scan_catalog_from_dir(skills_dir)
         .into_iter()
         .map(|(id, indexed)| (id, indexed.doc.requires_tools))
         .collect()
@@ -370,7 +369,7 @@ fn current_settings(state: &AppState) -> PersistedBackgroundSettings {
 
 pub fn list(state: &AppState) -> Result<Vec<JobSkillSummary>, SkillCatalogError> {
     let settings = current_settings(state);
-    let scanned = scan_skills_dir(state.config.orchestrator.skills_dir.as_deref());
+    let scanned = scan_catalog_from_dir(state.config.orchestrator.skills_dir.as_deref());
     Ok(scanned
         .into_values()
         .map(|indexed| build_detail(indexed, &settings, false).summary)
@@ -384,13 +383,10 @@ pub fn get(state: &AppState, id: &str) -> Result<JobSkillDetail, SkillCatalogErr
     let Some(skills_dir) = state.config.orchestrator.skills_dir.as_deref() else {
         return Err(SkillCatalogError::NotFound);
     };
-    let indexed = match read_one_skill_from_dir(skills_dir, id) {
-        Ok(disk) => disk,
-        Err(SkillCatalogError::NotFound) => {
-            builtin_indexed(id).ok_or(SkillCatalogError::NotFound)?
-        }
-        Err(other) => return Err(other),
-    };
+    if !catalog_ids_from_dir(Some(skills_dir)).contains(id) {
+        return Err(SkillCatalogError::NotFound);
+    }
+    let indexed = read_one_skill_from_dir(skills_dir, id)?;
     let settings = current_settings(state);
     Ok(build_detail(indexed, &settings, true))
 }
@@ -416,6 +412,31 @@ fn map_doc_error(err: SkillDocumentError) -> SkillCatalogError {
             SkillCatalogError::InvalidArguments("invalid_arguments")
         }
     }
+}
+
+fn write_skill_file_with_cleanup(
+    skill_dir: &Path,
+    rendered: &str,
+    after_write: impl FnOnce() -> Result<(), SkillCatalogError>,
+) -> Result<(), SkillCatalogError> {
+    let existed_before_write = skill_dir.exists();
+    let result = (|| {
+        std::fs::create_dir_all(skill_dir).map_err(|_| SkillCatalogError::Io)?;
+        let skill_file = skill_dir.join(SKILL_FILE);
+        if let Ok(meta) = std::fs::symlink_metadata(&skill_file)
+            && meta.file_type().is_symlink()
+        {
+            return Err(SkillCatalogError::InvalidArguments("invalid_arguments"));
+        }
+        let tmp_file = skill_dir.join(".SKILL.md.tmp");
+        std::fs::write(&tmp_file, rendered.as_bytes()).map_err(|_| SkillCatalogError::Io)?;
+        std::fs::rename(&tmp_file, &skill_file).map_err(|_| SkillCatalogError::Io)?;
+        after_write()
+    })();
+    if result.is_err() && !existed_before_write {
+        let _ = std::fs::remove_dir_all(skill_dir);
+    }
+    result
 }
 
 pub async fn save(
@@ -448,7 +469,7 @@ pub async fn save(
     ensure_builtin_skills(skills_dir).map_err(|_| SkillCatalogError::Io)?;
 
     // Ensure no other skill in the catalog declares the same frontmatter `name`
-    let existing_catalog = scan_skills_dir(Some(skills_dir));
+    let existing_catalog = scan_catalog_from_dir(Some(skills_dir));
     if existing_catalog
         .iter()
         .any(|(other_id, entry)| other_id != id && entry.doc.name == verified.name)
@@ -474,19 +495,12 @@ pub async fn save(
     {
         return Err(SkillCatalogError::InvalidArguments("invalid_arguments"));
     }
-    std::fs::create_dir_all(&skill_dir).map_err(|_| SkillCatalogError::Io)?;
-    let skill_file = skill_dir.join(SKILL_FILE);
-    if let Ok(meta) = std::fs::symlink_metadata(&skill_file)
-        && meta.file_type().is_symlink()
-    {
-        return Err(SkillCatalogError::InvalidArguments("invalid_arguments"));
-    }
-    let tmp_file = skill_dir.join(".SKILL.md.tmp");
-    std::fs::write(&tmp_file, rendered.as_bytes()).map_err(|_| SkillCatalogError::Io)?;
-    std::fs::rename(&tmp_file, &skill_file).map_err(|_| SkillCatalogError::Io)?;
-    if is_builtin_skill(id) {
-        record_builtin_skill_base_version(skills_dir, id).map_err(|_| SkillCatalogError::Io)?;
-    }
+    write_skill_file_with_cleanup(&skill_dir, &rendered, || {
+        if is_builtin_skill(id) {
+            record_builtin_skill_base_version(skills_dir, id).map_err(|_| SkillCatalogError::Io)?;
+        }
+        Ok(())
+    })?;
 
     if let Some(orch) = state.orchestrator.as_ref()
         && let Err(err) = orch.reload_skills().await
@@ -565,4 +579,82 @@ pub async fn delete(
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static NEXT_TEMP: AtomicU64 = AtomicU64::new(0);
+
+    struct TempRoot(PathBuf);
+
+    impl TempRoot {
+        fn new() -> Self {
+            let path = std::env::temp_dir().join(format!(
+                "vela-skill-catalog-{}-{}",
+                std::process::id(),
+                NEXT_TEMP.fetch_add(1, Ordering::Relaxed)
+            ));
+            std::fs::create_dir_all(&path).unwrap();
+            Self(path)
+        }
+    }
+
+    impl Drop for TempRoot {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[test]
+    fn catalog_uses_library_scan_and_does_not_add_embedded_skills() {
+        let root = TempRoot::new();
+        let custom = root.0.join("custom-skill");
+        std::fs::create_dir_all(&custom).unwrap();
+        std::fs::write(
+            custom.join(SKILL_FILE),
+            "---\nname: Custom\ndescription: Valid\n---\nBody.\n",
+        )
+        .unwrap();
+        let malformed = root.0.join("malformed");
+        std::fs::create_dir_all(&malformed).unwrap();
+        std::fs::write(malformed.join(SKILL_FILE), "not frontmatter").unwrap();
+        std::fs::create_dir_all(root.0.join("empty-skill-dir")).unwrap();
+        std::fs::create_dir_all(root.0.join("Bad ID")).unwrap();
+
+        let ids = catalog_ids_from_dir(Some(&root.0));
+        assert_eq!(ids, BTreeSet::from(["custom-skill".to_owned()]));
+    }
+
+    #[test]
+    fn catalog_without_skills_dir_is_empty() {
+        assert!(catalog_ids_from_dir(None).is_empty());
+    }
+
+    #[test]
+    fn catalog_related_files_omits_hidden_malformed_builtin_backups() {
+        let root = TempRoot::new();
+        let skill_dir = root.0.join("wiki-chat");
+        std::fs::create_dir_all(&skill_dir).unwrap();
+        std::fs::write(skill_dir.join("SKILL.md"), "content").unwrap();
+        std::fs::write(skill_dir.join(".SKILL.md.corrupt-1"), "old content").unwrap();
+        std::fs::write(skill_dir.join("guide.md"), "related").unwrap();
+
+        assert_eq!(list_related_sync(&skill_dir), vec!["guide.md"]);
+    }
+
+    #[test]
+    fn catalog_failed_new_skill_write_removes_created_directory() {
+        let root = TempRoot::new();
+        let skill_dir = root.0.join("new-skill");
+
+        let result = write_skill_file_with_cleanup(&skill_dir, "valid rendered skill", || {
+            Err(SkillCatalogError::Io)
+        });
+
+        assert_eq!(result, Err(SkillCatalogError::Io));
+        assert!(!skill_dir.exists());
+    }
 }
