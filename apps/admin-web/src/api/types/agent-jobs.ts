@@ -36,6 +36,7 @@ export interface BackgroundAgentConfig {
   allowed_skills: string[]
   default_allowed_skills?: string[]
   required_job_skills?: string[]
+  tool_requirement_gaps?: Array<{ skill_id: string; missing_tools: string[] }>
   available_skills: string[]
   allowed_subagents: string[]
   allowed_capability_tags?: string[]
@@ -71,6 +72,7 @@ export interface JobSkillSummary {
   id: string
   name: string
   description: string
+  requires_tools?: string[]
   is_builtin: boolean
   is_modified: boolean
   default_has_update: boolean
@@ -81,6 +83,7 @@ export interface JobSkillSummary {
 export interface SkillDefaults {
   name: string
   description: string
+  requires_tools?: string[]
   body: string
 }
 export interface JobSkillDetail extends JobSkillSummary {
@@ -91,6 +94,7 @@ export interface SaveJobSkillInput {
   name: string
   description: string
   body: string
+  requires_tools: string[]
 }
 export interface BackgroundSettings {
   llm_providers?: BackgroundProviderOption[]

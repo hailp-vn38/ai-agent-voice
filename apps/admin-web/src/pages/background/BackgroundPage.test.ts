@@ -1,3 +1,4 @@
+import { ApiError } from '@/api/errors'
 import type { BackgroundSettings } from '@/api/types/agent-jobs'
 import { flushPromises, mount } from '@vue/test-utils'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -125,6 +126,7 @@ const fixtureSettings = (): SettingsFixture => ({
       allowed_skills: ['wiki-query'],
       default_allowed_skills: ['wiki-query'],
       required_job_skills: ['wiki-query'],
+      tool_requirement_gaps: [],
       available_skills: ['wiki-query', 'wiki-taxonomy'],
       allowed_subagents: [],
       description: 'Read-only Wiki researcher',
@@ -204,6 +206,7 @@ const fixtureSettings = (): SettingsFixture => ({
       id: 'wiki-query',
       name: 'wiki-query',
       description: 'Answer questions from the Karpathy Wiki.',
+      requires_tools: ['wiki_get'],
       is_builtin: true,
       is_modified: true,
       default_has_update: true,
@@ -502,13 +505,21 @@ describe('Jobs Settings Hub (Variant A) & Sub-pages', () => {
     const researcher = settings.agents.find(agent => agent.id === 'wiki_researcher')!
     researcher.available_skills = ['wiki-taxonomy']
     researcher.default_allowed_skills = []
-    requestMock.mockImplementation((path: string) => {
+    researcher.allowed_tools = researcher.allowed_tools.filter(tool => tool !== 'wiki_get')
+    researcher.tool_requirement_gaps = [{ skill_id: 'wiki-query', missing_tools: ['wiki_get'] }]
+    requestMock.mockImplementation((path: string, init?: RequestInit) => {
+      if (path === '/api/admin/background/settings' && init?.method === 'PUT') {
+        researcher.tool_requirement_gaps = []
+        researcher.allowed_tools.push('wiki_get')
+        return Promise.resolve(settings)
+      }
       if (path === '/api/admin/background/settings') return Promise.resolve(settings)
       if (path === '/api/admin/background/skills/wiki-query') {
         return Promise.resolve({
           id: 'wiki-query',
           name: 'Wiki query',
           description: 'Read and query the Wiki.',
+          requires_tools: ['wiki_get'],
           body: 'Read Wiki pages.',
           is_builtin: true,
           is_modified: false,
@@ -529,6 +540,7 @@ describe('Jobs Settings Hub (Variant A) & Sub-pages', () => {
     expect(required.element.checked).toBe(true)
     expect(required.element.disabled).toBe(true)
     expect(wrapper.text()).toContain('Required')
+    expect(wrapper.get('[data-agent-skill-tool-gap="wiki-query"]').text()).toContain('wiki_get')
     expect(wrapper.text()).toContain('This skill is always included in this Sub-Agent system prompt.')
     await wrapper.get('[data-reset-agent-default]').trigger('click')
     expect(required.element.checked).toBe(true)
@@ -536,6 +548,8 @@ describe('Jobs Settings Hub (Variant A) & Sub-pages', () => {
     expect(ordinary.element.disabled).toBe(false)
     await ordinary.setValue(true)
     expect(ordinary.element.checked).toBe(true)
+    await wrapper.get<HTMLInputElement>('input[data-agent-tool="wiki_get"]').setValue(true)
+    expect(wrapper.get('[data-save-agent-config]').attributes('disabled')).toBeUndefined()
 
     await wrapper.get('[data-agent-required-skill-link="wiki-query"]').trigger('click')
     expect(navigateMock).toHaveBeenCalledWith({
@@ -551,6 +565,7 @@ describe('Jobs Settings Hub (Variant A) & Sub-pages', () => {
     await wrapper.get('input[data-agent-steps]').setValue(9)
     await wrapper.get('[data-save-agent-config]').trigger('click')
     await flushPromises()
+    expect(wrapper.find('[data-agent-skill-tool-gap="wiki-query"]').exists()).toBe(false)
     const putCall = requestMock.mock.calls.find(
       c => c[0] === '/api/admin/background/settings' && c[1]?.method === 'PUT',
     )
@@ -562,6 +577,7 @@ describe('Jobs Settings Hub (Variant A) & Sub-pages', () => {
 
   it('manages Job Skills on BackgroundSkillsPage and dedicated BackgroundSkillDetailPage', async () => {
     vi.spyOn(window, 'confirm').mockReturnValue(true)
+    let showEmptyTools = false
 
     requestMock.mockImplementation((path: string, init?: RequestInit) => {
       if (path === '/api/admin/background/settings') {
@@ -572,6 +588,7 @@ describe('Jobs Settings Hub (Variant A) & Sub-pages', () => {
           id: 'wiki-query',
           name: 'wiki-query-custom',
           description: 'Modified wiki-query description',
+          requires_tools: showEmptyTools ? [] : ['wiki_query'],
           body: '## Custom Body\n\nModified instructions.',
           is_builtin: true,
           is_modified: true,
@@ -582,15 +599,21 @@ describe('Jobs Settings Hub (Variant A) & Sub-pages', () => {
           default: {
             name: 'wiki-query',
             description: 'Answer questions from the Karpathy Wiki.',
+            requires_tools: ['wiki_get'],
             body: '## Default Body\n\nOriginal built-in instructions.',
           },
         })
       }
       if (path === '/api/admin/background/skills/wiki-query' && init?.method === 'PUT') {
+        const payload = JSON.parse(String(init.body))
+        if (payload.requires_tools.includes('invalid tool')) {
+          return Promise.reject(new ApiError('invalid', 400, 'invalid_skill_requires_tools'))
+        }
         return Promise.resolve({
           id: 'wiki-query',
           name: 'wiki-query',
           description: 'Answer questions from the Karpathy Wiki.',
+          requires_tools: payload.requires_tools,
           body: '## Default Body\n\nOriginal built-in instructions.',
           is_builtin: true,
           is_modified: false,
@@ -601,15 +624,18 @@ describe('Jobs Settings Hub (Variant A) & Sub-pages', () => {
           default: {
             name: 'wiki-query',
             description: 'Answer questions from the Karpathy Wiki.',
+            requires_tools: ['wiki_get'],
             body: '## Default Body\n\nOriginal built-in instructions.',
           },
         })
       }
       if (path === '/api/admin/background/skills/new-custom-skill' && init?.method === 'PUT') {
+        const payload = JSON.parse(String(init.body))
         return Promise.resolve({
           id: 'new-custom-skill',
           name: 'New Custom Skill',
           description: 'Custom skill created from modal',
+          requires_tools: payload.requires_tools,
           body: '## Custom Steps\n\n1. Run check.',
           is_builtin: false,
           is_modified: true,
@@ -660,6 +686,7 @@ describe('Jobs Settings Hub (Variant A) & Sub-pages', () => {
       'Default update available',
     )
     expect(detailWrapper.get('[data-skill-required-by]').text()).toContain('wiki_researcher')
+    expect(detailWrapper.get('[data-skill-required-tools]').text()).toContain('wiki_query')
     await detailWrapper.get('[data-skill-required-agent="wiki_researcher"]').trigger('click')
     expect(navigateMock).toHaveBeenCalledWith({
       name: 'jobs-settings-agent',
@@ -674,15 +701,40 @@ describe('Jobs Settings Hub (Variant A) & Sub-pages', () => {
     expect(
       (detailWrapper.get('[data-skill-name-input]').element as HTMLInputElement).value,
     ).toBe('wiki-query')
+    expect(
+      (detailWrapper.get('[data-skill-requires-tools]').element as HTMLInputElement).value,
+    ).toBe('wiki_get')
+
+    await detailWrapper.get('[data-skill-requires-tools]').setValue('invalid tool')
+    await detailWrapper.get('[data-skill-save]').trigger('click')
+    await flushPromises()
+    expect(detailWrapper.get('[data-skill-requires-tools-error]').text()).toContain('valid tool names')
+
+    await detailWrapper.get('[data-skill-requires-tools]').setValue('wiki_get, wiki_tree')
 
     await detailWrapper.get('[data-skill-save]').trigger('click')
     await flushPromises()
 
-    const updateSkillCall = requestMock.mock.calls.find(
-      c => c[0] === '/api/admin/background/skills/wiki-query' && c[1]?.method === 'PUT',
-    )
+    const updateSkillCall = requestMock.mock.calls
+      .filter(c => c[0] === '/api/admin/background/skills/wiki-query' && c[1]?.method === 'PUT')
+      .at(-1)
     expect(updateSkillCall).toBeDefined()
     expect(updateSkillCall![2]?.headers).toEqual({ 'If-Match': '"etag-wiki-query"' })
+    expect(JSON.parse(String(updateSkillCall![1].body)).requires_tools).toEqual([
+      'wiki_get',
+      'wiki_tree',
+    ])
+
+    showEmptyTools = true
+    const refreshSkillButton = detailWrapper
+      .findAll('button')
+      .find(button => button.text().includes('Refresh'))
+    expect(refreshSkillButton).toBeDefined()
+    await refreshSkillButton!.trigger('click')
+    await flushPromises()
+    expect(detailWrapper.get('[data-skill-required-tools]').text()).toContain(
+      'This skill declares no required tools.',
+    )
 
     // 2. Open Create Modal on BackgroundSkillsPage, fill in new custom skill, and save
     await wrapper.get('[data-skill-create-btn]').trigger('click')
@@ -691,6 +743,7 @@ describe('Jobs Settings Hub (Variant A) & Sub-pages', () => {
     await wrapper.get('[data-skill-id-input]').setValue('new-custom-skill')
     await wrapper.get('[data-skill-name-input]').setValue('New Custom Skill')
     await wrapper.get('[data-skill-description-input]').setValue('Custom skill created from modal')
+    await wrapper.get('[data-skill-requires-tools]').setValue('wiki_get, wiki_tree')
     await wrapper.get('[data-skill-body-textarea]').setValue('## Custom Steps\n\n1. Run check.')
     await wrapper.get('[data-skill-save]').trigger('click')
     await flushPromises()
@@ -700,6 +753,10 @@ describe('Jobs Settings Hub (Variant A) & Sub-pages', () => {
     )
     expect(createSkillCall).toBeDefined()
     expect(createSkillCall![2]?.headers).toEqual({ 'If-None-Match': '*' })
+    expect(JSON.parse(String(createSkillCall![1].body)).requires_tools).toEqual([
+      'wiki_get',
+      'wiki_tree',
+    ])
 
     // 3. Delete custom skill from row
     await wrapper.get('[data-skill-delete-card="seo-audit"]').trigger('click')

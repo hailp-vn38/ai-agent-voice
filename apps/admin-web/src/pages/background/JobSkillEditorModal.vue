@@ -3,7 +3,7 @@ import { BookOpen, Columns2, Eye, Pencil, RotateCcw, Save, Trash2, X } from '@lu
 import { computed, ref, watch } from 'vue'
 
 import { agentJobsApi } from '@/api/agent-jobs'
-import { formatApiError } from '@/api/errors'
+import { formatApiError, isApiError } from '@/api/errors'
 import type { JobSkillDetail } from '@/api/types/agent-jobs'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -28,6 +28,7 @@ const loading = ref(false)
 const saving = ref(false)
 const deleting = ref(false)
 const error = ref('')
+const requiresToolsError = ref('')
 const detail = ref<JobSkillDetail | null>(null)
 const editorMode = ref<'edit' | 'preview' | 'split' | 'default'>('split')
 
@@ -35,6 +36,7 @@ const form = ref({
   id: '',
   name: '',
   description: '',
+  requiresTools: '',
   body: '',
 })
 
@@ -92,6 +94,7 @@ async function loadSkill(id: string) {
       id: loaded.id,
       name: loaded.name,
       description: loaded.description,
+      requiresTools: (loaded.requires_tools ?? []).join(', '),
       body: loaded.body,
     }
   } catch (err) {
@@ -106,6 +109,7 @@ watch(
   ([open, mode, skillId]) => {
     if (!open) return
     error.value = ''
+    requiresToolsError.value = ''
     editorMode.value = mode === 'create' ? 'edit' : 'split'
     if (mode === 'create') {
       detail.value = null
@@ -113,6 +117,7 @@ watch(
         id: '',
         name: '',
         description: '',
+        requiresTools: '',
         body: '',
       }
     } else if (skillId) {
@@ -127,11 +132,13 @@ function restoreDefault() {
   if (!def) return
   form.value.name = def.name
   form.value.description = def.description
+  form.value.requiresTools = (def.requires_tools ?? []).join(', ')
   form.value.body = def.body
 }
 
 async function save() {
   error.value = ''
+  requiresToolsError.value = ''
   if (!isValidId.value) {
     error.value = t('jobUi.skillValidationId')
     return
@@ -146,6 +153,10 @@ async function save() {
       name: form.value.name.trim(),
       description: form.value.description.trim(),
       body: form.value.body,
+      requires_tools: form.value.requiresTools
+        .split(',')
+        .map(tool => tool.trim())
+        .filter(Boolean),
     }
     const saved =
       props.mode === 'create'
@@ -154,7 +165,11 @@ async function save() {
     detail.value = saved
     emit('saved', saved)
   } catch (err) {
-    error.value = formatApiError(err)
+    if (isApiError(err) && err.code === 'invalid_skill_requires_tools') {
+      requiresToolsError.value = t('jobUi.skillValidationRequiresTools')
+    } else {
+      error.value = formatApiError(err)
+    }
   } finally {
     saving.value = false
   }
@@ -312,6 +327,30 @@ async function removeSkill() {
               :disabled="saving || deleting"
               data-skill-description-input
             />
+          </label>
+
+          <label class="block space-y-1.5">
+            <span class="text-xs font-medium">{{ t('jobUi.skillRequiresToolsLabel') }}</span>
+            <input
+              v-model="form.requiresTools"
+              type="text"
+              class="admin-input font-mono text-xs"
+              :placeholder="t('jobUi.skillRequiresToolsPlaceholder')"
+              :disabled="saving || deleting"
+              data-skill-requires-tools
+              @input="requiresToolsError = ''"
+            />
+            <span class="block text-[11px] text-muted-foreground">
+              {{ t('jobUi.skillRequiresToolsHint') }}
+            </span>
+            <span
+              v-if="requiresToolsError"
+              class="block text-[11px] text-danger"
+              role="alert"
+              data-skill-requires-tools-error
+            >
+              {{ requiresToolsError }}
+            </span>
           </label>
 
           <!-- Markdown Body Editor with Edit / Preview / Split -->
