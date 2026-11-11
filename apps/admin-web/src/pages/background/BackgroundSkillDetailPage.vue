@@ -16,7 +16,7 @@ import { useRoute, useRouter } from 'vue-router'
 
 import { agentJobsApi } from '@/api/agent-jobs'
 import { formatApiError } from '@/api/errors'
-import type { JobSkillDetail } from '@/api/types/agent-jobs'
+import type { BackgroundSettings, JobSkillDetail } from '@/api/types/agent-jobs'
 import DetailHeader from '@/components/admin/DetailHeader.vue'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -41,6 +41,7 @@ const deleting = ref(false)
 const error = ref('')
 const notice = ref('')
 const detail = ref<JobSkillDetail | null>(null)
+const settings = ref<BackgroundSettings | null>(null)
 const editorMode = ref<'edit' | 'preview' | 'split' | 'default'>('edit')
 
 const form = ref({
@@ -59,6 +60,13 @@ const effectiveId = computed(() =>
 )
 
 const isBuiltin = computed(() => Boolean(detail.value?.is_builtin))
+const requiredByAgents = computed(() => {
+  const skillId = detail.value?.id
+  if (!skillId) return []
+  return (settings.value?.agents ?? [])
+    .filter(agent => agent.required_job_skills?.includes(skillId))
+    .map(agent => agent.id)
+})
 const isValidId = computed(() => SKILL_ID_RE.test(effectiveId.value))
 
 const isValidFields = computed(() => {
@@ -106,6 +114,13 @@ async function loadSkill(id: string) {
       name: loaded.name,
       description: loaded.description,
       body: loaded.body,
+    }
+    try {
+      const currentSettings = await agentJobsApi.settings(pending.signal)
+      if (pending.signal.aborted) return
+      settings.value = currentSettings
+    } catch {
+      if (!pending.signal.aborted) settings.value = null
     }
   } catch (err) {
     if (pending.signal.aborted) return
@@ -408,6 +423,29 @@ onBeforeUnmount(() => controller?.abort())
                 <small v-else class="text-xs text-muted-foreground">
                   {{ t('jobUi.skillUnused') }}
                 </small>
+              </div>
+            </div>
+
+            <div
+              v-if="requiredByAgents.length > 0"
+              class="border-t border-border/60 pt-3"
+              data-skill-required-by
+            >
+              <div class="mb-2 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+                {{ t('jobUi.skillRequiredBy') }}
+              </div>
+              <div class="flex flex-wrap gap-1.5">
+                <button
+                  v-for="agId in requiredByAgents"
+                  :key="agId"
+                  type="button"
+                  class="inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-studio-cyan/40 bg-studio-cyan/10 px-2.5 py-1.5 font-mono text-xs text-studio-cyan transition-colors hover:bg-studio-cyan/15"
+                  :data-skill-required-agent="agId"
+                  @click="router.push({ name: 'jobs-settings-agent', params: { agentId: agId } })"
+                >
+                  <Bot class="size-3.5" aria-hidden="true" />
+                  {{ agId }}
+                </button>
               </div>
             </div>
 
