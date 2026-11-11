@@ -1,30 +1,41 @@
 ---
 name: wiki-lint
-description: "Universal structural + semantic health-check, orphan/broken-link repair, non-destructive [[WikiLink]] enrichment, and deduplication workflow for LLM Wiki."
+description: "Health-check for the LLM Wiki: repair structure (broken links, orphans, frontmatter), merge duplicates, flag contradictions, and audit that pages still cover their sources. Load for a maintenance pass or after a batch of ingests."
 ---
 
-# Universal Wiki Lint, Repair & Enrich Skill (`wiki-lint`)
+# Wiki Lint
 
-Use this skill periodically or after batch ingests to keep the knowledge base healthy, richly interlinked, and free of contradictions or duplicates.
+A lint pass leaves the vault structurally clean and reports where the wiki has lost what its sources say.
 
-## Step 1: Run Structural Health-Check (`wiki_lint`)
-Call `wiki_lint` to inspect deterministic structural issues across the vault:
-1. **`uningested_sources`**: Raw files in `sources/` that do not yet have a corresponding summary page in `wiki/sources/`.
-   - *Fix*: Read the raw source and ingest it via `wiki_ingest_source` (following `wiki-ingest`).
-2. **`broken_links`**: `[[WikiLinks]]` pointing to non-existent pages.
-   - *Fix*: Either create the missing target page via `wiki_write_file` (if `Page-worthy: yes`) or fix the broken link slug in the source page via `wiki_patch_file`.
-3. **`orphan_wiki_pages`**: Pages in `wiki/` with zero inbound `[[WikiLinks]]`.
-   - *Fix*: Add inbound `[[WikiLinks]]` from relevant `wiki/sources/`, `wiki/entities/`, or `wiki/syntheses/` pages via `wiki_patch_file`, or merge/delete redundant pages.
-4. **`unlinked_mentions`**: Pages that mention an existing entity or concept title in plain text without wrapping it in `[[WikiLinks]]`.
-   - *Fix*: Use `wiki_patch_file` (`target_text` -> `replacement_text`) to wrap the first mention in `[[entities/slug|Term]]` or `[[concepts/slug|Term]]` without altering surrounding prose or YAML frontmatter.
-5. **`missing_frontmatter_pages`**: Pages lacking `title`, `category`, `summary`, or `tags`.
-   - *Fix*: Repair the YAML frontmatter via `wiki_write_file` or `wiki_patch_file`.
+## 1. Structure (`wiki_lint`)
 
-## Step 2: Semantic Quality Audit & Deduplication
-1. Inspect `wiki/index.md` and `wiki_tree(scope="wiki")` for **synonymous duplicate pages** (e.g., two entity/concept pages covering the same subject under different slugs).
-   - *Fix*: Merge all unique claims, code blocks, and `sources` into the canonical page (`wiki_write_file`), update inbound links across affected pages (`wiki_patch_file`), and delete the duplicate file.
-2. Check cross-referenced pages for **unflagged contradictions or stale claims**:
-   - *Fix*: When two sources disagree, ensure the affected entity/concept page documents both perspectives and highlights the tension in a `> [!WARNING] Contradiction / Caveat` callout block citing both `[[sources/...]]` files.
+Call `wiki_lint` and fix each finding:
 
-## Step 3: Verify Clean State
-- Re-run `wiki_lint` after applying fixes until `is_healthy: true` (`uningested_sources = 0`, `broken_links = 0`, `orphan_wiki_pages = 0`) and log the maintenance pass via `wiki_log(mode="append", action="lint", ...)`.
+| Finding | Fix |
+|---|---|
+| `uningested_sources` | Report each path as `needs_ingest`; ingesting is the `wiki-ingest` workflow. |
+| `broken_links` | Correct the slug with `wiki_patch_file`, or create the target with `wiki_write_file` when it is page-worthy. |
+| `orphan_wiki_pages` | Link to the page from a related source summary, entity, or synthesis with `wiki_patch_file`. |
+| `unlinked_mentions` | Wrap the first mention with `wiki_patch_file` (`target_text` -> `replacement_text`) as an `[[entities/<domain>/<slug>]]` or `[[concepts/<domain>/<slug>]]` link labelled with the term, leaving the surrounding prose and frontmatter as they are. |
+| `missing_frontmatter_pages` | Add `title`, `category`, `summary`, `tags`. |
+
+## 2. Duplicates and contradictions
+
+1. In `wiki/index.md`, find entity/concept pages covering one subject under different slugs. Merge every unique claim, table, code block, and `sources` entry into the canonical page, repoint inbound links, then remove the duplicate.
+2. Where two sources disagree, the entity/concept page states both views in a `> [!WARNING] Contradiction / Caveat` callout citing both `[[sources/...]]` files.
+
+## 3. Coverage audit
+
+Audit up to 5 source summary pages per pass: the ones ingested since the last `lint` entry in `wiki/log.md`, then the largest raw sources.
+
+For each, read the raw source's headings and the summary's outline (`wiki_get`), and check:
+
+- every source section has an outline entry;
+- each outline entry links a home page that exists and carries that section's tables, numbers, and code, or links the raw source;
+- the page's `topic/...` tags and any synthesis linking it match the source's own subject.
+
+Report each page that fails as `needs_reingest: <source_rel_path> — <what is missing>`. A summary with no outline at all fails.
+
+## 4. Finish
+
+Re-run `wiki_lint` until `is_healthy: true`, then log the pass with `wiki_log(mode="append", action="lint", ...)`, listing the `needs_ingest` and `needs_reingest` paths.

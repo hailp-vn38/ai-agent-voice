@@ -34,4 +34,4 @@ Call `fetch_html` **ONLY** when **both** a concrete `http://` or `https://` URL 
 
 ## 3. Completion Criteria & Output Rules
 - **Media Links**: Format every image or video URL in Markdown as `![mô tả hoặc tiêu đề](url)` (with a leading `!`), never `[link](url)`.
-- **Read-Only Default**: Return the structured Vietnamese summary (**Tóm tắt cốt lõi**, **Phân tích chuyên sâu**, **Điểm nhấn trực quan**) directly to `daily_root`. Only call `add_to_sources` if the prompt explicitly instructs saving to `sources/` or the Wiki.
+- **Read-Only Default**: Return the structured Vietnamese summary (**Tóm tắt cốt lõi**, **Phân tích chuyên sâu**, **Điểm nhấn trực quan**) directly to `daily_root`. Only call `add_to_sources` if the prompt explicitly instructs saving to `sources/` or the Wiki; then `markdown_body` is the full extracted article (title, URL, every heading, paragraph, table, and image), and the summary stays in your reply.

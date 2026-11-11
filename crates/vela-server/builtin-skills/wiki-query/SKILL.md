@@ -1,6 +1,6 @@
 ---
 name: wiki-query
-description: "Universal QMD Hybrid Search, Obsidian Graph traversal, retrieval modes (Standard, Smart, Faithful), and Synthesis filing workflow for LLM Wiki."
+description: "Retrieval and answer workflow for the LLM Wiki: index-first navigation, hybrid search, graph traversal, and filing valuable answers back as syntheses. Load when answering a question from the Wiki."
 ---
 
 # Universal Wiki Query & Synthesis Skill (`wiki-query`)
@@ -23,7 +23,7 @@ Choose the right tool for the question:
 3. **Graph Relationship Traversal (`wiki_graph_neighbors`)**:
    - When the user asks how two or more entities/concepts relate, depend on each other, or evolve across sources, call `wiki_graph_neighbors(rel_path="...")` to inspect incoming backlinks and outgoing `[[WikiLinks]]`.
 4. **Full Page & Line-Range Reading (`wiki_get` / `wiki_multi_get`)**:
-   - Read the relevant wiki pages (and raw `sources/` files when exact quotes or code details are needed) before synthesizing your answer.
+   - Read the relevant wiki pages before synthesizing your answer. A source summary page is a map: its outline links to the entity/concept page holding each section's detail, or to the raw `sources/` file. Follow that link when the answer needs the detail, exact quotes, or code.
 
 ## 2. Three Retrieval Discipline Modes
 - **Standard Mode**: Combine compiled `wiki/` pages and `sources/` excerpts with `[[WikiLink]]` citations.
@@ -36,9 +36,8 @@ Choose the right tool for the question:
   - Quote key passages verbatim and cite `[[sources/path/to/file.md|file.md]]` beside every factual claim. Do not rely on unverified claims or external assumptions.
 
 ## 3. Compounding Explorations: File Valuable Answers Back (`wiki_file_synthesis`)
-Karpathy's core rule: *"Good answers shouldn't disappear into chat history."*
 When a query produces a deep comparison, architectural synthesis, multi-source table, or thesis:
-1. Call `wiki_file_synthesis` to save it permanently under `wiki/syntheses/<slug>.md` with:
+1. Call `wiki_file_synthesis` to save it permanently under `wiki/syntheses/<domain>/<topic>-synthesis.md` with:
    - Executive thesis & core conclusions
    - Markdown comparison table across sources/entities/methods (always preceded and followed by a blank line; inside table cells, escape the pipe in aliased WikiLinks as `[[path\|Label]]` so Obsidian and external Markdown apps do not split columns)
    - Contradictions & caveats (`> [!WARNING] Contradiction / Caveat`)

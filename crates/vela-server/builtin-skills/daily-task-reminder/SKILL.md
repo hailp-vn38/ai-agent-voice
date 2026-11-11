@@ -9,7 +9,7 @@ Use this skill when creating, listing, or updating reminders and action items fo
 
 ## Rules
 1. **Check Existing Reminders First**: Before creating a new reminder, call `reminder_list(status="pending")` to avoid creating duplicate reminders for the same task.
-2. **Normalize Time & Recurrence**:
+2. **Normalize Time**:
    - Resolve relative time expressions into strict ISO-8601 format (`YYYY-MM-DDTHH:MM:SS+07:00`).
 3. **Attach Wiki Context (`related_wiki_links`)**:
    - If the reminder relates to a topic in the Wiki, include the exact `[[wiki/sources/...]]`, `[[concepts/...]]`, or `[[syntheses/...]]` links in `related_wiki_links`.

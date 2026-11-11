@@ -1,6 +1,6 @@
 ---
 name: trading-chart
-description: "Synthesize interactive OHLCV candlestick charts (`trading-chart`) via `chart_write` and `chart_get` when illustrating candlestick patterns, market structure (BOS/CHoCH, Order Block, FVG, Liquidity Sweep), or trade setups (Entry/SL/TP) in Wiki pages and Markdown reports."
+description: "Draw interactive OHLCV candlestick charts with `chart_write` / `chart_get`. Load when a Wiki page or report needs to illustrate a candlestick pattern, market structure (BOS/CHoCH, Order Block, FVG, Liquidity Sweep), or a trade setup (Entry/SL/TP)."
 ---
 
 # Trading Concept Chart Visualization Skill (`trading-chart`)
