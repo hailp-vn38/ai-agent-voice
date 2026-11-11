@@ -31,6 +31,7 @@ pub struct JobSkillSummary {
     pub id: String,
     pub name: String,
     pub description: String,
+    pub requires_tools: Vec<String>,
     pub is_builtin: bool,
     pub is_modified: bool,
     pub default_has_update: bool,
@@ -44,6 +45,7 @@ pub struct JobSkillSummary {
 pub struct SkillDefaults {
     pub name: String,
     pub description: String,
+    pub requires_tools: Vec<String>,
     pub body: String,
 }
 
@@ -61,6 +63,8 @@ pub struct SaveJobSkill {
     pub name: String,
     pub description: String,
     pub body: String,
+    #[serde(default)]
+    pub requires_tools: Vec<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -110,6 +114,7 @@ fn builtin_defaults(id: &str) -> Option<SkillDefaults> {
     Some(SkillDefaults {
         name: doc.name,
         description: doc.description,
+        requires_tools: doc.requires_tools,
         body: doc.body,
     })
 }
@@ -301,6 +306,13 @@ pub fn catalog_ids(state: &AppState) -> BTreeSet<String> {
     catalog_ids_from_dir(state.config.orchestrator.skills_dir.as_deref())
 }
 
+pub fn catalog_tool_requirements(skills_dir: Option<&Path>) -> BTreeMap<String, Vec<String>> {
+    scan_skills_dir(skills_dir)
+        .into_iter()
+        .map(|(id, indexed)| (id, indexed.doc.requires_tools))
+        .collect()
+}
+
 fn build_detail(
     indexed: IndexedDiskSkill,
     settings: &PersistedBackgroundSettings,
@@ -312,6 +324,7 @@ fn build_detail(
     let is_modified = default.as_ref().is_some_and(|def| {
         indexed.doc.name != def.name
             || indexed.doc.description != def.description
+            || indexed.doc.requires_tools != def.requires_tools
             || indexed.doc.body != def.body
     });
     let default_has_update = is_modified
@@ -331,6 +344,7 @@ fn build_detail(
             id,
             name: indexed.doc.name,
             description: indexed.doc.description,
+            requires_tools: indexed.doc.requires_tools,
             is_builtin,
             is_modified,
             default_has_update,
@@ -392,6 +406,9 @@ fn map_doc_error(err: SkillDocumentError) -> SkillCatalogError {
         | SkillDocumentError::InvalidField("description") => {
             SkillCatalogError::InvalidArguments("invalid_skill_description")
         }
+        SkillDocumentError::InvalidField("requires_tools") => {
+            SkillCatalogError::InvalidArguments("invalid_skill_requires_tools")
+        }
         SkillDocumentError::EmptyBody => SkillCatalogError::InvalidArguments("empty_skill_body"),
         SkillDocumentError::MissingFrontmatter
         | SkillDocumentError::MissingField(_)
@@ -418,6 +435,7 @@ pub async fn save(
         id: id.to_owned(),
         name: input.name,
         description: input.description,
+        requires_tools: input.requires_tools,
         body: input.body,
     };
     let rendered = candidate.render().map_err(map_doc_error)?;

@@ -447,9 +447,30 @@ pub fn project_agents_json(
     // Refs to providers no longer in the catalog resolve to a fallback at runtime, so they are
     // not shown as the agent's selection.
     let in_catalog = |pref: &str| catalog.iter().any(|p| p.provider_ref == pref);
+    let skill_tool_requirements =
+        super::super::skills::catalog_tool_requirements(cfg.skills_dir.as_deref());
     resolve_effective_agents(cfg, settings, catalog)
         .into_iter()
         .map(|eff| {
+            let tool_requirement_gaps: Vec<Value> = eff
+                .allowed_skills
+                .iter()
+                .filter_map(|skill_id| {
+                    let missing_tools: Vec<String> = skill_tool_requirements
+                        .get(skill_id)
+                        .into_iter()
+                        .flatten()
+                        .filter(|required| !eff.allowed_tools.iter().any(|tool| tool == *required))
+                        .cloned()
+                        .collect();
+                    (!missing_tools.is_empty()).then(|| {
+                        json!({
+                            "skill_id": skill_id,
+                            "missing_tools": missing_tools,
+                        })
+                    })
+                })
+                .collect();
             let tool_capability_tags: BTreeMap<&str, &str> =
                 eff.tool_capability_tags.iter().copied().collect();
             let tool_providers: BTreeMap<String, String> = settings
@@ -510,6 +531,7 @@ pub fn project_agents_json(
                 "allowed_skills": eff.allowed_skills,
                 "default_allowed_skills": eff.default_allowed_skills,
                 "required_job_skills": eff.required_job_skills,
+                "tool_requirement_gaps": tool_requirement_gaps,
                 "available_skills": eff.available_skills,
                 "allowed_subagents": eff.allowed_subagents,
                 "allowed_capability_tags": eff.allowed_capability_tags,

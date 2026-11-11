@@ -2693,8 +2693,7 @@ dependencies = [
 [[package]]
 name = "orchestrator-agent"
 version = "0.7.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bfad0e4c88ae9383d96f098e9ce0014cd2f40e782a9e9de22864f7282c51c435"
+source = "git+file:///Users/lamphuchai/Desktop/project_rust/libs/orchestrator_agent_rs?branch=feat%2Fjob-skill-catalog-hardening#edef077bc58128a9ea4fe8037cb5249e349cd062"
 dependencies = [
  "async-trait",
  "futures",
