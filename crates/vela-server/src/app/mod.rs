@@ -128,14 +128,11 @@ pub fn router_with_state(mut state: AppState) -> Router {
         .swap(true, std::sync::atomic::Ordering::AcqRel)
         && state.database.is_some()
     {
-        let refresh_handle = state
-            .llm_gateway_hub
-            .spawn_proactive_refresh_loop(Duration::from_secs(60), 300);
-        let stopping = state.lifecycle.stopping().clone();
-        tokio::spawn(async move {
-            stopping.cancelled().await;
-            refresh_handle.abort();
-        });
+        let _refresh_loop = state.llm_gateway_hub.spawn_proactive_refresh_loop(
+            Duration::from_secs(60),
+            300,
+            state.lifecycle.stopping().clone(),
+        );
     }
     if !state
         .reminder_scheduler_started

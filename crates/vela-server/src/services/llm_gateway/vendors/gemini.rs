@@ -708,12 +708,15 @@ impl OAuthVendorDriver for GeminiOAuthDriver {
             .filter(|s| !s.is_empty())
             .ok_or(GatewayError::AccountReauthRequired)?;
 
-        let (parsed_opt, _) = self
+        let (parsed_opt, last_status) = self
             .post_token_with_candidates("refresh_token", &[("refresh_token", refresh_token)])
             .await?;
 
         let Some(parsed) = parsed_opt else {
-            return Err(GatewayError::AccountReauthRequired);
+            return Err(match last_status {
+                0 => GatewayError::AccountReauthRequired,
+                status => super::refresh_failure_for_status(status),
+            });
         };
         let existing_context = current
             .account_context_id

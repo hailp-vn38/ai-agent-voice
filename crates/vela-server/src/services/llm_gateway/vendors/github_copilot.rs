@@ -85,7 +85,7 @@ impl GithubCopilotOAuthDriver {
             .await
             .map_err(|e| GatewayError::OAuthExchangeFailed(e.to_string()))?;
         if !resp.status().is_success() {
-            return Err(GatewayError::AccountReauthRequired);
+            return Err(super::refresh_failure_for_status(resp.status().as_u16()));
         }
         let payload: Value = resp
             .json()

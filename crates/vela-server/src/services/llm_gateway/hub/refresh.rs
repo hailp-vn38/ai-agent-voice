@@ -2,8 +2,8 @@ use super::*;
 
 impl LlmGatewayHub {
     /// Out-of-band proactive renewal for accounts whose `expires_at` is within `margin_secs`,
-    /// plus self-healing watchdog recovery for cookie-backed Muse accounts stuck in
-    /// `oauth_exchange_failed` or `upstream_unauthorized` (matching `muse-api-server-main`).
+    /// plus self-healing watchdog recovery for accounts parked in `reauth_required` that their
+    /// driver says can still be refreshed (see `OAuthVendorDriver::can_self_heal_reauth`).
     pub async fn proactive_refresh_expiring(
         &self,
         margin_secs: i64,
@@ -57,13 +57,19 @@ impl LlmGatewayHub {
         self: &Arc<Self>,
         interval: Duration,
         margin_secs: i64,
+        stopping: CancellationToken,
     ) -> tokio::task::JoinHandle<()> {
         let hub = Arc::clone(self);
         tokio::spawn(async move {
             let mut ticker = tokio::time::interval(interval.max(Duration::from_secs(15)));
             ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
             loop {
-                ticker.tick().await;
+                // Stop only between passes: aborting mid-refresh could drop a rotated refresh
+                // token after the upstream issued it but before it reached SQLite.
+                tokio::select! {
+                    _ = stopping.cancelled() => break,
+                    _ = ticker.tick() => {}
+                }
                 let _ = hub.proactive_refresh_expiring(margin_secs).await;
             }
         })
