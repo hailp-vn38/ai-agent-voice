@@ -496,7 +496,7 @@ pub fn get(state: &AppState, id: &str) -> Result<JobSkillDetail, SkillCatalogErr
             .map(|(_, reason)| reason)
             .unwrap_or_else(|| "invalid skill document".into());
         let settings = current_settings(state);
-        let (used_by_agents, suggested_for_agents) = compute_agent_links(id, &settings);
+        let (used_by_agents, suggested_for_agents) = compute_agent_links(id, &[], &settings);
         return Ok(JobSkillDetail {
             summary: JobSkillSummary {
                 id: id.to_owned(),
@@ -658,9 +658,6 @@ pub async fn delete(
     id: &str,
     expected_etag: &str,
 ) -> Result<(), SkillCatalogError> {
-    if !valid_skill_id(id) {
-        return Err(SkillCatalogError::InvalidId);
-    }
     if is_builtin_skill(id) {
         return Err(SkillCatalogError::BuiltinCannotBeDeleted);
     }
@@ -670,7 +667,15 @@ pub async fn delete(
 
     let _write_guard = state.skill_write_lock.lock().await;
     ensure_builtin_skills(skills_dir).map_err(|_| SkillCatalogError::Io)?;
-    let (dir, bytes) = raw_skill_file(skills_dir, id)?;
+    if !valid_skill_id(id)
+        && !scan_catalog(Some(skills_dir))
+            .skipped
+            .iter()
+            .any(|(skipped_id, _)| skipped_id == id)
+    {
+        return Err(SkillCatalogError::NotFound);
+    }
+    let (dir, bytes) = raw_skipped_skill_file(skills_dir, id)?;
     if sha256_hex(&bytes) != expected_etag {
         return Err(SkillCatalogError::RevisionConflict);
     }

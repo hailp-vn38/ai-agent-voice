@@ -63,6 +63,11 @@ function isManageableSkillId(id: string) {
   return /^[a-z0-9][a-z0-9_-]{0,63}$/.test(id)
 }
 
+function isSafeSkippedSkillId(id: string) {
+  return id.length > 0 && id !== '.' && id !== '..' &&
+    !id.includes('/') && !id.includes('\\') && !id.includes('\0')
+}
+
 function openSkillEditor(id: string) {
   skillModalMode.value = 'edit'
   activeSkillId.value = id
@@ -357,7 +362,7 @@ onBeforeUnmount(() => controller?.abort())
                 <td class="px-4 py-3 text-right whitespace-nowrap">
                   <div class="inline-flex items-center gap-1.5">
                     <Button
-                      v-if="!skill.is_builtin && isManageableSkillId(skill.id)"
+                      v-if="!skill.is_builtin && (isManageableSkillId(skill.id) || (skill.status === 'invalid' && isSafeSkippedSkillId(skill.id)))"
                       size="sm"
                       variant="outline"
                       type="button"

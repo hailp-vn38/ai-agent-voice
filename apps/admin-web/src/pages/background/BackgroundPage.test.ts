@@ -979,8 +979,14 @@ describe('Jobs Settings Hub (Variant A) & Sub-pages', () => {
       status: 'invalid' as const, invalid_reason: 'missing name frontmatter', body: 'bad content',
       related_files: [], default: null,
     }
+    const invalidName = {
+      ...invalid,
+      id: 'Bad ID', name: 'Bad ID', etag: 'raw-invalid-name-etag',
+      invalid_reason: 'invalid skill id',
+    }
     const settings = fixtureSettings()
     settings.skills.push(invalid)
+    settings.skills.push(invalidName)
     requestMock.mockImplementation((path: string, init?: RequestInit) => {
       if (path === '/api/admin/background/settings') return Promise.resolve(settings)
       if (path === '/api/admin/background/skills/broken-skill' && (!init || !init.method)) {
@@ -998,6 +1004,15 @@ describe('Jobs Settings Hub (Variant A) & Sub-pages', () => {
       'missing name frontmatter',
     )
     expect(wrapper.find('[data-skill-repair="broken-skill"]').exists()).toBe(true)
+    expect(wrapper.find('[data-skill-delete-card="Bad ID"]').exists()).toBe(true)
+    expect(wrapper.find('[data-skill-repair="Bad ID"]').exists()).toBe(false)
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    await wrapper.get('[data-skill-delete-card="Bad ID"]').trigger('click')
+    await flushPromises()
+    const deleteInvalidNameCall = requestMock.mock.calls.find(
+      call => call[0] === '/api/admin/background/skills/Bad%20ID' && call[1]?.method === 'DELETE',
+    )
+    expect(deleteInvalidNameCall?.[2]?.headers).toEqual({ 'If-Match': '"raw-invalid-name-etag"' })
     await wrapper.get('[data-skill-repair="broken-skill"]').trigger('click')
     await flushPromises()
     expect(wrapper.find('[data-skill-editor-modal]').exists()).toBe(true)
