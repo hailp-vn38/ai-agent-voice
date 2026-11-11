@@ -37,6 +37,33 @@ fn is_old_cloud_worker_default_prompt(prompt: &str) -> bool {
     OLD_CLOUD_WORKER_DEFAULT_PROMPTS.contains(&digest.as_str())
 }
 
+/// SHA-256 of the `wiki_ingestor` and `wiki_curator` defaults before Required Job Skills were
+/// preloaded. Admin Web may have persisted these exact defaults as overrides on older servers.
+const OLD_WIKI_SUBAGENT_DEFAULT_PROMPTS: &[(&str, &str)] = &[
+    (
+        "wiki_ingestor",
+        "21e00cf28da2c2cf6f1bd4b68a376be335479a21ee06a73fc41437824a703a40",
+    ),
+    (
+        "wiki_curator",
+        "284339c1ae7f7f5b10c562664626a023e975c8d9a0737a879059aee64651893d",
+    ),
+];
+
+fn is_old_wiki_subagent_default_prompt(agent_id: &str, prompt: &str) -> bool {
+    let Some((_, expected_hash)) = OLD_WIKI_SUBAGENT_DEFAULT_PROMPTS
+        .iter()
+        .find(|(id, _)| *id == agent_id)
+    else {
+        return false;
+    };
+    let digest: String = Sha256::digest(prompt.trim().as_bytes())
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect();
+    digest == *expected_hash
+}
+
 pub(crate) fn default_true() -> bool {
     true
 }
@@ -230,6 +257,16 @@ pub fn load_persisted_settings(store_dir: &Path) -> Option<PersistedBackgroundSe
             .is_some_and(is_old_cloud_worker_default_prompt)
     {
         cloud_worker.system_prompt = None;
+    }
+
+    for (agent_id, agent) in &mut settings.agents {
+        if agent
+            .system_prompt
+            .as_deref()
+            .is_some_and(|prompt| is_old_wiki_subagent_default_prompt(agent_id, prompt))
+        {
+            agent.system_prompt = None;
+        }
     }
 
     settings.agents.retain(|id, ovr| {
