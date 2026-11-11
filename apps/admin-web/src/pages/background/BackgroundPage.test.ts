@@ -205,6 +205,7 @@ const fixtureSettings = (): SettingsFixture => ({
       description: 'Answer questions from the Karpathy Wiki.',
       is_builtin: true,
       is_modified: true,
+      default_has_update: true,
       etag: 'etag-wiki-query',
       used_by_agents: ['wiki_researcher'],
       suggested_for_agents: ['wiki_researcher'],
@@ -215,6 +216,7 @@ const fixtureSettings = (): SettingsFixture => ({
       description: 'Audit headings and links for SEO quality.',
       is_builtin: false,
       is_modified: true,
+      default_has_update: false,
       etag: 'etag-seo-audit',
       used_by_agents: [],
       suggested_for_agents: [],
@@ -509,6 +511,7 @@ describe('Jobs Settings Hub (Variant A) & Sub-pages', () => {
           body: '## Custom Body\n\nModified instructions.',
           is_builtin: true,
           is_modified: true,
+          default_has_update: true,
           etag: 'etag-wiki-query',
           used_by_agents: ['wiki_researcher'],
           suggested_for_agents: ['wiki_researcher'],
@@ -527,6 +530,7 @@ describe('Jobs Settings Hub (Variant A) & Sub-pages', () => {
           body: '## Default Body\n\nOriginal built-in instructions.',
           is_builtin: true,
           is_modified: false,
+          default_has_update: false,
           etag: 'etag-wiki-query-2',
           used_by_agents: ['wiki_researcher'],
           suggested_for_agents: ['wiki_researcher'],
@@ -545,6 +549,7 @@ describe('Jobs Settings Hub (Variant A) & Sub-pages', () => {
           body: '## Custom Steps\n\n1. Run check.',
           is_builtin: false,
           is_modified: true,
+          default_has_update: false,
           etag: 'etag-new-custom',
           used_by_agents: [],
           suggested_for_agents: [],
@@ -566,6 +571,9 @@ describe('Jobs Settings Hub (Variant A) & Sub-pages', () => {
     expect(catalog.text()).toContain('Built-in')
     expect(catalog.text()).toContain('seo-audit')
     expect(catalog.text()).toContain('Custom')
+    expect(wrapper.get('[data-skill-default-update="wiki-query"]').text()).toContain(
+      'Default update available',
+    )
 
     // Built-in skill row must NOT render a delete button; custom skill row MUST render one
     expect(wrapper.find('[data-skill-delete-card="wiki-query"]').exists()).toBe(false)
@@ -584,6 +592,9 @@ describe('Jobs Settings Hub (Variant A) & Sub-pages', () => {
     const detailWrapper = mount(BackgroundSkillDetailPage)
     await flushPromises()
 
+    expect(detailWrapper.get('[data-skill-default-update]').text()).toContain(
+      'Default update available',
+    )
     expect(detailWrapper.find('[data-skill-delete]').exists()).toBe(false)
     expect(
       (detailWrapper.get('[data-skill-name-input]').element as HTMLInputElement).value,
@@ -645,6 +656,7 @@ describe('Jobs Settings Hub (Variant A) & Sub-pages', () => {
             description: 'Cross-verify claims before synthesis.',
             is_builtin: false,
             is_modified: true,
+            default_has_update: false,
             etag: 'etag-fact-check',
             used_by_agents: [],
             suggested_for_agents: [],
@@ -661,6 +673,7 @@ describe('Jobs Settings Hub (Variant A) & Sub-pages', () => {
           body: '## Verify\n- Check primary source.',
           is_builtin: false,
           is_modified: true,
+          default_has_update: false,
           etag: 'etag-fact-check',
           used_by_agents: [],
           suggested_for_agents: [],

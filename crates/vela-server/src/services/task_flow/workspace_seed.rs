@@ -186,6 +186,22 @@ pub(crate) fn record_builtin_skill_base_version(
     write_builtin_skill_versions(skills_root, &versions)
 }
 
+pub(crate) fn builtin_skill_default_has_update(skills_root: &Path, id: &str) -> bool {
+    let Some(default_content) = BUILTIN_SKILLS
+        .iter()
+        .find_map(|(builtin_id, content)| (*builtin_id == id).then_some(*content))
+    else {
+        return false;
+    };
+    let Some(current_hash) = builtin_skill_hash(id, default_content) else {
+        return false;
+    };
+    read_builtin_skill_versions(skills_root)
+        .0
+        .get(id)
+        .is_some_and(|base_hash| base_hash != &current_hash)
+}
+
 pub(crate) fn ensure_builtin_skills(skills_root: &Path) -> Result<(), std::io::Error> {
     std::fs::create_dir_all(skills_root)?;
     let mut versions = read_builtin_skill_versions(skills_root);

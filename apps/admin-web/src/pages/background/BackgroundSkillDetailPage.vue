@@ -245,6 +245,14 @@ onBeforeUnmount(() => controller?.abort())
           >
             {{ t('jobUi.customizedBadge') }}
           </Badge>
+          <Badge
+            v-if="isBuiltin && detail.default_has_update"
+            variant="outline"
+            class="border-studio-cyan/40 bg-studio-cyan/10 text-studio-cyan"
+            data-skill-default-update
+          >
+            {{ t('jobUi.skillDefaultUpdateBadge') }}
+          </Badge>
         </template>
 
         <Button

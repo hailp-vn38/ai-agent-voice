@@ -1028,3 +1028,162 @@ prompts_dir = "{}"
 
     server.abort();
 }
+
+#[tokio::test]
+async fn background_skill_summary_reports_default_updates_separately_from_edits() {
+    let temp_root =
+        std::env::temp_dir().join(format!("background-skill-update-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&temp_root).unwrap();
+    let skills_dir = temp_root.join("skills");
+    let config: AppConfig = toml::from_str(&format!(
+        r#"
+[server]
+bind = "127.0.0.1:0"
+public_ws_url = "ws://127.0.0.1:0/voice/v1/"
+[provider_defaults]
+vad = "test"
+asr = "test"
+llm = "test"
+tts = "test"
+[database]
+url = "sqlite://{}"
+[api]
+enabled = true
+admin_token = "background-test-token"
+[orchestrator]
+store_dir = "{}"
+prompts_dir = "{}"
+skills_dir = "{}"
+"#,
+        temp_root.join("vela.db").display(),
+        temp_root.join("orch-store").display(),
+        temp_root.join("prompts").display(),
+        skills_dir.display(),
+    ))
+    .unwrap();
+    let router = bootstrap_with_providers(config, Arc::new(ProviderSet::unavailable()))
+        .await
+        .unwrap();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base = format!("http://{}/api/admin", listener.local_addr().unwrap());
+    let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    let client = Client::new();
+
+    let list: Value = client
+        .get(format!("{base}/background/settings"))
+        .bearer_auth("background-test-token")
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let wiki_query = list["skills"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|skill| skill["id"] == "wiki-query")
+        .unwrap();
+    assert_eq!(wiki_query["is_modified"], false);
+    assert_eq!(wiki_query["default_has_update"], false);
+
+    let wiki_query_detail: Value = client
+        .get(format!("{base}/background/skills/wiki-query"))
+        .bearer_auth("background-test-token")
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let original_etag = wiki_query_detail["etag"].as_str().unwrap().to_owned();
+    let edit: Value = client
+        .put(format!("{base}/background/skills/wiki-query"))
+        .bearer_auth("background-test-token")
+        .header("If-Match", format!("\"{original_etag}\""))
+        .json(&json!({
+            "name": "wiki-query",
+            "description": "Admin edit with current base",
+            "body": "# Admin edit\n\nKeep my workflow."
+        }))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(edit["is_modified"], true);
+    assert_eq!(edit["default_has_update"], false);
+
+    let manifest_path = skills_dir.join(".builtin-job-skill-versions.json");
+    let mut manifest: Value =
+        serde_json::from_slice(&std::fs::read(&manifest_path).unwrap()).unwrap();
+    manifest["wiki-query"] = json!("older-default-hash");
+    manifest["wiki-ingest"] = json!("older-default-hash");
+    std::fs::write(&manifest_path, serde_json::to_vec(&manifest).unwrap()).unwrap();
+
+    let updated_edit: Value = client
+        .get(format!("{base}/background/skills/wiki-query"))
+        .bearer_auth("background-test-token")
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(updated_edit["is_modified"], true);
+    assert_eq!(updated_edit["default_has_update"], true);
+
+    let unchanged_default: Value = client
+        .get(format!("{base}/background/skills/wiki-ingest"))
+        .bearer_auth("background-test-token")
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(unchanged_default["is_modified"], false);
+    assert_eq!(unchanged_default["default_has_update"], false);
+
+    let latest_etag = updated_edit["etag"].as_str().unwrap();
+    let defaults = &updated_edit["default"];
+    let restored: Value = client
+        .put(format!("{base}/background/skills/wiki-query"))
+        .bearer_auth("background-test-token")
+        .header("If-Match", format!("\"{latest_etag}\""))
+        .json(&json!({
+            "name": defaults["name"],
+            "description": defaults["description"],
+            "body": defaults["body"]
+        }))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(restored["is_modified"], false);
+    assert_eq!(restored["default_has_update"], false);
+
+    let custom: Value = client
+        .put(format!("{base}/background/skills/custom-update-check"))
+        .bearer_auth("background-test-token")
+        .header("If-None-Match", "*")
+        .json(&json!({
+            "name": "Custom update check",
+            "description": "Custom skills have no built-in update state",
+            "body": "# Custom\n\nNo default."
+        }))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(custom["is_builtin"], false);
+    assert_eq!(custom["is_modified"], false);
+    assert_eq!(custom["default_has_update"], false);
+
+    server.abort();
+}

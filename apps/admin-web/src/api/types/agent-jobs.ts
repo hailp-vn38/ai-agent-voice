@@ -72,6 +72,7 @@ export interface JobSkillSummary {
   description: string
   is_builtin: boolean
   is_modified: boolean
+  default_has_update: boolean
   etag: string
   used_by_agents: string[]
   suggested_for_agents: string[]
