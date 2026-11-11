@@ -40,10 +40,10 @@ pub use agent_settings::{
     WIKI_AUTOFLOW_ROOT_AGENT_ID, build_agent_definitions, create_custom_subagent,
     custom_subagent_flow_policy, default_orchestrator_provider, delete_custom_subagent,
     find_agent_spec, find_tool_owner_spec, is_user_routable_root_agent, load_persisted_settings,
-    normalize_user_target_agent, project_agents_json, resolve_llm_provider_catalog,
-    save_persisted_settings, sync_orchestrator_from_state, valid_custom_subagent_id,
-    validate_agent_overrides, validate_agent_overrides_with_skills, validate_settings_change,
-    write_agent_prompts,
+    normalize_user_target_agent, project_agents_json, required_job_skills,
+    resolve_llm_provider_catalog, save_persisted_settings, sync_orchestrator_from_state,
+    valid_custom_subagent_id, validate_agent_overrides, validate_agent_overrides_with_skills,
+    validate_settings_change, write_agent_prompts, write_agent_prompts_with_skills_dir,
 };
 pub use charts::{ChartDocument, ChartError, chart_host_tools, read_chart_json_for_admin};
 pub use memory_tools::TaskMemoryAccess;
@@ -373,7 +373,11 @@ async fn init_orchestrator_and_task_manager(
     let recipe_runtime = task_init.recipe_provider_runtime()?;
 
     let persisted = load_persisted_settings(&cfg.store_dir).unwrap_or_default();
-    let _ = write_agent_prompts(&cfg.prompts_dir, &persisted);
+    let _ = write_agent_prompts_with_skills_dir(
+        &cfg.prompts_dir,
+        &persisted,
+        cfg.skills_dir.as_deref(),
+    );
     let (providers, mut agents) = build_agent_definitions(cfg, &persisted, catalog);
     let recipe_start_manager = Arc::new(OnceLock::new());
     agents.extend(recipe_agents::playlist_recipe_agents(

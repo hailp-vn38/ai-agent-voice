@@ -24,6 +24,7 @@ pub use media_backend::{
 pub use persistence::{
     AgentConfigOverride, PersistedBackgroundSettings, ValidCustomSubagentRef,
     load_persisted_settings, save_persisted_settings, write_agent_prompts,
+    write_agent_prompts_with_skills_dir,
 };
 pub use provider_catalog::{
     MuseCatalogOptions, ResolvedLlmProvider, default_orchestrator_provider, find_provider_by_tag,
@@ -34,7 +35,7 @@ pub use specs::{
     AGENT_SPECS, AgentSpec, CUSTOM_DAILY_SUBAGENT_TOOLS, CUSTOM_WIKI_SUBAGENT_TOOLS,
     DEFAULT_USER_ROOT_AGENT_ID, WIKI_AUTOFLOW_ROOT_AGENT_ID, custom_subagent_flow_policy,
     find_agent_spec, find_tool_owner_spec, is_user_routable_root_agent,
-    normalize_user_target_agent, valid_custom_subagent_id,
+    normalize_user_target_agent, required_job_skills, valid_custom_subagent_id,
 };
 pub use validation::{
     CreateCustomSubagentInput, SubagentMutationError, create_custom_subagent,
