@@ -308,14 +308,16 @@ pub async fn seeded_provider(body: serde_json::Value) -> (String, String) {
 
 /// Keeps the Admin router mounted while making the already-configured database unavailable.
 /// This exercises the public status route's degradation response rather than a startup failure.
-pub async fn server_with_closed_database() -> (String, tokio::task::JoinHandle<()>) {
+pub async fn server_with_closed_database() -> (String, tokio::task::JoinHandle<()>, String) {
     resource_server(true, false).await
 }
 
+/// Returns the base URL, the serving task, and an Admin Web Token minted while the database still
+/// accepts the password login; the database is closed afterwards.
 pub async fn resource_server(
     api_enabled: bool,
     collect: bool,
-) -> (String, tokio::task::JoinHandle<()>) {
+) -> (String, tokio::task::JoinHandle<()>, String) {
     let config_path =
         std::env::temp_dir().join(format!("vela-admin-closed-{}.toml", uuid::Uuid::new_v4()));
     fs::write(
@@ -349,6 +351,18 @@ jwt_secret = "admin-harness-signing-secret-0123456789"
         Arc::new(ProviderSet::unavailable()),
         Some(Database::connect(&config.database).await.unwrap()),
     );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let base = format!("http://{address}");
+    seed_default_admin_password(state.database.as_ref().unwrap().pool()).await;
+    let router = router_with_state(state.clone());
+    let task = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    // The API-disabled case mounts no Admin routes, so there is no login and no token to mint.
+    let token = if api_enabled {
+        admin_web_token(&Client::new(), &base).await
+    } else {
+        String::new()
+    };
     state.database.as_ref().unwrap().pool().close().await;
     if collect {
         let stop = state.lifecycle.listening().clone();
@@ -363,14 +377,7 @@ jwt_secret = "admin-harness-signing-secret-0123456789"
         stop.cancel();
         sampler.await.unwrap();
     }
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let address = listener.local_addr().unwrap();
-    let task = tokio::spawn(async move {
-        axum::serve(listener, router_with_state(state))
-            .await
-            .unwrap()
-    });
-    (format!("http://{address}"), task)
+    (base, task, token)
 }
 
 pub async fn server_with_loaded_llm(
@@ -670,38 +677,6 @@ pub async fn assert_waits_for_writer(
     writer.close().await;
 }
 
-/// The password the harness sets on every fresh Admin database.
-pub const HARNESS_ADMIN_PASSWORD: &str = "harness-admin-password";
-
-/// Logs in with the default Admin Password, rotates it to `HARNESS_ADMIN_PASSWORD`, and returns a
-/// usable Admin Web Token. Tests that call protected Admin routes use this instead of `admin_token`.
-pub async fn admin_web_token(client: &Client, base: &str) -> String {
-    let login: Value = client
-        .post(format!("{base}/api/admin/auth/login"))
-        .json(&json!({ "password": "admin" }))
-        .send()
-        .await
-        .unwrap()
-        .error_for_status()
-        .unwrap()
-        .json()
-        .await
-        .unwrap();
-    let first_token = login["token"].as_str().unwrap();
-    let changed: Value = client
-        .post(format!("{base}/api/admin/auth/password"))
-        .bearer_auth(first_token)
-        .json(&json!({
-            "current_password": "admin",
-            "new_password": HARNESS_ADMIN_PASSWORD,
-        }))
-        .send()
-        .await
-        .unwrap()
-        .error_for_status()
-        .unwrap()
-        .json()
-        .await
-        .unwrap();
-    changed["token"].as_str().unwrap().to_owned()
-}
+pub use crate::support::admin_auth::{
+    HARNESS_ADMIN_PASSWORD, admin_web_token, seed_default_admin_password,
+};

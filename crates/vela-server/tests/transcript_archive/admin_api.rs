@@ -9,10 +9,10 @@ fn admin(base: &str, path: &str) -> String {
     format!("{base}/api/admin{path}")
 }
 
-async fn purge_body(base: &str, body: serde_json::Value) -> reqwest::Response {
+async fn purge_body(harness: &Harness, body: serde_json::Value) -> reqwest::Response {
     reqwest::Client::new()
-        .post(admin(base, "/history/purge"))
-        .bearer_auth(ADMIN_TOKEN)
+        .post(admin(&harness.base, "/history/purge"))
+        .bearer_auth(&harness.token)
         .json(&body)
         .send()
         .await
@@ -21,7 +21,7 @@ async fn purge_body(base: &str, body: serde_json::Value) -> reqwest::Response {
 
 #[tokio::test]
 async fn the_archive_is_readable_and_prunable_through_the_authenticated_admin_api() {
-    let harness = start(
+    let harness = start_prepared(
         Arc::new(ScriptLlm::new(
             "default-llm",
             vec![Step::Answer("the delivered answer")],
@@ -63,7 +63,7 @@ async fn the_archive_is_readable_and_prunable_through_the_authenticated_admin_ap
 
     let listed: serde_json::Value = client
         .get(admin(&harness.base, "/history"))
-        .bearer_auth(ADMIN_TOKEN)
+        .bearer_auth(&harness.token)
         .send()
         .await
         .unwrap()
@@ -82,7 +82,7 @@ async fn the_archive_is_readable_and_prunable_through_the_authenticated_admin_ap
     ] {
         let response = client
             .get(admin(&harness.base, &format!("/history?{}", query.0)))
-            .bearer_auth(ADMIN_TOKEN)
+            .bearer_auth(&harness.token)
             .send()
             .await
             .unwrap();
@@ -98,7 +98,7 @@ async fn the_archive_is_readable_and_prunable_through_the_authenticated_admin_ap
             &harness.base,
             &format!("/history?session_id={session_id}&role=user"),
         ))
-        .bearer_auth(ADMIN_TOKEN)
+        .bearer_auth(&harness.token)
         .send()
         .await
         .unwrap()
@@ -144,7 +144,7 @@ async fn the_archive_is_readable_and_prunable_through_the_authenticated_admin_ap
             "invalid_json",
         ),
     ] {
-        let response = purge_body(&harness.base, body.clone()).await;
+        let response = purge_body(&harness, body.clone()).await;
         assert_eq!(response.status(), StatusCode::BAD_REQUEST, "body {body}");
         assert_eq!(
             response.json::<serde_json::Value>().await.unwrap()["error"]["code"],
@@ -157,7 +157,7 @@ async fn the_archive_is_readable_and_prunable_through_the_authenticated_admin_ap
         "no rejected request deletes anything"
     );
 
-    let purged = purge_body(&harness.base, serde_json::json!({"session_id": session_id}))
+    let purged = purge_body(&harness, serde_json::json!({"session_id": session_id}))
         .await
         .json::<serde_json::Value>()
         .await
@@ -180,7 +180,7 @@ async fn a_purge_never_reaches_an_open_sessions_dialogue_history() {
         "default-llm",
         vec![Step::Answer("first answer"), Step::Answer("second answer")],
     ));
-    let harness = start(
+    let harness = start_prepared(
         llm.clone(),
         DatabaseHistoryConfig {
             enabled: true,
@@ -195,7 +195,7 @@ async fn a_purge_never_reaches_an_open_sessions_dialogue_history() {
     let session_id = archived[0].session_id.clone();
 
     let purged: serde_json::Value =
-        purge_body(&harness.base, serde_json::json!({"session_id": session_id}))
+        purge_body(&harness, serde_json::json!({"session_id": session_id}))
             .await
             .json()
             .await
@@ -233,7 +233,7 @@ async fn a_purge_never_reaches_an_open_sessions_dialogue_history() {
 
 #[tokio::test]
 async fn the_archive_stays_readable_and_prunable_while_capture_is_off() {
-    let harness = start(
+    let harness = start_prepared(
         Arc::new(ScriptLlm::new("default-llm", Vec::new())),
         DatabaseHistoryConfig::default(),
     )
@@ -255,7 +255,7 @@ async fn the_archive_stays_readable_and_prunable_while_capture_is_off() {
 
     let listed: serde_json::Value = client
         .get(admin(&harness.base, "/history?role=user"))
-        .bearer_auth(ADMIN_TOKEN)
+        .bearer_auth(&harness.token)
         .send()
         .await
         .unwrap()
@@ -269,7 +269,7 @@ async fn the_archive_stays_readable_and_prunable_while_capture_is_off() {
     );
     assert_eq!(listed["items"][0]["text"], "older");
     let purged: serde_json::Value = purge_body(
-        &harness.base,
+        &harness,
         serde_json::json!({"session_id": "archived-by-an-earlier-deployment"}),
     )
     .await

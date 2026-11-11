@@ -5,6 +5,8 @@
 //! - Facts & Profile: fact lifecycle (CRUD, search, pin, revision concurrency), discard tombstones, and profile.
 //! - Devices & Vault: device memory partitioning, agent re-assignment, vault purging, and startup reconciliation.
 
+mod support;
+
 #[path = "memory_admin/harness.rs"]
 mod harness;
 
