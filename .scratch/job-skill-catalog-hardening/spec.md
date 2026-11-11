@@ -163,7 +163,7 @@ Ba khái niệm mới, chưa có trong `GLOSSARY.md`; ticket 13 thêm vào:
 
 ### Thứ tự phát hành thư viện
 
-Theo `AGENTS.md`: làm trong repo thư viện, thử từ server bằng `[patch.crates-io]` tạm, publish theo thứ tự orchestrator-agent rồi orchestrator-flow, thay patch bằng phiên bản đã publish trước khi merge. Bước publish lên crates.io cần người duyệt.
+Theo `AGENTS.md`: làm trong repo thư viện, thử từ server bằng `[patch.crates-io]` tạm, publish theo thứ tự `llm-wiki-rs`, `orchestrator-agent`, `orchestrator-flow`, thay patch bằng phiên bản đã publish trước khi merge. Bước publish lên crates.io cần người duyệt.
 
 ## Testing Decisions
 
