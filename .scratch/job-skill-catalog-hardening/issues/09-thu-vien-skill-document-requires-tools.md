@@ -8,11 +8,20 @@ Xem spec: [Skill Tool Requirement](../spec.md#skill-tool-requirement-adr-0144); 
 
 **Blocked by:** không
 
-**Status:** ready-for-agent
+**Status:** ready-for-human
 
 - [ ] Parse rồi render một tài liệu có `requires_tools` cho lại đúng danh sách đó, đúng thứ tự
 - [ ] Tài liệu không có `requires_tools` render ra đúng từng byte như phiên bản thư viện trước
 - [ ] Tên tool sai định dạng là lỗi trường không hợp lệ; tên trùng lặp bị gộp
 - [ ] Skill có `requires_tools` nạp được bởi agent không có các tool đó
 - [ ] Nội dung trả về cho agent khi nạp skill không đổi so với trước
-- [ ] Phiên bản mới được publish và ghi vào ticket này
+- [x] Parse rồi render một tài liệu có `requires_tools` cho lại đúng danh sách, đúng thứ tự
+- [x] Tài liệu không có `requires_tools` giữ nguyên render từng byte
+- [x] Tên tool sai định dạng bị từ chối; tên trùng được gộp
+- [x] Skill có `requires_tools` vẫn nạp được khi agent không có các tool đó
+- [x] Nội dung skill trả cho agent không đổi
+- [ ] Publish phiên bản mới và ghi số phiên bản vào ticket này (cần người duyệt)
+
+## Comments
+
+- 2026-11-11: Implementation committed as `edef077` (`feat: add skill tool requirement metadata`) and merged into the `orchestrator-agent` library integration branch. `CHECK_MAX_LINES=100 scripts/check.sh fast` passed fmt, clippy, clippy-lib, and all tests. Crates.io publication is pending reviewer approval.
