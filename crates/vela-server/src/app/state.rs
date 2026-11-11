@@ -231,9 +231,10 @@ impl AppState {
                 >(bg_val.clone())
                 && crate::services::task_flow::save_persisted_settings(store_dir, &parsed).is_ok()
             {
-                let _ = crate::services::task_flow::write_agent_prompts(
+                let _ = crate::services::task_flow::write_agent_prompts_with_skills_dir(
                     &self.config.orchestrator.prompts_dir,
                     &parsed,
+                    self.config.orchestrator.skills_dir.as_deref(),
                 );
                 {
                     let mut guard = self

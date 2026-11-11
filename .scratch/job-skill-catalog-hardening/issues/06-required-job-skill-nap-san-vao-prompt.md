@@ -10,13 +10,13 @@ Xem spec: [Required Job Skill](../spec.md#required-job-skill-adr-0143); [ADR 014
 
 **Blocked by:** không
 
-**Status:** ready-for-agent
+**Status:** resolved
 
-- [ ] Sau khi dựng app, file prompt của `wiki_ingestor` chứa nội dung hiện tại của cả ba Required Job Skill; file prompt của `wiki_curator` chứa hai skill của nó; các Sub-Agent khác không có khối
-- [ ] Admin sửa nội dung một Required Job Skill qua Admin API: file prompt chứa nội dung mới mà không cần dựng lại app
-- [ ] Admin đặt system prompt riêng cho `wiki_ingestor`: file prompt gồm prompt riêng đó rồi tới khối; Admin API trả lại đúng prompt Admin đã gửi, không có khối
-- [ ] Prompt đã lưu chứa sẵn một bản chụp cũ của khối: file prompt chỉ có một khối, với nội dung hiện tại
-- [ ] Lưu `allowed_skills` của `wiki_ingestor` thiếu `wiki-ingest` thành công và cấu hình hiệu lực vẫn có `wiki-ingest`
-- [ ] Projection của mỗi Sub-Agent có danh sách Required Job Skill; rỗng với Root Orchestrator và Custom Sub-Agent
-- [ ] Required Job Skill không có bản hợp lệ trên đĩa: khối dùng nội dung bản nhúng
-- [ ] Test bất biến: mọi Required Job Skill là Built-in Job Skill tồn tại
+- [x] Sau khi dựng app, file prompt của `wiki_ingestor` chứa nội dung hiện tại của cả ba Required Job Skill; file prompt của `wiki_curator` chứa hai skill của nó; các Sub-Agent khác không có khối
+- [x] Admin sửa nội dung một Required Job Skill qua Admin API: file prompt chứa nội dung mới mà không cần dựng lại app
+- [x] Admin đặt system prompt riêng cho `wiki_ingestor`: file prompt gồm prompt riêng đó rồi tới khối; Admin API trả lại đúng prompt Admin đã gửi, không có khối
+- [x] Prompt đã lưu chứa sẵn một bản chụp cũ của khối: file prompt chỉ có một khối, với nội dung hiện tại
+- [x] Lưu `allowed_skills` của `wiki_ingestor` thiếu `wiki-ingest` thành công và cấu hình hiệu lực vẫn có `wiki-ingest`
+- [x] Projection của mỗi Sub-Agent có danh sách Required Job Skill; rỗng với Root Orchestrator và Custom Sub-Agent
+- [x] Required Job Skill không có bản hợp lệ trên đĩa: khối dùng nội dung bản nhúng
+- [x] Test bất biến: mọi Required Job Skill là Built-in Job Skill tồn tại

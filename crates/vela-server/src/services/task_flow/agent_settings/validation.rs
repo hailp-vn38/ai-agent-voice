@@ -13,7 +13,7 @@ use super::DEFAULT_ORCHESTRATOR_PROVIDER_REF;
 use super::media_backend::{install_server_media_runtime, update_live_media_catalog};
 use super::persistence::{
     AgentConfigOverride, PersistedBackgroundSettings, default_true, save_persisted_settings,
-    write_agent_prompts,
+    write_agent_prompts_with_skills_dir,
 };
 use super::provider_catalog::{
     ResolvedLlmProvider, agent_supports_provider, resolve_llm_provider_catalog,
@@ -261,8 +261,12 @@ async fn persist_and_sync_after_mutation(
 ) -> Result<i64, SubagentMutationError> {
     save_persisted_settings(&state.config.orchestrator.store_dir, persisted)
         .map_err(|_| SubagentMutationError::Io)?;
-    write_agent_prompts(&state.config.orchestrator.prompts_dir, persisted)
-        .map_err(|_| SubagentMutationError::Io)?;
+    write_agent_prompts_with_skills_dir(
+        &state.config.orchestrator.prompts_dir,
+        persisted,
+        state.config.orchestrator.skills_dir.as_deref(),
+    )
+    .map_err(|_| SubagentMutationError::Io)?;
     if let Err(err) = reconfigure_orchestrator_with_settings(state, persisted).await {
         tracing::warn!(
             error = %err,
@@ -394,7 +398,11 @@ pub async fn sync_orchestrator_from_state(state: &AppState) -> Result<(), String
     if state.orchestrator.is_some()
         || state.config.orchestrator.prompts_dir != Path::new("data/orchestrator-prompts")
     {
-        let _ = write_agent_prompts(&state.config.orchestrator.prompts_dir, &settings);
+        let _ = write_agent_prompts_with_skills_dir(
+            &state.config.orchestrator.prompts_dir,
+            &settings,
+            state.config.orchestrator.skills_dir.as_deref(),
+        );
     }
     reconfigure_orchestrator_with_settings(state, &settings).await
 }
