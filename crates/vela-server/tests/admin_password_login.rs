@@ -514,3 +514,211 @@ async fn password_change_survives_restart_on_the_same_database() {
         .unwrap();
     assert_eq!(body["must_change_password"], json!(false));
 }
+
+fn database_config(database_uri: &str) -> vela_server::config::DatabaseConfig {
+    parse(&config_text(database_uri, JWT_SECRET, 3600))
+        .unwrap()
+        .database
+}
+
+#[tokio::test]
+async fn reset_returns_default_password_and_forces_change_after_restart() {
+    let uri = database_url();
+    let base = serve(&uri, JWT_SECRET, 3600).await;
+    let client = Client::new();
+    let old_token = rotated_token(&client, &base).await;
+    assert_eq!(
+        system_status(&client, &base, &old_token).await,
+        StatusCode::OK
+    );
+
+    vela_server::app::reset_admin_password(&database_config(&uri))
+        .await
+        .unwrap();
+
+    let restarted = serve(&uri, JWT_SECRET, 3600).await;
+    assert_eq!(
+        system_status(&client, &restarted, &old_token).await,
+        StatusCode::UNAUTHORIZED,
+        "a token minted before the reset is revoked once the server restarts"
+    );
+    let old_password = login(&client, &restarted, "fresh-admin-pass").await;
+    assert_eq!(old_password.status(), StatusCode::UNAUTHORIZED);
+    assert_eq!(error_code(old_password).await, "invalid_password");
+
+    let response = login(&client, &restarted, "admin").await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let body: Value = response.json().await.unwrap();
+    assert_eq!(body["must_change_password"], json!(true));
+    let token = body["token"].as_str().unwrap();
+    assert_eq!(
+        system_status(&client, &restarted, token).await,
+        StatusCode::FORBIDDEN
+    );
+}
+
+#[tokio::test]
+async fn reset_reenables_password_login_when_it_was_switched_off() {
+    let uri = database_url();
+    let base = serve(&uri, JWT_SECRET, 3600).await;
+    let client = Client::new();
+    let _ = login_token(&client, &base, "admin").await;
+    let pool = sqlx::SqlitePool::connect(&uri).await.unwrap();
+    sqlx::query("UPDATE admin_auth SET password_login_enabled = 0 WHERE id = 1")
+        .execute(&pool)
+        .await
+        .unwrap();
+    pool.close().await;
+
+    vela_server::app::reset_admin_password(&database_config(&uri))
+        .await
+        .unwrap();
+
+    let restarted = serve(&uri, JWT_SECRET, 3600).await;
+    let status: Value = client
+        .get(format!("{restarted}/auth/status"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(
+        status,
+        json!({ "password_login_enabled": true, "must_change_password": true })
+    );
+}
+
+#[tokio::test]
+async fn reset_command_prints_restart_notice_and_no_password() {
+    let uri = database_url();
+    let config_path =
+        std::env::temp_dir().join(format!("vela-reset-{}.toml", uuid::Uuid::new_v4()));
+    fs::write(&config_path, config_text(&uri, JWT_SECRET, 3600)).unwrap();
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_vela-server"))
+        .arg("reset-admin-password")
+        .env("VELA_CONFIG", &config_path)
+        .output()
+        .unwrap();
+    fs::remove_file(&config_path).unwrap();
+    assert!(output.status.success(), "reset command failed");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.to_lowercase().contains("restart"),
+        "the command must say a running server needs a restart: {stdout}"
+    );
+    assert!(!stdout.contains("fresh-admin-pass"));
+}
+
+#[tokio::test]
+async fn reset_writes_one_audit_event_without_secrets() {
+    let uri = database_url();
+    let base = serve(&uri, JWT_SECRET, 3600).await;
+    let client = Client::new();
+    let _ = rotated_token(&client, &base).await;
+
+    vela_server::app::reset_admin_password(&database_config(&uri))
+        .await
+        .unwrap();
+
+    let restarted = serve(&uri, JWT_SECRET, 3600).await;
+    let page: Value = client
+        .get(format!("{restarted}/system/audit-logs"))
+        .bearer_auth(ADMIN_TOKEN)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let rows: Vec<&Value> = page["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|row| row["action"] == json!("password_reset"))
+        .collect();
+    assert_eq!(rows.len(), 1, "exactly one audit event per reset");
+    assert_eq!(rows[0]["resource_type"], json!("admin_auth"));
+    assert_eq!(rows[0]["outcome"], json!("success"));
+    assert_eq!(rows[0]["prior_revision"], json!(2));
+    assert_eq!(rows[0]["new_revision"], json!(3));
+    let serialized = rows[0].to_string();
+    assert!(!serialized.contains("fresh-admin-pass"));
+    assert!(!serialized.contains("pbkdf2"));
+}
+
+async fn export_bytes(client: &Client, base: &str, bearer: &str, format: &str) -> Vec<u8> {
+    let response = client
+        .get(format!(
+            "{base}/system/backup/export?format={format}&scope=full"
+        ))
+        .bearer_auth(bearer)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    response.bytes().await.unwrap().to_vec()
+}
+
+async fn import_status(client: &Client, base: &str, bearer: &str, payload: Vec<u8>) -> StatusCode {
+    client
+        .post(format!(
+            "{base}/system/backup/import?mode=merge&scope=full&clear_unreadable_credentials=true"
+        ))
+        .bearer_auth(bearer)
+        .body(payload)
+        .send()
+        .await
+        .unwrap()
+        .status()
+}
+
+#[tokio::test]
+async fn backup_import_keeps_target_password_login_and_token() {
+    let client = Client::new();
+    let source = serve(&database_url(), JWT_SECRET, 3600).await;
+    let source_token = rotated_token(&client, &source).await;
+    let bundle = export_bytes(&client, &source, &source_token, "json").await;
+    let snapshot = export_bytes(&client, &source, &source_token, "sqlite").await;
+    let bundle_text = String::from_utf8_lossy(&bundle);
+    assert!(!bundle_text.contains("pbkdf2"));
+    assert!(!bundle_text.contains("password_login"));
+
+    let target = serve(&database_url(), JWT_SECRET, 3600).await;
+    let target_token = login_token(&client, &target, "admin").await;
+    let changed = change_password(
+        &client,
+        &target,
+        &target_token,
+        "admin",
+        "target-admin-pass",
+    )
+    .await;
+    assert_eq!(changed.status(), StatusCode::OK);
+    let target_token = changed.json::<Value>().await.unwrap()["token"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+
+    for payload in [bundle, snapshot] {
+        assert_eq!(
+            import_status(&client, &target, &target_token, payload).await,
+            StatusCode::OK
+        );
+        assert_eq!(
+            system_status(&client, &target, &target_token).await,
+            StatusCode::OK,
+            "the token minted on the target stays valid after import"
+        );
+        assert_eq!(
+            login(&client, &target, "target-admin-pass").await.status(),
+            StatusCode::OK,
+            "the target keeps its own Admin Password"
+        );
+        assert_eq!(
+            login(&client, &target, "fresh-admin-pass").await.status(),
+            StatusCode::UNAUTHORIZED,
+            "the source Admin Password is not imported"
+        );
+    }
+}

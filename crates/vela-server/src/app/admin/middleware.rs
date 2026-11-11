@@ -35,6 +35,10 @@ pub(super) async fn transport(request: Request, next: Next) -> Response {
             MAX_ASR_TEST_BODY + 80 * 1024
         } else if request.uri().path().ends_with("/knowledge/raw/batch") {
             super::knowledge::MAX_RAW_BATCH_BODY
+        } else if request.uri().path().ends_with("/system/backup/import")
+            || request.uri().path().ends_with("/system/backup/inspect")
+        {
+            crate::database::backup::MAX_BACKUP_BODY_BYTES + 80 * 1024
         } else if request.uri().path().ends_with("/speakers/captures") {
             MAX_QUICK_CAPTURE_BODY
         } else if request.uri().path().contains("/enrollments/")
