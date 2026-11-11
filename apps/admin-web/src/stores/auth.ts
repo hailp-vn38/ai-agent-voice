@@ -1,26 +1,22 @@
 import { defineStore } from 'pinia'
-import { ref } from 'vue'
+import { computed } from 'vue'
 
-const STORAGE_KEY = 'voice-agent-admin-token'
-const configuredAdminToken = import.meta.env.VITE_ADMIN_TOKEN?.trim() || null
-let cleared = false
+import { adminTokenState, loginStatusState, writeAdminToken, type LoginStatus } from './admin-session'
 
-export function readAdminToken(): string | null {
-  if (typeof sessionStorage === 'undefined') return null
-  return sessionStorage.getItem(STORAGE_KEY) || (cleared ? null : configuredAdminToken)
-}
+export { readAdminToken, adminTokenState, type LoginStatus } from './admin-session'
 
 export const useAuthStore = defineStore('auth', () => {
-  const adminToken = ref<string | null>(readAdminToken())
+  const adminToken = adminTokenState
+  const loginStatus = loginStatusState
+  const mustChangePassword = computed(() => loginStatus.value?.mustChangePassword === true)
 
   function setAdminToken(token: string | null) {
-    const normalized = token?.trim() || null
-    cleared = normalized === null
-    adminToken.value = normalized
-    if (typeof sessionStorage === 'undefined') return
-    if (normalized) sessionStorage.setItem(STORAGE_KEY, normalized)
-    else sessionStorage.removeItem(STORAGE_KEY)
+    writeAdminToken(token)
   }
 
-  return { adminToken, setAdminToken }
+  function setLoginStatus(status: LoginStatus | null) {
+    loginStatus.value = status
+  }
+
+  return { adminToken, loginStatus, mustChangePassword, setAdminToken, setLoginStatus }
 })
