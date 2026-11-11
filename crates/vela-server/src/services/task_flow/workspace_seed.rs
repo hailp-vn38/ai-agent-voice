@@ -4,7 +4,13 @@
 //! Built-in Job Skills live in `crates/vela-server/builtin-skills/<id>/SKILL.md` so the
 //! server can seed runtime `skills/` and restore defaults on demand.
 
+use std::collections::BTreeMap;
+use std::io;
 use std::path::Path;
+
+use orchestrator_agent_rs::SkillDocument;
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 
 pub use orchestrator_flow_rs::{
     DAILY_ROOT_PROMPT, MEDIA_CREATOR_PROMPT, MEDIA_PROCESSOR_PROMPT, REMINDER_PLANNER_PROMPT,
@@ -82,15 +88,155 @@ pub const BUILTIN_SKILLS: &[(&str, &str)] = &[
     ("web-fetch-policy", WEB_FETCH_POLICY_SKILL),
 ];
 
+const BUILTIN_SKILL_VERSIONS_FILE: &str = ".builtin-job-skill-versions.json";
+const BUILTIN_SKILL_VERSIONS_TEMP_FILE: &str = ".builtin-job-skill-versions.json.tmp";
+
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Eq, Serialize)]
+struct BuiltinSkillVersions(BTreeMap<String, String>);
+
+fn builtin_skill_hash(id: &str, content: &str) -> Option<String> {
+    let document = SkillDocument::parse(id, content, usize::MAX).ok()?;
+    let rendered = document.render().ok()?;
+    let digest = Sha256::digest(rendered.as_bytes());
+    Some(digest.iter().map(|byte| format!("{byte:02x}")).collect())
+}
+
+fn is_known_legacy_builtin_hash(id: &str, hash: &str) -> bool {
+    // Frozen normalized hashes from Git history through this release; keep this list unchanged.
+    let legacy_hashes: &[&str] = match id {
+        "batch-source-collection" => {
+            &["a5aa74c5bff6fd0e484009f3e11f75a06725759a61ca94a96f1825cf4867cb46"]
+        }
+        "daily-synthesis-staging" => &[
+            "130bafe09321e13a5abbd385bebd3780c7a23cb996f746d5e2e220ce3b32448f",
+            "fff4b58bfbec6788ac73113021d37cb4ee695c5240aa488e71d1b01a7719e6e7",
+        ],
+        "daily-task-reminder" => &[
+            "e835289ce493f1f504d0a6bc4f4f592c94c727403425d724e28bb556d0724d29",
+            "f60a9ef6765c397bd9b1d8e309b3cf4017ecb42ac1baa3942f380d2bb6d3cf36",
+        ],
+        "trading-chart" => &[
+            "3a6d7098a2a56299591eb4c51a856c21eef0295af466832c726958abd60b99ea",
+            "1eba5cb86888b49c0fbd6954d12f9247f0fe2bf3872c42324af470ca1547eee9",
+        ],
+        "web-fetch-policy" => &[
+            "bc11ebd512b09eeec199663d85eb8e36fe31b6f1a9cb8f7d683a866110dfbd9b",
+            "11a815c8c35ac3cdca0a4aa0e47406bf386bb5190b04269524a10238f69ea0e5",
+        ],
+        "wiki-chat" => &["630f170b3e65c82d1b8c587b7c18c40745654f3b933c2c368cc033bb709bb4a3"],
+        "wiki-ingest" => &[
+            "dcd55eb320ec2ffc6b92c86fe11f9b2248d67b32e86020d7a9e41059eb002896",
+            "266b4f2a6588ce386bbcdbcde0fc2625934c2871a676014ede1b2363a86be833",
+            "e208b2b331075af65fa7018cdc178c16304266a3fc2400adaf4120fdf284e683",
+            "e086e87dfdac8a624e39f6a5121f2c9f79f2ecad48ab6fe8b461f5d48344712d",
+        ],
+        "wiki-lint" => &[
+            "d23101e7e27c863d491e671585c88a6d1e530b64ea0f8a4c9d3dc8ae0fd03e29",
+            "8b777c511f5106cf46fb7d2d9b5f29c0a7cedf793b217bfb1d0db7f3479e3792",
+        ],
+        "wiki-page-format" => &[
+            "5769193aa38b9248fde8cca7aa9425163a53a9a09e6a9720dc1059fd2349819e",
+            "67cdcde7059cc781477c335649c42456f259e8d37a434ce37d977afd8dac9f62",
+        ],
+        "wiki-query" => &[
+            "41fd3ddb3df3d68cbe8df9780793e840adf3428c5b15cf395d62c179ef5d1ef2",
+            "049790e057e9a676e5be6b0ec3d20363740252fc05bc9602459a473aae63a32b",
+        ],
+        "wiki-taxonomy" => &[
+            "563b6255090cfeae85158fd51b75344bd618bed57b41ee4208006f90c58ef82f",
+            "1fe2d81f2c0236dd3f4d076718c095877f58de60b8a3e75133857e1a531c8241",
+        ],
+        _ => &[],
+    };
+    legacy_hashes.contains(&hash)
+}
+
+fn read_builtin_skill_versions(skills_root: &Path) -> BuiltinSkillVersions {
+    std::fs::read(skills_root.join(BUILTIN_SKILL_VERSIONS_FILE))
+        .ok()
+        .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+        .unwrap_or_default()
+}
+
+fn write_builtin_skill_versions(
+    skills_root: &Path,
+    versions: &BuiltinSkillVersions,
+) -> Result<(), io::Error> {
+    let bytes = serde_json::to_vec_pretty(versions)
+        .map_err(|err| io::Error::other(format!("serialize built-in skill versions: {err}")))?;
+    let temporary = skills_root.join(BUILTIN_SKILL_VERSIONS_TEMP_FILE);
+    std::fs::write(&temporary, bytes)?;
+    std::fs::rename(temporary, skills_root.join(BUILTIN_SKILL_VERSIONS_FILE))
+}
+
+pub(crate) fn record_builtin_skill_base_version(
+    skills_root: &Path,
+    id: &str,
+) -> Result<(), io::Error> {
+    let Some(default_content) = BUILTIN_SKILLS
+        .iter()
+        .find_map(|(builtin_id, content)| (*builtin_id == id).then_some(*content))
+    else {
+        return Ok(());
+    };
+    let hash = builtin_skill_hash(id, default_content)
+        .ok_or_else(|| io::Error::other("invalid embedded built-in skill document"))?;
+    let mut versions = read_builtin_skill_versions(skills_root);
+    versions.0.insert(id.to_owned(), hash);
+    write_builtin_skill_versions(skills_root, &versions)
+}
+
 pub(crate) fn ensure_builtin_skills(skills_root: &Path) -> Result<(), std::io::Error> {
     std::fs::create_dir_all(skills_root)?;
+    let mut versions = read_builtin_skill_versions(skills_root);
+    let original_versions = versions.clone();
     for (skill_name, content) in BUILTIN_SKILLS {
+        let current_hash = builtin_skill_hash(skill_name, content)
+            .ok_or_else(|| io::Error::other("invalid embedded built-in skill document"))?;
         let dir = skills_root.join(skill_name);
         std::fs::create_dir_all(&dir)?;
         let skill_file = dir.join("SKILL.md");
-        if !skill_file.exists() {
-            std::fs::write(skill_file, content)?;
+        let disk_content = match std::fs::read_to_string(&skill_file) {
+            Ok(existing) => existing,
+            Err(err) if err.kind() == io::ErrorKind::NotFound => {
+                std::fs::write(&skill_file, content)?;
+                versions.0.insert((*skill_name).to_owned(), current_hash);
+                continue;
+            }
+            Err(err) => return Err(err),
+        };
+        let Some(disk_hash) = builtin_skill_hash(skill_name, &disk_content) else {
+            // Ticket 04 owns recovery for malformed built-in files. Keep their bytes intact here.
+            continue;
+        };
+
+        match versions.0.get(*skill_name).map(String::as_str) {
+            Some(base_hash) if base_hash == disk_hash => {
+                if base_hash != current_hash {
+                    std::fs::write(&skill_file, content)?;
+                }
+                versions.0.insert((*skill_name).to_owned(), current_hash);
+            }
+            Some(_) if disk_hash == current_hash => {
+                versions.0.insert((*skill_name).to_owned(), current_hash);
+            }
+            Some(_) => {}
+            None if disk_hash == current_hash => {
+                versions.0.insert((*skill_name).to_owned(), current_hash);
+            }
+            None if is_known_legacy_builtin_hash(skill_name, &disk_hash) => {
+                std::fs::write(&skill_file, content)?;
+                versions.0.insert((*skill_name).to_owned(), current_hash);
+            }
+            None => {
+                // Treat unrecognized pre-manifest content as an Admin edit and use today's
+                // default as its base for future update checks.
+                versions.0.insert((*skill_name).to_owned(), current_hash);
+            }
         }
+    }
+    if versions != original_versions || !skills_root.join(BUILTIN_SKILL_VERSIONS_FILE).exists() {
+        write_builtin_skill_versions(skills_root, &versions)?;
     }
     Ok(())
 }

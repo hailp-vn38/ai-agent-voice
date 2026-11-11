@@ -15,7 +15,9 @@ use super::agent_settings::{
     AGENT_SPECS, PersistedBackgroundSettings, find_agent_spec, save_persisted_settings,
     sync_orchestrator_from_state,
 };
-use super::workspace_seed::{BUILTIN_SKILLS, ensure_builtin_skills};
+use super::workspace_seed::{
+    BUILTIN_SKILLS, ensure_builtin_skills, record_builtin_skill_base_version,
+};
 
 pub const SKILL_MAX_BYTES: usize = 64 * 1024;
 const SKILL_FILE: &str = "SKILL.md";
@@ -456,6 +458,9 @@ pub async fn save(
     let tmp_file = skill_dir.join(".SKILL.md.tmp");
     std::fs::write(&tmp_file, rendered.as_bytes()).map_err(|_| SkillCatalogError::Io)?;
     std::fs::rename(&tmp_file, &skill_file).map_err(|_| SkillCatalogError::Io)?;
+    if is_builtin_skill(id) {
+        record_builtin_skill_base_version(skills_dir, id).map_err(|_| SkillCatalogError::Io)?;
+    }
 
     if let Some(orch) = state.orchestrator.as_ref()
         && let Err(err) = orch.reload_skills().await
