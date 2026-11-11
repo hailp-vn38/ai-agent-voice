@@ -11,7 +11,7 @@ import type {
 
 describe('systemLogsApi & listenSystemLogStream', () => {
   afterEach(() => {
-    sessionStorage.clear()
+    localStorage.clear()
     vi.unstubAllGlobals()
   })
 
@@ -96,7 +96,7 @@ describe('systemLogsApi & listenSystemLogStream', () => {
   })
 
   it('parses chunked SSE ready, log_entry, and lagged frames with bearer token', async () => {
-    sessionStorage.setItem('voice-agent-admin-token', 'secret-admin-jwt')
+    localStorage.setItem('voice-agent-admin-token', 'secret-admin-jwt')
 
     const encoder = new TextEncoder()
     const chunks = [

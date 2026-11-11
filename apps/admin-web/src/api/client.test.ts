@@ -5,7 +5,7 @@ import { ApiError } from './errors'
 
 describe('HTTP client', () => {
   afterEach(() => {
-    sessionStorage.clear()
+    localStorage.clear()
     vi.unstubAllGlobals()
   })
 
@@ -21,7 +21,7 @@ describe('HTTP client', () => {
   })
 
   it('merges request headers and adds session authentication plus quoted revision', async () => {
-    sessionStorage.setItem('voice-agent-admin-token', 'admin-token')
+    localStorage.setItem('voice-agent-admin-token', 'admin-token')
     const fetch = vi.fn().mockResolvedValue(new Response('{"ok":true}', { status: 200 }))
     vi.stubGlobal('fetch', fetch)
 
