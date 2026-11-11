@@ -148,6 +148,20 @@ async function onSkillDeleted(deletedId: string) {
 const agentSpec = computed<BackgroundAgentConfig | null>(
   () => agentsCatalog.value.find(a => a.id === agentId.value) ?? null,
 )
+const requiredJobSkills = computed(() => agentSpec.value?.required_job_skills ?? [])
+const requiredJobSkillSet = computed(() => new Set(requiredJobSkills.value))
+function withRequiredJobSkills(skills: string[], spec = agentSpec.value) {
+  return [...new Set([...skills, ...(spec?.required_job_skills ?? [])])]
+}
+const skillOptions = computed(() =>
+  agentSpec.value ? withRequiredJobSkills(agentSpec.value.available_skills, agentSpec.value) : [],
+)
+function isRequiredJobSkill(skillId: string) {
+  return requiredJobSkillSet.value.has(skillId)
+}
+function openSkillDetails(skillId: string) {
+  void router.push({ name: 'jobs-settings-skill', params: { skillId } })
+}
 const isPrimary = computed(() => agentSpec.value?.mode === 'primary')
 const isCustomSubagent = computed(() => agentSpec.value?.is_builtin === false)
 const domainTools = computed(() => (agentSpec.value ? domainToolsForAgent(agentSpec.value) : []))
@@ -215,7 +229,7 @@ const currentAgentUpdate = computed<BackgroundAgentConfigUpdate | undefined>(() 
   const spec = agentSpec.value
   if (!spec) return undefined
   const steps = Math.max(1, Math.min(100, Number(form.value.steps) || spec.default_steps))
-  const skills = [...form.value.allowed_skills]
+  const skills = withRequiredJobSkills(form.value.allowed_skills)
   const tools = normalizeTools(form.value.allowed_tools, skills, spec.mode === 'primary')
   const toolProviders = normalizeToolProviders(form.value.tool_providers)
   return {
@@ -268,7 +282,7 @@ function populateForm(spec: BackgroundAgentConfig) {
     tool_providers: initialToolProviders,
     steps: spec.steps,
     allowed_tools: [...spec.allowed_tools].filter(t => t !== 'skill'),
-    allowed_skills: [...spec.allowed_skills],
+    allowed_skills: withRequiredJobSkills(spec.allowed_skills, spec),
     description: spec.description,
     system_prompt: spec.system_prompt,
   }
@@ -290,6 +304,7 @@ function resetDefaultTools() {
 }
 
 function toggleSkill(skill: string, checked: boolean) {
+  if (!checked && isRequiredJobSkill(skill)) return
   const set = new Set(form.value.allowed_skills)
   if (checked) set.add(skill)
   else set.delete(skill)
@@ -298,12 +313,14 @@ function toggleSkill(skill: string, checked: boolean) {
 
 function selectAllSkills() {
   if (!agentSpec.value) return
-  form.value.allowed_skills = [...agentSpec.value.available_skills]
+  form.value.allowed_skills = [...skillOptions.value]
 }
 
 function resetDefaultSkills() {
   if (!agentSpec.value) return
-  form.value.allowed_skills = [...(agentSpec.value.default_allowed_skills ?? [])]
+  form.value.allowed_skills = withRequiredJobSkills(
+    agentSpec.value.default_allowed_skills ?? [],
+  )
 }
 
 function resetToDefault() {
@@ -319,7 +336,7 @@ function resetToDefault() {
     tool_providers: emptyToolProviders,
     steps: spec.default_steps,
     allowed_tools: [...defaultDomainToolsForAgent(spec)],
-    allowed_skills: [...(spec.default_allowed_skills ?? [])],
+    allowed_skills: withRequiredJobSkills(spec.default_allowed_skills ?? [], spec),
     description: spec.default_description,
     system_prompt: spec.default_system_prompt,
   }
@@ -1190,7 +1207,7 @@ onBeforeUnmount(() => controller?.abort())
                     {{ t('jobUi.skillsAllowed') }}
                   </h2>
                   <Badge variant="secondary" class="tabular-nums">
-                    {{ form.allowed_skills.length }}/{{ agentSpec.available_skills.length }}
+                    {{ form.allowed_skills.length }}/{{ skillOptions.length }}
                   </Badge>
                 </div>
                 <p class="mt-0.5 text-xs text-muted-foreground">
@@ -1228,7 +1245,7 @@ onBeforeUnmount(() => controller?.abort())
                   type="button"
                   class="h-7 px-2 text-xs"
                   :disabled="
-                    saving || form.allowed_skills.length === agentSpec.available_skills.length
+                    saving || form.allowed_skills.length === skillOptions.length
                   "
                   @click="selectAllSkills"
                 >
@@ -1254,9 +1271,9 @@ onBeforeUnmount(() => controller?.abort())
 
             <div class="flex flex-wrap gap-2">
               <div
-                v-for="skill in agentSpec.available_skills"
+                v-for="skill in skillOptions"
                 :key="skill"
-                class="inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs transition-colors"
+                class="inline-flex flex-wrap items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs transition-colors"
                 :class="
                   form.allowed_skills.includes(skill)
                     ? 'border-studio-violet/40 bg-studio-violet/10 font-medium text-studio-violet'
@@ -1268,11 +1285,31 @@ onBeforeUnmount(() => controller?.abort())
                     type="checkbox"
                     class="size-3.5 shrink-0 accent-primary"
                     :checked="form.allowed_skills.includes(skill)"
-                    :disabled="saving"
+                    :disabled="saving || isRequiredJobSkill(skill)"
+                    :data-agent-skill="skill"
                     @change="toggleSkill(skill, ($event.target as HTMLInputElement).checked)"
                   />
                   <code class="font-mono text-[11px]">{{ skill }}</code>
+                  <Badge v-if="isRequiredJobSkill(skill)" variant="secondary">
+                    {{ t('jobUi.requiredJobSkillBadge') }}
+                  </Badge>
                 </label>
+                <small
+                  v-if="isRequiredJobSkill(skill)"
+                  class="basis-full text-[11px] font-normal text-muted-foreground"
+                  data-agent-required-skill-note
+                >
+                  {{ t('jobUi.requiredJobSkillLockedHint') }}
+                </small>
+                <button
+                  v-if="isRequiredJobSkill(skill)"
+                  type="button"
+                  class="inline-flex items-center rounded px-1 py-0.5 text-[11px] text-studio-violet hover:bg-accent"
+                  :data-agent-required-skill-link="skill"
+                  @click="openSkillDetails(skill)"
+                >
+                  {{ t('jobUi.requiredJobSkillOpenDetails') }}
+                </button>
                 <button
                   type="button"
                   class="ml-1 inline-flex cursor-pointer items-center rounded px-1 py-0.5 text-[11px] text-muted-foreground hover:bg-accent hover:text-foreground"

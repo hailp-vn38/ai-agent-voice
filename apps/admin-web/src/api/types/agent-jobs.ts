@@ -35,6 +35,7 @@ export interface BackgroundAgentConfig {
   available_tools: string[]
   allowed_skills: string[]
   default_allowed_skills?: string[]
+  required_job_skills?: string[]
   available_skills: string[]
   allowed_subagents: string[]
   allowed_capability_tags?: string[]

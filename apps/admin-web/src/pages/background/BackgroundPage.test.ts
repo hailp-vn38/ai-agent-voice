@@ -124,6 +124,7 @@ const fixtureSettings = (): SettingsFixture => ({
       available_tools: ['skill', 'wiki_tree', 'wiki_query', 'wiki_get'],
       allowed_skills: ['wiki-query'],
       default_allowed_skills: ['wiki-query'],
+      required_job_skills: ['wiki-query'],
       available_skills: ['wiki-query', 'wiki-taxonomy'],
       allowed_subagents: [],
       description: 'Read-only Wiki researcher',
@@ -496,6 +497,69 @@ describe('Jobs Settings Hub (Variant A) & Sub-pages', () => {
     })
   })
 
+  it('keeps a Required Job Skill selected, explains why, and keeps both edit paths available', async () => {
+    const settings = fixtureSettings()
+    const researcher = settings.agents.find(agent => agent.id === 'wiki_researcher')!
+    researcher.available_skills = ['wiki-taxonomy']
+    researcher.default_allowed_skills = []
+    requestMock.mockImplementation((path: string) => {
+      if (path === '/api/admin/background/settings') return Promise.resolve(settings)
+      if (path === '/api/admin/background/skills/wiki-query') {
+        return Promise.resolve({
+          id: 'wiki-query',
+          name: 'Wiki query',
+          description: 'Read and query the Wiki.',
+          body: 'Read Wiki pages.',
+          is_builtin: true,
+          is_modified: false,
+          default_has_update: false,
+          etag: 'wiki-query-v1',
+          used_by_agents: ['wiki_researcher'],
+          suggested_for_agents: [],
+          default: null,
+        })
+      }
+      return Promise.resolve({ items: [], total: 0, page: 1, page_size: 30 })
+    })
+
+    const wrapper = mount(BackgroundAgentDetailPage)
+    await flushPromises()
+
+    const required = wrapper.get<HTMLInputElement>('input[data-agent-skill="wiki-query"]')
+    expect(required.element.checked).toBe(true)
+    expect(required.element.disabled).toBe(true)
+    expect(wrapper.text()).toContain('Required')
+    expect(wrapper.text()).toContain('This skill is always included in this Sub-Agent system prompt.')
+    await wrapper.get('[data-reset-agent-default]').trigger('click')
+    expect(required.element.checked).toBe(true)
+    const ordinary = wrapper.get<HTMLInputElement>('input[data-agent-skill="wiki-taxonomy"]')
+    expect(ordinary.element.disabled).toBe(false)
+    await ordinary.setValue(true)
+    expect(ordinary.element.checked).toBe(true)
+
+    await wrapper.get('[data-agent-required-skill-link="wiki-query"]').trigger('click')
+    expect(navigateMock).toHaveBeenCalledWith({
+      name: 'jobs-settings-skill',
+      params: { skillId: 'wiki-query' },
+    })
+
+    await wrapper.get('[data-agent-edit-skill="wiki-query"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('[data-skill-editor-modal]').exists()).toBe(true)
+
+    await wrapper.get('[data-skill-modal-close]').trigger('click')
+    await wrapper.get('input[data-agent-steps]').setValue(9)
+    await wrapper.get('[data-save-agent-config]').trigger('click')
+    await flushPromises()
+    const putCall = requestMock.mock.calls.find(
+      c => c[0] === '/api/admin/background/settings' && c[1]?.method === 'PUT',
+    )
+    expect(putCall).toBeDefined()
+    expect(JSON.parse(String(putCall![1].body)).agents.wiki_researcher.allowed_skills).toContain(
+      'wiki-query',
+    )
+  })
+
   it('manages Job Skills on BackgroundSkillsPage and dedicated BackgroundSkillDetailPage', async () => {
     vi.spyOn(window, 'confirm').mockReturnValue(true)
 
@@ -595,6 +659,12 @@ describe('Jobs Settings Hub (Variant A) & Sub-pages', () => {
     expect(detailWrapper.get('[data-skill-default-update]').text()).toContain(
       'Default update available',
     )
+    expect(detailWrapper.get('[data-skill-required-by]').text()).toContain('wiki_researcher')
+    await detailWrapper.get('[data-skill-required-agent="wiki_researcher"]').trigger('click')
+    expect(navigateMock).toHaveBeenCalledWith({
+      name: 'jobs-settings-agent',
+      params: { agentId: 'wiki_researcher' },
+    })
     expect(detailWrapper.find('[data-skill-delete]').exists()).toBe(false)
     expect(
       (detailWrapper.get('[data-skill-name-input]').element as HTMLInputElement).value,
