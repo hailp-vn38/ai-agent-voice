@@ -1264,6 +1264,19 @@ skills_dir = "{}"
             .iter()
             .any(|skill| skill["id"] == "Bad ID" && skill["status"] == "invalid")
     );
+
+    let invalid_name = skills.iter().find(|skill| skill["id"] == "Bad ID").unwrap();
+    let delete_invalid_name = client
+        .delete(format!("{base}/background/skills/Bad%20ID"))
+        .bearer_auth("background-test-token")
+        .header(
+            "If-Match",
+            format!("\"{}\"", invalid_name["etag"].as_str().unwrap()),
+        )
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(delete_invalid_name.status(), StatusCode::NO_CONTENT);
     assert!(
         skills
             .iter()
