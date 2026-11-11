@@ -20,6 +20,8 @@ use std::{
 
 /// The default Admin Password of a fresh deployment. It is only ever seeded as a hash.
 const DEFAULT_PASSWORD: &str = "admin";
+const MIN_PASSWORD_CHARS: usize = 8;
+const MAX_PASSWORD_BYTES: usize = 1024;
 const FAILURE_LIMIT: usize = 5;
 const FAILURE_WINDOW: Duration = Duration::from_secs(60);
 
@@ -59,6 +61,7 @@ impl AdminAuthState {
     }
 
     fn publish(&self, status: PasswordLoginStatus) {
+        // Callers publish only after the SQLite transaction that produced the status commits.
         *self.status.write().unwrap_or_else(PoisonError::into_inner) = status;
     }
 
@@ -159,6 +162,174 @@ pub(super) fn routes() -> Router<AppState> {
     Router::new()
         .route("/auth/status", get(status))
         .route("/auth/login", post(login))
+}
+
+/// Admin routes behind the bearer check. The password change is the one route an Admin Web Token
+/// may call while the forced-change flag is set, so the middleware exempts it by path.
+pub(super) fn protected_routes() -> Router<AppState> {
+    Router::new().route("/auth/password", post(change_password))
+}
+
+/// The path the middleware lets through while the forced-change flag is set.
+pub(super) fn is_password_change_path(path: &str) -> bool {
+    path.ends_with("/auth/password")
+}
+
+#[derive(Deserialize)]
+struct ChangePasswordRequest {
+    current_password: String,
+    new_password: String,
+}
+
+/// Replaces the Admin Password. The hash, the cleared forced-change flag, the revision bump and
+/// the audit event commit together; every token minted before is then rejected.
+async fn change_password(State(state): State<AppState>, request: Request) -> Response {
+    let (request, body): (Request, ChangePasswordRequest) = match json(request).await {
+        Ok(parsed) => parsed,
+        Err(response) => return response,
+    };
+    let ChangePasswordRequest {
+        current_password,
+        new_password,
+    } = body;
+    if new_password == DEFAULT_PASSWORD {
+        return error(
+            &request,
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "password_is_default",
+        );
+    }
+    if new_password.chars().count() < MIN_PASSWORD_CHARS {
+        return error(
+            &request,
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "password_too_short",
+        );
+    }
+    if new_password.len() > MAX_PASSWORD_BYTES {
+        return error(
+            &request,
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "password_too_long",
+        );
+    }
+    let Some(database) = state.database.as_ref() else {
+        return error(
+            &request,
+            StatusCode::SERVICE_UNAVAILABLE,
+            "database_unavailable",
+        );
+    };
+    let pool = database.pool();
+    let row = match read_row(pool).await {
+        Ok(row) => row,
+        Err(cause) => return sql_error(&request, &cause),
+    };
+    let stored = row.password_hash.clone();
+    let candidate = current_password.clone();
+    let verified = tokio::task::spawn_blocking(move || password::verify(&stored, &candidate))
+        .await
+        .unwrap_or(false);
+    if !verified {
+        return error(
+            &request,
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "invalid_current_password",
+        );
+    }
+    if new_password == current_password {
+        return error(
+            &request,
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "password_unchanged",
+        );
+    }
+    let Some(key) = state.admin_auth.key.as_ref() else {
+        return error(
+            &request,
+            StatusCode::SERVICE_UNAVAILABLE,
+            "admin_signing_unavailable",
+        );
+    };
+    let new_hash = match tokio::task::spawn_blocking(move || password::hash(&new_password)).await {
+        Ok(hash) => hash,
+        Err(_) => {
+            return error(
+                &request,
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "password_hash_failed",
+            );
+        }
+    };
+    let new_revision = row.revision.saturating_add(1);
+    let issued_at = unix_now();
+    let mut tx = match pool.begin().await {
+        Ok(tx) => tx,
+        Err(cause) => return sql_error(&request, &cause),
+    };
+    let updated = sqlx::query(
+        "UPDATE admin_auth
+         SET password_hash = ?, must_change_password = 0, revision = ?, updated_at = ?
+         WHERE id = 1 AND revision = ?",
+    )
+    .bind(new_hash)
+    .bind(new_revision)
+    .bind(issued_at)
+    .bind(row.revision)
+    .execute(&mut *tx)
+    .await;
+    match updated {
+        Ok(result) if result.rows_affected() == 1 => {}
+        Ok(_) => {
+            return error(&request, StatusCode::CONFLICT, "revision_conflict");
+        }
+        Err(cause) => return sql_error(&request, &cause),
+    }
+    if let Err(cause) = crate::database::audit::audit(
+        &mut *tx,
+        id(&request),
+        "admin_auth",
+        Some(1),
+        "password_change",
+        Some(row.revision),
+        Some(new_revision),
+        crate::database::audit::AuditOutcome::Success,
+        1,
+    )
+    .await
+    {
+        return sql_error(&request, &cause);
+    }
+    if let Err(cause) = tx.commit().await {
+        return sql_error(&request, &cause);
+    }
+    let enabled = row.password_login_enabled != 0;
+    state.admin_auth.publish(PasswordLoginStatus {
+        password_login_enabled: enabled,
+        must_change_password: false,
+        revision: new_revision,
+    });
+    let expires_at = issued_at.saturating_add(state.admin_auth.token_ttl_secs);
+    let token = token::sign(
+        key,
+        &token::Claims {
+            iat: issued_at,
+            exp: expires_at,
+            rev: new_revision,
+        },
+    );
+    let mut response = Json(serde_json::json!({
+        "token": token,
+        "token_type": "Bearer",
+        "expires_at": expires_at,
+        "must_change_password": false,
+    }))
+    .into_response();
+    response.headers_mut().insert(
+        axum::http::header::CACHE_CONTROL,
+        axum::http::HeaderValue::from_static("no-store"),
+    );
+    response
 }
 
 #[derive(Deserialize)]

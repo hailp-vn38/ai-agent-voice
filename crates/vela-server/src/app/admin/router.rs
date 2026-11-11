@@ -13,12 +13,19 @@ use std::sync::Arc;
 
 pub(in crate::app) fn router(state: AppState) -> Router<AppState> {
     // Login and status carry no bearer credential, so they merge after the authenticate layer.
-    let public = if state.config.api.jwt_secret.expose().trim().is_empty() {
-        Router::new()
-    } else {
+    let signing_enabled = !state.config.api.jwt_secret.expose().trim().is_empty();
+    let public = if signing_enabled {
         auth::routes()
+    } else {
+        Router::new()
+    };
+    let password_change = if signing_enabled {
+        auth::protected_routes()
+    } else {
+        Router::new()
     };
     Router::new()
+        .merge(password_change)
         .merge(knowledge_routes(Arc::clone(&state.knowledge_write_gate)))
         .merge(wiki_sync_routes())
         .merge(background_routes())

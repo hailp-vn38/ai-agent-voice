@@ -85,27 +85,41 @@ pub(super) async fn authenticate(
     {
         return next.run(request).await;
     }
-    let valid = request
+    let token = if request
         .headers()
         .get_all(header::AUTHORIZATION)
         .iter()
         .count()
         == 1
-        && request
+    {
+        request
             .headers()
             .get(header::AUTHORIZATION)
             .and_then(|value| value.to_str().ok())
             .and_then(|value| value.strip_prefix("Bearer "))
-            .is_some_and(|token| {
-                !token.is_empty()
-                    && (constant_time_eq(token.as_bytes(), state.config.api.admin_token.as_bytes())
-                        || state.admin_auth.accepts(token))
-            });
-    if valid {
-        next.run(request).await
+            .filter(|token| !token.is_empty())
     } else {
-        error(&request, StatusCode::UNAUTHORIZED, "unauthorized")
+        None
+    };
+    let Some(token) = token else {
+        return error(&request, StatusCode::UNAUTHORIZED, "unauthorized");
+    };
+    let password_change = super::auth::is_password_change_path(request.uri().path())
+        && request.method() == http::Method::POST;
+    // The static admin_token stays usable through the expand step, but it cannot change the
+    // Admin Password, so the password route accepts only Admin Web Tokens.
+    if !password_change
+        && constant_time_eq(token.as_bytes(), state.config.api.admin_token.as_bytes())
+    {
+        return next.run(request).await;
     }
+    if !state.admin_auth.accepts(token) {
+        return error(&request, StatusCode::UNAUTHORIZED, "unauthorized");
+    }
+    if state.admin_auth.status().must_change_password && !password_change {
+        return error(&request, StatusCode::FORBIDDEN, "password_change_required");
+    }
+    next.run(request).await
 }
 
 fn constant_time_eq(left: &[u8], right: &[u8]) -> bool {

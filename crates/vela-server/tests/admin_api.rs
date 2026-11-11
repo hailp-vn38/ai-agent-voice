@@ -20,5 +20,8 @@ mod providers_templates;
 #[path = "admin_api/credentials_mcp.rs"]
 mod credentials_mcp;
 
+#[path = "admin_api/web_token.rs"]
+mod web_token;
+
 #[path = "admin_api/reminders.rs"]
 mod reminders;
