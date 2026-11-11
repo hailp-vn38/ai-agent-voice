@@ -8,10 +8,16 @@ Xem spec: [Thuật ngữ](../spec.md#thuật-ngữ), [Further Notes](../spec.md#
 
 **Blocked by:** 02, 05, 07, 08, 11, 12
 
-**Status:** ready-for-agent
+**Status:** resolved
 
-- [ ] `GLOSSARY.md` có ba thuật ngữ mới, mỗi thuật ngữ có dòng `_Avoid_`
-- [ ] Không mục Job Skill nào trong `GLOSSARY.md` mâu thuẫn với hành vi đã triển khai
-- [ ] ADR 0128 ghi đúng số Built-in Job Skill và đúng hành vi khi xoá skill, có dòng tham chiếu tới ADR 0142
-- [ ] ADR 0142, 0143, 0144 ở trạng thái Accepted
-- [ ] Spec này được đánh dấu hoàn thành
+- [x] `GLOSSARY.md` có ba thuật ngữ mới, mỗi thuật ngữ có dòng `_Avoid_`
+- [x] Không mục Job Skill nào trong `GLOSSARY.md` mâu thuẫn với hành vi đã triển khai
+- [x] ADR 0128 ghi đúng số Built-in Job Skill và đúng hành vi khi xoá skill, có dòng tham chiếu tới ADR 0142
+- [x] ADR 0142, 0143, 0144 ở trạng thái Accepted
+- [ ] Spec này được đánh dấu hoàn thành sau khi các thư viện cần thiết được phát hành và thay patch tạm bằng phiên bản đã phát hành
+
+## Answer
+
+Đã cập nhật glossary và ADR theo hành vi đã tích hợp. Spec vẫn `ready-for-human` vì phát hành các crate lên crates.io cần người duyệt theo `AGENTS.md` và spec.
+
+- 2026-11-12: Hoàn tất chỉnh sửa tài liệu; còn cổng phát hành thư viện trước khi đánh dấu spec hoàn thành.

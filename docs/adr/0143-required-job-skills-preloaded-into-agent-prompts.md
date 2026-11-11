@@ -1,6 +1,6 @@
 # ADR 0143 — Required Job Skill được nạp sẵn vào system prompt của Built-in Sub-Agent
 
-Status: Proposed, 2026-11-11.
+Status: Accepted, 2026-11-12.
 Extends: [ADR 0128](0128-admin-managed-job-skill-catalog.md).
 
 Prompt của `wiki_ingestor` yêu cầu gọi `skill` cho ba Job Skill ngay lượt đầu của mọi Agent Run; `wiki_curator` làm tương tự với hai skill. Các skill này thực chất là một phần của prompt, nhưng lại đi qua cơ chế lựa chọn: Admin bỏ gán được (Sub-Agent sau đó bị từ chối khi nạp, không có cảnh báo lúc lưu), mỗi run tốn một lượt model để nạp, và nội dung mất khi Agent Session bị nén. Spec: [job-skill-catalog-hardening](../../.scratch/job-skill-catalog-hardening/spec.md).
@@ -17,7 +17,7 @@ Quyết định: phân biệt **Required Job Skill** với skill thường. Serv
 - **Nội dung lấy từ bản trên đĩa nếu hợp lệ, nếu không thì từ bản nhúng.**
 - **Required Job Skill vẫn nạp được qua tool `skill`.** Prompt Admin đã tuỳ chỉnh từ trước có thể còn câu yêu cầu nạp; từ chối lời gọi đó sẽ tái tạo đúng lỗi cần sửa.
 - **Root Orchestrator và Custom Sub-Agent không có Required Job Skill.**
-- **Prompt mặc định trong orchestrator-flow bỏ bước nạp các skill này.**
+- **Prompt mặc định do `llm-wiki-rs` sở hữu bỏ bước nạp các skill này; `orchestrator-flow` tái xuất prompt đó.**
 - **Không thay đổi orchestrator-agent.** Server đã sở hữu việc ghi file prompt.
 
 ## Considered Options

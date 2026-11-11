@@ -1,8 +1,8 @@
 # Skill Catalog bền vững: nâng cấp Built-in, Required Job Skill và yêu cầu tool
 
-Status: ready-for-agent
+Status: ready-for-human
 
-Quyết định kiến trúc (đều Proposed):
+Quyết định kiến trúc (đều Accepted ngày 2026-11-12):
 
 - [ADR 0142](../../docs/adr/0142-single-skill-discovery-and-builtin-skill-upgrades.md): một cách quét Skill Catalog duy nhất và nâng cấp Built-in Job Skill.
 - [ADR 0143](../../docs/adr/0143-required-job-skills-preloaded-into-agent-prompts.md): Required Job Skill nạp sẵn vào system prompt.
@@ -145,7 +145,7 @@ Ba khái niệm mới, chưa có trong `GLOSSARY.md`; ticket 13 thêm vào:
 - Khối được ghi lại mỗi khi lưu skill, lưu cấu hình Sub-Agent và lúc khởi động. Nội dung lấy từ bản trên đĩa nếu hợp lệ, nếu không thì từ bản nhúng.
 - Required Job Skill vẫn nằm trong `allowed_skills` hiệu lực của Sub-Agent, nên vẫn nạp được bằng tool `skill`. Lý do: prompt Admin đã tuỳ chỉnh từ trước có thể còn câu yêu cầu nạp. Nếu Admin gửi `allowed_skills` thiếu Required Job Skill, server tự thêm lại chứ không từ chối, giống cách tool `skill` đang được tự thêm.
 - Projection cấu hình Sub-Agent trong Admin API thêm danh sách Required Job Skill.
-- Prompt mặc định của `wiki_ingestor` và `wiki_curator` (nằm trong thư viện orchestrator-flow) bỏ bước nạp các Required Job Skill.
+- Prompt mặc định của `wiki_ingestor` và `wiki_curator` (do `llm-wiki-rs` sở hữu và được `orchestrator-flow` tái xuất) bỏ bước nạp các Required Job Skill.
 - Không cần thay đổi thư viện orchestrator-agent cho phần này.
 
 ### Skill Tool Requirement (ADR 0144)

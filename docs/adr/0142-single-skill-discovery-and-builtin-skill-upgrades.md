@@ -1,6 +1,6 @@
 # ADR 0142 — Một cách quét Skill Catalog và nâng cấp Built-in Job Skill theo Skill Base Version
 
-Status: Proposed, 2026-11-11.
+Status: Accepted, 2026-11-12.
 Amends: [ADR 0128](0128-admin-managed-job-skill-catalog.md).
 
 Server và thư viện orchestrator-agent hiện mỗi bên tự quét thư mục skill, theo hai quy tắc khác nhau. Server dùng bản nhúng thay cho Built-in Job Skill hỏng trên đĩa; thư viện chỉ đọc đĩa, quét nghiêm ngặt lúc build và khoan dung lúc reload. Hệ quả: một mục hỏng trong thư mục skill làm server không khởi động được, và một Built-in Job Skill hỏng làm `reconfigure` thất bại, trái với ý định của ADR 0128. Ngoài ra Built-in Job Skill chỉ được ghi khi file chưa có, nên bản sửa phát hành cùng server không tới deployment đang chạy. Spec: [job-skill-catalog-hardening](../../.scratch/job-skill-catalog-hardening/spec.md).

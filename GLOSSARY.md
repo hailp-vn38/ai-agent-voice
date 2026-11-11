@@ -191,12 +191,24 @@ Hướng dẫn chuyên môn có tên và mô tả phạm vi áp dụng để Sub
 _Avoid_: Plugin Package, Tool Grant, executable script
 
 **Built-in Job Skill**:
-Job Skill chuẩn do hệ thống cung cấp sẵn kèm nội dung mặc định để bảo đảm các quy trình cốt lõi của Sub-Agent; Admin có thể tùy chỉnh nội dung hoặc khôi phục về mặc định nhưng không thể xóa bỏ.
+Job Skill chuẩn do hệ thống cung cấp để bảo đảm các quy trình cốt lõi của Sub-Agent; Admin có thể tùy chỉnh nội dung hoặc khôi phục về mặc định, còn nội dung chưa được Admin sửa sẽ nhận bản mặc định mới khi hệ thống nâng cấp.
 _Avoid_: hardcoded prompt, Custom Job Skill, read-only skill
 
 **Custom Job Skill**:
 Job Skill do Admin tự định nghĩa thêm để mở rộng hướng dẫn chuyên môn cho Sub-Agent, có thể chỉnh sửa hoặc xóa bỏ hoàn toàn khỏi hệ thống.
 _Avoid_: Built-in Job Skill, custom plugin, custom tool
+
+**Required Job Skill**:
+Job Skill cốt lõi mà một Built-in Sub-Agent luôn phải tuân theo và Admin không thể bỏ khỏi phân công của Sub-Agent đó.
+_Avoid_: Loaded Skill, optional Job Skill, Tool Grant
+
+**Skill Tool Requirement**:
+Tập tool mà một Job Skill cần để Sub-Agent có thể làm theo hướng dẫn của skill, không cấp quyền sử dụng các tool đó.
+_Avoid_: Tool Grant, allowed tool, permission
+
+**Skill Base Version**:
+Bản mặc định mà nội dung hiện tại của một Built-in Job Skill được xem là bắt nguồn từ đó.
+_Avoid_: current default, skill revision history, Admin edit
 
 **Skill Catalog**:
 Tập các Job Skill mà một Agent Session được phép khám phá và lựa chọn thông qua công cụ `skill` cho nhiệm vụ của mình.

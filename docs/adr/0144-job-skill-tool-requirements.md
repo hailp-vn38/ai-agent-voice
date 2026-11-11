@@ -1,6 +1,6 @@
 # ADR 0144 — Job Skill khai báo tool nó cần, server cảnh báo khi Sub-Agent thiếu
 
-Status: Proposed, 2026-11-11.
+Status: Accepted, 2026-11-12.
 Extends: [ADR 0128](0128-admin-managed-job-skill-catalog.md).
 
 Job Skill là văn bản hướng dẫn và không cấp quyền thực thi tool. Vì vậy một skill có thể được gán cho Sub-Agent không có tool mà skill bảo gọi, và không ai biết. Ví dụ hiện có: `wiki-query` hướng dẫn ghi synthesis và vá trang Wiki nhưng được gán mặc định cho `wiki_researcher`, vốn chỉ có tool đọc. Spec: [job-skill-catalog-hardening](../../.scratch/job-skill-catalog-hardening/spec.md).
