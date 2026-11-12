@@ -1,5 +1,7 @@
 # 01: Đăng nhập bằng Admin Password cấp Admin Web Token
 
+Status: resolved
+
 **What to build:** Một client gọi route đăng nhập của Admin API với Admin Password mặc định và nhận về Admin Web Token; token đó được Admin API chấp nhận làm Bearer. Đây là bước *expand*: `admin_token` vẫn hoạt động y như cũ, nên không test hay script nào hiện có bị ảnh hưởng.
 
 Gồm: migration thêm bản ghi singleton trạng thái đăng nhập, seed mật khẩu mặc định khi chưa có hash, khoá `api.jwt_secret` trong config (ở ticket này còn **tuỳ chọn**: thiếu thì hai route mới trả `404` và chỉ `admin_token` dùng được), route đọc trạng thái, route đăng nhập, limiter chống dò, và middleware xác thực nhận thêm Admin Web Token. Thêm ba thuật ngữ Admin Password, Admin Web Token, Admin Signing Secret vào `CONTEXT.md` và `GLOSSARY.md`.

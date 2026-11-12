@@ -1,5 +1,7 @@
 # 04: Admin Web có trang đăng nhập và đổi mật khẩu bắt buộc
 
+Status: resolved
+
 **What to build:** Mở Admin Web khi chưa có Admin Web Token, Admin thấy trang đăng nhập thay cho ô dán token. Đăng nhập bằng mật khẩu mặc định đưa thẳng tới trang đổi mật khẩu; đổi xong mới vào được app và quay về trang đã định đến. Token hết hạn hoặc bị thu hồi thì Admin được đưa về trang đăng nhập. Bundle không còn chứa credential nào.
 
 Gồm cả việc kiểm tra Studio Assistant và các trang streaming (job, log, thông báo, wiki chat) vẫn chạy sau khi đăng nhập bằng token mới.

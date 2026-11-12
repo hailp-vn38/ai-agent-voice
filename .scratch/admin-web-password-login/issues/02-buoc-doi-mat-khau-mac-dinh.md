@@ -1,5 +1,7 @@
 # 02: Buộc đổi mật khẩu mặc định và đổi Admin Password
 
+Status: resolved
+
 **What to build:** Sau khi đăng nhập bằng mật khẩu mặc định, Admin Web Token chỉ gọi được route đổi mật khẩu và route đọc trạng thái; mọi route khác trả `403 password_change_required`. Đổi mật khẩu thành công trả token mới dùng được ngay, và mọi token cấp trước đó hết hiệu lực. Admin đổi lại mật khẩu bất kỳ lúc nào bằng cùng route.
 
 Kèm một helper trong harness test Admin API: đăng nhập bằng mật khẩu mặc định, đổi mật khẩu, trả Admin Web Token dùng được. Các ticket chuyển test (07–09) dựa vào helper này.

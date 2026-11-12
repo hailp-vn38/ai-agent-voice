@@ -1,5 +1,7 @@
 # 03: Đăng xuất mọi nơi và tắt/bật Password Login
 
+Status: resolved
+
 **What to build:** Admin thu hồi được mọi Admin Web Token mà không đổi mật khẩu, và tắt hoặc bật lại Password Login. Khi Password Login tắt, Admin API cho qua request không có credential; bật lại thì đòi token như trước và mật khẩu cũ vẫn đăng nhập được. Phần này chỉ là API; giao diện nằm ở ticket 05.
 
 Xem spec: [Route mới](../spec.md#route-mới), [Xác thực Admin API](../spec.md#xác-thực-admin-api).

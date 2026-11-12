@@ -1,5 +1,7 @@
 # 08: Chuyển test background, Studio Assistant và test trong crate (lô 2)
 
+Status: resolved
+
 **What to build:** Bước *migrate* thứ hai. Các test còn lại có gửi Bearer tới Admin API chuyển sang Admin Web Token, cùng cách với ticket 07.
 
 Phạm vi lô này: bộ test background HTTP, bộ test web assistant, và các test nằm trong mã nguồn server có gọi Admin API (background, knowledge và Wiki Chat, Wiki Conversation, LLM Gateway, System MCP, notification hub, system logs).

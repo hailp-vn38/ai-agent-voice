@@ -1,5 +1,7 @@
 # 06: Lệnh reset Admin Password và backup không mang trạng thái đăng nhập
 
+Status: resolved
+
 **What to build:** Admin quên mật khẩu chạy một lệnh con của binary server để đưa Admin Password về mặc định; lần đăng nhập sau lại bị buộc đổi mật khẩu. Ngoài ra, export rồi import backup không bao giờ thay đổi việc ai đăng nhập được vào server đích.
 
 Xem spec: [Lệnh reset](../spec.md#lệnh-reset), [Backup](../spec.md#backup).

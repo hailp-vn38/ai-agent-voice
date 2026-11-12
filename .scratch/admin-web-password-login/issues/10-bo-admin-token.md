@@ -1,5 +1,7 @@
 # 10: Bỏ `admin_token`, bắt buộc `jwt_secret`
 
+Status: resolved
+
 **What to build:** Bước *contract*. Admin API chỉ còn nhận Admin Web Token (hoặc cho qua khi Password Login tắt). `admin_token` biến mất khỏi config, mã nguồn, test, script và tài liệu. Server từ chối khởi động khi Admin API bật mà thiếu `jwt_secret`, hoặc khi config còn khoá `admin_token`.
 
 Từ ticket này cờ phải đổi mật khẩu chặn mọi request, vì không còn đường `admin_token` đi vòng.

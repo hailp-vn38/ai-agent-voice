@@ -1,5 +1,7 @@
 # 07: Chuyển test Admin API sang Admin Web Token (lô 1)
 
+Status: resolved
+
 **What to build:** Bước *migrate* thứ nhất. Các bộ test tích hợp gọi Admin API nhiều nhất thôi gửi `admin_token` và lấy Bearer từ helper của harness (ticket 02). `admin_token` vẫn còn trong config của test để CI xanh; ticket 10 mới xoá nó.
 
 Phạm vi lô này: bộ test hợp đồng Admin API, bộ test memory admin, bộ test transcript archive.
