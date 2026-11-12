@@ -6,6 +6,7 @@ import type { JobChangeCallbacks } from '@/api/job-updates'
 import { ApiError } from '@/api/errors'
 import JobsPage from './JobsPage.vue'
 import JobDetailPage from './JobDetailPage.vue'
+import { useNotifyState } from '@/composables/useNotify'
 
 const { api, listenJobChanges, push } = vi.hoisted(() => ({
   api: { listJobs: vi.fn(), job: vi.fn(), events: vi.fn(), deleteJob: vi.fn(), deleteJobs: vi.fn(), createJob: vi.fn(), listRecipes: vi.fn(), wikiDomains: vi.fn(), createRecipeJob: vi.fn() },
@@ -202,7 +203,7 @@ it('shows deletion conflicts and keeps the Job detail available', async () => {
     await wrapper.findAll('button').find(button => button.text() === translate('jobUi.deleteJob'))!.trigger('click')
     await wrapper.get('[role="dialog"]').findAll('button').find(button => button.text() === translate('jobUi.deleteJob'))!.trigger('click')
     await flushPromises()
-    expect(wrapper.get('[role="alert"]').text()).toBe(translate('jobUi.deleteConflict'))
+    expect(useNotifyState().toasts.filter(toast => toast.tone === 'error').map(toast => toast.message).join('\n')).toContain(translate('jobUi.deleteConflict'))
     expect(wrapper.text()).toContain('Run a job')
     expect(push).not.toHaveBeenCalled()
   } finally {

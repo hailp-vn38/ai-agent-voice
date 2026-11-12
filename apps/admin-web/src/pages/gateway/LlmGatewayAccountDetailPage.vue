@@ -24,6 +24,7 @@ import ConfirmDialog from '@/components/admin/ConfirmDialog.vue'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { useI18n } from '@/composables/useI18n'
+import { useErrorToast } from '@/composables/useNotify'
 import {
   formatResetCountdown,
   formatTimestamp,
@@ -48,6 +49,7 @@ const loading = ref(true)
 const loadingQuota = ref(false)
 const busy = ref(false)
 const errorMessage = ref('')
+useErrorToast(() => errorMessage.value, { retry: () => load() })
 
 const editOpen = ref(false)
 const editLabel = ref('')
@@ -233,14 +235,6 @@ onMounted(() => {
         {{ t('llmGateway.backToAccounts') }}
       </button>
     </div>
-
-    <p
-      v-if="errorMessage"
-      role="alert"
-      class="rounded-lg border border-danger/30 bg-danger/5 px-4 py-3 text-sm text-danger"
-    >
-      {{ errorMessage }}
-    </p>
 
     <div v-if="loading" class="studio-panel card-shimmer h-56 p-4" aria-hidden="true" />
 

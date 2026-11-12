@@ -27,6 +27,7 @@ import ProviderTestPanel from '@/components/providers/ProviderTestPanel.vue'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { useI18n } from '@/composables/useI18n'
+import { useErrorToast } from '@/composables/useNotify'
 import {
   effectiveLlmTags,
   type ProviderInstance,
@@ -57,6 +58,7 @@ const loading = ref(false)
 const loadingBindings = ref(false)
 const busy = ref(false)
 const error = ref('')
+useErrorToast(() => error.value, { retry: () => load() })
 const isConfigProvider = computed(() => provider.value?.source === 'config')
 const editOpen = ref(false)
 const deleteOpen = ref(false)
@@ -461,10 +463,7 @@ onBeforeUnmount(() => {
       </template>
     </DetailHeader>
 
-    <p v-if="error" role="alert" class="studio-panel p-4 text-sm text-danger">
-      {{ error }}
-    </p>
-    <p v-else-if="loading" class="studio-panel p-4 text-sm text-muted-foreground">
+    <p v-if="loading" class="studio-panel p-4 text-sm text-muted-foreground">
       {{ t('common.loading') }}
     </p>
 

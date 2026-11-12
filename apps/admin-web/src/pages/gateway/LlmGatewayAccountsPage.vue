@@ -15,6 +15,7 @@ import type {
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { useI18n } from '@/composables/useI18n'
+import { useErrorToast } from '@/composables/useNotify'
 import { primaryQuotaPercent, quotaBarColorClass, statusBadgeClass } from './llmGatewayUi'
 
 const router = useRouter()
@@ -28,6 +29,7 @@ const statusFilter = ref<'all' | GatewayAccountStatus>('all')
 const loading = ref(true)
 const loadingQuotas = ref(false)
 const errorMessage = ref('')
+useErrorToast(() => errorMessage.value, { retry: () => load() })
 
 function vendorName(vendor: GatewayVendor): string {
   return vendors.value.find((v) => v.vendor === vendor)?.display_name ?? vendor
@@ -161,14 +163,6 @@ onMounted(() => {
         </Button>
       </div>
     </header>
-
-    <p
-      v-if="errorMessage"
-      role="alert"
-      class="rounded-lg border border-danger/30 bg-danger/5 px-4 py-3 text-sm text-danger"
-    >
-      {{ errorMessage }}
-    </p>
 
     <div class="studio-panel overflow-hidden">
       <div class="space-y-3 border-b border-border/70 p-4">

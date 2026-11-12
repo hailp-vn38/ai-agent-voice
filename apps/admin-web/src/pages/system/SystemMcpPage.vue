@@ -34,6 +34,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { useI18n } from '@/composables/useI18n'
+import { useErrorToast, useSuccessToast } from '@/composables/useNotify'
 
 const { locale, formatDateTime } = useI18n()
 const isVi = computed(() => locale.value === 'vi')
@@ -44,7 +45,9 @@ const savingConfig = ref(false)
 const creatingToken = ref(false)
 const deletingTokenId = ref('')
 const error = ref('')
+useErrorToast(() => error.value, { retry: () => load() })
 const notice = ref('')
+useSuccessToast(() => notice.value, { onDismiss: () => (notice.value = '') })
 let loadAbortController: AbortController | null = null
 
 // Editable config form
@@ -308,21 +311,6 @@ onBeforeUnmount(() => {
         </Button>
       </template>
     </PageHeader>
-
-    <div
-      v-if="error"
-      role="alert"
-      class="rounded-lg border border-destructive/40 bg-destructive/5 p-3 text-sm text-destructive"
-    >
-      {{ error }}
-    </div>
-    <div
-      v-if="notice"
-      role="status"
-      class="rounded-lg border border-emerald-500/40 bg-emerald-500/5 p-3 text-sm text-emerald-700 dark:text-emerald-300"
-    >
-      {{ notice }}
-    </div>
 
     <!-- Summary Strip -->
     <div class="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">

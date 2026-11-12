@@ -19,6 +19,7 @@ import DetailHeader from '@/components/admin/DetailHeader.vue'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { useI18n } from '@/composables/useI18n'
+import { useErrorToast } from '@/composables/useNotify'
 
 const router = useRouter()
 const { t } = useI18n()
@@ -26,6 +27,7 @@ const { t } = useI18n()
 const settings = ref<BackgroundSettings | null>(null)
 const loading = ref(true)
 const error = ref('')
+useErrorToast(() => error.value, { title: () => (unavailable.value ? t('jobUi.backendPending') : t('jobUi.loadFailed')), retry: () => load() })
 const unavailable = ref(false)
 
 let controller: AbortController | undefined
@@ -134,15 +136,6 @@ onBeforeUnmount(() => controller?.abort())
         </Button>
       </template>
     </DetailHeader>
-
-    <div
-      v-if="error"
-      role="alert"
-      class="rounded-lg border border-danger/30 bg-danger/5 p-3.5 text-sm text-danger"
-    >
-      <p class="font-medium">{{ unavailable ? t('jobUi.backendPending') : t('jobUi.loadFailed') }}</p>
-      <p class="mt-1 break-words">{{ error }}</p>
-    </div>
 
     <div
       v-if="loading && !settings"

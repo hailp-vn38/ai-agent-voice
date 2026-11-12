@@ -36,6 +36,7 @@ import DetailHeader from '@/components/admin/DetailHeader.vue'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { useI18n } from '@/composables/useI18n'
+import { useErrorToast, useSuccessToast } from '@/composables/useNotify'
 import { renderMarkdown } from '@/lib/markdown'
 import { redactEndpoint } from '@/lib/providerEndpoint'
 import {
@@ -65,7 +66,9 @@ const loading = ref(true)
 const saving = ref(false)
 const deleting = ref(false)
 const error = ref('')
+useErrorToast(() => error.value, { title: () => (unavailable.value ? t('jobUi.backendPending') : t('jobUi.loadFailed')), retry: () => load() })
 const notice = ref('')
+useSuccessToast(() => notice.value, { onDismiss: () => (notice.value = '') })
 const unavailable = ref(false)
 const promptMode = ref<'edit' | 'preview' | 'split'>('edit')
 const activeSection = ref<'overview' | 'model' | 'prompt' | 'tools' | 'skills'>('overview')
@@ -556,22 +559,6 @@ onBeforeUnmount(() => controller?.abort())
         </Button>
       </template>
     </DetailHeader>
-
-    <div
-      v-if="error"
-      role="alert"
-      class="rounded-lg border border-danger/30 bg-danger/5 p-3.5 text-sm text-danger"
-    >
-      <p class="font-medium">{{ unavailable ? t('jobUi.backendPending') : t('jobUi.loadFailed') }}</p>
-      <p class="mt-1 break-words">{{ error }}</p>
-    </div>
-    <p
-      v-if="notice"
-      role="status"
-      class="rounded-lg border border-success/30 bg-success/5 p-3 text-sm text-success-foreground"
-    >
-      {{ notice }}
-    </p>
 
     <div
       v-if="loading && !settings"

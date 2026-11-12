@@ -15,6 +15,7 @@ import { displayDeviceDate } from '@/components/devices/presentation'
 import { ActionMenu, MenuItem } from '@/components/ui/action-menu'
 import { Button } from '@/components/ui/button'
 import { useI18n } from '@/composables/useI18n'
+import { useErrorToast } from '@/composables/useNotify'
 import { useAdminStore } from '@/stores/admin'
 
 const route = useRoute()
@@ -27,6 +28,7 @@ const device = ref<AdminDevice>()
 const loading = ref(false)
 const saving = ref(false)
 const error = ref('')
+useErrorToast(() => error.value, { retry: () => load() })
 const editOpen = ref(false)
 const deleteOpen = ref(false)
 const copied = ref(false)
@@ -182,10 +184,6 @@ onBeforeUnmount(() => activeRequest?.abort())
 
 <template>
   <section class="space-y-5">
-    <div v-if="error" role="alert" class="rounded-lg border border-danger/30 bg-danger/10 px-4 py-3 text-sm text-danger-foreground">
-      {{ error }}
-      <Button v-if="!device" variant="outline" size="sm" class="ml-2" @click="load">{{ t('common.retry') }}</Button>
-    </div>
 
     <div v-if="loading" class="space-y-4" aria-busy="true">
       <div class="studio-panel h-40 animate-pulse bg-muted/20" />

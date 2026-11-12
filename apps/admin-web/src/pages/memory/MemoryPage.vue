@@ -6,6 +6,7 @@ import { formatApiError, isApiError } from '@/api/errors'
 import { FACT_KINDS, memoryApi, type FactKind, type MemoryFact, type MemoryIndex, type MemoryProfile, type MemoryReceipt } from '@/api/memory'
 import type { AdminDevice } from '@/api/types/devices'
 import { useI18n } from '@/composables/useI18n'
+import { useErrorToast, useSuccessToast } from '@/composables/useNotify'
 
 const STORAGE_KEY = 'memory.selectedDevice'
 const DEVICE_PAGE_SIZE = 200
@@ -30,7 +31,9 @@ const profileBody = ref('')
 const libraryFilter = ref<LibraryKey>('all')
 const busy = ref(false)
 const error = ref('')
+useErrorToast(() => error.value)
 const notice = ref('')
+useSuccessToast(() => notice.value, { onDismiss: () => (notice.value = '') })
 
 // Modal state
 const showSummaryModal = ref(false)
@@ -397,15 +400,6 @@ onMounted(async () => {
     </header>
 
     <!-- Notice / Error / Status banners -->
-    <div v-if="error" role="alert" class="notice warn" style="border-color: var(--danger); color: var(--danger);">
-      <svg class="ico sm" viewBox="0 0 24 24"><path d="m12 3 10 18H2L12 3Z"/><path d="M12 9v5M12 17h.01"/></svg>
-      <span>{{ error }}</span>
-    </div>
-
-    <div v-if="notice" role="status" class="notice good" style="border-color: var(--mint); color: var(--mint);">
-      <svg class="ico sm" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="m8 12 3 3 5-6"/></svg>
-      <span>{{ notice }}</span>
-    </div>
 
     <!-- Empty state when no device selected -->
     <div v-if="!device" class="empty">

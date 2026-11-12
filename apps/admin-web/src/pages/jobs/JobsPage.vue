@@ -13,6 +13,7 @@ import { recipeFieldForValidationPath, recipeParamDefaults, validateRecipeParams
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { useI18n } from '@/composables/useI18n'
+import { useErrorToast, useSuccessToast } from '@/composables/useNotify'
 
 interface PendingWavAttachment extends JobAttachmentUpload {
   id: string
@@ -36,8 +37,10 @@ const loading = ref(true)
 const busy = ref(false)
 const error = ref('')
 const notice = ref('')
+useSuccessToast(() => notice.value, { onDismiss: () => (notice.value = '') })
 const backendPending = ref(false)
 const createOpen = ref(false)
+useErrorToast(() => (createOpen.value ? '' : error.value), { title: () => (backendPending.value ? t('jobUi.backendPending') : t('jobUi.loadFailed')), retry: () => load() })
 const batchDeleteOpen = ref(false)
 const selectedIds = ref<string[]>([])
 const goal = ref('')
@@ -348,10 +351,6 @@ onBeforeUnmount(() => {
         <Button variant="outline" size="icon" :aria-label="t('jobUi.background')" :title="t('jobUi.background')" @click="router.push({ name: 'jobs-settings' })"><Settings2 class="size-4" aria-hidden="true" /></Button>
       </template>
     </PageHeader>
-    <div v-if="error" role="alert" class="rounded-lg border border-danger/30 bg-danger/5 p-4 text-sm text-danger">
-      <p class="font-medium">{{ backendPending ? t('jobUi.backendPending') : t('jobUi.loadFailed') }}</p><p class="mt-1 break-words">{{ error }}</p>
-    </div>
-    <p v-if="notice" role="status" class="rounded-lg border border-success/30 bg-success/5 p-3 text-sm text-success-foreground">{{ notice }}</p>
 
     <div class="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
       <div class="studio-panel flex items-center gap-3 p-4"><ClipboardList class="size-6 text-studio-violet" /><div><p class="text-xl font-semibold tabular-nums">{{ total }}</p><p class="text-xs text-muted-foreground">{{ t('jobUi.totalFiltered') }}</p></div></div>

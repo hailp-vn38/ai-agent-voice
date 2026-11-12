@@ -29,6 +29,7 @@ import TemplateConfigurationPanel from '@/components/templates/TemplateConfigura
 import TemplateFormDialog from '@/components/templates/TemplateFormDialog.vue'
 import { Button } from '@/components/ui/button'
 import { useI18n } from '@/composables/useI18n'
+import { useErrorToast } from '@/composables/useNotify'
 import type { AgentTemplate, Device, ProviderInstance, ProviderType } from '@/domain/admin'
 import { useAdminStore, type TemplateSetupInput } from '@/stores/admin'
 
@@ -49,6 +50,7 @@ const toolReviewKey = ref(0)
 const selectedTemplateId = ref<string | null>(null)
 const settingDefaultTemplate = ref(false)
 const setDefaultError = ref<string | null>(null)
+useErrorToast(() => setDefaultError.value)
 
 /** Query param wins, otherwise the agent default; unlinked ids fall back to the default. */
 function resolveTemplateId() {
@@ -373,9 +375,6 @@ async function confirmDeleteDevice() {
         @link-existing-template="linkAgentTemplateOpen = true"
         @set-default="setDefaultTemplate"
       />
-      <p v-if="setDefaultError" role="alert" class="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
-        {{ setDefaultError }}
-      </p>
 
       <section class="studio-panel space-y-3 p-4 sm:p-5" aria-label="Voice AI pipeline summary">
         <h2 class="text-sm font-semibold">{{ t('studio.pipeline.title') }}</h2>

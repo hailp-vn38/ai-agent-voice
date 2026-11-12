@@ -7,6 +7,7 @@ import { memoryApi, type MemoryFact } from '@/api/memory'
 import type { AdminDevice } from '@/api/types/devices'
 import { setLocale } from '@/composables/useI18n'
 import MemoryPage from './MemoryPage.vue'
+import { useNotifyState } from '@/composables/useNotify'
 
 vi.mock('@/api/devices', () => ({ devicesApi: { list: vi.fn() } }))
 vi.mock('@/api/memory', () => ({
@@ -173,7 +174,7 @@ describe('MemoryPage', () => {
     await wrapper.get('[data-fact-form]').trigger('submit')
     await flushPromises()
     expect(memoryApi.update).toHaveBeenCalledTimes(1)
-    expect(wrapper.get('[role="alert"]').text()).toMatch(/changed/i)
+    expect(useNotifyState().toasts.filter(toast => toast.tone === 'error').map(toast => toast.message).join('\n')).toMatch(/changed/i)
     expect((wrapper.get('[data-fact-body]').element as HTMLTextAreaElement).value).toBe('Bản của người khác')
     expect(wrapper.text()).toContain('r4')
     wrapper.unmount()
@@ -232,7 +233,7 @@ describe('MemoryPage', () => {
     await openFirstFact(wrapper)
     await wrapper.get('[data-fact-forget]').trigger('click')
     await flushPromises()
-    expect(wrapper.get('[role="status"]').text()).toMatch(/rebuild/i)
+    expect(useNotifyState().toasts.filter(toast => toast.tone === 'success').map(toast => toast.message).join('\n')).toMatch(/rebuild/i)
     wrapper.unmount()
   })
 
@@ -284,7 +285,7 @@ describe('MemoryPage', () => {
     await wrapper.get('[data-profile-form]').trigger('submit')
     await flushPromises()
     expect((wrapper.get('[data-profile-body]').element as HTMLTextAreaElement).value).toBe('Bản mới hơn')
-    expect(wrapper.get('[role="alert"]').text()).toMatch(/changed/i)
+    expect(useNotifyState().toasts.filter(toast => toast.tone === 'error').map(toast => toast.message).join('\n')).toMatch(/changed/i)
     wrapper.unmount()
   })
 })

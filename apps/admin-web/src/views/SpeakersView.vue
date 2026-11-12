@@ -14,6 +14,7 @@ import SpeakerCard from '@/components/speakers/SpeakerCard.vue'
 import SpeakerEnrollmentWizard from '@/components/speakers/SpeakerEnrollmentWizard.vue'
 import { Button } from '@/components/ui/button'
 import { useI18n } from '@/composables/useI18n'
+import { useErrorToast } from '@/composables/useNotify'
 
 const router = useRouter()
 const { t } = useI18n()
@@ -24,6 +25,7 @@ const page = ref(1)
 const pageSize = 50
 const loading = ref(false)
 const error = ref('')
+useErrorToast(() => error.value, { retry: () => load() })
 const search = ref('')
 let activeRequest: AbortController | undefined
 
@@ -150,11 +152,6 @@ onBeforeUnmount(() => activeRequest?.abort())
       <Search class="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
       <input v-model="search" class="admin-input pl-9" type="search" :placeholder="t('speakers.search')" />
     </label>
-
-    <div v-if="error" role="alert" class="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-destructive/40 bg-destructive/10 px-4 py-3 text-sm text-destructive">
-      <span>{{ error }}</span>
-      <Button size="sm" variant="outline" @click="load">{{ t('common.retry') }}</Button>
-    </div>
 
     <CardListSkeleton v-if="loading" class="sm:grid-cols-2 xl:grid-cols-3" />
 
