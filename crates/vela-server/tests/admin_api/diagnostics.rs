@@ -9,10 +9,11 @@ async fn vad_provider_test_uses_one_canonical_silent_frame_from_the_loaded_runti
     .await;
     let (base, inputs, task) = server_with_loaded_vad(&database_uri, &key).await;
     let client = Client::new();
+    let web_token = admin_web_token(&client, &base).await;
     let providers = format!("{base}/api/admin/providers");
     let response = client
         .post(format!("{providers}/{key}/test/vad"))
-        .bearer_auth("admin-test-token")
+        .bearer_auth(&web_token)
         .send()
         .await
         .unwrap();
@@ -32,7 +33,7 @@ async fn vad_provider_test_uses_one_canonical_silent_frame_from_the_loaded_runti
     );
     let nonempty = client
         .post(format!("{providers}/{key}/test/vad"))
-        .bearer_auth("admin-test-token")
+        .bearer_auth(&web_token)
         .body("caller pcm is not accepted")
         .send()
         .await
@@ -53,7 +54,7 @@ async fn vad_provider_test_uses_one_canonical_silent_frame_from_the_loaded_runti
     .await;
     let wrong_type = client
         .post(format!("{providers}/{other}/test/vad"))
-        .bearer_auth("admin-test-token")
+        .bearer_auth(&web_token)
         .send()
         .await
         .unwrap();
@@ -65,7 +66,7 @@ async fn vad_provider_test_uses_one_canonical_silent_frame_from_the_loaded_runti
     assert_eq!(
         client
             .post(format!("{providers}/missing/test/vad"))
-            .bearer_auth("admin-test-token")
+            .bearer_auth(&web_token)
             .send()
             .await
             .unwrap()
@@ -84,11 +85,12 @@ async fn llm_provider_test_uses_only_the_loaded_runtime_and_a_tool_free_request(
     .await;
     let (base, requests, task) = server_with_loaded_llm(&database_uri, &key).await;
     let client = Client::new();
+    let web_token = admin_web_token(&client, &base).await;
     let providers = format!("{base}/api/admin/providers");
 
     let response = client
         .post(format!("{providers}/{key}/test/llm"))
-        .bearer_auth("admin-test-token")
+        .bearer_auth(&web_token)
         .json(&serde_json::json!({"input":"xin chao"}))
         .send()
         .await
@@ -107,7 +109,7 @@ async fn llm_provider_test_uses_only_the_loaded_runtime_and_a_tool_free_request(
 
     let changed = client
         .patch(format!("{providers}/{key}"))
-        .bearer_auth("admin-test-token")
+        .bearer_auth(&web_token)
         .header("if-match", "\"1\"")
         .json(&serde_json::json!({"name":"Changed desired state"}))
         .send()
@@ -116,7 +118,7 @@ async fn llm_provider_test_uses_only_the_loaded_runtime_and_a_tool_free_request(
     assert_eq!(changed.status(), StatusCode::OK);
     let stale = client
         .post(format!("{providers}/{key}/test/llm"))
-        .bearer_auth("admin-test-token")
+        .bearer_auth(&web_token)
         .json(&serde_json::json!({"input":"still loaded"}))
         .send()
         .await
@@ -142,7 +144,7 @@ async fn llm_provider_test_uses_only_the_loaded_runtime_and_a_tool_free_request(
 
     let invalid = client
         .post(format!("{providers}/{key}/test/llm"))
-        .bearer_auth("admin-test-token")
+        .bearer_auth(&web_token)
         .json(&serde_json::json!({"input":""}))
         .send()
         .await
@@ -159,7 +161,8 @@ async fn llm_provider_test_uses_only_the_loaded_runtime_and_a_tool_free_request(
 async fn admin_p1_read_models_and_device_template_override_are_public_contracts() {
     let (base, task) = server(true).await;
     let client = Client::new();
-    let auth = "admin-test-token";
+    let web_token = admin_web_token(&client, &base).await;
+    let auth = &web_token;
     let agents = format!("{base}/api/admin/agents");
     let templates = format!("{base}/api/admin/templates");
     assert_eq!(
@@ -315,10 +318,10 @@ async fn admin_p1_read_models_and_device_template_override_are_public_contracts(
 
 #[tokio::test]
 async fn admin_system_reports_database_unavailable_without_leaking_runtime_details() {
-    let (base, task) = server_with_closed_database().await;
+    let (base, task, web_token) = server_with_closed_database().await;
     let response = Client::new()
         .get(format!("{base}/api/admin/system"))
-        .bearer_auth("admin-test-token")
+        .bearer_auth(&web_token)
         .send()
         .await
         .unwrap();
@@ -340,10 +343,11 @@ async fn tts_provider_test_passes_typed_override_to_loaded_adapter_and_returns_p
     .await;
     let (base, requests, task) = server_with_loaded_tts(&database_uri, &key).await;
     let client = Client::new();
+    let web_token = admin_web_token(&client, &base).await;
     let providers = format!("{base}/api/admin/providers");
     let response = client
         .post(format!("{providers}/{key}/test/tts"))
-        .bearer_auth("admin-test-token")
+        .bearer_auth(&web_token)
         .json(&serde_json::json!({"text":"xin chao","voice":"maichi","language":"vi-VN"}))
         .send()
         .await
@@ -378,12 +382,13 @@ async fn asr_provider_test_accepts_bounded_pcm_wav_and_rejects_other_media() {
     .await;
     let (base, received_samples, task) = server_with_loaded_asr(&database_uri, &key).await;
     let client = Client::new();
+    let web_token = admin_web_token(&client, &base).await;
     let providers = format!("{base}/api/admin/providers");
     let url = format!("{providers}/{key}/test/asr");
 
     let response = client
         .post(&url)
-        .bearer_auth("admin-test-token")
+        .bearer_auth(&web_token)
         .header("content-type", "audio/wav")
         .body(wav_pcm16_mono(16_000, 16_000))
         .send()
@@ -406,7 +411,7 @@ async fn asr_provider_test_accepts_bounded_pcm_wav_and_rejects_other_media() {
     ] {
         let response = client
             .post(&url)
-            .bearer_auth("admin-test-token")
+            .bearer_auth(&web_token)
             .header("content-type", content_type)
             .body(body)
             .send()
@@ -420,7 +425,7 @@ async fn asr_provider_test_accepts_bounded_pcm_wav_and_rejects_other_media() {
     }
     let response = client
         .post(&url)
-        .bearer_auth("admin-test-token")
+        .bearer_auth(&web_token)
         .header("content-type", "audio/wav")
         .body(vec![0; 5 * 1024 * 1024 + 1])
         .send()
@@ -438,9 +443,10 @@ async fn asr_provider_test_accepts_bounded_pcm_wav_and_rejects_other_media() {
 async fn speaker_provider_creation_is_rejected() {
     let (base, task) = server(true).await;
     let client = Client::new();
+    let web_token = admin_web_token(&client, &base).await;
     let response = client
         .post(format!("{base}/api/admin/providers"))
-        .bearer_auth("admin-test-token")
+        .bearer_auth(&web_token)
         .json(&serde_json::json!({"type":"speaker","adapter":"campplus_sherpa","name":"Voice","config_json":{}}))
         .send()
         .await
@@ -454,9 +460,10 @@ async fn speaker_provider_creation_is_rejected() {
 #[tokio::test]
 async fn speaker_provider_diagnostic_route_is_not_exposed() {
     let (base, task) = server(true).await;
+    let web_token = admin_web_token(&Client::new(), &base).await;
     let response = Client::new()
         .post(format!("{base}/api/admin/providers/missing/test/speaker"))
-        .bearer_auth("admin-test-token")
+        .bearer_auth(&web_token)
         .send()
         .await
         .unwrap();
@@ -522,6 +529,7 @@ async fn speaker_waiter_timeout_retains_exact_lease_and_capacity_until_native_co
 async fn draft_tests_reject_invalid_sources_without_creating_resources() {
     let (base, task) = server(true).await;
     let client = Client::new();
+    let web_token = admin_web_token(&client, &base).await;
     for (route, body) in [
         (
             "provider-tests/llm",
@@ -534,7 +542,7 @@ async fn draft_tests_reject_invalid_sources_without_creating_resources() {
     ] {
         let response = client
             .post(format!("{base}/api/admin/{route}"))
-            .bearer_auth("admin-test-token")
+            .bearer_auth(&web_token)
             .json(&body)
             .send()
             .await
@@ -545,7 +553,7 @@ async fn draft_tests_reject_invalid_sources_without_creating_resources() {
     for resource in ["providers", "mcp-servers"] {
         let response: serde_json::Value = client
             .get(format!("{base}/api/admin/{resource}"))
-            .bearer_auth("admin-test-token")
+            .bearer_auth(&web_token)
             .send()
             .await
             .unwrap()
@@ -571,13 +579,14 @@ async fn draft_tests_reject_invalid_sources_without_creating_resources() {
 async fn draft_asr_rejects_ambiguous_multipart_and_invalid_wav_before_runtime() {
     let (base, task) = server(true).await;
     let client = Client::new();
+    let web_token = admin_web_token(&client, &base).await;
     let provider = r#"{"type":"asr","adapter":"zipformer_sherpa","config_json":{}}"#;
     let malformed = reqwest::multipart::Form::new()
         .text("provider", provider)
         .text("provider", provider);
     let response = client
         .post(format!("{base}/api/admin/provider-tests/asr"))
-        .bearer_auth("admin-test-token")
+        .bearer_auth(&web_token)
         .multipart(malformed)
         .send()
         .await
@@ -593,7 +602,7 @@ async fn draft_asr_rejects_ambiguous_multipart_and_invalid_wav_before_runtime() 
         );
     let response = client
         .post(format!("{base}/api/admin/provider-tests/asr"))
-        .bearer_auth("admin-test-token")
+        .bearer_auth(&web_token)
         .multipart(form)
         .send()
         .await
@@ -609,7 +618,7 @@ async fn draft_asr_rejects_ambiguous_multipart_and_invalid_wav_before_runtime() 
         );
     let response = client
         .post(format!("{base}/api/admin/provider-tests/asr"))
-        .bearer_auth("admin-test-token")
+        .bearer_auth(&web_token)
         .multipart(form)
         .send()
         .await
@@ -620,8 +629,8 @@ async fn draft_asr_rejects_ambiguous_multipart_and_invalid_wav_before_runtime() 
 
 #[tokio::test]
 async fn system_resources_are_authenticated_uncached_and_independent_of_database() {
+    let (base, task, web_token) = resource_server(true, true).await;
     let client = Client::new();
-    let (base, task) = resource_server(true, true).await;
     let url = format!("{base}/api/admin/system/resources");
     for token in [None, Some("wrong-token")] {
         let request = client.get(&url);
@@ -636,7 +645,7 @@ async fn system_resources_are_authenticated_uncached_and_independent_of_database
     }
     let response = client
         .get(&url)
-        .bearer_auth("admin-test-token")
+        .bearer_auth(&web_token)
         .send()
         .await
         .unwrap();
@@ -664,10 +673,10 @@ async fn system_resources_are_authenticated_uncached_and_independent_of_database
     );
     task.abort();
 
-    let (base, task) = resource_server(true, false).await;
+    let (base, task, web_token) = resource_server(true, false).await;
     let response = client
         .get(format!("{base}/api/admin/system/resources"))
-        .bearer_auth("admin-test-token")
+        .bearer_auth(&web_token)
         .send()
         .await
         .unwrap();
@@ -677,11 +686,10 @@ async fn system_resources_are_authenticated_uncached_and_independent_of_database
     assert!(body["error"]["request_id"].is_string());
     task.abort();
 
-    let (base, task) = resource_server(false, false).await;
+    let (base, task, _) = resource_server(false, false).await;
     assert_eq!(
         client
             .get(format!("{base}/api/admin/system/resources"))
-            .bearer_auth("admin-test-token")
             .send()
             .await
             .unwrap()

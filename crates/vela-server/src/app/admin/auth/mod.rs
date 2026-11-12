@@ -156,6 +156,41 @@ pub(crate) async fn prepare(state: &AppState) -> Result<(), sqlx::Error> {
     Ok(())
 }
 
+/// Command-line recovery: puts the Admin Password back to the public default, turns Password Login
+/// on and sets the forced-change flag. Writes SQLite directly and audits the reset in the same
+/// transaction; a running server keeps its in-memory status until it restarts.
+pub(crate) async fn reset_to_default(config: &crate::config::DatabaseConfig) -> anyhow::Result<()> {
+    let database = crate::database::Database::connect(config).await?;
+    let seeded = tokio::task::spawn_blocking(|| password::hash(DEFAULT_PASSWORD)).await?;
+    let request_id = format!("admin-password-reset-{}", Uuid::new_v4());
+    let mut tx = database.pool().begin().await?;
+    let (prior, new): (i64, i64) = sqlx::query_as(
+        "UPDATE admin_auth
+         SET password_login_enabled = 1, password_hash = ?, must_change_password = 1,
+             revision = revision + 1, updated_at = ?
+         WHERE id = 1
+         RETURNING revision - 1, revision",
+    )
+    .bind(seeded)
+    .bind(unix_now())
+    .fetch_one(&mut *tx)
+    .await?;
+    crate::database::audit::audit(
+        &mut *tx,
+        &request_id,
+        "admin_auth",
+        Some(1),
+        "password_reset",
+        Some(prior),
+        Some(new),
+        crate::database::audit::AuditOutcome::Success,
+        1,
+    )
+    .await?;
+    tx.commit().await?;
+    Ok(())
+}
+
 /// Public Admin routes that carry no bearer credential. They are mounted only when the signing
 /// secret is configured; otherwise they answer 404 and only `admin_token` remains usable.
 pub(super) fn routes() -> Router<AppState> {

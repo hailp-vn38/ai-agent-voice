@@ -148,6 +148,9 @@ describe('System Hub (Variant A) & Sub-pages', () => {
     await wrapper.get('[data-system-card="transport"]').trigger('click')
     expect(navigateMock).toHaveBeenCalledWith({ name: 'system-transport' })
 
+    await wrapper.get('[data-system-card="security"]').trigger('click')
+    expect(navigateMock).toHaveBeenCalledWith({ name: 'system-security' })
+
     await wrapper.get('[data-system-card="logs"]').trigger('click')
     expect(navigateMock).toHaveBeenCalledWith({ name: 'system-logs' })
 

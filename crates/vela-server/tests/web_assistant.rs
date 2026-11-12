@@ -1,4 +1,4 @@
-#[path = "support/admin_web_token.rs"]
+#[path = "support/admin_auth.rs"]
 mod admin_web_token_support;
 use admin_web_token_support::admin_web_token;
 use futures_util::{SinkExt, StreamExt};

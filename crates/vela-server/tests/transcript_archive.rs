@@ -11,6 +11,8 @@
 //! - Retention: startup and scheduled cleanup, and non-blocking retry on write contention.
 //! - Admin API: authenticated read & purge endpoints, validation, audit logging, and open session dialogue isolation.
 
+mod support;
+
 #[path = "transcript_archive/harness.rs"]
 mod harness;
 

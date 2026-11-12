@@ -5,7 +5,7 @@
 //! - Settings & Skills: background settings CRUD, revision concurrency, skills discovery & execution.
 //! - Subagents & Jobs: subagent registration, job scheduling, async dispatch, and cancellation.
 
-#[path = "support/admin_web_token.rs"]
+#[path = "support/admin_auth.rs"]
 mod admin_web_token_support;
 
 #[path = "background_http/harness.rs"]

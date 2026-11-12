@@ -6,8 +6,7 @@
 //! - Credentials & MCP: encrypted secret storage, redaction, and external MCP configurations.
 //! - Reminders: scheduling, replay, concurrency, quotas, and mutations.
 
-#[path = "support/admin_web_token.rs"]
-mod admin_web_token_support;
+mod support;
 
 #[path = "admin_api/harness.rs"]
 mod harness;

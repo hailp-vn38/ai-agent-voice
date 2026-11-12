@@ -173,7 +173,7 @@ pub(in crate::app::admin) async fn knowledge_conversation(
 }
 
 #[cfg(test)]
-#[path = "../../../../tests/support/admin_web_token.rs"]
+#[path = "../../../../tests/support/admin_auth.rs"]
 mod admin_web_token;
 
 #[cfg(test)]

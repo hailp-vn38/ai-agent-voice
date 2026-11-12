@@ -11,6 +11,7 @@ use super::harness::*;
 #[tokio::test]
 async fn admin_direct_speech_applies_the_reported_template_boundary_before_admission() {
     let (base, url, task, _, mut boundary) = start_controlled_switch(&["sales"]).await;
+    let admin = crate::admin_web::admin_web_token(&reqwest::Client::new(), &base).await;
     let pool = seed(&url).await;
     seed_switchable_pair(&pool).await;
     let mut socket = admit_with_direct(&base, true).await;
@@ -22,7 +23,7 @@ async fn admin_direct_speech_applies_the_reported_template_boundary_before_admis
     boundary.release.notify_one();
     let response = reqwest::Client::new()
         .post(format!("{base}/api/admin/devices/device/speak"))
-        .bearer_auth("direct-admin")
+        .bearer_auth(&admin)
         .json(&serde_json::json!({
             "request_id": "boundary-direct",
             "text": "Direct text after switching."

@@ -1,6 +1,8 @@
 //! File-backed admission fixtures for protocol tests. No database-free WS bypass.
 #![allow(dead_code)]
 
+pub mod admin_auth;
+
 use std::sync::Arc;
 use vela_server::{
     app::router_with_providers, config::AppConfig, database::Database, providers::ProviderSet,

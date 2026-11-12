@@ -11,6 +11,7 @@ async fn admin_direct_speech_uses_current_session_and_rejects_offline_legacy_and
         Arc::new(RecordingTts(Arc::clone(&requests))),
     ));
     let (base, task) = start_router_with(providers).await;
+    let admin = crate::admin_web::admin_web_token(&reqwest::Client::new(), &base).await;
     let http = reqwest::Client::new();
     let path = format!("{base}/api/admin/devices/tracer-device/speak");
     let body = serde_json::json!({"request_id":"admin-1","text":"An admin notification: {\"voltage\":5}."});
@@ -20,7 +21,7 @@ async fn admin_direct_speech_uses_current_session_and_rejects_offline_legacy_and
     );
     let response = http
         .post(&path)
-        .bearer_auth("direct-admin")
+        .bearer_auth(&admin)
         .json(&body)
         .send()
         .await
@@ -33,7 +34,7 @@ async fn admin_direct_speech_uses_current_session_and_rejects_offline_legacy_and
     let mut legacy = connect_router(&base).await;
     assert_eq!(
         http.post(&path)
-            .bearer_auth("direct-admin")
+            .bearer_auth(&admin)
             .json(&body)
             .send()
             .await
@@ -45,7 +46,7 @@ async fn admin_direct_speech_uses_current_session_and_rejects_offline_legacy_and
     let _ = timeout(Duration::from_secs(2), legacy.next()).await;
     let presence: serde_json::Value = http
         .get(format!("{base}/api/admin/devices/tracer-device"))
-        .bearer_auth("direct-admin")
+        .bearer_auth(&admin)
         .send()
         .await
         .unwrap()
@@ -57,7 +58,7 @@ async fn admin_direct_speech_uses_current_session_and_rejects_offline_legacy_and
     let spoof = serde_json::json!({"request_id":"spoof","text":"hello","provider_id":"evil"});
     assert_eq!(
         http.post(&path)
-            .bearer_auth("direct-admin")
+            .bearer_auth(&admin)
             .json(&spoof)
             .send()
             .await
@@ -68,7 +69,7 @@ async fn admin_direct_speech_uses_current_session_and_rejects_offline_legacy_and
     let invalid = serde_json::json!({"request_id":"bad","text":"\u{0001}"});
     assert_eq!(
         http.post(&path)
-            .bearer_auth("direct-admin")
+            .bearer_auth(&admin)
             .json(&invalid)
             .send()
             .await
@@ -78,7 +79,7 @@ async fn admin_direct_speech_uses_current_session_and_rejects_offline_legacy_and
     );
     let response = http
         .post(&path)
-        .bearer_auth("direct-admin")
+        .bearer_auth(&admin)
         .json(&body)
         .send()
         .await
@@ -135,7 +136,7 @@ async fn admin_direct_speech_uses_current_session_and_rejects_offline_legacy_and
     assert_eq!(asr_calls.load(Ordering::SeqCst), 0);
     assert_eq!(
         http.post(&path)
-            .bearer_auth("direct-admin")
+            .bearer_auth(&admin)
             .json(&body)
             .send()
             .await
@@ -165,7 +166,7 @@ async fn admin_direct_speech_uses_current_session_and_rejects_offline_legacy_and
     );
     let busy = http
         .post(&path)
-        .bearer_auth("direct-admin")
+        .bearer_auth(&admin)
         .json(&body)
         .send()
         .await
@@ -179,7 +180,7 @@ async fn admin_direct_speech_uses_current_session_and_rejects_offline_legacy_and
     for _ in 0..40 {
         let presence: serde_json::Value = http
             .get(format!("{base}/api/admin/devices/tracer-device"))
-            .bearer_auth("direct-admin")
+            .bearer_auth(&admin)
             .send()
             .await
             .unwrap()
