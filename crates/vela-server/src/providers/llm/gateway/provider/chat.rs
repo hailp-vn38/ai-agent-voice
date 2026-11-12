@@ -37,8 +37,15 @@ impl LlmGatewayProvider {
                 .await
             }
             GatewayVendor::Gemini => {
-                wire_gemini::open_sse_stream(&self.http, endpoint, lease, effective_cfg, request)
-                    .await
+                wire_gemini::open_sse_stream(
+                    &self.http,
+                    endpoint,
+                    lease,
+                    effective_cfg,
+                    request,
+                    &self.last_error_detail,
+                )
+                .await
             }
             GatewayVendor::GithubCopilot => {
                 wire_openai::open_sse_stream(&self.http, endpoint, lease, effective_cfg, request)

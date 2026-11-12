@@ -1,15 +1,15 @@
 <script setup lang="ts">
-import { Plus, RefreshCw, Search } from '@lucide/vue'
+import { AudioLines, BookOpen, ChevronLeft, ChevronRight, Mic, Plus, RefreshCw, Search, UserCheck, Users, X } from '@lucide/vue'
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 
 import CardListSkeleton from '@/components/admin/CardListSkeleton.vue'
+import DirectoryHero from '@/components/admin/DirectoryHero.vue'
 import { formatApiError } from '@/api/errors'
 import { speakersApi } from '@/api/speakers'
 import type { SpeakerSummary } from '@/api/types/speakers'
 import BaseModal from '@/components/admin/BaseModal.vue'
 import ConfirmDialog from '@/components/admin/ConfirmDialog.vue'
-import PageHeader from '@/components/admin/PageHeader.vue'
 import SpeakerCard from '@/components/speakers/SpeakerCard.vue'
 import SpeakerEnrollmentWizard from '@/components/speakers/SpeakerEnrollmentWizard.vue'
 import { Button } from '@/components/ui/button'
@@ -27,6 +27,7 @@ const loading = ref(false)
 const error = ref('')
 useErrorToast(() => error.value, { retry: () => load() })
 const search = ref('')
+const statusFilter = ref<'all' | 'enabled' | 'disabled'>('all')
 let activeRequest: AbortController | undefined
 
 const createOpen = ref(false)
@@ -41,12 +42,25 @@ const deleteDialogOpen = computed({
 
 const filtered = computed(() => {
   const query = search.value.trim().toLocaleLowerCase()
-  if (!query) return items.value
   return items.value.filter((speaker) =>
-    [speaker.name, speaker.description ?? '', speaker.key]
-      .some((value) => value.toLocaleLowerCase().includes(query)),
+    (statusFilter.value === 'all' || speaker.enabled === (statusFilter.value === 'enabled')) &&
+    (!query || [speaker.name, speaker.description ?? '', speaker.key]
+      .some((value) => value.toLocaleLowerCase().includes(query))),
   )
 })
+const enabledOnPage = computed(() => items.value.filter((item) => item.enabled).length)
+const heroStats = computed(() => [
+  { label: t('directoryUi.totalProfiles'), value: total.value, icon: Users },
+  { label: t('directoryUi.enabledOnPage'), value: enabledOnPage.value, icon: UserCheck },
+  { label: t('directoryUi.page'), value: `${page.value} / ${pageCount.value}`, icon: BookOpen },
+])
+const statusOptions = computed(() => [
+  { value: 'all' as const, label: t('common.all'), count: items.value.length, tone: '' },
+  { value: 'enabled' as const, label: t('speakers.enabled'), count: enabledOnPage.value, tone: 'on' },
+  { value: 'disabled' as const, label: t('speakers.disabled'), count: items.value.length - enabledOnPage.value, tone: 'off' },
+])
+const hasFilters = computed(() => Boolean(search.value.trim()) || statusFilter.value !== 'all')
+function clearFilters() { search.value = ''; statusFilter.value = 'all' }
 const pageCount = computed(() => Math.max(1, Math.ceil(total.value / pageSize)))
 
 async function load() {
@@ -132,37 +146,38 @@ onBeforeUnmount(() => activeRequest?.abort())
 </script>
 
 <template>
-  <section class="space-y-6">
-    <PageHeader :eyebrow="t('speakers.eyebrow')" :title="t('speakers.title')" :description="t('speakers.description')">
+  <section class="studio-directory" data-directory="speakers">
+    <DirectoryHero tone="speakers" :eyebrow="t('directoryUi.speakersEyebrow')" :title="t('speakers.title')" :intro="t('directoryUi.speakersIntro')" :stats="heroStats">
       <template #actions>
-        <Button variant="outline" :disabled="loading" @click="load">
-          <RefreshCw class="size-4" :class="{ 'animate-spin': loading }" />
-          {{ t('common.refresh') }}
-        </Button>
-        <Button @click="enrollmentOpen = true">
-          <Plus class="size-4" />
-          {{ t('speakers.create') }}
-        </Button>
-        <Button variant="outline" @click="openCreate">{{ t('speakers.createTitle') }}</Button>
+        <button type="button" class="hero-primary" @click="enrollmentOpen = true"><Mic :size="16" aria-hidden="true" />{{ t('speakers.create') }}</button>
+        <button type="button" class="hero-ghost" @click="openCreate"><Plus :size="16" aria-hidden="true" />{{ t('directoryUi.createEmptyProfile') }}</button>
+        <button type="button" class="hero-ghost" :disabled="loading" :aria-label="t('common.refresh')" :title="t('common.refresh')" @click="load"><RefreshCw :size="16" :class="{ 'animate-spin': loading }" aria-hidden="true" /></button>
       </template>
-    </PageHeader>
+    </DirectoryHero>
 
-    <label class="relative block max-w-xl">
-      <span class="sr-only">{{ t('speakers.search') }}</span>
-      <Search class="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
-      <input v-model="search" class="admin-input pl-9" type="search" :placeholder="t('speakers.search')" />
-    </label>
+    <div class="directory-toolbar">
+      <label class="directory-search"><span class="sr-only">{{ t('speakers.search') }}</span><Search :size="16" aria-hidden="true" /><input v-model="search" type="search" class="admin-input" :placeholder="pageCount > 1 ? t('directoryUi.pageSearchHint', { page }) : t('speakers.search')" /></label>
+      <div class="directory-chips" role="group" :aria-label="t('speakers.title')">
+        <button v-for="option in statusOptions" :key="option.value" type="button" class="directory-chip" :aria-pressed="statusFilter === option.value" @click="statusFilter = option.value">
+          <i v-if="option.tone" :data-tone="option.tone" aria-hidden="true" />{{ option.label }}<b>{{ option.count }}</b>
+        </button>
+      </div>
+      <button v-if="hasFilters" type="button" class="directory-clear" @click="clearFilters"><X :size="14" aria-hidden="true" />{{ t('providers.clearFilters') }}</button>
+      <span v-if="!loading" class="directory-count">{{ t('providers.resultCount', { count: filtered.length }) }}</span>
+    </div>
 
     <CardListSkeleton v-if="loading" class="sm:grid-cols-2 xl:grid-cols-3" />
 
-    <div v-else-if="!filtered.length" class="studio-panel px-6 py-12 text-center">
-      <p class="text-sm text-muted-foreground">{{ search.trim() ? t('speakers.emptySearch') : t('speakers.empty') }}</p>
-      <Button v-if="!search.trim() && !error" class="mt-4" @click="enrollmentOpen = true">
+    <div v-else-if="!filtered.length" class="directory-empty text-center">
+      <span class="directory-empty-icon"><AudioLines :size="28" :stroke-width="1.6" aria-hidden="true" /></span>
+      <p>{{ hasFilters ? t('speakers.emptySearch') : t('speakers.empty') }}</p>
+      <Button v-if="hasFilters" variant="outline" @click="clearFilters"><X class="size-4" aria-hidden="true" />{{ t('providers.clearFilters') }}</Button>
+      <Button v-else-if="!error" @click="enrollmentOpen = true">
         <Plus class="size-4" />{{ t('speakers.create') }}
       </Button>
     </div>
 
-    <div v-else class="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+    <div v-else class="directory-grid">
       <SpeakerCard
         v-for="speaker in filtered"
         :key="speaker.key"
@@ -172,11 +187,7 @@ onBeforeUnmount(() => activeRequest?.abort())
       />
     </div>
 
-    <nav v-if="!loading && pageCount > 1" class="flex items-center justify-end gap-2" :aria-label="t('speakers.title')">
-      <Button variant="outline" size="sm" :disabled="page <= 1" @click="changePage(-1)">{{ t('common.previous') }}</Button>
-      <span class="text-sm text-muted-foreground">{{ page }} / {{ pageCount }}</span>
-      <Button variant="outline" size="sm" :disabled="page >= pageCount" @click="changePage(1)">{{ t('common.next') }}</Button>
-    </nav>
+    <nav v-if="!loading && pageCount > 1" class="directory-pagination" :aria-label="t('speakers.title')"><span>{{ t('directoryUi.page') }} {{ page }} / {{ pageCount }}</span><div><Button variant="outline" size="sm" :disabled="page <= 1" @click="changePage(-1)"><ChevronLeft class="size-4" aria-hidden="true" />{{ t('common.previous') }}</Button><Button variant="outline" size="sm" :disabled="page >= pageCount" @click="changePage(1)">{{ t('common.next') }}<ChevronRight class="size-4" aria-hidden="true" /></Button></div></nav>
 
     <SpeakerEnrollmentWizard v-model:open="enrollmentOpen" @completed="enrollmentCompleted" />
 
@@ -213,3 +224,5 @@ onBeforeUnmount(() => activeRequest?.abort())
     />
   </section>
 </template>
+
+<style scoped src="./studio-directory.css"></style>

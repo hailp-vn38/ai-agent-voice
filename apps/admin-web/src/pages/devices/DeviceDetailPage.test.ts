@@ -1,4 +1,4 @@
-import { flushPromises, shallowMount } from '@vue/test-utils'
+import { config, flushPromises, shallowMount } from '@vue/test-utils'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { reactive } from 'vue'
 
@@ -6,6 +6,12 @@ import { setLocale } from '@/composables/useI18n'
 import { devicesApi } from '@/api/devices'
 import type { AdminDevice } from '@/api/types/devices'
 import DeviceDetailPage from './DeviceDetailPage.vue'
+
+// shallowMount drops named slots, and the header's facts and actions live in DetailHero slots.
+config.global.stubs = {
+  ...config.global.stubs,
+  DetailHero: { template: '<header><slot name="meta" /><slot name="actions" /><slot name="facts" /></header>' },
+}
 
 const route = reactive({ params: { deviceId: 'device-a' }, query: { edit: undefined as string | undefined } })
 const push = vi.fn()
@@ -122,6 +128,22 @@ describe('DeviceDetailPage', () => {
     wrapper.unmount()
   })
 
+  it.each([
+    { ws_online: true, state: 'online', label: 'WS online' },
+    { ws_online: false, state: 'offline', label: 'WS offline' },
+    { ws_online: undefined, state: 'unknown', label: 'Live presence is not available' },
+  ])('shows $state presence independently of enabled admission', async ({ ws_online, state, label }) => {
+    vi.mocked(devicesApi.get).mockResolvedValue({ ...sample('device-a'), ws_online })
+    const wrapper = shallowMount(DeviceDetailPage, { global: { stubs: { RouterLink: true } } })
+    try {
+      await flushPromises()
+      const presence = wrapper.get('[data-device-presence]')
+      expect(presence.attributes('data-presence')).toBe(state)
+      expect(presence.text()).toContain(label)
+      expect(wrapper.get('.device-admission-label').text()).toBe('Connection permitted')
+    } finally { wrapper.unmount() }
+  })
+
   it('warns that deleting a Device deletes its Memory vault', async () => {
     const wrapper = shallowMount(DeviceDetailPage, { global: { stubs: { RouterLink: true } } })
     await flushPromises()
@@ -139,9 +161,8 @@ describe('DeviceDetailPage', () => {
     await flushPromises()
     expect(wrapper.get('[data-device-memory-mode-value]').text()).toBe('Read')
 
-    const select = wrapper.get('[data-device-memory-mode]')
-    expect((select.element as HTMLSelectElement).value).toBe('read')
-    await select.setValue('read_write')
+    expect(wrapper.get<HTMLInputElement>('[data-device-memory-mode][value="read"]').element.checked).toBe(true)
+    await wrapper.get('[data-device-memory-mode][value="read_write"]').setValue(true)
     await wrapper.get('#device-detail-edit-form').trigger('submit')
     await flushPromises()
     expect(devicesApi.update).toHaveBeenCalledWith(

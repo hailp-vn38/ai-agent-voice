@@ -1,15 +1,5 @@
 <script setup lang="ts">
-import {
-  ArrowLeft,
-  ArrowRight,
-  ChevronRight,
-  Cpu,
-  Info,
-  KeyRound,
-  Plus,
-  Trash2,
-  User,
-} from '@lucide/vue'
+import { ArrowRight, ChevronRight, Cpu, Info, KeyRound, Plus, Trash2, User } from '@lucide/vue'
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
@@ -25,6 +15,8 @@ import type {
 import ConfirmDialog from '@/components/admin/ConfirmDialog.vue'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import DetailHero from '@/components/admin/DetailHero.vue'
+import { Layers as HeroIcon } from '@lucide/vue'
 import { useI18n } from '@/composables/useI18n'
 import { useErrorToast } from '@/composables/useNotify'
 import {
@@ -180,46 +172,19 @@ onMounted(() => {
 
 <template>
   <section class="space-y-4" data-testid="llm-gateway-pool-detail-page">
-    <div class="flex flex-wrap items-center justify-between gap-2">
-      <button
-        type="button"
-        data-detail-back
-        class="inline-flex items-center gap-1.5 rounded-lg border border-border/80 bg-surface/60 px-2.5 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:border-studio-violet/40 hover:text-foreground"
-        @click="router.push({ name: 'llm-gateway-pools' })"
-      >
-        <ArrowLeft class="size-3.5" aria-hidden="true" />
-        {{ t('llmGateway.backToPools') }}
-      </button>
-    </div>
-
-    <header class="flex flex-wrap items-start justify-between gap-3">
-      <div class="space-y-1">
-        <p class="text-[11px] font-bold tracking-[0.14em] text-studio-violet uppercase">
-          {{ t('llmGateway.poolPage.eyebrow') }}
-        </p>
-        <h1 class="text-xl font-bold tracking-tight sm:text-2xl">
-          {{ poolDetail?.display_name || vendorParam }}
-        </h1>
-        <p class="max-w-2xl text-xs text-muted-foreground sm:text-sm">
-          {{
-            t('llmGateway.poolPage.subtitle', {
-              name: poolDetail?.display_name || vendorParam,
-            })
-          }}
-        </p>
-      </div>
-
-      <div class="flex flex-wrap items-center gap-2">
-        <Button variant="outline" size="sm" data-action="create-model" @click="goCreateModel()">
+    <DetailHero tone="gateway" :eyebrow="t('llmGateway.poolPage.eyebrow')" :title="poolDetail?.display_name || vendorParam" :description="t('llmGateway.poolPage.subtitle', { name: poolDetail?.display_name || vendorParam, })" :back-label="t('llmGateway.backToPools')" @back="router.push({ name: 'llm-gateway-pools' })">
+      <template #icon><HeroIcon :size="28" /></template>
+      <template #actions>
+        <button type="button" class="hero-ghost" data-action="create-model" @click="goCreateModel()">
           <Plus class="size-4" aria-hidden="true" />
           {{ t('llmGateway.pool.addModelBtn') }}
-        </Button>
-        <Button size="sm" data-action="connect-vendor" @click="goConnectVendor()">
+        </button>
+        <button type="button" class="hero-primary" data-action="connect-vendor" @click="goConnectVendor()">
           <KeyRound class="size-4" aria-hidden="true" />
           {{ t('llmGateway.addToPool') }}
-        </Button>
-      </div>
-    </header>
+        </button>
+      </template>
+    </DetailHero>
 
     <div
       v-if="loading && !poolDetail"

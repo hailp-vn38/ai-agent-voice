@@ -1,18 +1,5 @@
 <script setup lang="ts">
-import {
-  AlertTriangle,
-  ArrowRight,
-  ChevronRight,
-  Clock,
-  Cpu,
-  Gauge,
-  KeyRound,
-  Layers,
-  Network,
-  Plus,
-  RefreshCw,
-  User,
-} from '@lucide/vue'
+import { AlertTriangle, ArrowRight, ChevronRight, Clock, Cpu, Gauge, KeyRound, Layers, Plus, RefreshCw, User } from '@lucide/vue'
 import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 
@@ -26,6 +13,7 @@ import type {
   GatewayVendorInfo,
 } from '@/api/types/llm-gateway'
 import { Badge } from '@/components/ui/badge'
+import DirectoryHero from '@/components/admin/DirectoryHero.vue'
 import { Button } from '@/components/ui/button'
 import { useI18n } from '@/composables/useI18n'
 import { useErrorToast } from '@/composables/useNotify'
@@ -181,169 +169,26 @@ function goAccount(accountKey: string) {
 onMounted(() => {
   void load()
 })
+const heroStats = computed(() => [
+  { key: 'pools', label: t('llmGateway.hub.kpiPools'), value: vendors.value.length, hint: t('llmGateway.hub.kpiPoolsDesc'), icon: Layers },
+  { key: 'accounts', label: t('llmGateway.hub.kpiAccounts'), value: accounts.value.length, hint: t('llmGateway.hub.kpiAccountsDesc', { count: activeAccountsCount.value }), icon: User },
+  { key: 'models', label: t('llmGateway.hub.kpiModels'), value: enabledModelsCount.value, hint: t('llmGateway.hub.kpiModelsDesc'), icon: Cpu },
+  { key: 'quotas', label: t('llmGateway.hub.kpiIssues'), value: issueAccounts.value.length, hint: t('llmGateway.hub.kpiIssuesDesc'), icon: AlertTriangle },
+])
+function openKpi(key: string) {
+  void router.push({ name: `llm-gateway-${key}` })
+}
 </script>
 
 <template>
   <section class="space-y-4" data-testid="llm-gateway-hub-page">
-    <!-- Header -->
-    <header class="flex flex-wrap items-start justify-between gap-3">
-      <div class="space-y-1">
-        <p class="text-[11px] font-bold tracking-[0.14em] text-studio-violet uppercase">
-          {{ t('llmGateway.hub.eyebrow') }}
-        </p>
-        <h1 class="text-xl font-bold tracking-tight sm:text-2xl">
-          {{ t('llmGateway.hub.title') }}
-        </h1>
-        <p class="max-w-2xl text-xs text-muted-foreground sm:text-sm">
-          {{ t('llmGateway.hub.subtitle') }}
-        </p>
-      </div>
+    <DirectoryHero tone="gateway" :eyebrow="t('llmGateway.hub.eyebrow')" :title="t('llmGateway.hub.title')" :intro="t('llmGateway.hub.heroDesc')" :stats="heroStats" data-testid="llm-gateway-hero" @select="openKpi">
+      <template #actions>
+        <button type="button" class="hero-primary" data-action="go-connect" @click="router.push({ name: 'llm-gateway-connect' })"><Plus :size="16" aria-hidden="true" />{{ t('llmGateway.hub.connectCta') }}</button>
+        <button type="button" class="hero-ghost" data-action="refresh" :disabled="loading" @click="load"><RefreshCw :size="16" :class="{ 'animate-spin': loading }" aria-hidden="true" />{{ t('common.refresh') }}</button>
+      </template>
+    </DirectoryHero>
 
-      <div class="flex flex-wrap items-center gap-2">
-        <Button
-          variant="outline"
-          size="sm"
-          data-action="refresh"
-          :disabled="loading"
-          @click="load"
-        >
-          <RefreshCw class="size-4" :class="{ 'animate-spin': loading }" aria-hidden="true" />
-          {{ t('common.refresh') }}
-        </Button>
-        <Button
-          size="sm"
-          data-action="go-connect"
-          @click="router.push({ name: 'llm-gateway-connect' })"
-        >
-          <Plus class="size-4" aria-hidden="true" />
-          {{ t('llmGateway.hub.connectCta') }}
-        </Button>
-      </div>
-    </header>
-
-    <!-- Hero Control Center Banner -->
-    <section
-      data-testid="llm-gateway-hero"
-      class="studio-panel flex flex-wrap items-center justify-between gap-3 border-studio-violet/25 bg-gradient-to-br from-studio-violet/10 via-surface/60 to-teal-500/5 p-4"
-    >
-      <div class="space-y-1">
-        <p class="text-[10px] font-bold tracking-[0.14em] text-studio-violet uppercase">
-          {{ t('llmGateway.hub.heroEyebrow') }}
-        </p>
-        <strong class="block text-sm font-bold text-foreground sm:text-base">
-          {{ t('llmGateway.hub.heroTitle') }}
-        </strong>
-        <p class="max-w-2xl text-xs text-muted-foreground">
-          {{ t('llmGateway.hub.heroDesc') }}
-        </p>
-      </div>
-      <div class="flex size-12 shrink-0 items-center justify-center rounded-2xl border border-studio-violet/30 bg-studio-violet/12 text-studio-violet">
-        <Network class="size-6" aria-hidden="true" />
-      </div>
-    </section>
-
-    <!-- 4 Clickable KPI Cards -->
-    <div class="grid grid-cols-2 gap-3 lg:grid-cols-4">
-      <article
-        data-kpi-card="pools"
-        role="button"
-        tabindex="0"
-        class="studio-panel flex cursor-pointer items-center gap-3 p-3.5 transition-colors hover:border-studio-violet/50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
-        @click="router.push({ name: 'llm-gateway-pools' })"
-        @keydown.enter.prevent="router.push({ name: 'llm-gateway-pools' })"
-        @keydown.space.prevent="router.push({ name: 'llm-gateway-pools' })"
-      >
-        <span class="inline-flex size-10 shrink-0 items-center justify-center rounded-xl border border-studio-violet/25 bg-studio-violet/10 text-studio-violet">
-          <Layers class="size-4" aria-hidden="true" />
-        </span>
-        <div class="min-w-0">
-          <div class="text-xl font-extrabold tracking-tight text-foreground">
-            {{ vendors.length }}
-          </div>
-          <div class="truncate text-xs font-bold text-foreground">
-            {{ t('llmGateway.hub.kpiPools') }}
-          </div>
-          <div class="truncate text-[11px] text-muted-foreground">
-            {{ t('llmGateway.hub.kpiPoolsDesc') }}
-          </div>
-        </div>
-      </article>
-
-      <article
-        data-kpi-card="accounts"
-        role="button"
-        tabindex="0"
-        class="studio-panel flex cursor-pointer items-center gap-3 p-3.5 transition-colors hover:border-studio-violet/50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
-        @click="router.push({ name: 'llm-gateway-accounts' })"
-        @keydown.enter.prevent="router.push({ name: 'llm-gateway-accounts' })"
-        @keydown.space.prevent="router.push({ name: 'llm-gateway-accounts' })"
-      >
-        <span class="inline-flex size-10 shrink-0 items-center justify-center rounded-xl border border-studio-violet/25 bg-studio-violet/10 text-studio-violet">
-          <User class="size-4" aria-hidden="true" />
-        </span>
-        <div class="min-w-0">
-          <div class="text-xl font-extrabold tracking-tight text-foreground">
-            {{ accounts.length }}
-          </div>
-          <div class="truncate text-xs font-bold text-foreground">
-            {{ t('llmGateway.hub.kpiAccounts') }}
-          </div>
-          <div class="truncate text-[11px] text-muted-foreground">
-            {{ t('llmGateway.hub.kpiAccountsDesc', { count: activeAccountsCount }) }}
-          </div>
-        </div>
-      </article>
-
-      <article
-        data-kpi-card="models"
-        role="button"
-        tabindex="0"
-        class="studio-panel flex cursor-pointer items-center gap-3 p-3.5 transition-colors hover:border-studio-violet/50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
-        @click="router.push({ name: 'llm-gateway-models' })"
-        @keydown.enter.prevent="router.push({ name: 'llm-gateway-models' })"
-        @keydown.space.prevent="router.push({ name: 'llm-gateway-models' })"
-      >
-        <span class="inline-flex size-10 shrink-0 items-center justify-center rounded-xl border border-studio-violet/25 bg-studio-violet/10 text-studio-violet">
-          <Cpu class="size-4" aria-hidden="true" />
-        </span>
-        <div class="min-w-0">
-          <div class="text-xl font-extrabold tracking-tight text-foreground">
-            {{ enabledModelsCount }}
-          </div>
-          <div class="truncate text-xs font-bold text-foreground">
-            {{ t('llmGateway.hub.kpiModels') }}
-          </div>
-          <div class="truncate text-[11px] text-muted-foreground">
-            {{ t('llmGateway.hub.kpiModelsDesc') }}
-          </div>
-        </div>
-      </article>
-
-      <article
-        data-kpi-card="quotas"
-        role="button"
-        tabindex="0"
-        class="studio-panel flex cursor-pointer items-center gap-3 p-3.5 transition-colors hover:border-studio-violet/50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
-        @click="router.push({ name: 'llm-gateway-quotas' })"
-        @keydown.enter.prevent="router.push({ name: 'llm-gateway-quotas' })"
-        @keydown.space.prevent="router.push({ name: 'llm-gateway-quotas' })"
-      >
-        <span class="inline-flex size-10 shrink-0 items-center justify-center rounded-xl border border-studio-violet/25 bg-studio-violet/10 text-studio-violet">
-          <AlertTriangle class="size-4" aria-hidden="true" />
-        </span>
-        <div class="min-w-0">
-          <div class="text-xl font-extrabold tracking-tight text-foreground">
-            {{ issueAccounts.length }}
-          </div>
-          <div class="truncate text-xs font-bold text-foreground">
-            {{ t('llmGateway.hub.kpiIssues') }}
-          </div>
-          <div class="truncate text-[11px] text-muted-foreground">
-            {{ t('llmGateway.hub.kpiIssuesDesc') }}
-          </div>
-        </div>
-      </article>
-    </div>
 
     <!-- Loading Skeleton -->
     <div

@@ -30,7 +30,7 @@ import type {
   ArtifactKind,
   ArtifactRole,
 } from '@/api/types/agent-jobs'
-import PageHeader from '@/components/admin/PageHeader.vue'
+import DirectoryHero from '@/components/admin/DirectoryHero.vue'
 import ArtifactPreviewDialog, {
   artifactPreview,
 } from '@/components/jobs/artifacts/ArtifactPreviewDialog.vue'
@@ -383,18 +383,25 @@ onBeforeUnmount(() => {
   if (refreshTimer) clearTimeout(refreshTimer)
   revokeAllBlobs()
 })
+const heroStats = computed(() => [
+  { label: t('artifactsUi.totalFiles'), value: loading.value ? '—' : summary.value.total_artifacts, icon: FolderOpen, attr: 'data-summary-total' },
+  { label: t('artifactsUi.primaryDeliverables'), value: loading.value ? '—' : summary.value.primary_artifacts, icon: Sparkles, attr: 'data-summary-primary' },
+  { label: t('artifactsUi.mediaAssets'), value: loading.value ? '—' : mediaAssetsCount.value, icon: ImageIcon, attr: 'data-summary-media' },
+  { label: t('artifactsUi.totalStorage'), value: loading.value ? '—' : formatBytes(summary.value.total_size_bytes), icon: HardDrive, attr: 'data-summary-bytes' },
+])
 </script>
 
 <template>
   <section class="space-y-6">
-    <PageHeader :title="t('artifactsUi.title')" :description="t('artifactsUi.description')">
+    <DirectoryHero tone="artifacts" :eyebrow="t('nav.artifacts')" :title="t('artifactsUi.title')" :intro="t('artifactsUi.description')" :stats="heroStats" data-artifact-summary-cards>
       <template #actions>
-        <div class="inline-flex rounded-lg border bg-muted/30 p-0.5">
+        <div class="inline-flex rounded-full border border-white/30 bg-white/10 p-0.5 backdrop-blur">
           <button
             type="button"
-            class="inline-flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-medium transition-colors"
-            :class="viewMode === 'grid' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'"
+            class="inline-flex h-8 cursor-pointer items-center gap-1.5 rounded-full px-3 text-sm font-medium transition-colors"
+            :class="viewMode === 'grid' ? 'bg-white text-[#3d27ad] shadow-sm' : 'text-white/80 hover:text-white'"
             :aria-label="t('artifactsUi.viewGrid')"
+            :aria-pressed="viewMode === 'grid'"
             data-view-mode="grid"
             @click="viewMode = 'grid'"
           >
@@ -402,55 +409,21 @@ onBeforeUnmount(() => {
           </button>
           <button
             type="button"
-            class="inline-flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-medium transition-colors"
-            :class="viewMode === 'table' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'"
+            class="inline-flex h-8 cursor-pointer items-center gap-1.5 rounded-full px-3 text-sm font-medium transition-colors"
+            :class="viewMode === 'table' ? 'bg-white text-[#3d27ad] shadow-sm' : 'text-white/80 hover:text-white'"
             :aria-label="t('artifactsUi.viewTable')"
+            :aria-pressed="viewMode === 'table'"
             data-view-mode="table"
             @click="viewMode = 'table'"
           >
             <List class="size-3.5" />{{ t('artifactsUi.viewTable') }}
           </button>
         </div>
-        <Button variant="outline" :disabled="loading" @click="load(page)">
-          <RefreshCw class="size-4" :class="{ 'animate-spin': loading }" />{{ t('jobUi.refresh') }}
-        </Button>
+        <button type="button" class="hero-ghost" :disabled="loading" @click="load(page)">
+          <RefreshCw :size="16" :class="{ 'animate-spin': loading }" />{{ t('jobUi.refresh') }}
+        </button>
       </template>
-    </PageHeader>
-
-    <div class="grid gap-3 sm:grid-cols-2 xl:grid-cols-4" data-artifact-summary-cards>
-      <div class="studio-panel flex items-center gap-3 p-4" :class="{ 'card-shimmer': loading }">
-        <FolderOpen class="size-6 shrink-0 text-studio-violet" />
-        <div class="min-w-0 flex-1">
-          <div v-if="loading" class="mb-1 h-6 w-12 rounded bg-muted/60" aria-hidden="true" />
-          <p v-else class="text-xl font-semibold tabular-nums" data-summary-total>{{ summary.total_artifacts }}</p>
-          <p class="text-xs text-muted-foreground">{{ t('artifactsUi.totalFiles') }}</p>
-        </div>
-      </div>
-      <div class="studio-panel flex items-center gap-3 p-4" :class="{ 'card-shimmer': loading }">
-        <Sparkles class="size-6 shrink-0 text-success" />
-        <div class="min-w-0 flex-1">
-          <div v-if="loading" class="mb-1 h-6 w-12 rounded bg-muted/60" aria-hidden="true" />
-          <p v-else class="text-xl font-semibold tabular-nums" data-summary-primary>{{ summary.primary_artifacts }}</p>
-          <p class="text-xs text-muted-foreground">{{ t('artifactsUi.primaryDeliverables') }}</p>
-        </div>
-      </div>
-      <div class="studio-panel flex items-center gap-3 p-4" :class="{ 'card-shimmer': loading }">
-        <ImageIcon class="size-6 shrink-0 text-studio-cyan" />
-        <div class="min-w-0 flex-1">
-          <div v-if="loading" class="mb-1 h-6 w-12 rounded bg-muted/60" aria-hidden="true" />
-          <p v-else class="text-xl font-semibold tabular-nums" data-summary-media>{{ mediaAssetsCount }}</p>
-          <p class="text-xs text-muted-foreground">{{ t('artifactsUi.mediaAssets') }}</p>
-        </div>
-      </div>
-      <div class="studio-panel flex items-center gap-3 p-4" :class="{ 'card-shimmer': loading }">
-        <HardDrive class="size-6 shrink-0 text-studio-violet" />
-        <div class="min-w-0 flex-1">
-          <div v-if="loading" class="mb-1 h-6 w-16 rounded bg-muted/60" aria-hidden="true" />
-          <p v-else class="text-xl font-semibold tabular-nums" data-summary-bytes>{{ formatBytes(summary.total_size_bytes) }}</p>
-          <p class="text-xs text-muted-foreground">{{ t('artifactsUi.totalStorage') }}</p>
-        </div>
-      </div>
-    </div>
+    </DirectoryHero>
 
     <div class="flex flex-wrap items-center gap-1.5 border-b pb-3" role="tablist" data-artifact-kind-tabs>
       <button

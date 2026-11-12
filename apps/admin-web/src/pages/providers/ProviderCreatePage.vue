@@ -28,9 +28,8 @@ import type {
   GatewayVendorInfo,
 } from '@/api/types/llm-gateway'
 import type { ProviderAdapter, ProviderConfigField } from '@/api/types/providers'
-import DetailHeader from '@/components/admin/DetailHeader.vue'
+import DetailHero from '@/components/admin/DetailHero.vue'
 import ProviderTestPanel from '@/components/providers/ProviderTestPanel.vue'
-import { Button } from '@/components/ui/button'
 import { useI18n } from '@/composables/useI18n'
 import OAuthLoginModal from '@/pages/gateway/OAuthLoginModal.vue'
 import { useAdminStore } from '@/stores/admin'
@@ -1210,31 +1209,22 @@ void loadGatewayOptions()
 
 <template>
   <div class="provider-create-page space-y-5">
-    <DetailHeader
+    <DetailHero
+      tone="providers"
+      :eyebrow="t('providers.title')"
       title="Tạo Provider mới"
+      description="Thiết lập adapter cho hệ thống AI Voice — cấu hình, kiểm tra và quản lý vòng đời runtime tại một trang độc lập."
       :back-label="t('providers.title')"
       @back="cancel"
     >
-      <template #icon>
-        <span
-          class="flex size-10 shrink-0 items-center justify-center rounded-xl border border-studio-violet/20 bg-studio-violet/10 text-studio-violet"
-        >
-          <component :is="TYPE_META[type].icon" class="size-5" aria-hidden="true" />
-        </span>
-      </template>
-      <template #details>
-        <span class="line-clamp-2">
-          Thiết lập adapter cho hệ thống AI Voice — cấu hình, kiểm tra và quản lý vòng đời runtime
-          tại một trang độc lập.
-        </span>
-      </template>
+      <template #icon><component :is="TYPE_META[type].icon" :size="28" /></template>
       <template #actions>
-        <Button variant="outline" size="sm" data-action="reset" @click="resetAll">
-          <RotateCcw class="size-4" aria-hidden="true" />
+        <button type="button" class="hero-ghost" data-action="reset" @click="resetAll">
+          <RotateCcw :size="16" aria-hidden="true" />
           Làm lại
-        </Button>
+        </button>
       </template>
-    </DetailHeader>
+    </DetailHero>
 
     <div class="stepbar" role="tablist" aria-label="Các bước tạo Provider">
       <button

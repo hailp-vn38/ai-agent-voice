@@ -1,10 +1,10 @@
 <script setup lang="ts">
-import { Layers3, Pencil } from '@lucide/vue'
+import { ArrowLeft, BookOpen, Globe2, Layers3, Link2, MonitorSmartphone, Pencil, TriangleAlert, Users, Workflow } from '@lucide/vue'
 import { computed, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
 import ConfirmDialog from '@/components/admin/ConfirmDialog.vue'
-import DetailHeader from '@/components/admin/DetailHeader.vue'
+import DetailHero from '@/components/admin/DetailHero.vue'
 import ProviderDetailModal from '@/components/admin/ProviderDetailModal.vue'
 import ProviderFormModal from '@/components/admin/ProviderFormModal.vue'
 import AiPipeline from '@/components/pipeline/AiPipeline.vue'
@@ -12,7 +12,7 @@ import CopyTemplateDialog from '@/components/templates/CopyTemplateDialog.vue'
 import LinkTemplateAgentDialog from '@/components/templates/LinkTemplateAgentDialog.vue'
 import TemplateActionsMenu from '@/components/templates/TemplateActionsMenu.vue'
 import TemplateAgentUsageList from '@/components/templates/TemplateAgentUsageList.vue'
-import TemplateConfigurationPanel from '@/components/templates/TemplateConfigurationPanel.vue'
+import TemplatePromptCard from '@/components/templates/TemplatePromptCard.vue'
 import TemplateFormDialog from '@/components/templates/TemplateFormDialog.vue'
 import { Button } from '@/components/ui/button'
 import { useI18n } from '@/composables/useI18n'
@@ -22,7 +22,7 @@ import { useAdminStore, type TemplateSetupInput } from '@/stores/admin'
 const store = useAdminStore()
 const route = useRoute()
 const router = useRouter()
-const { t } = useI18n()
+const { t, formatRelative } = useI18n()
 
 const templateId = computed(() => String(route.params.templateId ?? ''))
 const template = computed(() => store.getTemplate(templateId.value))
@@ -50,6 +50,14 @@ const unlinkOpen = computed({
     if (!value) unlinkAgentTarget.value = undefined
   },
 })
+
+const providerUsage = computed(() => selectedProvider.value
+  ? store.templatesUsingProvider(selectedProvider.value.id).map((item) => ({
+    templateId: item.id, templateName: item.name, language: item.language,
+    agentNames: store.getAgentsUsingTemplate(item.id).map((agent) => agent.name),
+  }))
+  : [],
+)
 
 const deleteAgentCount = computed(() =>
   deleteTarget.value ? store.getTemplateAgentCount(deleteTarget.value.id) : 0,
@@ -159,68 +167,35 @@ function isDefaultForAgent(agentId: string) {
 </script>
 
 <template>
-  <div v-if="template" class="space-y-4 sm:space-y-5">
-    <DetailHeader :title="template.name" :back-label="t('nav.templates')" @back="router.push('/templates')">
-      <template #icon>
-        <span class="flex size-11 shrink-0 items-center justify-center rounded-xl border border-studio-violet/20 bg-studio-violet/10 text-studio-violet">
-          <Layers3 class="size-6" aria-hidden="true" />
-        </span>
-      </template>
-      <template #details>
-        <p>{{ template.language || t('templateCard.noLanguage') }} · {{ t('templates.usedBy', { count: agentCount }) }}</p>
-        <p v-if="template.description" class="mt-1 max-w-2xl text-sm leading-relaxed">{{ template.description }}</p>
-      </template>
+  <div v-if="template" class="template-workspace">
+    <DetailHero tone="templates" :eyebrow="t('templatesBoard.workspace')" :title="template.name" :description="template.description" :back-label="t('templates.back')" @back="router.push('/templates')">
+      <template #icon><Layers3 :size="28" /></template>
       <template #actions>
-          <Button size="sm" variant="outline" @click="editOpen = true">
-            <Pencil class="size-4" />
-            {{ t('templateConfig.editTemplate') }}
-          </Button>
-          <TemplateActionsMenu
-            :template="template"
-            :show-view-details="false"
-            @link-to-agent="linkOpen = true"
-            @copy="copyOpen = true"
-            @delete="requestDeleteTemplate"
-          />
+        <button type="button" class="hero-primary" @click="editOpen = true"><Pencil :size="16" aria-hidden="true" />{{ t('templateConfig.editTemplate') }}</button>
+        <button type="button" class="hero-ghost" @click="linkOpen = true"><Link2 :size="16" aria-hidden="true" />{{ t('templatesActions.linkToAgent') }}</button>
+        <span class="hero-menu"><TemplateActionsMenu :template="template" :show-view-details="false" @link-to-agent="linkOpen = true" @copy="copyOpen = true" @delete="requestDeleteTemplate" /></span>
       </template>
-    </DetailHeader>
-
-    <p v-if="agentCount > 1" class="rounded-lg bg-muted/60 px-3 py-2.5 text-xs leading-relaxed text-muted-foreground">
-      {{ t('templates.sharedNotice', { name: template.name, count: agentCount }) }}
-    </p>
-
-    <div class="grid items-start gap-4 lg:grid-cols-[minmax(0,1.35fr)_minmax(320px,0.65fr)]">
-      <AiPipeline
-        :template="template"
-        :providers="store.providers"
-        :shared-templates="sharedTemplates"
-        @open-provider="openProvider"
-        @edit-provider="editProvider"
-        @unlink="unlinkProvider"
-        @select="linkProvider"
-      />
-
-      <TemplateConfigurationPanel
-        :template="template"
-        :provider-count="store.templateProviderCount(template)"
-        :agent-count="agentCount"
-        :device-count="store.devicesUsingTemplate(template.id).length"
-        @view-template="router.push(`/templates/${template.id}`)"
-        @edit-template="editOpen = true"
-        @link-to-agent="linkOpen = true"
-        @copy-template="copyOpen = true"
-        @delete-template="requestDeleteTemplate"
-        @save-prompt="savePrompt"
-      />
+      <template #facts>
+        <div class="hero-fact"><span><Globe2 :size="13" aria-hidden="true" />{{ t('templateForm.language') }}</span><strong>{{ template.language || t('templateCard.noLanguage') }}</strong></div>
+        <div class="hero-fact"><span><Workflow :size="13" aria-hidden="true" />{{ t('templateForm.providers') }}</span><strong>{{ store.templateProviderCount(template) }}</strong></div>
+        <div class="hero-fact"><span><Users :size="13" aria-hidden="true" />{{ t('templateConfig.agentsUsing') }}</span><strong>{{ agentCount }}</strong></div>
+        <div class="hero-fact"><span><MonitorSmartphone :size="13" aria-hidden="true" />{{ t('templateConfig.devicesResolving') }}</span><strong>{{ store.devicesUsingTemplate(template.id).length }}</strong></div>
+      </template>
+    </DetailHero>
+    <p v-if="agentCount > 1" class="workspace-shared"><TriangleAlert :size="15" aria-hidden="true" />{{ t('templates.sharedNotice', { name: template.name, count: agentCount }) }}</p>
+    <div class="template-workspace-layout">
+      <AiPipeline class="workspace-pipeline" :template="template" :providers="store.providers" :shared-templates="sharedTemplates" @open-provider="openProvider" @edit-provider="editProvider" @unlink="unlinkProvider" @select="linkProvider" />
+      <section class="workspace-prompt-panel">
+        <p class="paper-eyebrow"><BookOpen :size="13" aria-hidden="true" />{{ t('templatesBoard.instructions') }}</p>
+        <TemplatePromptCard :prompt="template.prompt" @save="savePrompt" />
+        <dl class="workspace-document-meta">
+          <div><dt>{{ t('templateConfig.updated') }}</dt><dd>{{ formatRelative(template.updatedAt) }}</dd></div>
+          <div><dt>{{ t('templateForm.reviewLanguage') }}</dt><dd>{{ template.language || '—' }}</dd></div>
+          <div><dt>{{ t('templateConfig.templateId') }}</dt><dd><code>{{ template.id }}</code></dd></div>
+        </dl>
+      </section>
     </div>
-
-    <TemplateAgentUsageList
-      :agents="agents"
-      :device-count-by-agent="deviceCountByAgent"
-      :is-default="isDefaultForAgent"
-      @view-agent="viewAgent"
-      @unlink="requestUnlinkTemplate"
-    />
+    <TemplateAgentUsageList class="workspace-agent-usage" :agents="agents" :device-count-by-agent="deviceCountByAgent" :is-default="isDefaultForAgent" @view-agent="viewAgent" @unlink="requestUnlinkTemplate" />
 
     <TemplateFormDialog
       v-model="editOpen"
@@ -238,8 +213,8 @@ function isDefaultForAgent(agentId: string) {
       :linked-agent-ids="agents.map((agent) => agent.id)"
       @link="linkTemplate"
     />
-    <ProviderDetailModal v-model="providerDetailOpen" :provider="selectedProvider" @edit="editProvider" />
-    <ProviderFormModal v-model="providerEditOpen" :provider="editingProvider" @save="saveEditedProvider" />
+    <ProviderDetailModal v-model="providerDetailOpen" :provider="selectedProvider" :usage="providerUsage" @edit="editProvider" />
+    <ProviderFormModal v-model="providerEditOpen" :provider="editingProvider" :usage-count="editingProvider ? store.templatesUsingProvider(editingProvider.id).length : 0" @save="saveEditedProvider" />
 
     <ConfirmDialog
       v-model="deleteOpen"
@@ -283,3 +258,5 @@ function isDefaultForAgent(agentId: string) {
     </Button>
   </section>
 </template>
+
+<style scoped src="./templates-pages.css"></style>

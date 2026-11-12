@@ -1,10 +1,9 @@
 <script setup lang="ts">
-import { TriangleAlert } from '@lucide/vue'
-import { computed, reactive, ref, watch } from 'vue'
+import { ArrowLeft, ArrowRight, ArrowUpRight, Check, FileText, Globe2, Layers3, Link2, MessageSquareText, RefreshCw, TriangleAlert } from '@lucide/vue'
+import { computed, reactive, ref, useId, watch } from 'vue'
 
 import { formatApiError } from '@/api/errors'
 import BaseModal from '@/components/admin/BaseModal.vue'
-import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { useI18n } from '@/composables/useI18n'
 import {
@@ -33,6 +32,8 @@ const open = defineModel<boolean>({ required: true })
 const { t, providerTypeLabel } = useI18n()
 
 const LAST_STEP = 3
+const languageListId = useId()
+const promptId = useId()
 
 const step = ref(1)
 const submitting = ref(false)
@@ -49,16 +50,22 @@ const form = reactive({
 const editing = computed(() => Boolean(props.template))
 
 /**
- * The API models four required core slots plus an optional `speaker` slot; `vision` is not a
- * Template slot. Every bindable type except `vision` is offered here.
+ * The editor follows the catalog types offered by the current domain model.
  */
 const bindableTypes = computed(() => providerTypes)
 
 const steps = computed(() => [
-  t('templateForm.stepIdentity'),
-  t('templateForm.stepContent'),
-  t('templateForm.stepReview'),
+  { label: t('templateStudio.identity'), hint: t('templateStudio.identityShort'), title: t('templateStudio.identityTitle'), description: t('templateStudio.identityHint'), icon: FileText },
+  { label: t('templateStudio.content'), hint: t('templateStudio.contentShort'), title: t('templateStudio.contentTitle'), description: t('templateStudio.contentHint'), icon: MessageSquareText },
+  { label: t('templateStudio.review'), hint: t('templateStudio.reviewShort'), title: t('templateStudio.reviewTitle'), description: t('templateForm.reviewIntro'), icon: Check },
 ])
+const currentStep = computed(() => steps.value[step.value - 1]!)
+
+function goToStep(target: number) {
+  if (submitting.value || (target > 1 && !form.name.trim())) return
+  failure.value = null
+  step.value = target
+}
 
 const boundCount = computed(
   () => bindableTypes.value.filter((type) => Boolean(form.providerBindings[type])).length,
@@ -96,10 +103,11 @@ watch(
 )
 
 function next() {
-  if (canContinue.value && step.value < LAST_STEP) step.value += 1
+  if (!submitting.value && canContinue.value && step.value < LAST_STEP) step.value += 1
 }
 
 function back() {
+  if (submitting.value) return
   failure.value = null
   if (step.value > 1) step.value -= 1
 }
@@ -135,206 +143,130 @@ async function submit() {
   <BaseModal
     v-model="open"
     :title="editing ? t('templateForm.editTitle') : t('templateForm.createTitle')"
-    :description="t('templateForm.description')"
-    width-class="max-w-3xl"
+    :description="t('templateStudio.subtitle')"
+    :close-disabled="submitting"
+    width-class="max-w-[1180px] h-[min(830px,90dvh)]"
+    body-class="template-studio-body"
   >
-    <div class="space-y-5">
-      <ol class="grid grid-cols-3 gap-2 text-center text-xs">
-        <li
-          v-for="(label, index) in steps"
-          :key="label"
-          :class="[
-            'rounded-md border px-2 py-2',
-            step === index + 1 ? 'border-primary bg-primary text-primary-foreground' : 'text-muted-foreground',
-          ]"
-        >
-          {{ label }}
-        </li>
-      </ol>
-
-      <p
-        v-if="template && agentCount"
-        class="flex gap-2.5 rounded-lg bg-muted/60 px-3 py-2.5 text-xs leading-relaxed text-muted-foreground"
-      >
-        <TriangleAlert class="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
-        <span>{{ t('templateForm.sharedWarning', { name: template.name, count: agentCount }) }}</span>
-      </p>
-
-      <p
-        v-if="failure"
-        role="alert"
-        class="rounded-lg border border-red-200 bg-red-50 px-3 py-2.5 text-sm text-red-700"
-      >
-        {{ formatApiError(failure) }}
-      </p>
-
-      <div v-if="step === 1" class="space-y-4">
-        <div>
-          <label class="block space-y-1.5">
-            <span class="text-sm font-medium">{{ t('templateForm.name') }}</span>
-            <input
-              v-model="form.name"
-              class="admin-input"
-              :placeholder="t('templateForm.namePlaceholder')"
-              required
-            />
-          </label>
-
+    <div class="template-studio">
+      <aside class="template-manuscript">
+        <div class="manuscript-eyebrow"><span /> TEMPLATE STUDIO <span>{{ editing ? 'EDIT' : 'NEW' }}</span></div>
+        <div class="manuscript-art" aria-hidden="true">
+          <span class="manuscript-sheet sheet-back" /><span class="manuscript-sheet sheet-middle" />
+          <span class="manuscript-sheet sheet-front"><MessageSquareText :size="21" :stroke-width="1.3" /><i /><i /><i /></span>
+          <small>VOICE / BLUEPRINT</small>
         </div>
+        <h3 class="manuscript-name">{{ form.name || t('templateStudio.untitled') }}</h3>
+        <p class="manuscript-caption">{{ t('templateStudio.caption') }}</p>
+        <div class="manuscript-meta">
+          <span><Globe2 :size="12" aria-hidden="true" />{{ form.language || '—' }}</span>
+          <span>{{ t('count.characters', { count: form.prompt.length }) }}</span>
+        </div>
+        <nav :aria-label="t('templateStudio.navigation')" class="template-steps">
+          <button
+            v-for="(item, index) in steps"
+            :key="index"
+            type="button"
+            class="template-step"
+            :class="{ 'is-visited': step > index + 1 }"
+            :aria-current="step === index + 1 ? 'step' : undefined"
+            :disabled="submitting || (index > 0 && !form.name.trim())"
+            @click="goToStep(index + 1)"
+          >
+            <span class="step-marker"><Check v-if="step > index + 1" :size="12" aria-hidden="true" /><template v-else>0{{ index + 1 }}</template></span>
+            <span class="step-copy"><strong>{{ item.label }}</strong><small>{{ item.hint }}</small></span>
+          </button>
+        </nav>
+        <div class="manuscript-bindings">
+          <p>{{ t('templateStudio.bindings') }}<strong>{{ boundCount }} / {{ bindableTypes.length }}</strong></p>
+          <div class="binding-dots">
+            <span v-for="type in bindableTypes" :key="type" :data-bound="Boolean(form.providerBindings[type])" :title="`${providerTypeLabel(type)}: ${boundProviderName(type) || t('templateForm.noProvider')}`"><component :is="providerTypeIcons[type]" :size="14" aria-hidden="true" /><span class="sr-only">{{ providerTypeLabel(type) }}: {{ boundProviderName(type) || t('templateForm.noProvider') }}</span></span>
+          </div>
+        </div>
+      </aside>
 
-        <label class="block space-y-1.5">
-          <span class="text-sm font-medium">{{ t('templateForm.language') }}</span>
-          <input
-            v-model="form.language"
-            class="admin-input"
-            list="template-language-options"
-            :placeholder="t('templateForm.languagePlaceholder')"
-          />
-          <datalist id="template-language-options">
-            <option v-for="option in templateLanguageOptions" :key="option" :value="option" />
-          </datalist>
-        </label>
+      <div class="template-desk" :aria-busy="submitting">
+        <header class="template-desk-header">
+          <div><p class="template-desk-eyebrow">{{ t('templateStudio.chapter', { step }) }} / 03</p><h3>{{ currentStep.title }}</h3><p>{{ currentStep.description }}</p></div>
+          <component :is="currentStep.icon" :size="24" :stroke-width="1.4" aria-hidden="true" />
+        </header>
+        <p v-if="template && agentCount" class="template-shared-notice"><TriangleAlert :size="15" aria-hidden="true" /><span>{{ t('templateForm.sharedWarning', { name: template.name, count: agentCount }) }}</span></p>
+        <p v-if="failure" role="alert" class="template-failure"><TriangleAlert :size="15" aria-hidden="true" />{{ formatApiError(failure) }}</p>
 
-        <label class="block space-y-1.5">
-          <span class="text-sm font-medium">{{ t('templateForm.descriptionField') }}</span>
-          <textarea
-            v-model="form.description"
-            class="admin-textarea min-h-20"
-            :placeholder="t('templateForm.descriptionPlaceholder')"
-          />
-        </label>
-      </div>
-
-      <div v-else-if="step === 2" class="space-y-5">
-        <label class="block space-y-1.5">
-          <span class="text-sm font-medium">{{ t('templateForm.prompt') }}</span>
-          <textarea
-            v-model="form.prompt"
-            class="admin-textarea min-h-44 font-mono text-xs"
-            spellcheck="false"
-            :placeholder="t('templateForm.promptPlaceholder')"
-          />
-        </label>
-
-        <fieldset class="space-y-3">
-          <legend class="text-sm font-medium">{{ t('templateForm.providers') }}</legend>
-          <p class="text-xs text-muted-foreground">{{ t('templateForm.providersHint') }}</p>
-
-          <div class="grid gap-3 sm:grid-cols-2">
-            <label v-for="type in bindableTypes" :key="type" class="block space-y-1.5">
-              <span class="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
-                <component :is="providerTypeIcons[type]" class="size-3.5" aria-hidden="true" />
-                {{ providerTypeLabel(type) }}
-              </span>
-              <select
-                v-model="form.providerBindings[type]"
-                class="admin-input"
-                :aria-label="providerTypeLabel(type)"
-              >
-                <option value="">{{ t('templateForm.noProvider') }}</option>
-                <option
-                  v-for="provider in candidatesFor(type)"
-                  :key="provider.id"
-                  :value="provider.id"
-                >
-                  {{ provider.name }} · {{ provider.adapter }}
-                </option>
-              </select>
+        <div v-if="step === 1" class="template-identity">
+          <div class="identity-fields">
+            <label>
+              <span class="field-label">{{ t('templateForm.name') }}</span>
+              <input v-model="form.name" :disabled="submitting" class="admin-input" :placeholder="t('templateForm.namePlaceholder')" required />
+            </label>
+            <label>
+              <span class="field-label">{{ t('templateForm.language') }}</span>
+              <input v-model="form.language" :disabled="submitting" class="admin-input" :list="languageListId" :placeholder="t('templateForm.languagePlaceholder')" />
+              <datalist :id="languageListId"><option v-for="option in templateLanguageOptions" :key="option" :value="option" /></datalist>
             </label>
           </div>
-        </fieldset>
-      </div>
-
-      <div v-else class="space-y-4">
-        <p class="text-sm text-muted-foreground">{{ t('templateForm.reviewIntro') }}</p>
-
-        <dl class="grid gap-3 rounded-lg border p-4 text-sm sm:grid-cols-2">
-          <div>
-            <dt class="text-muted-foreground">{{ t('templateForm.name') }}</dt>
-            <dd class="font-medium">{{ form.name }}</dd>
-          </div>
-          <div>
-            <dt class="text-muted-foreground">{{ t('templateForm.reviewLanguage') }}</dt>
-            <dd>{{ form.language }}</dd>
-          </div>
-          <div>
-            <dt class="text-muted-foreground">{{ t('templateForm.providers') }}</dt>
-            <dd>
-              <Badge v-if="boundCount" variant="outline">{{ boundCount }}/{{ bindableTypes.length }}</Badge>
-              <span v-else class="text-muted-foreground">{{ t('templateForm.noProvider') }}</span>
-            </dd>
-          </div>
-          <div v-if="form.description" class="sm:col-span-2">
-            <dt class="text-muted-foreground">{{ t('templateForm.descriptionField') }}</dt>
-            <dd>{{ form.description }}</dd>
-          </div>
-        </dl>
-
-        <div class="space-y-1.5">
-          <p class="text-sm font-medium">{{ t('templateForm.reviewPrompt') }}</p>
-          <pre
-            v-if="form.prompt"
-            class="max-h-40 overflow-auto rounded-lg bg-muted/60 p-3 font-mono text-xs whitespace-pre-wrap"
-          >{{ form.prompt }}</pre>
-          <p v-else class="text-sm text-muted-foreground">{{ t('templateForm.reviewNoPrompt') }}</p>
+          <label>
+            <span class="field-label">{{ t('templateForm.descriptionField') }}</span>
+            <textarea v-model="form.description" :disabled="submitting" class="admin-textarea min-h-28" :placeholder="t('templateForm.descriptionPlaceholder')" />
+          </label>
+          <div class="template-identity-note"><Layers3 :size="18" aria-hidden="true" /><p>{{ t('templateForm.description') }}</p></div>
         </div>
 
-        <div class="space-y-1.5">
-          <p class="text-sm font-medium">{{ t('templateForm.providers') }}</p>
-          <ul class="space-y-1 text-sm">
-            <li
-              v-for="type in bindableTypes"
-              :key="type"
-              class="flex items-center justify-between gap-3"
-            >
-              <span class="flex items-center gap-1.5 text-xs text-muted-foreground">
-                <component :is="providerTypeIcons[type]" class="size-3.5" aria-hidden="true" />
-                {{ providerTypeLabel(type) }}
-              </span>
-              <span class="truncate font-medium">{{ boundProviderName(type) || '—' }}</span>
-            </li>
-          </ul>
+        <div v-else-if="step === 2" class="template-compose">
+          <div class="prompt-editor">
+            <div class="prompt-editor-bar"><label :for="promptId"><MessageSquareText :size="13" aria-hidden="true" />{{ t('templateForm.prompt') }}</label><small>{{ t('count.characters', { count: form.prompt.length }) }}</small></div>
+            <textarea :id="promptId" v-model="form.prompt" :disabled="submitting" spellcheck="false" :placeholder="t('templateForm.promptPlaceholder')" />
+            <p class="prompt-editor-footer">{{ t('templateStudio.promptHint') }}</p>
+          </div>
+          <fieldset class="template-provider-fields" :disabled="submitting">
+            <legend>{{ t('templateForm.providers') }}</legend>
+            <p>{{ t('templateForm.providersHint') }}</p>
+            <div class="template-binding-list">
+              <label v-for="type in bindableTypes" :key="type" class="template-binding" :data-bound="Boolean(form.providerBindings[type])">
+                <span class="binding-label"><component :is="providerTypeIcons[type]" :size="13" aria-hidden="true" />{{ providerTypeLabel(type) }}</span>
+                <select v-model="form.providerBindings[type]" class="admin-input" :aria-label="providerTypeLabel(type)">
+                  <option value="">{{ t('templateForm.noProvider') }}</option>
+                  <option v-for="provider in candidatesFor(type)" :key="provider.id" :value="provider.id">{{ provider.name }} · {{ provider.adapter }}</option>
+                </select>
+              </label>
+            </div>
+          </fieldset>
         </div>
 
-        <p class="rounded-lg bg-amber-50 px-3 py-2.5 text-sm text-amber-900">
-          {{ t('templateForm.bindingNote') }}
-        </p>
-
-        <details class="rounded-lg border p-3">
-          <summary class="cursor-pointer text-sm font-medium">{{ t('templateForm.showJson') }}</summary>
-          <pre class="mt-3 overflow-auto text-xs">{{
-            JSON.stringify(
-              {
-                name: form.name.trim(),
-                description: form.description.trim(),
-                language: form.language.trim(),
-                prompt: form.prompt,
-                provider_bindings: form.providerBindings,
-              },
-              null,
-              2,
-            )
-          }}</pre>
-        </details>
+        <div v-else class="template-review">
+          <dl class="template-review-meta">
+            <div><dt>{{ t('templateForm.name') }}</dt><dd>{{ form.name }}</dd></div>
+            <div><dt>{{ t('templateForm.reviewLanguage') }}</dt><dd>{{ form.language || templateLanguageOptions[0] }}</dd></div>
+            <div v-if="form.description" class="review-description"><dt>{{ t('templateForm.descriptionField') }}</dt><dd>{{ form.description }}</dd></div>
+          </dl>
+          <div class="template-review-content">
+            <div class="prompt-editor">
+              <div class="prompt-editor-bar"><span><MessageSquareText :size="13" aria-hidden="true" />{{ t('templateForm.reviewPrompt') }}</span><small>{{ t('count.characters', { count: form.prompt.length }) }}</small></div>
+              <pre v-if="form.prompt" class="review-prompt">{{ form.prompt }}</pre>
+              <p v-else class="review-empty-prompt">{{ t('templateForm.reviewNoPrompt') }}</p>
+            </div>
+            <div class="review-bindings">
+              <h4>{{ t('templateForm.providers') }} <span class="text-muted-foreground">{{ boundCount }}/{{ bindableTypes.length }}</span></h4>
+              <ul><li v-for="type in bindableTypes" :key="type"><span><component :is="providerTypeIcons[type]" :size="13" aria-hidden="true" />{{ providerTypeLabel(type) }}</span><strong>{{ boundProviderName(type) || '—' }}</strong></li></ul>
+            </div>
+          </div>
+          <p class="template-save-note"><Link2 :size="14" aria-hidden="true" />{{ t('templateForm.bindingNote') }}</p>
+        </div>
       </div>
     </div>
 
     <template #footer>
-      <div class="flex items-center justify-between gap-2">
-        <Button v-if="step > 1" variant="outline" @click="back">
-          {{ t('common.back') }}
-        </Button>
-        <Button v-else variant="outline" @click="open = false">
-          {{ t('common.cancel') }}
-        </Button>
-
-        <Button v-if="step < LAST_STEP" :disabled="!canContinue" @click="next">
-          {{ t('common.continue') }}
-        </Button>
-        <Button v-else :disabled="submitting || !canSave" @click="submit">
-          {{ submitting ? t('templateForm.saving') : editing ? t('templateForm.save') : t('templateForm.create') }}
-        </Button>
+      <div class="template-studio-footer">
+        <div class="template-footer-progress"><span>0{{ step }} / 03</span><span class="template-progress-track" aria-hidden="true"><i v-for="index in LAST_STEP" :key="index" :class="{ 'is-filled': step >= index }" /></span></div>
+        <div class="template-footer-actions">
+          <Button v-if="step > 1" variant="ghost" :disabled="submitting" @click="back"><ArrowLeft class="size-3.5" aria-hidden="true" />{{ t('common.back') }}</Button>
+          <Button v-else variant="ghost" :disabled="submitting" @click="open = false">{{ t('common.cancel') }}</Button>
+          <Button v-if="step < LAST_STEP" class="template-primary-action" :disabled="submitting || !canContinue" @click="next">{{ t('common.continue') }}<ArrowRight class="size-3.5" aria-hidden="true" /></Button>
+          <Button v-else class="template-primary-action" :disabled="submitting || !canSave" @click="submit"><RefreshCw v-if="submitting" class="size-3.5 animate-spin" aria-hidden="true" />{{ submitting ? t('templateForm.saving') : editing ? t('templateForm.save') : t('templateForm.create') }}<ArrowUpRight v-if="!submitting" class="size-3.5" aria-hidden="true" /></Button>
+        </div>
       </div>
     </template>
   </BaseModal>
 </template>
+
+<style scoped src="./template-form-dialog.css"></style>

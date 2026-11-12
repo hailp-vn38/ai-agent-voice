@@ -53,6 +53,7 @@ impl LlmGatewayProvider {
                     prompt,
                     image_bytes,
                     mime_type,
+                    &self.last_error_detail,
                 )
                 .await
             }

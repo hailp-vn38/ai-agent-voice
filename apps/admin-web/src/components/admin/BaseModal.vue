@@ -12,10 +12,12 @@ const props = withDefaults(defineProps<{
   description?: string
   widthClass?: string
   closeDisabled?: boolean
+  bodyClass?: string
 }>(), {
   description: '',
   widthClass: 'max-w-2xl',
   closeDisabled: false,
+  bodyClass: 'px-5 py-5 sm:px-6',
 })
 
 const open = defineModel<boolean>({ required: true })
@@ -62,7 +64,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
         tabindex="-1"
         :class="['relative z-10 flex max-h-[90vh] w-full flex-col overflow-hidden rounded-xl border bg-background shadow-2xl outline-none', props.widthClass]"
       >
-        <header class="flex items-start justify-between gap-4 border-b px-5 py-4 sm:px-6">
+        <header class="flex shrink-0 items-start justify-between gap-4 border-b px-5 py-4 sm:px-6">
           <div class="min-w-0">
             <h2 :id="titleId" class="text-lg font-semibold tracking-tight">{{ title }}</h2>
             <p v-if="description" :id="descriptionId" class="mt-1 text-sm text-muted-foreground">{{ description }}</p>
@@ -71,10 +73,10 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
             <X class="size-4" />
           </Button>
         </header>
-        <div class="overflow-y-auto px-5 py-5 sm:px-6">
+        <div :class="['min-h-0 overflow-y-auto', props.bodyClass]">
           <slot />
         </div>
-        <footer v-if="$slots.footer" class="border-t px-5 py-4 sm:px-6">
+        <footer v-if="$slots.footer" class="shrink-0 border-t px-5 py-4 sm:px-6">
           <slot name="footer" />
         </footer>
       </section>

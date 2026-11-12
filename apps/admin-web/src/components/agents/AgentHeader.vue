@@ -2,9 +2,8 @@
 import { Layers3, MonitorSmartphone, Pencil, Plus } from '@lucide/vue'
 
 import AgentActionsMenu from '@/components/agents/AgentActionsMenu.vue'
-import DetailHeader from '@/components/admin/DetailHeader.vue'
+import DetailHero from '@/components/admin/DetailHero.vue'
 import AgentVoiceIcon from '@/components/icons/AgentVoiceIcon.vue'
-import { Button } from '@/components/ui/button'
 import { useI18n } from '@/composables/useI18n'
 import type { Agent } from '@/domain/admin'
 
@@ -25,43 +24,29 @@ const { t } = useI18n()
 </script>
 
 <template>
-  <DetailHeader :title="agent.name" :back-label="t('nav.agents')" data-agent-header @back="emit('back')">
-    <template #icon>
-      <span class="flex size-11 shrink-0 items-center justify-center rounded-xl border border-studio-violet/20 bg-studio-violet/10 text-studio-violet">
-        <AgentVoiceIcon class="size-7" />
-      </span>
-    </template>
-    <template #details>
-      <div class="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1">
-        <p class="max-w-80 min-w-0 truncate" :title="agent.description || t('agentHeader.type')">
-          {{ agent.description || t('agentHeader.type') }}
-        </p>
-        <dl class="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-1" data-agent-metadata>
-          <div class="inline-flex items-center gap-1">
-            <dt class="sr-only">{{ t('switcher.heading') }}</dt>
-            <Layers3 class="size-3.5 text-studio-violet" aria-hidden="true" />
-            <dd>{{ t('count.templates', { count: templateCount }) }}</dd>
-          </div>
-          <div class="inline-flex items-center gap-1">
-            <dt class="sr-only">{{ t('agentDevices.heading') }}</dt>
-            <MonitorSmartphone class="size-3.5 text-studio-cyan" aria-hidden="true" />
-            <dd>{{ t('count.devices', { count: deviceCount }) }}</dd>
-          </div>
-        </dl>
-      </div>
+  <DetailHero tone="agents" :eyebrow="t('directoryUi.agentIdentity')" :title="agent.name" :description="agent.description || t('agentHeader.type')" :back-label="t('nav.agents')" data-agent-header @back="emit('back')">
+    <template #icon><AgentVoiceIcon class="size-9" /></template>
+    <template #meta>
+      <span class="hero-code"><code class="px-0.5 py-1">@{{ agent.id }}</code></span>
     </template>
     <template #actions>
       <div data-agent-actions class="contents">
-        <Button size="sm" variant="outline" class="cursor-pointer" data-agent-edit @click="emit('editAgent')">
-          <Pencil class="size-4" aria-hidden="true" />
-          {{ t('agents.edit') }}
-        </Button>
-        <Button size="sm" class="cursor-pointer" data-agent-add-device @click="emit('addDevice')">
-          <Plus class="size-4" aria-hidden="true" />
+        <button type="button" class="hero-primary" data-agent-add-device @click="emit('addDevice')">
+          <Plus :size="16" aria-hidden="true" />
           {{ t('agentDevices.add') }}
-        </Button>
-        <AgentActionsMenu @delete-agent="emit('deleteAgent')" />
+        </button>
+        <button type="button" class="hero-ghost" data-agent-edit @click="emit('editAgent')">
+          <Pencil :size="16" aria-hidden="true" />
+          {{ t('agents.edit') }}
+        </button>
+        <span class="hero-menu"><AgentActionsMenu @delete-agent="emit('deleteAgent')" /></span>
       </div>
     </template>
-  </DetailHeader>
+    <template #facts>
+      <div class="contents" data-agent-metadata>
+        <div class="hero-fact"><span><Layers3 :size="13" aria-hidden="true" />{{ t('switcher.heading') }}</span><strong>{{ t('count.templates', { count: templateCount }) }}</strong></div>
+        <div class="hero-fact"><span><MonitorSmartphone :size="13" aria-hidden="true" />{{ t('agentDevices.heading') }}</span><strong>{{ t('count.devices', { count: deviceCount }) }}</strong></div>
+      </div>
+    </template>
+  </DetailHero>
 </template>

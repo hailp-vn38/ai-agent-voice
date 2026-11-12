@@ -1,15 +1,15 @@
 <script setup lang="ts">
-import { Plus } from '@lucide/vue'
+import { Bot, Layers, MonitorSmartphone, Plus, Search, X } from '@lucide/vue'
 import { computed, ref } from 'vue'
 import { useRouter } from 'vue-router'
 
 import CardListSkeleton from '@/components/admin/CardListSkeleton.vue'
+import DirectoryHero from '@/components/admin/DirectoryHero.vue'
 import type { AdminAgent, AgentTemplateLink } from '@/api/types/agents'
 import type { ClaimDeviceEnrollmentInput } from '@/api/types/devices'
 import ClaimDeviceEnrollmentModal from '@/components/agents/ClaimDeviceEnrollmentModal.vue'
 import AgentCard from '@/components/admin/AgentCard.vue'
 import AgentFormModal from '@/components/admin/AgentFormModal.vue'
-import PageHeader from '@/components/admin/PageHeader.vue'
 import { Button } from '@/components/ui/button'
 import { useI18n } from '@/composables/useI18n'
 import type { Agent, ProviderInstance } from '@/domain/admin'
@@ -25,7 +25,18 @@ const deviceAgent = ref<Agent | undefined>()
 const enrollmentError = ref<unknown>(null)
 const enrollmentSubmitting = ref(false)
 
-const agents = computed(() => store.agents)
+const search = ref('')
+const agents = computed(() => {
+  const query = search.value.trim().toLocaleLowerCase()
+  return store.agents.filter((item) => !query || [item.name, item.description, item.id].some((value) => value.toLocaleLowerCase().includes(query)))
+})
+const linkedTemplateCount = computed(() => store.agents.reduce((sum, item) => sum + store.getTemplatesForAgent(item.id).length, 0))
+const linkedDeviceCount = computed(() => store.agents.reduce((sum, item) => sum + store.devicesForAgent(item.id).length, 0))
+const heroStats = computed(() => [
+  { label: t('agents.title'), value: store.agents.length, icon: Bot },
+  { label: t('directoryUi.linkedTemplates'), value: linkedTemplateCount.value, icon: Layers },
+  { label: t('directoryUi.linkedDevices'), value: linkedDeviceCount.value, icon: MonitorSmartphone },
+])
 
 function defaultTemplateProviders(agent: Agent): ProviderInstance[] {
   const template = store.getDefaultTemplate(agent.id)
@@ -82,18 +93,21 @@ function createAgent(payload: { agent: { name: string; description: string }; te
 </script>
 
 <template>
-  <section class="space-y-6">
-    <PageHeader :eyebrow="t('agents.eyebrow')" :title="t('agents.title')" :description="t('agents.description')">
+  <section class="studio-directory" data-directory="agents">
+    <DirectoryHero tone="agents" :eyebrow="t('directoryUi.agentsEyebrow')" :title="t('agents.title')" :intro="t('directoryUi.agentsIntro')" :stats="heroStats">
       <template #actions>
-        <Button @click="agentModalOpen = true">
-          <Plus class="size-4" />
-          {{ t('agents.add') }}
-        </Button>
+        <button type="button" class="hero-primary" @click="agentModalOpen = true"><Plus :size="16" aria-hidden="true" />{{ t('agents.add') }}</button>
       </template>
-    </PageHeader>
+    </DirectoryHero>
 
-    <CardListSkeleton v-if="store.loading" class="lg:grid-cols-2" />
-    <div v-else class="grid gap-4 lg:grid-cols-2">
+    <div class="directory-toolbar">
+      <label class="directory-search"><span class="sr-only">{{ t('directoryUi.searchAgents') }}</span><Search :size="16" aria-hidden="true" /><input v-model="search" type="search" class="admin-input" :placeholder="t('directoryUi.searchAgents')" /></label>
+      <button v-if="search" type="button" class="directory-clear" @click="search = ''"><X :size="14" aria-hidden="true" />{{ t('providers.clearFilters') }}</button>
+      <span v-if="!store.loading" class="directory-count">{{ t('providers.resultCount', { count: agents.length }) }}</span>
+    </div>
+
+    <CardListSkeleton v-if="store.loading" class="sm:grid-cols-2 xl:grid-cols-3" />
+    <div v-else-if="agents.length" class="directory-grid">
       <AgentCard
         v-for="agent in agents"
         :key="agent.id"
@@ -106,12 +120,11 @@ function createAgent(payload: { agent: { name: string; description: string }; te
         @add-device="addDevice(agent)"
       />
     </div>
-
-    <div
-      v-if="!store.loading && agents.length === 0"
-      class="rounded-xl border border-dashed py-16 text-center text-sm text-muted-foreground"
-    >
-      {{ t('agents.empty') }}
+    <div v-else class="directory-empty text-center">
+      <span class="directory-empty-icon"><Bot :size="28" :stroke-width="1.6" aria-hidden="true" /></span>
+      <p>{{ search.trim() ? t('directoryUi.noAgentsMatch') : t('agents.empty') }}</p>
+      <Button v-if="search.trim()" variant="outline" @click="search = ''"><X class="size-4" aria-hidden="true" />{{ t('providers.clearFilters') }}</Button>
+      <Button v-else @click="agentModalOpen = true"><Plus class="size-4" aria-hidden="true" />{{ t('agents.add') }}</Button>
     </div>
 
     <AgentFormModal
@@ -130,3 +143,5 @@ function createAgent(payload: { agent: { name: string; description: string }; te
     />
   </section>
 </template>
+
+<style scoped src="./studio-directory.css"></style>

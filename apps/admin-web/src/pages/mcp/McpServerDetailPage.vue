@@ -1,16 +1,15 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
-import { Server, Pencil } from '@lucide/vue'
+import { ArrowRight, KeyRound, Link2, Pencil, Server, Settings2, Timer } from '@lucide/vue'
 import { mcpApi } from '@/api/mcp'
 import { formatApiError, isApiError } from '@/api/errors'
 import type { AdminMcpServer, UpdateMcpServerInput } from '@/api/types/mcp'
-import PageHeader from '@/components/admin/PageHeader.vue'
+import DetailHero from '@/components/admin/DetailHero.vue'
 import ConfirmDialog from '@/components/admin/ConfirmDialog.vue'
 import McpDiagnosticPanel from '@/components/mcp/McpDiagnosticPanel.vue'
 import McpServerFormModal from '@/components/mcp/McpServerFormModal.vue'
 import { ActionMenu, MenuItem } from '@/components/ui/action-menu'
-import { Button } from '@/components/ui/button'
 import { useI18n } from '@/composables/useI18n'
 import { useErrorToast } from '@/composables/useNotify'
 const { t } = useI18n()
@@ -62,36 +61,47 @@ watch(key, () => { editOpen.value = false; deleteOpen.value = false; void load()
 onBeforeUnmount(() => controller?.abort())
 </script>
 <template>
-  <main class="mx-auto max-w-6xl space-y-5">
-    <RouterLink to="/mcp" class="inline-flex text-sm text-studio-violet hover:underline">← {{ t('mcp.title') }}</RouterLink>
-    <section v-if="server" class="studio-panel space-y-3 p-4 sm:p-5">
-      <PageHeader :title="server.name" :eyebrow="'Streamable HTTP · ' + (server.enabled ? t('mcp.enabled') : t('mcp.disabled'))">
-        <template #actions>
-          <Button variant="outline" :disabled="saving" @click="editOpen = true"><Pencil class="size-4" aria-hidden="true" />{{ t('common.edit') }}</Button>
+  <section class="space-y-5">
+    <DetailHero v-if="server" tone="mcp" eyebrow="Streamable HTTP" :title="server.name" :description="endpoint" :back-label="t('mcp.title')" @back="router.push('/mcp')">
+      <template #icon><Server :size="28" /></template>
+      <template #meta>
+        <span class="hero-code"><code class="px-0.5 py-1">{{ server.key }}</code></span>
+        <span class="hero-code"><span class="px-0.5 py-1">{{ server.auth.type }}<template v-if="server.credential"> · {{ server.credential.masked_key }}</template></span></span>
+      </template>
+      <template #actions>
+        <span class="inline-flex h-9 items-center gap-2 rounded-full border border-white/30 bg-black/15 px-3 text-sm font-medium">
+          <span class="size-2 rounded-full" :class="server.enabled ? 'bg-emerald-300' : 'bg-white/50'" aria-hidden="true" />{{ server.enabled ? t('mcp.enabled') : t('mcp.disabled') }}
+        </span>
+        <button type="button" class="hero-primary" :disabled="saving" @click="editOpen = true"><Pencil :size="16" aria-hidden="true" />{{ t('common.edit') }}</button>
+        <span class="hero-menu">
           <ActionMenu :label="t('common.actions')">
             <MenuItem :disabled="saving" @select="update({ enabled: !server.enabled })">{{ server.enabled ? t('mcp.disable') : t('mcp.enable') }}</MenuItem>
             <MenuItem :disabled="saving" variant="danger" @select="deleteOpen = true">{{ t('common.delete') }}</MenuItem>
           </ActionMenu>
-        </template>
-      </PageHeader>
-      <p class="flex items-center gap-2 text-xs text-muted-foreground"><Server class="size-4" aria-hidden="true" /><span class="font-mono">{{ server.key }}</span> · {{ endpoint }} · {{ server.auth.type }} <span v-if="server.credential">· {{ server.credential.masked_key }}</span></p>
-      <p v-if="server.url.startsWith('http:') && server.auth.type !== 'none'" class="text-xs text-warning">{{ t('diagnostics.httpWarning') }}</p>
-    </section>
-    <div v-if="loading" class="studio-panel p-8 text-center text-muted-foreground" role="status">{{ t('common.loading') }}</div>
+        </span>
+      </template>
+    </DetailHero>
+    <RouterLink v-else to="/mcp" class="inline-flex text-sm text-studio-violet hover:underline">← {{ t('mcp.title') }}</RouterLink>
+    <p v-if="server && server.url.startsWith('http:') && server.auth.type !== 'none'" class="rounded-2xl border border-warning/40 bg-warning/10 px-4 py-3 text-sm text-warning-foreground">{{ t('diagnostics.httpWarning') }}</p>
+    <div v-if="loading" class="studio-panel !rounded-[20px] p-8 text-center text-muted-foreground" role="status">{{ t('common.loading') }}</div>
     <template v-if="server">
-      <McpDiagnosticPanel :saved-key="server.key" :revision="server.revision" />
-      <section class="studio-panel space-y-3 p-4 sm:p-5">
-        <h2 class="font-semibold">{{ t('diagnostics.configuration') }}</h2>
-        <dl class="grid gap-4 text-sm sm:grid-cols-2">
-          <div><dt class="text-xs text-muted-foreground">{{ t('mcp.endpoint') }}</dt><dd class="break-all">{{ endpoint }}</dd></div>
-          <div><dt class="text-xs text-muted-foreground">{{ t('mcp.auth') }}</dt><dd>{{ server.auth.type }} {{ server.auth.type === 'header' ? server.auth.header_name : '' }} {{ server.credential?.masked_key ?? '' }} {{ server.credential ? '· v' + server.credential.key_version : '' }}</dd></div>
-          <div><dt class="text-xs text-muted-foreground">{{ t('mcp.connectTimeout') }}</dt><dd>{{ server.connect_timeout_ms }} ms</dd></div>
-          <div><dt class="text-xs text-muted-foreground">{{ t('mcp.requestTimeout') }}</dt><dd>{{ server.request_timeout_ms }} ms</dd></div>
-        </dl>
-        <RouterLink to="/agents" class="inline-flex text-sm text-studio-violet hover:underline">{{ t('mcp.manageAgents') }}</RouterLink>
-      </section>
+      <div class="grid items-start gap-5 xl:grid-cols-[minmax(0,1.7fr)_minmax(320px,1fr)]">
+        <McpDiagnosticPanel :saved-key="server.key" :revision="server.revision" />
+        <aside class="studio-panel !rounded-[20px] p-5 sm:p-6">
+          <h2 class="flex items-center gap-2 text-base font-semibold"><Settings2 :size="18" class="text-studio-cyan" aria-hidden="true" />{{ t('diagnostics.configuration') }}</h2>
+          <dl class="mt-4 divide-y divide-border/60">
+            <div class="py-3 first:pt-0"><dt class="flex items-center gap-1.5 text-xs font-medium uppercase tracking-wider text-muted-foreground"><Link2 :size="13" aria-hidden="true" />{{ t('mcp.endpoint') }}</dt><dd class="mt-1.5 break-all font-mono text-[13px]">{{ endpoint }}</dd></div>
+            <div class="py-3"><dt class="flex items-center gap-1.5 text-xs font-medium uppercase tracking-wider text-muted-foreground"><KeyRound :size="13" aria-hidden="true" />{{ t('mcp.auth') }}</dt><dd class="mt-1.5 flex flex-wrap items-center gap-2 text-sm"><span class="rounded-md bg-muted px-2 py-0.5 font-medium">{{ server.auth.type }}</span><code v-if="server.auth.type === 'header'" class="text-xs">{{ server.auth.header_name }}</code><code v-if="server.credential?.masked_key" class="text-xs text-muted-foreground">{{ server.credential.masked_key }}</code><span v-if="server.credential" class="text-xs text-muted-foreground">v{{ server.credential.key_version }}</span></dd></div>
+            <div class="grid grid-cols-2 gap-4 py-3">
+              <div><dt class="flex items-center gap-1.5 text-xs font-medium uppercase tracking-wider text-muted-foreground"><Timer :size="13" aria-hidden="true" />{{ t('mcp.connectTimeout') }}</dt><dd class="mt-1.5 text-lg font-semibold tabular-nums">{{ server.connect_timeout_ms }} <small class="text-xs font-normal text-muted-foreground">ms</small></dd></div>
+              <div><dt class="flex items-center gap-1.5 text-xs font-medium uppercase tracking-wider text-muted-foreground"><Timer :size="13" aria-hidden="true" />{{ t('mcp.requestTimeout') }}</dt><dd class="mt-1.5 text-lg font-semibold tabular-nums">{{ server.request_timeout_ms }} <small class="text-xs font-normal text-muted-foreground">ms</small></dd></div>
+            </div>
+          </dl>
+          <RouterLink to="/agents" class="mt-2 inline-flex items-center gap-1.5 rounded-full bg-studio-cyan/10 px-3.5 py-2 text-sm font-medium text-studio-cyan transition-colors hover:bg-studio-cyan/20">{{ t('mcp.manageAgents') }}<ArrowRight :size="15" aria-hidden="true" /></RouterLink>
+        </aside>
+      </div>
       <McpServerFormModal v-model="editOpen" :server="server" :saving="saving" :server-error="error" @save="update" />
       <ConfirmDialog v-model="deleteOpen" :title="t('mcp.deleteTitle', { name: server.name })" :description="t('mcp.deleteHint')" tone="danger" @confirm="remove" />
     </template>
-  </main>
+  </section>
 </template>

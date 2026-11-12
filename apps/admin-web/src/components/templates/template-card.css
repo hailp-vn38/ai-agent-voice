@@ -1,0 +1,18 @@
+/* Template-specific parts; the card shell lives in admin/studio-directory-cards.css. */
+.template-icon { display: grid; place-items: center; flex-shrink: 0; width: 48px; height: 48px; border-radius: 15px; background: color-mix(in oklab, var(--ink) 13%, transparent); color: var(--ink); }
+.template-heading button { text-align: left; cursor: pointer; }
+.template-heading button::after { content: ''; position: absolute; inset: 0; z-index: 1; border-radius: 20px; }
+.template-heading button:focus-visible { outline: none; }
+.template-heading button:focus-visible::after { outline: 2px solid var(--ink); outline-offset: 3px; }
+.dir-card-title > p { display: flex; align-items: center; gap: 5px; }
+.template-prompt { display: flex; align-items: flex-start; gap: 9px; padding: 11px 13px; border-left: 3px solid color-mix(in oklab, var(--ink) 60%, var(--border)); border-radius: 4px 12px 12px 4px; background: color-mix(in oklab, var(--muted) 50%, transparent); }
+.template-prompt > svg { flex-shrink: 0; margin-top: 3px; color: var(--ink); }
+.template-prompt p { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; min-height: 40px; font-size: 13px; line-height: 1.55; white-space: pre-wrap; overflow-wrap: anywhere; }
+.template-prompt[data-empty="true"] p { color: var(--muted-foreground); font-style: italic; }
+.template-agents { display: inline-flex; align-items: center; }
+.template-agents > i { display: grid; place-items: center; width: 26px; height: 26px; border: 2px solid var(--card); border-radius: 50%; color: #fff; font-size: 11px; font-weight: 600; font-style: normal; background: linear-gradient(135deg, oklch(0.62 0.17 var(--hue)), oklch(0.5 0.19 calc(var(--hue) + 50))); }
+.template-agents > i + i { margin-left: -8px; }
+.template-agents > .template-agents-more { background: var(--muted); color: var(--muted-foreground); font-size: 10px; }
+.template-usage { display: grid !important; gap: 1px; min-width: 0; }
+.template-usage strong { color: var(--foreground); font-size: 13px; font-weight: 600; }
+.template-usage small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }

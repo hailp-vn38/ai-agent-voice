@@ -21,10 +21,10 @@ import { providerAdaptersApi } from '@/api/provider-adapters'
 import { providersApi } from '@/api/providers'
 import type { AdminProvider, ProviderAdapter, ProviderTemplate } from '@/api/types/providers'
 import ConfirmDialog from '@/components/admin/ConfirmDialog.vue'
-import DetailHeader from '@/components/admin/DetailHeader.vue'
+import DetailHero from '@/components/admin/DetailHero.vue'
+import { Badge } from '@/components/ui/badge'
 import ProviderFormModal from '@/components/admin/ProviderFormModal.vue'
 import ProviderTestPanel from '@/components/providers/ProviderTestPanel.vue'
-import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { useI18n } from '@/composables/useI18n'
 import { useErrorToast } from '@/composables/useNotify'
@@ -123,21 +123,6 @@ const status = computed<ProviderStatus>(() => {
     return 'error'
   }
   return 'ready'
-})
-
-const typeIconBoxClass = computed(() => {
-  switch (provider.value?.type) {
-    case 'asr':
-      return 'border-sky-500/25 bg-sky-500/12 text-sky-400'
-    case 'tts':
-      return 'border-emerald-500/25 bg-emerald-500/12 text-emerald-400'
-    case 'vad':
-      return 'border-amber-500/25 bg-amber-500/12 text-amber-400'
-    case 'llm':
-      return 'border-violet-500/25 bg-violet-500/12 text-violet-400'
-    default:
-      return 'border-primary/25 bg-primary/12 text-primary'
-  }
 })
 
 const statusChipClass = computed(() => {
@@ -379,89 +364,63 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="space-y-4">
-    <DetailHeader
+    <DetailHero
+      tone="providers"
+      :eyebrow="provider ? providerTypeLabel(provider.type) : t('providers.title')"
       :title="provider?.name || key || t('providers.detailTitle')"
       :back-label="t('providers.title')"
       @back="router.push(catalogRoute)"
     >
-      <template #icon>
-        <div
-          class="flex size-9 shrink-0 items-center justify-center rounded-lg border"
-          :class="typeIconBoxClass"
-        >
-          <component :is="typeIcon" class="size-4" aria-hidden="true" />
-        </div>
+      <template #icon><component :is="typeIcon" :size="28" /></template>
+      <template v-if="provider" #meta>
+        <span class="hero-code"><code class="px-0.5 py-1">{{ provider.adapter }}</code></span>
+        <span class="hero-code"><code class="px-0.5 py-1">{{ provider.key }}</code></span>
+        <Badge v-if="isConfigProvider" variant="outline" class="border-white/40 bg-white/10 text-white">Config</Badge>
       </template>
-
-      <template #details>
-        <div class="flex flex-wrap items-center gap-x-2 gap-y-1">
-          <span v-if="provider" class="font-medium uppercase">
-            {{ providerTypeLabel(provider.type) }}
-          </span>
-          <span v-if="provider" class="font-mono">· {{ provider.adapter }}</span>
-          <span v-if="provider" class="font-mono">· {{ provider.key }}</span>
-          <Badge v-if="isConfigProvider" variant="outline">Config</Badge>
-        </div>
-      </template>
-
       <template #actions>
         <span
           v-if="provider"
-          class="inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium"
-          :class="statusChipClass"
+          class="inline-flex h-9 items-center gap-2 rounded-full border border-white/30 bg-black/15 px-3 text-sm font-medium"
         >
           <span class="size-1.5 rounded-full" :class="statusDotClass" aria-hidden="true" />
           {{ providerStatusLabel(status) }}
         </span>
 
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
+        <button type="button" class="hero-ghost"
           :disabled="loading || busy"
           @click="load"
         >
           <RefreshCw class="size-3.5" aria-hidden="true" />
           {{ t('common.refresh') }}
-        </Button>
+        </button>
 
-        <Button
+        <button type="button" class="hero-ghost"
           v-if="provider"
-          type="button"
-          variant="outline"
-          size="sm"
           :disabled="busy || isConfigProvider"
           @click="editOpen = true"
         >
           <Pencil class="size-3.5" aria-hidden="true" />
           {{ t('common.edit') }}
-        </Button>
+        </button>
 
-        <Button
+        <button type="button" class="hero-ghost"
           v-if="provider"
-          type="button"
-          variant="outline"
-          size="sm"
           :disabled="busy || isConfigProvider"
           @click="toggleEnabled"
         >
           {{ enabled ? t('providerDetail.disable') : t('providerDetail.enable') }}
-        </Button>
+        </button>
 
-        <Button
+        <button type="button" class="hero-ghost"
           v-if="provider"
-          type="button"
-          variant="outline"
-          size="sm"
-          class="text-danger"
           :disabled="busy || isConfigProvider || !bindingsLoaded || bindingTotal > 0"
           @click="deleteOpen = true"
         >
           <Trash2 class="size-3.5" aria-hidden="true" />
           {{ t('common.delete') }}
-        </Button>
+        </button>
       </template>
-    </DetailHeader>
+    </DetailHero>
 
     <p v-if="loading" class="studio-panel p-4 text-sm text-muted-foreground">
       {{ t('common.loading') }}

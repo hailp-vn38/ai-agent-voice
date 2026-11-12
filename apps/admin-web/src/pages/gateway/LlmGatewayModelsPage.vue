@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ArrowLeft, ChevronRight, Plus, Search } from '@lucide/vue'
+import { ChevronRight, Plus, Search } from '@lucide/vue'
 import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 
@@ -10,6 +10,8 @@ import type {
   GatewayVendor,
   GatewayVendorInfo,
 } from '@/api/types/llm-gateway'
+import DetailHero from '@/components/admin/DetailHero.vue'
+import { Cpu as HeroIcon } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import { useI18n } from '@/composables/useI18n'
 import { useErrorToast } from '@/composables/useNotify'
@@ -91,38 +93,15 @@ onMounted(() => {
 
 <template>
   <section class="space-y-4" data-testid="llm-gateway-models-page">
-    <div class="flex flex-wrap items-center justify-between gap-2">
-      <button
-        type="button"
-        data-detail-back
-        class="inline-flex items-center gap-1.5 rounded-lg border border-border/80 bg-surface/60 px-2.5 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:border-studio-violet/40 hover:text-foreground"
-        @click="router.push({ name: 'llm-gateway' })"
-      >
-        <ArrowLeft class="size-3.5" aria-hidden="true" />
-        {{ t('llmGateway.backToGateway') }}
-      </button>
-    </div>
-
-    <header class="flex flex-wrap items-start justify-between gap-3">
-      <div class="space-y-1">
-        <p class="text-[11px] font-bold tracking-[0.14em] text-studio-violet uppercase">
-          {{ t('llmGateway.modelsPage.eyebrow') }}
-        </p>
-        <h1 class="text-xl font-bold tracking-tight sm:text-2xl">
-          {{ t('llmGateway.modelsPage.title') }}
-        </h1>
-        <p class="max-w-2xl text-xs text-muted-foreground sm:text-sm">
-          {{ t('llmGateway.modelsPage.subtitle') }}
-        </p>
-      </div>
-
-      <div class="flex flex-wrap items-center gap-2">
-        <Button size="sm" data-action="create-model" @click="goCreateModel">
+    <DetailHero tone="gateway" :eyebrow="t('llmGateway.modelsPage.eyebrow')" :title="t('llmGateway.modelsPage.title')" :description="t('llmGateway.modelsPage.subtitle')" :back-label="t('llmGateway.backToGateway')" @back="router.push({ name: 'llm-gateway' })">
+      <template #icon><HeroIcon :size="28" /></template>
+      <template #actions>
+        <button type="button" class="hero-primary" data-action="create-model" @click="goCreateModel">
           <Plus class="size-4" aria-hidden="true" />
           {{ t('llmGateway.pool.addModelBtn') }}
-        </Button>
-      </div>
-    </header>
+        </button>
+      </template>
+    </DetailHero>
 
     <div class="studio-panel overflow-hidden">
       <div class="border-b border-border/70 p-4">

@@ -10,7 +10,7 @@ const provider = { id: 'config:llm:primary', name: 'Config', source: 'config' as
 const global = { stubs: {
   ActionMenu: { template: '<div><slot /></div>' },
   MenuItem: { props: ['disabled'], emits: ['select'], template: `<button :disabled="disabled" @click="$emit('select')"><slot /></button>` },
-  BaseModal: { template: '<div><slot /></div>' }, ProviderTestPanel: true,
+  BaseModal: { template: '<div><slot /><slot name="footer" /></div>' }, ProviderTestPanel: true,
 } }
 
 it('catalog mutations are disabled and reject direct callbacks; view and link remain available', async () => {

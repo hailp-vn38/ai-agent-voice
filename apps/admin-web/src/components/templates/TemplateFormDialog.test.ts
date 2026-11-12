@@ -93,3 +93,48 @@ describe('TemplateFormDialog', () => {
     expect(wrapper.emitted('update:modelValue')).toBeUndefined()
   })
 })
+
+it('keeps the draft when jumping between sections and saves the reviewed configuration', async () => {
+  const save = vi.fn().mockResolvedValue(undefined)
+  const wrapper = page({ template: existing, save })
+  await wrapper.get('nav').findAll('button')[1]!.trigger('click')
+  await wrapper.get('textarea').setValue('Speak clearly.\nKeep answers brief.')
+  await wrapper.get('select[aria-label="VAD"]').setValue('silero')
+  await wrapper.get('nav').findAll('button')[0]!.trigger('click')
+  await wrapper.get('input[required]').setValue('Home revised')
+  await wrapper.get('nav').findAll('button')[2]!.trigger('click')
+  expect(wrapper.text()).toContain('Speak clearly.')
+  expect(wrapper.text()).toContain('Silero')
+  await button(wrapper, 'Save template').trigger('click')
+  await flushPromises()
+  expect(save).toHaveBeenCalledWith({
+    id: existing.id,
+    name: 'Home revised',
+    description: '',
+    language: 'Vietnamese',
+    prompt: 'Speak clearly.\nKeep answers brief.',
+    providerBindings: { vad: 'silero', tts: 'maichi' },
+  })
+  wrapper.unmount()
+})
+
+it('keeps navigation and closing locked until the pending save finishes', async () => {
+  let complete = () => {}
+  const pending = new Promise<void>((resolve) => { complete = resolve })
+  const save = vi.fn(() => pending)
+  const wrapper = page({ template: existing, save })
+  try {
+    await wrapper.get('nav').findAll('button')[2]!.trigger('click')
+    await button(wrapper, 'Save template').trigger('click')
+    expect(wrapper.getComponent(BaseModalStub).attributes('close-disabled')).toBe('true')
+    for (const control of wrapper.findAll('button')) expect(control.attributes('disabled')).toBeDefined()
+    expect(wrapper.emitted('update:modelValue')).toBeUndefined()
+    complete()
+    await flushPromises()
+    expect(save).toHaveBeenCalledOnce()
+    expect(wrapper.emitted('update:modelValue')).toEqual([[false]])
+  } finally {
+    complete()
+    wrapper.unmount()
+  }
+})

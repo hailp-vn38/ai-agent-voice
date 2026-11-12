@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { TriangleAlert } from '@lucide/vue'
+import { ArrowDown, ArrowUpRight, Check, FlaskConical, KeyRound, Layers, LockKeyhole, SlidersHorizontal, TriangleAlert } from '@lucide/vue'
 import { computed, reactive, ref, useId, watch } from 'vue'
 
 import { llmGatewayApi } from '@/api/llm-gateway'
@@ -21,6 +21,7 @@ import {
   type ProviderStatus,
   type ProviderType,
 } from '@/domain/admin'
+import { providerTypeIcons } from '@/lib/providerTypeIcons'
 
 const props = withDefaults(
   defineProps<{
@@ -42,12 +43,22 @@ const emit = defineEmits<{
   save: [payload: { name: string; type: ProviderType; adapter: string; model: string; description: string; status: ProviderStatus; endpoint?: string; apiKey?: string | null; configJson?: Record<string, unknown> }]
 }>()
 
-const { t, providerTypeLabel } = useI18n()
+const { t, providerTypeLabel, providerStatusLabel } = useI18n()
 
 const descriptor = ref<ProviderAdapter>()
 const configError = ref('')
 let descriptorVersion = 0
 const adapterListId = useId()
+const formId = useId()
+const identitySection = ref<HTMLElement>()
+const connectionSection = ref<HTMLElement>()
+const configurationSection = ref<HTMLElement>()
+const diagnosticSection = ref<HTMLElement>()
+
+function jumpTo(section: HTMLElement | undefined) {
+  section?.scrollIntoView({ behavior: window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth', block: 'start' })
+  section?.focus({ preventScroll: true })
+}
 
 type AuthSourceMode = 'static_api_key' | 'gateway_account' | 'gateway_pool'
 const authSource = ref<AuthSourceMode>('static_api_key')
@@ -260,6 +271,17 @@ const form = reactive({
   configJson: {} as Record<string, unknown>,
 })
 
+const selectedModel = computed(() =>
+  typeof form.configJson.model === 'string' && form.configJson.model
+    ? form.configJson.model
+    : form.model,
+)
+const hasDiagnostic = computed(() => ['asr', 'llm', 'tts'].includes(form.type))
+const authLabel = computed(() => {
+  if (isUsingGateway.value) return t(authSource.value === 'gateway_account' ? 'llmGateway.auth.gatewayAccount' : 'llmGateway.auth.gatewayPool')
+  return t('providers.studio.direct')
+})
+
 /**
  * Adapters already used by providers of the selected type. There is no adapter
  * registry in the mock domain yet, so this suggests rather than restricts.
@@ -397,158 +419,236 @@ function submit() {
     v-model="open"
     :title="provider ? t('providers.editTitle') : t('providers.createTitle')"
     :description="provider ? t('providers.editDescription') : t('providers.createDescription')"
+    width-class="max-w-[1120px] h-[min(860px,90dvh)]"
+    body-class="provider-modal-body"
   >
-    <form class="grid gap-4 sm:grid-cols-2" @submit.prevent="submit">
-      <div
-        v-if="provider && usageCount > 0"
-        class="flex gap-2 rounded-md border border-warning/40 bg-warning/10 px-3 py-2.5 text-xs leading-relaxed text-muted-foreground sm:col-span-2"
-      >
-        <TriangleAlert class="mt-0.5 size-3.5 shrink-0 text-warning" aria-hidden="true" />
-        <span>{{ t('providers.usedBy', { count: usageCount }) }}</span>
-      </div>
-
-      <label class="block space-y-1.5">
-        <span class="text-sm font-medium">{{ t('providers.type') }}</span>
-        <select
-          v-model="form.type"
-          class="admin-input"
-          :disabled="Boolean(provider)"
-          @change="typeChanged(form.type)"
-        >
-          <option v-for="type in providerTypes" :key="type" :value="type">
-            {{ providerTypeLabel(type) }}
-          </option>
-        </select>
-      </label>
-
-      <label class="block space-y-1.5">
-        <span class="text-sm font-medium">{{ t('providers.name') }}</span>
-        <input :disabled="isReadOnly" v-model="form.name" class="admin-input" :placeholder="t('providers.namePlaceholder')" required />
-      </label>
-
-      <label class="block space-y-1.5">
-        <span class="text-sm font-medium">{{ t('providers.adapter') }}</span>
-        <input :disabled="isReadOnly"
-          v-model="form.adapter"
-          class="admin-input font-mono text-sm"
-          :list="adapterListId"
-          required
-        />
-        <datalist :id="adapterListId">
-          <option v-for="adapter in adapterHints" :key="adapter" :value="adapter" />
-        </datalist>
-      </label>
-
-      <label class="block space-y-1.5">
-        <span class="text-sm font-medium">{{ t('providers.status') }}</span>
-        <select :disabled="isReadOnly" v-model="form.status" class="admin-input">
-          <option value="ready">{{ t('status.provider.ready') }}</option>
-          <option value="disabled">{{ t('status.provider.disabled') }}</option>
-          <option value="error">{{ t('status.provider.error') }}</option>
-        </select>
-      </label>
-
-      <div class="sm:col-span-2"><p v-if="configError" class="text-sm text-danger">{{ configError }}</p><ProviderConfigEditor :readonly="isReadOnly" v-model="form.configJson" :schema="filteredSchema" :capabilities="effectiveCapabilities" /></div>
-
-      <div v-if="supportsGatewayBinding" class="space-y-2.5 rounded-lg border border-border/70 bg-surface/50 p-3.5 sm:col-span-2">
-        <span class="block text-sm font-medium">{{ t('llmGateway.auth.title') }}</span>
-        <div class="flex flex-wrap gap-2">
-          <button
-            v-if="form.adapter === 'openai'"
-            type="button"
-            class="rounded-md border px-3 py-1 text-xs font-medium transition-colors"
-            :class="
-              authSource === 'static_api_key'
-                ? 'border-studio-violet bg-studio-violet text-white'
-                : 'border-border bg-background text-muted-foreground hover:bg-accent'
-            "
-            :disabled="isReadOnly"
-            @click="setAuthSource('static_api_key')"
-          >
-            {{ t('llmGateway.auth.staticApiKey') }}
-          </button>
-          <button
-            type="button"
-            class="rounded-md border px-3 py-1 text-xs font-medium transition-colors"
-            :class="
-              authSource === 'gateway_account'
-                ? 'border-studio-violet bg-studio-violet text-white'
-                : 'border-border bg-background text-muted-foreground hover:bg-accent'
-            "
-            :disabled="isReadOnly"
-            @click="setAuthSource('gateway_account')"
-          >
-            {{ t('llmGateway.auth.gatewayAccount') }}
-          </button>
-          <button
-            type="button"
-            class="rounded-md border px-3 py-1 text-xs font-medium transition-colors"
-            :class="
-              authSource === 'gateway_pool'
-                ? 'border-studio-violet bg-studio-violet text-white'
-                : 'border-border bg-background text-muted-foreground hover:bg-accent'
-            "
-            :disabled="isReadOnly"
-            @click="setAuthSource('gateway_pool')"
-          >
-            {{ t('llmGateway.auth.gatewayPool') }}
-          </button>
+    <div class="provider-studio" :data-provider-type="form.type">
+      <aside class="provider-passport">
+        <div class="passport-sticky">
+          <div class="passport-eyebrow"><span class="passport-marker" /> PROVIDER STUDIO <span>/ {{ form.type.toUpperCase() }}</span></div>
+          <div class="provider-emblem" aria-hidden="true">
+            <svg viewBox="0 0 240 154" fill="none">
+              <path d="M0 77h51m138 0h51M120 0v22m0 110v22" class="emblem-axis" />
+              <ellipse cx="120" cy="77" rx="93" ry="44" transform="rotate(-25 120 77)" />
+              <ellipse cx="120" cy="77" rx="93" ry="44" transform="rotate(25 120 77)" />
+              <circle cx="120" cy="77" r="58" stroke-dasharray="2 7" />
+              <circle cx="38" cy="104" r="3" class="emblem-node" />
+              <circle cx="202" cy="50" r="3" class="emblem-node" />
+            </svg>
+            <span><component :is="providerTypeIcons[form.type]" :size="31" :stroke-width="1.4" /></span>
+          </div>
+          <p class="passport-role">{{ providerTypeLabel(form.type) }}</p>
+          <h3 class="passport-name">{{ form.name || t('providers.studio.untitled') }}</h3>
+          <p class="passport-caption">{{ t('providers.studio.caption') }}</p>
+          <dl class="passport-specs">
+            <div><dt>{{ t('providers.adapter') }}</dt><dd>{{ form.adapter || '—' }}</dd></div>
+            <div><dt>{{ t('providers.model') }}</dt><dd>{{ selectedModel || '—' }}</dd></div>
+            <div><dt>{{ t('providers.status') }}</dt><dd class="passport-status" :data-status="form.status"><span />{{ providerStatusLabel(form.status) }}</dd></div>
+          </dl>
+          <nav class="passport-nav" :aria-label="t('providers.studio.navigation')">
+            <button type="button" @click="jumpTo(identitySection)"><span>01</span>{{ t('providers.studio.identity') }}<ArrowDown :size="13" /></button>
+            <button type="button" @click="jumpTo(connectionSection)"><span>02</span>{{ t('providers.studio.connection') }}<ArrowDown :size="13" /></button>
+            <button type="button" @click="jumpTo(configurationSection)"><span>03</span>{{ t('providers.studio.parameters') }}<ArrowDown :size="13" /></button>
+            <button v-if="hasDiagnostic" type="button" @click="jumpTo(diagnosticSection)"><span>04</span>{{ t('providers.testAction') }}<ArrowDown :size="13" /></button>
+          </nav>
+          <div class="passport-note" :class="{ 'has-usage': usageCount > 0 }">
+            <LockKeyhole v-if="isReadOnly" :size="16" />
+            <TriangleAlert v-else-if="usageCount > 0" :size="16" />
+            <Layers v-else :size="16" />
+            <p>{{ isReadOnly ? t('providers.studio.readOnly') : usageCount > 0 ? t('providers.usedBy', { count: usageCount }) : t('providers.unused') }}</p>
+          </div>
         </div>
+      </aside>
 
-        <label v-if="authSource === 'gateway_account'" class="block space-y-1">
-          <span class="text-xs text-muted-foreground">{{ t('llmGateway.auth.gatewayAccount') }}</span>
-          <select
-            :disabled="isReadOnly"
-            class="admin-input font-mono text-xs"
-            :value="String(form.configJson.gateway_binding ?? '')"
-            @change="updateGatewayBinding(($event.target as HTMLSelectElement).value)"
-          >
-            <option value="">{{ t('llmGateway.auth.selectAccount') }}</option>
-            <option
-              v-for="acc in gatewayAccounts"
-              :key="acc.account_key"
-              :value="`account:${acc.account_key}`"
-            >
-              {{ acc.label }} ({{ acc.vendor }} — {{ acc.account_email || acc.account_key }})
-            </option>
-          </select>
-        </label>
+      <form :id="formId" class="provider-workbench" @submit.prevent="submit">
+        <section ref="identitySection" tabindex="-1" class="provider-section">
+          <header class="provider-section-heading">
+            <span class="section-number">01</span>
+            <div><h3>{{ t('providers.studio.identity') }}</h3><p>{{ t('providers.studio.identityHint') }}</p></div>
+            <component :is="providerTypeIcons[form.type]" :size="18" aria-hidden="true" />
+          </header>
+          <div class="grid gap-4 sm:grid-cols-2">
+            <label class="block space-y-1.5">
+              <span class="text-sm font-medium">{{ t('providers.type') }}</span>
+              <select
+                v-model="form.type"
+                class="admin-input"
+                :disabled="Boolean(provider)"
+                @change="typeChanged(form.type)"
+              >
+                <option v-for="type in providerTypes" :key="type" :value="type">
+                  {{ providerTypeLabel(type) }}
+                </option>
+              </select>
+            </label>
 
-        <label v-else-if="authSource === 'gateway_pool'" class="block space-y-1">
-          <span class="text-xs text-muted-foreground">{{ t('llmGateway.auth.gatewayPool') }}</span>
-          <select
-            :disabled="isReadOnly"
-            class="admin-input font-mono text-xs"
-            :value="String(form.configJson.gateway_binding ?? '')"
-            @change="updateGatewayBinding(($event.target as HTMLSelectElement).value)"
-          >
-            <option value="">{{ t('llmGateway.auth.selectPool') }}</option>
-            <option
-              v-for="v in gatewayVendors"
-              :key="v.vendor"
-              :value="v.pool_binding"
-            >
-              {{ v.display_name }} ({{ v.pool_binding }} — {{ v.active_accounts }}/{{ v.total_accounts }} active)
-            </option>
-          </select>
-        </label>
+            <label class="block space-y-1.5">
+              <span class="text-sm font-medium">{{ t('providers.name') }}</span>
+              <input :disabled="isReadOnly" v-model="form.name" class="admin-input" :placeholder="t('providers.namePlaceholder')" required />
+            </label>
+
+            <label class="block space-y-1.5">
+              <span class="text-sm font-medium">{{ t('providers.adapter') }}</span>
+              <input :disabled="Boolean(provider)"
+                v-model="form.adapter"
+                class="admin-input font-mono text-sm"
+                :list="adapterListId"
+                required
+              />
+              <datalist :id="adapterListId">
+                <option v-for="adapter in adapterHints" :key="adapter" :value="adapter" />
+              </datalist>
+            </label>
+
+            <label class="block space-y-1.5">
+              <span class="text-sm font-medium">{{ t('providers.status') }}</span>
+              <select :disabled="isReadOnly" v-model="form.status" class="admin-input">
+                <option value="ready">{{ t('status.provider.ready') }}</option>
+                <option value="disabled">{{ t('status.provider.disabled') }}</option>
+                <option value="error">{{ t('status.provider.error') }}</option>
+              </select>
+            </label>
+
+          </div>
+        </section>
+
+        <section ref="connectionSection" tabindex="-1" class="provider-section">
+          <header class="provider-section-heading">
+            <span class="section-number">02</span>
+            <div><h3>{{ t('providers.studio.connection') }}</h3><p>{{ authLabel }}</p></div>
+            <KeyRound :size="18" aria-hidden="true" />
+          </header>
+          <div v-if="supportsGatewayBinding" class="provider-auth space-y-3">
+            <span class="block text-sm font-medium">{{ t('llmGateway.auth.title') }}</span>
+            <div class="flex flex-wrap gap-2">
+              <button
+                v-if="form.adapter === 'openai'"
+                type="button"
+                class="provider-auth-option"
+                :class="
+                  authSource === 'static_api_key'
+                    ? 'is-selected'
+                    : ''
+                "
+                :disabled="isReadOnly"
+                :aria-pressed="authSource === 'static_api_key'"
+                @click="setAuthSource('static_api_key')"
+              >
+                {{ t('llmGateway.auth.staticApiKey') }}
+              </button>
+              <button
+                type="button"
+                class="provider-auth-option"
+                :class="
+                  authSource === 'gateway_account'
+                    ? 'is-selected'
+                    : ''
+                "
+                :disabled="isReadOnly"
+                :aria-pressed="authSource === 'gateway_account'"
+                @click="setAuthSource('gateway_account')"
+              >
+                {{ t('llmGateway.auth.gatewayAccount') }}
+              </button>
+              <button
+                type="button"
+                class="provider-auth-option"
+                :class="
+                  authSource === 'gateway_pool'
+                    ? 'is-selected'
+                    : ''
+                "
+                :disabled="isReadOnly"
+                :aria-pressed="authSource === 'gateway_pool'"
+                @click="setAuthSource('gateway_pool')"
+              >
+                {{ t('llmGateway.auth.gatewayPool') }}
+              </button>
+            </div>
+
+            <label v-if="authSource === 'gateway_account'" class="block space-y-1">
+              <span class="text-xs text-muted-foreground">{{ t('llmGateway.auth.gatewayAccount') }}</span>
+              <select
+                :disabled="isReadOnly"
+                class="admin-input font-mono text-xs"
+                :value="String(form.configJson.gateway_binding ?? '')"
+                @change="updateGatewayBinding(($event.target as HTMLSelectElement).value)"
+              >
+                <option value="">{{ t('llmGateway.auth.selectAccount') }}</option>
+                <option
+                  v-for="acc in gatewayAccounts"
+                  :key="acc.account_key"
+                  :value="`account:${acc.account_key}`"
+                >
+                  {{ acc.label }} ({{ acc.vendor }} — {{ acc.account_email || acc.account_key }})
+                </option>
+              </select>
+            </label>
+
+            <label v-else-if="authSource === 'gateway_pool'" class="block space-y-1">
+              <span class="text-xs text-muted-foreground">{{ t('llmGateway.auth.gatewayPool') }}</span>
+              <select
+                :disabled="isReadOnly"
+                class="admin-input font-mono text-xs"
+                :value="String(form.configJson.gateway_binding ?? '')"
+                @change="updateGatewayBinding(($event.target as HTMLSelectElement).value)"
+              >
+                <option value="">{{ t('llmGateway.auth.selectPool') }}</option>
+                <option
+                  v-for="v in gatewayVendors"
+                  :key="v.vendor"
+                  :value="v.pool_binding"
+                >
+                  {{ v.display_name }} ({{ v.pool_binding }} — {{ v.active_accounts }}/{{ v.total_accounts }} active)
+                </option>
+              </select>
+            </label>
+          </div>
+
+          <label v-if="(['openai', 'chillaudio_ws'].includes(form.adapter)) && (!supportsGatewayBinding || authSource === 'static_api_key')" class="block space-y-1.5 sm:col-span-2">
+            <span class="text-sm font-medium">{{ t('providers.studio.newKey') }}</span>
+            <p v-if="provider?.credential" class="text-xs text-muted-foreground">{{ t('providers.studio.currentKey') }} {{ provider.credential.masked_key }}</p>
+            <input :disabled="isReadOnly" v-model="form.apiKey" type="password" autocomplete="new-password" maxlength="4096" class="admin-input" />
+            <small class="block text-xs text-muted-foreground">{{ t('providers.studio.keyHint') }}</small>
+          </label>
+
+          <p v-if="!supportsGatewayBinding && !['openai', 'chillaudio_ws'].includes(form.adapter)" class="provider-local-note"><LockKeyhole :size="16" aria-hidden="true" />{{ t('providers.studio.adapterAuth') }}</p>
+        </section>
+
+        <section ref="configurationSection" tabindex="-1" class="provider-section">
+          <header class="provider-section-heading">
+            <span class="section-number">03</span>
+            <div><h3>{{ t('providers.studio.parameters') }}</h3><p>{{ t('providers.studio.parametersHint') }}</p></div>
+            <SlidersHorizontal :size="18" aria-hidden="true" />
+          </header>
+          <p v-if="configError" role="alert" class="provider-config-error">{{ configError }}</p>
+          <ProviderConfigEditor :readonly="isReadOnly" v-model="form.configJson" :schema="filteredSchema" :capabilities="effectiveCapabilities" />
+          <p v-if="!configError && !filteredSchema?.fields?.length" class="provider-local-note">{{ t('providers.studio.noParameters') }}</p>
+        </section>
+
+        <section v-if="hasDiagnostic" ref="diagnosticSection" tabindex="-1" class="provider-section provider-lab">
+          <header class="provider-section-heading">
+            <span class="section-number">04</span>
+            <div><h3>{{ t('providers.studio.lab') }}</h3><p>{{ t('providers.studio.labHint') }}</p></div>
+            <FlaskConical :size="18" aria-hidden="true" />
+          </header>
+          <ProviderTestPanel v-if="open" :type="form.type" :adapter="form.adapter" :model="typeof form.configJson.model === 'string' && form.configJson.model ? form.configJson.model : form.model" :capabilities="descriptor?.capabilities" :saved-key="isReadOnly ? provider?.id : undefined" :draft="isReadOnly ? undefined : { type: form.type as 'asr' | 'llm' | 'tts', adapter: form.adapter, config_json: form.configJson, ...(form.apiKey ? { api_key: form.apiKey } : provider && ['openai', 'chillaudio_ws'].includes(form.adapter) && form.adapter === provider.adapter && provider.desiredRevision ? { saved_credential: { key: provider.id, expected_revision: provider.desiredRevision } } : {}) }" />
+
+        </section>
+      </form>
+    </div>
+    <template #footer>
+      <div class="provider-studio-footer">
+        <p><LockKeyhole v-if="isReadOnly" :size="14" /><Check v-else :size="14" />{{ t(isReadOnly ? 'providers.studio.readOnly' : 'providers.studio.saveHint') }}</p>
+        <div class="flex items-center gap-2">
+          <Button type="button" variant="ghost" @click="open = false">{{ t('common.cancel') }}</Button>
+          <Button type="submit" :form="formId" :disabled="isReadOnly">
+            {{ provider ? t('common.saveChanges') : t('providers.create') }}<ArrowUpRight class="size-4" />
+          </Button>
+        </div>
       </div>
-
-      <label v-if="(['openai', 'chillaudio_ws'].includes(form.adapter)) && (!supportsGatewayBinding || authSource === 'static_api_key')" class="block space-y-1.5 sm:col-span-2">
-        <span class="text-sm font-medium">API key / token mới (tùy chọn)</span>
-        <p v-if="provider?.credential" class="text-xs text-muted-foreground">Key hiện tại: {{ provider.credential.masked_key }}</p>
-        <input :disabled="isReadOnly" v-model="form.apiKey" type="password" autocomplete="new-password" maxlength="4096" class="admin-input" />
-        <small class="block text-xs text-muted-foreground">Để trống để giữ key hiện tại. Key mới được mã hóa trên server.</small>
-      </label>
-
-      <ProviderTestPanel v-if="open && ['asr','llm','tts'].includes(form.type)" class="sm:col-span-2" :type="form.type" :adapter="form.adapter" :model="typeof form.configJson.model === 'string' && form.configJson.model ? form.configJson.model : form.model" :capabilities="descriptor?.capabilities" :saved-key="isReadOnly ? provider?.id : undefined" :draft="isReadOnly ? undefined : { type: form.type as 'asr' | 'llm' | 'tts', adapter: form.adapter, config_json: form.configJson, ...(form.apiKey ? { api_key: form.apiKey } : provider && ['openai', 'chillaudio_ws'].includes(form.adapter) && form.adapter === provider.adapter && provider.desiredRevision ? { saved_credential: { key: provider.id, expected_revision: provider.desiredRevision } } : {}) }" />
-
-      <div class="flex justify-end gap-2 pt-2 sm:col-span-2">
-        <Button type="button" variant="outline" @click="open = false">{{ t('common.cancel') }}</Button>
-        <Button type="submit" :disabled="isReadOnly">
-          {{ provider ? t('common.saveChanges') : t('providers.create') }}
-        </Button>
-      </div>
-    </form>
+    </template>
   </BaseModal>
 </template>
+
+<style scoped src="./provider-form-modal.css"></style>

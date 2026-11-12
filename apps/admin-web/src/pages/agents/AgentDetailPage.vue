@@ -102,6 +102,13 @@ const deviceModalOpen = ref(false)
 const editingDevice = ref<Device | undefined>()
 const providerDetailOpen = ref(false)
 const selectedProvider = ref<ProviderInstance | undefined>()
+const providerUsage = computed(() => selectedProvider.value
+  ? store.templatesUsingProvider(selectedProvider.value.id).map((item) => ({
+    templateId: item.id, templateName: item.name, language: item.language,
+    agentNames: store.getAgentsUsingTemplate(item.id).map((agent) => agent.name),
+  }))
+  : [],
+)
 const providerEditOpen = ref(false)
 const editingProvider = ref<ProviderInstance | undefined>()
 const deleteAgentOpen = ref(false)
@@ -511,7 +518,7 @@ async function confirmDeleteDevice() {
       :templates="templates"
       @save="saveDevice"
     />
-    <ProviderDetailModal v-model="providerDetailOpen" :provider="selectedProvider" @edit="editProvider" />
+    <ProviderDetailModal v-model="providerDetailOpen" :provider="selectedProvider" :usage="providerUsage" @edit="editProvider" />
     <ProviderFormModal v-model="providerEditOpen" :provider="editingProvider" @save="saveEditedProvider" />
 
     <ConfirmDialog

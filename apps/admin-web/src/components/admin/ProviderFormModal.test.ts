@@ -132,3 +132,37 @@ it('hides custom timeout fields unless timeout_profile is custom and preserves l
   expect(keysCustom).toContain('max_total_ms')
 })
 
+
+it('submits from the fixed footer and keeps native required-field validation', async () => {
+  vi.spyOn(providerAdaptersApi, 'get').mockResolvedValue({
+    adapter: 'openai', type: 'llm', display_name: 'OpenAI', description: '',
+    config_schema: { fields: [] }, capabilities: {},
+  })
+  const host = document.createElement('div')
+  document.body.append(host)
+  const wrapper = mount(ProviderFormModal, {
+    attachTo: host,
+    props: { modelValue: true, provider },
+    global: { stubs: { Teleport: true, ProviderTestPanel: true } },
+  })
+  try {
+    await flushPromises()
+    const name = () => wrapper.get('input[required]')
+    const save = () => wrapper.get<HTMLButtonElement>('button[type="submit"]')
+    await name().setValue('')
+    save().element.click()
+    await flushPromises()
+    expect(wrapper.emitted('save')).toBeUndefined()
+
+    await name().setValue('Studio provider')
+    expect(wrapper.get('form').element.checkValidity()).toBe(true)
+    expect(save().element.form?.id).toBe(wrapper.get('form').attributes('id'))
+    save().element.click()
+    await flushPromises()
+    expect(wrapper.emitted('save')?.[0]?.[0]).toMatchObject({ name: 'Studio provider', adapter: 'openai' })
+    expect(wrapper.emitted('update:modelValue')?.[0]).toEqual([false])
+  } finally {
+    wrapper.unmount()
+    host.remove()
+  }
+})

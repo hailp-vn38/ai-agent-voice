@@ -1,11 +1,11 @@
 <script setup lang="ts">
-import { Plus, Search } from '@lucide/vue'
+import { CircleCheck, CircleDashed, Layers3, Link2, Plus, Search, X } from '@lucide/vue'
 import { computed, ref } from 'vue'
 import { useRouter } from 'vue-router'
 
 import CardListSkeleton from '@/components/admin/CardListSkeleton.vue'
+import DirectoryHero from '@/components/admin/DirectoryHero.vue'
 import ConfirmDialog from '@/components/admin/ConfirmDialog.vue'
-import PageHeader from '@/components/admin/PageHeader.vue'
 import CopyTemplateDialog from '@/components/templates/CopyTemplateDialog.vue'
 import LinkTemplateAgentDialog from '@/components/templates/LinkTemplateAgentDialog.vue'
 import TemplateCard from '@/components/templates/TemplateCard.vue'
@@ -13,7 +13,6 @@ import TemplateFormDialog from '@/components/templates/TemplateFormDialog.vue'
 import { Button } from '@/components/ui/button'
 import { useI18n } from '@/composables/useI18n'
 import type { AgentTemplate } from '@/domain/admin'
-import type { MessageKey } from '@/i18n/messages'
 import { useAdminStore, type TemplateSetupInput } from '@/stores/admin'
 
 const store = useAdminStore()
@@ -64,11 +63,16 @@ const deleteOpen = computed({
 const inUseCount = computed(
   () => store.templates.filter((template) => store.getTemplateAgentCount(template.id) > 0).length,
 )
-const stats = computed<{ key: MessageKey; value: number }[]>(() => [
-  { key: 'templates.stat.templates', value: store.templates.length },
-  { key: 'templates.stat.inUse', value: inUseCount.value },
-  { key: 'templates.stat.unused', value: store.templates.length - inUseCount.value },
-  { key: 'templates.stat.links', value: store.agentTemplateLinks.length },
+const heroStats = computed(() => [
+  { label: t('templates.stat.templates'), value: store.templates.length, icon: Layers3 },
+  { label: t('templates.stat.inUse'), value: inUseCount.value, icon: CircleCheck },
+  { label: t('templates.stat.unused'), value: store.templates.length - inUseCount.value, icon: CircleDashed },
+  { label: t('templates.stat.links'), value: store.agentTemplateLinks.length, icon: Link2 },
+])
+const usageOptions = computed(() => [
+  { value: ALL, label: t('common.all'), count: store.templates.length },
+  { value: IN_USE, label: t('templates.usage.inUse'), count: inUseCount.value },
+  { value: 'unused', label: t('templates.usage.unused'), count: store.templates.length - inUseCount.value },
 ])
 
 const visibleTemplates = computed(() => {
@@ -84,6 +88,13 @@ const visibleTemplates = computed(() => {
       .some((field) => field.toLowerCase().includes(query))
   })
 })
+
+const hasFilters = computed(() => Boolean(searchQuery.value.trim()) || languageFilter.value !== ALL || usageFilter.value !== ALL)
+function clearFilters() {
+  searchQuery.value = ''
+  languageFilter.value = ALL
+  usageFilter.value = ALL
+}
 
 const deleteAgentCount = computed(() =>
   deleteTarget.value ? store.getTemplateAgentCount(deleteTarget.value.id) : 0,
@@ -136,70 +147,25 @@ function agentNamesFor(templateId: string) {
 </script>
 
 <template>
-  <section class="space-y-6">
-    <PageHeader
-      :eyebrow="t('templates.eyebrow')"
-      :title="t('templates.title')"
-      :description="t('templates.description')"
-    >
+  <section class="studio-directory" data-directory="templates">
+    <DirectoryHero tone="templates" :eyebrow="t('templatesBoard.eyebrow')" :title="t('templates.title')" :intro="t('templatesBoard.description')" :stats="heroStats">
       <template #actions>
-        <Button @click="createOpen = true; editingTemplate = undefined">
-          <Plus class="size-4" />
-          {{ t('templates.create') }}
-        </Button>
+        <button type="button" class="hero-primary" @click="createOpen = true; editingTemplate = undefined"><Plus :size="16" aria-hidden="true" />{{ t('templates.create') }}</button>
       </template>
-    </PageHeader>
+    </DirectoryHero>
 
-    <dl class="grid grid-cols-2 gap-3 sm:grid-cols-4">
-      <div
-        v-for="stat in stats"
-          :key="stat.key"
-        class="rounded-lg border border-border/70 bg-card px-3.5 py-3"
-      >
-        <dt class="text-xs text-muted-foreground">{{ t(stat.key) }}</dt>
-        <dd class="mt-1 text-xl font-semibold tabular-nums">{{ stat.value }}</dd>
+    <div class="directory-toolbar">
+      <label class="directory-search"><span class="sr-only">{{ t('templates.searchLabel') }}</span><Search :size="16" aria-hidden="true" /><input v-model="searchQuery" class="admin-input" type="search" :placeholder="t('templates.search')" /></label>
+      <div class="directory-chips" role="group" :aria-label="t('templates.usageFilter')">
+        <button v-for="option in usageOptions" :key="option.value" type="button" class="directory-chip" :aria-pressed="usageFilter === option.value" @click="usageFilter = option.value">{{ option.label }}<b>{{ option.count }}</b></button>
       </div>
-    </dl>
-
-    <div class="flex flex-col gap-2 sm:flex-row sm:items-center">
-      <div class="relative sm:max-w-sm sm:flex-1">
-        <Search
-          class="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground"
-          aria-hidden="true"
-        />
-        <input
-          v-model="searchQuery"
-          class="admin-input pl-9"
-          type="search"
-          :placeholder="t('templates.search')"
-          :aria-label="t('templates.searchLabel')"
-        />
-      </div>
-
-      <select
-        v-model="languageFilter"
-        class="admin-input sm:w-44"
-        :aria-label="t('templates.languageFilter')"
-      >
-        <option :value="ALL">{{ t('templates.allLanguages') }}</option>
-        <option v-for="language in store.templateLanguages" :key="language" :value="language">
-          {{ language }}
-        </option>
-      </select>
-
-      <select
-        v-model="usageFilter"
-        class="admin-input sm:w-36"
-        :aria-label="t('templates.usageFilter')"
-      >
-        <option :value="ALL">{{ t('templates.allUsage') }}</option>
-        <option :value="IN_USE">{{ t('templates.usage.inUse') }}</option>
-        <option value="unused">{{ t('templates.usage.unused') }}</option>
-      </select>
+      <select v-model="languageFilter" class="admin-input" :aria-label="t('templates.languageFilter')"><option :value="ALL">{{ t('templates.allLanguages') }}</option><option v-for="language in store.templateLanguages" :key="language" :value="language">{{ language }}</option></select>
+      <button v-if="hasFilters" type="button" class="directory-clear" @click="clearFilters"><X :size="14" aria-hidden="true" />{{ t('providers.clearFilters') }}</button>
+      <span v-if="!store.loading" class="directory-count">{{ t('providers.resultCount', { count: visibleTemplates.length }) }}</span>
     </div>
 
     <CardListSkeleton v-if="store.loading" class="lg:grid-cols-2" />
-    <div v-else-if="visibleTemplates.length" class="grid gap-3 lg:grid-cols-2">
+    <div v-else-if="visibleTemplates.length" class="directory-grid" data-wide>
       <TemplateCard
         v-for="template in visibleTemplates"
         :key="template.id"
@@ -215,11 +181,11 @@ function agentNamesFor(templateId: string) {
       />
     </div>
 
-    <div
-      v-else
-      class="rounded-xl border border-dashed border-border/80 py-16 text-center text-sm text-muted-foreground"
-    >
-      {{ t('templates.empty') }}
+    <div v-else class="directory-empty text-center">
+      <span class="directory-empty-icon"><Layers3 :size="28" :stroke-width="1.6" aria-hidden="true" /></span>
+      <p>{{ t('templates.empty') }}</p>
+      <Button v-if="hasFilters" variant="outline" @click="clearFilters"><X class="size-4" aria-hidden="true" />{{ t('providers.clearFilters') }}</Button>
+      <Button v-else @click="createOpen = true; editingTemplate = undefined"><Plus class="size-4" aria-hidden="true" />{{ t('templates.create') }}</Button>
     </div>
 
     <TemplateFormDialog
@@ -263,3 +229,5 @@ function agentNamesFor(templateId: string) {
     </ConfirmDialog>
   </section>
 </template>
+
+<style scoped src="../../views/studio-directory.css"></style>

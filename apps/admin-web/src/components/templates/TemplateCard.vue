@@ -1,11 +1,12 @@
 <script setup lang="ts">
+import { ArrowUpRight, Globe2, Layers3, MessageSquareText, Users } from '@lucide/vue'
 import { computed } from 'vue'
 
 import TemplateActionsMenu from '@/components/templates/TemplateActionsMenu.vue'
 import TemplatePipelineSummary from '@/components/templates/TemplatePipelineSummary.vue'
-import { Badge } from '@/components/ui/badge'
 import { useI18n } from '@/composables/useI18n'
 import type { AgentTemplate } from '@/domain/admin'
+import { identityHue, monogram } from '@/lib/visualIdentity'
 
 const { t } = useI18n()
 
@@ -34,49 +35,38 @@ const used = computed(() => props.agentCount > 0)
 </script>
 
 <template>
-  <article
-    class="flex cursor-pointer flex-col gap-3 rounded-xl border border-border/70 bg-card p-4 transition-colors hover:border-ring/50 hover:bg-accent/40"
-    @click="emit('open')"
-  >
-    <div class="flex items-start justify-between gap-3">
-      <div class="min-w-0">
-        <h3 class="truncate text-base font-semibold tracking-tight">
-          {{ template.name }}
-        </h3>
-        <p v-if="template.description" class="mt-1 line-clamp-2 text-sm text-muted-foreground">
-          {{ template.description }}
-        </p>
-        <p v-else class="mt-1 text-sm text-muted-foreground">{{ t('common.noDescription') }}</p>
+  <article class="dir-card template-card" :style="{ '--hue': identityHue(template.id) }">
+    <div class="dir-card-head">
+      <span class="template-icon" aria-hidden="true"><Layers3 :size="22" /></span>
+      <div class="dir-card-title">
+        <h3 class="template-heading"><button type="button" :aria-label="t('templatesBoard.open', { name: template.name })" @click="emit('open')">{{ template.name }}</button></h3>
+        <p><Globe2 :size="12" aria-hidden="true" />{{ template.language || t('templateCard.noLanguage') }}</p>
       </div>
-
-      <div class="flex shrink-0 items-center gap-2" @click.stop>
-        <TemplateActionsMenu
-          :template="template"
-          show-edit
-          @edit="emit('edit')"
-          @view-details="emit('open')"
-          @link-to-agent="emit('linkToAgent')"
-          @copy="emit('copy')"
-          @delete="emit('delete')"
-        />
+      <div class="dir-card-raise" @click.stop>
+        <TemplateActionsMenu :template="template" show-edit @edit="emit('edit')" @view-details="emit('open')" @link-to-agent="emit('linkToAgent')" @copy="emit('copy')" @delete="emit('delete')" />
       </div>
     </div>
-
-    <div class="flex flex-wrap items-center gap-2">
-      <Badge variant="secondary">{{ template.language || t('templateCard.noLanguage') }}</Badge>
-    </div>
-
+    <p class="dir-card-desc">{{ template.description || t('common.noDescription') }}</p>
+    <blockquote class="template-prompt" :data-empty="!template.prompt">
+      <MessageSquareText :size="14" aria-hidden="true" />
+      <p>{{ template.prompt || t('templateForm.reviewNoPrompt') }}</p>
+    </blockquote>
     <TemplatePipelineSummary :template="template" :provider-name-by-id="providerNameById" />
-
-    <div class="mt-auto flex flex-wrap items-center gap-x-2 gap-y-1 border-t border-border/60 pt-3 text-xs">
-      <span class="font-medium text-foreground">
-        {{ t('count.agents', { count: agentCount }) }}
+    <div class="dir-card-foot">
+      <span v-if="used" class="template-agents" aria-hidden="true">
+        <i v-for="name in previewedAgentNames" :key="name" :style="{ '--hue': identityHue(name) }" :title="name">{{ monogram(name, 'A') }}</i>
+        <i v-if="overflowCount > 0" class="template-agents-more">+{{ overflowCount }}</i>
       </span>
-      <span v-if="used && previewedAgentNames.length" class="min-w-0 truncate text-muted-foreground">
-        {{ previewedAgentNames.join(', ') }}<template v-if="overflowCount > 0">, {{ t('count.more', { count: overflowCount }) }}</template>
+      <span v-else><Users :size="14" aria-hidden="true" /></span>
+      <span class="template-usage">
+        <strong>{{ t('count.agents', { count: agentCount }) }}</strong>
+        <small v-if="used && previewedAgentNames.length">{{ previewedAgentNames.join(', ') }}<template v-if="overflowCount > 0">, {{ t('count.more', { count: overflowCount }) }}</template></small>
+        <small v-else>{{ used ? t('templateCard.linked') : t('templateCard.unused') }}</small>
       </span>
-      <span v-else-if="used" class="text-muted-foreground">{{ t('templateCard.linked') }}</span>
-      <span v-else class="text-muted-foreground">{{ t('templateCard.unused') }}</span>
+      <ArrowUpRight class="dir-card-arrow dir-card-push" :size="18" aria-hidden="true" />
     </div>
   </article>
 </template>
+
+<style scoped src="../admin/studio-directory-cards.css"></style>
+<style scoped src="./template-card.css"></style>

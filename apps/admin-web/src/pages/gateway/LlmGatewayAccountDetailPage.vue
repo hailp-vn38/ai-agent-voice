@@ -1,14 +1,5 @@
 <script setup lang="ts">
-import {
-  ArrowLeft,
-  ArrowRight,
-  Clock,
-  KeyRound,
-  Pencil,
-  RefreshCw,
-  Shield,
-  Trash2,
-} from '@lucide/vue'
+import { ArrowRight, Clock, KeyRound, Pencil, RefreshCw, Shield, Trash2 } from '@lucide/vue'
 import { computed, onMounted, ref, watch } from 'vue'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
 
@@ -23,6 +14,8 @@ import BaseModal from '@/components/admin/BaseModal.vue'
 import ConfirmDialog from '@/components/admin/ConfirmDialog.vue'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import DetailHero from '@/components/admin/DetailHero.vue'
+import { User as HeroIcon } from '@lucide/vue'
 import { useI18n } from '@/composables/useI18n'
 import { useErrorToast } from '@/composables/useNotify'
 import {
@@ -224,18 +217,6 @@ onMounted(() => {
 
 <template>
   <section class="space-y-4" data-testid="llm-gateway-account-detail-page">
-    <div class="flex flex-wrap items-center justify-between gap-2">
-      <button
-        type="button"
-        data-detail-back
-        class="inline-flex items-center gap-1.5 rounded-lg border border-border/80 bg-surface/60 px-2.5 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:border-studio-violet/40 hover:text-foreground"
-        @click="router.push({ name: 'llm-gateway-accounts' })"
-      >
-        <ArrowLeft class="size-3.5" aria-hidden="true" />
-        {{ t('llmGateway.backToAccounts') }}
-      </button>
-    </div>
-
     <div v-if="loading" class="studio-panel card-shimmer h-56 p-4" aria-hidden="true" />
 
     <div
@@ -249,45 +230,28 @@ onMounted(() => {
     </div>
 
     <template v-else>
-      <header class="flex flex-wrap items-start justify-between gap-3">
-        <div class="space-y-1">
-          <p class="text-[11px] font-bold tracking-[0.14em] text-studio-violet uppercase">
-            {{ t('llmGateway.accountPage.eyebrow') }}
-          </p>
-          <h1 class="text-xl font-bold tracking-tight sm:text-2xl">
-            {{ account.label }}
-          </h1>
-          <p class="max-w-2xl text-xs text-muted-foreground sm:text-sm">
-            {{ vendorInfo?.display_name || account.vendor }} ·
-            {{ account.account_email || account.account_key }} · OAuth Account
-          </p>
-        </div>
-
-        <div class="flex flex-wrap items-center gap-2">
-          <Button
-            variant="outline"
-            size="sm"
+      <DetailHero tone="gateway" :eyebrow="t('llmGateway.accountPage.eyebrow')" :title="account.label" :description="[vendorInfo?.display_name || account.vendor, account.account_email || account.account_key, 'OAuth Account'].join(' · ')" :back-label="t('llmGateway.backToAccounts')" @back="router.push({ name: 'llm-gateway-accounts' })">
+        <template #icon><HeroIcon :size="28" /></template>
+        <template #actions>
+          <button type="button" class="hero-ghost"
             data-action="account-refresh"
             :disabled="busy"
             @click="refreshAccount"
           >
             <RefreshCw class="size-4" :class="{ 'animate-spin': busy }" aria-hidden="true" />
             {{ t('llmGateway.refreshToken') }}
-          </Button>
-          <Button
+          </button>
+          <button type="button" class="hero-ghost"
             v-if="account.status === 'cooling_down'"
-            variant="outline"
-            size="sm"
             data-action="clear-cooldown"
             :disabled="busy"
             @click="clearCooldown"
           >
             <Clock class="size-4" aria-hidden="true" />
             {{ t('llmGateway.clearCooldown') }}
-          </Button>
-          <Button
+          </button>
+          <button type="button" class="hero-primary"
             v-if="account.status === 'reauth_required'"
-            size="sm"
             data-action="reauth"
             @click="
               router.push({
@@ -298,13 +262,13 @@ onMounted(() => {
           >
             <KeyRound class="size-4" aria-hidden="true" />
             {{ t('llmGateway.accountPage.reauthBtn') }}
-          </Button>
-          <Button v-else size="sm" data-action="account-edit" @click="openEditModal">
+          </button>
+          <button type="button" class="hero-primary" v-else data-action="account-edit" @click="openEditModal">
             <Pencil class="size-4" aria-hidden="true" />
             {{ t('common.edit') }}
-          </Button>
-        </div>
-      </header>
+          </button>
+        </template>
+      </DetailHero>
 
       <div class="grid gap-4 lg:grid-cols-[minmax(0,1fr)_315px]">
         <div class="space-y-3.5">
@@ -418,6 +382,14 @@ onMounted(() => {
                 </div>
                 <p v-else class="text-xs text-muted-foreground">
                   {{ effectiveQuota?.message || t('llmGateway.quota.noData') }}
+                </p>
+                <p
+                  v-if="effectiveQuota?.windows?.length && effectiveQuota.message"
+                  role="alert"
+                  data-testid="gateway-account-quota-message"
+                  class="mt-3 break-words rounded-xl border border-warning/40 bg-warning/10 p-3 text-xs text-warning"
+                >
+                  {{ effectiveQuota.message }}
                 </p>
               </div>
             </div>

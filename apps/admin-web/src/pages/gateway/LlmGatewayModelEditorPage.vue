@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ArrowLeft, Check, Info, Trash2 } from '@lucide/vue'
+import { Check, Info, Trash2 } from '@lucide/vue'
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
@@ -16,6 +16,8 @@ import type {
 import ConfirmDialog from '@/components/admin/ConfirmDialog.vue'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import DetailHero from '@/components/admin/DetailHero.vue'
+import { Cpu as HeroIcon } from '@lucide/vue'
 import { useI18n } from '@/composables/useI18n'
 import { useErrorToast } from '@/composables/useNotify'
 import { ALL_CAPABILITY_TAGS } from './llmGatewayUi'
@@ -289,53 +291,19 @@ onMounted(() => {
 
 <template>
   <section class="space-y-4" data-testid="llm-gateway-model-editor-page">
-    <div class="flex flex-wrap items-center justify-between gap-2">
-      <button
-        type="button"
-        data-detail-back
-        class="inline-flex items-center gap-1.5 rounded-lg border border-border/80 bg-surface/60 px-2.5 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:border-studio-violet/40 hover:text-foreground"
-        @click="goBack"
-      >
-        <ArrowLeft class="size-3.5" aria-hidden="true" />
-        {{
-          isCreateMode && !route.query.vendor
-            ? t('llmGateway.backToModels')
-            : t('llmGateway.backToPool')
-        }}
-      </button>
-    </div>
-
-    <header class="flex flex-wrap items-start justify-between gap-3">
-      <div class="space-y-1">
-        <p class="text-[11px] font-bold tracking-[0.14em] text-studio-violet uppercase">
-          {{ t('llmGateway.modelPage.eyebrow') }}
-        </p>
-        <h1 class="text-xl font-bold tracking-tight sm:text-2xl">
-          {{
-            isCreateMode
-              ? t('llmGateway.modelPage.createTitle')
-              : t('llmGateway.modelPage.editTitle', {
-                  name: displayName || modelId,
-                })
-          }}
-        </h1>
-        <p class="max-w-2xl text-xs text-muted-foreground sm:text-sm">
-          {{ t('llmGateway.modelPage.subtitle') }}
-        </p>
-      </div>
-
-      <div class="flex flex-wrap items-center gap-2">
-        <Button
-          size="sm"
+    <DetailHero tone="gateway" :eyebrow="t('llmGateway.modelPage.eyebrow')" :title="isCreateMode ? t('llmGateway.modelPage.createTitle') : t('llmGateway.modelPage.editTitle', { name: displayName || modelId, })" :description="t('llmGateway.modelPage.subtitle')" :back-label="isCreateMode && !route.query.vendor ? t('llmGateway.backToModels') : t('llmGateway.backToPool')" @back="goBack">
+      <template #icon><HeroIcon :size="28" /></template>
+      <template #actions>
+        <button type="button" class="hero-primary"
           data-action="save-model"
           :disabled="saving"
           @click="saveModel"
         >
           <Check class="size-4" aria-hidden="true" />
           {{ t('llmGateway.modelPage.saveBtn') }}
-        </Button>
-      </div>
-    </header>
+        </button>
+      </template>
+    </DetailHero>
 
     <form
       data-testid="pool-model-form"

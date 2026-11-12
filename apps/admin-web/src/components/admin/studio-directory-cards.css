@@ -1,0 +1,79 @@
+/* Shared card system for the Agents, Devices, Speakers and Templates directories. */
+.dir-card {
+  --hue: 282;
+  --ink: light-dark(oklch(0.5 0.17 var(--hue)), oklch(0.8 0.12 var(--hue)));
+  position: relative; display: flex; flex-direction: column; gap: 14px; min-width: 0; padding: 18px;
+  border: 1px solid color-mix(in oklab, var(--border) 80%, transparent); border-radius: 20px;
+  background: linear-gradient(180deg, color-mix(in oklab, var(--ink) 8%, var(--card)), var(--card) 96px);
+  box-shadow: 0 1px 2px rgb(0 0 0 / 0.04);
+  transition: transform 180ms, box-shadow 180ms, border-color 180ms;
+}
+.dir-card:hover { transform: translateY(-3px); border-color: color-mix(in oklab, var(--ink) 55%, var(--border)); box-shadow: 0 18px 32px -20px color-mix(in oklab, var(--ink) 70%, transparent); }
+.dir-card-hit { position: absolute; inset: 0; z-index: 1; border-radius: 20px; cursor: pointer; }
+.dir-card-hit:focus-visible { outline: 2px solid var(--ink); outline-offset: 3px; }
+/* Controls that must stay clickable above the full-card hit target. */
+.dir-card-raise { position: relative; z-index: 2; flex-shrink: 0; }
+
+.dir-card-head { display: flex; align-items: flex-start; gap: 12px; }
+.dir-card-title { flex: 1; min-width: 0; padding-top: 2px; }
+.dir-card-title :is(h2, h3) { font-size: 17px; line-height: 1.3; font-weight: 600; letter-spacing: -0.01em; overflow-wrap: anywhere; }
+.dir-card-title > p, .dir-card-title > code { display: block; margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted-foreground); font-size: 12px; }
+.dir-card-arrow { flex-shrink: 0; margin-top: 4px; color: var(--muted-foreground); transition: transform 180ms, color 180ms; }
+.dir-card:hover .dir-card-arrow { transform: translate(2px, -2px); color: var(--ink); }
+.dir-card-desc { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; min-height: 42px; color: var(--muted-foreground); font-size: 13.5px; line-height: 1.55; overflow-wrap: anywhere; }
+.dir-card-foot { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; margin-top: auto; padding-top: 14px; border-top: 1px solid color-mix(in oklab, var(--border) 70%, transparent); color: var(--muted-foreground); font-size: 12.5px; }
+.dir-card-foot > span { display: inline-flex; align-items: center; gap: 6px; }
+.dir-card-foot > .dir-card-push { margin-left: auto; }
+.dir-card-foot :deep(button) { height: 30px; border-radius: 999px; padding-inline: 12px; font-size: 12.5px; }
+
+.dir-avatar { display: grid; place-items: center; flex-shrink: 0; width: 48px; height: 48px; border-radius: 15px; color: #fff; font-size: 20px; font-weight: 600; background: linear-gradient(135deg, oklch(0.62 0.17 var(--hue)), oklch(0.5 0.19 calc(var(--hue) + 50))); box-shadow: 0 6px 14px -8px oklch(0.5 0.19 var(--hue)); }
+
+.dir-pill { display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; border-radius: 999px; background: var(--muted); color: var(--muted-foreground); font-size: 12px; font-weight: 600; white-space: nowrap; }
+.dir-pill[data-enabled="true"] { background: color-mix(in oklab, var(--success) 14%, transparent); color: var(--success-foreground); }
+.dir-pill > i { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+.dir-tag { padding: 2px 8px; border: 1px solid var(--border); border-radius: 6px; color: var(--muted-foreground); font-size: 11px; font-weight: 500; font-style: normal; white-space: nowrap; }
+
+/* Agent */
+.agent-template { display: grid; gap: 8px; padding: 12px 14px; border-radius: 14px; background: color-mix(in oklab, var(--muted) 55%, transparent); }
+.agent-template-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; color: var(--muted-foreground); font-size: 11px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; }
+.agent-template-head > span { display: inline-flex; align-items: center; gap: 6px; }
+.agent-template > strong { font-size: 14px; font-weight: 600; overflow-wrap: anywhere; }
+.agent-template > strong[data-empty="true"] { color: var(--muted-foreground); font-weight: 500; }
+.agent-providers { display: flex; flex-wrap: wrap; gap: 6px; }
+.agent-providers > li { display: inline-flex; align-items: center; gap: 5px; min-width: 0; max-width: 100%; padding: 3px 9px; border-radius: 999px; background: var(--card); border: 1px solid color-mix(in oklab, var(--border) 70%, transparent); color: var(--muted-foreground); font-size: 12px; }
+.agent-providers svg { flex-shrink: 0; color: var(--ink); }
+.agent-providers span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Device */
+.device-card { --hue: 219; }
+.device-card[data-enabled="false"] { --ink: var(--muted-foreground); }
+.device-icon { position: relative; display: grid; place-items: center; flex-shrink: 0; width: 48px; height: 48px; border-radius: 15px; background: color-mix(in oklab, var(--ink) 13%, transparent); color: var(--ink); }
+.device-icon > svg { width: 24px; height: 30px; }
+.device-icon > i { position: absolute; right: -2px; bottom: -2px; width: 13px; height: 13px; border: 2.5px solid var(--card); border-radius: 50%; background: var(--muted-foreground); }
+.device-card[data-enabled="true"] .device-icon > i { background: var(--success); }
+.device-managed { display: inline-flex; align-items: center; gap: 5px; margin-left: auto; padding: 2px 8px; border-radius: 6px; color: var(--muted-foreground); font-size: 12px; font-weight: 500; }
+.device-managed:hover { background: var(--muted); color: var(--foreground); }
+.device-status { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.device-id { display: flex; align-items: center; gap: 8px; padding: 6px 6px 6px 12px; border: 1px dashed var(--border); border-radius: 12px; background: color-mix(in oklab, var(--muted) 40%, transparent); }
+.device-id > svg { flex-shrink: 0; color: var(--muted-foreground); }
+.device-id > code { flex: 1; min-width: 0; font-size: 12.5px; overflow-wrap: anywhere; }
+.device-copy { display: grid; place-items: center; width: 30px; height: 30px; border-radius: 8px; color: var(--muted-foreground); cursor: pointer; }
+.device-copy:hover { background: var(--accent); color: var(--foreground); }
+.device-copy[data-copied="true"] { color: var(--success-foreground); }
+.device-route { display: flex; align-items: stretch; gap: 8px; margin-top: auto; padding-top: 14px; border-top: 1px solid color-mix(in oklab, var(--border) 70%, transparent); }
+.device-route > div { flex: 1; min-width: 0; }
+.device-route > svg { flex-shrink: 0; align-self: center; color: var(--ink); opacity: 0.7; }
+.device-route dt { display: flex; align-items: center; gap: 5px; color: var(--muted-foreground); font-size: 11px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; }
+.device-route dd { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 4px; font-size: 13.5px; font-weight: 500; overflow-wrap: anywhere; }
+
+/* Speaker */
+.speaker-card[data-enabled="false"] .speaker-voiceprint > i { background: var(--border); }
+.speaker-card .dir-avatar { border-radius: 50%; }
+.speaker-card .dir-card-title > .dir-pill { margin-top: 5px; }
+.speaker-voiceprint { display: flex; align-items: center; gap: 3px; height: 44px; padding: 0 2px; }
+.speaker-voiceprint > i { flex: 1; min-width: 2px; border-radius: 99px; background: linear-gradient(180deg, oklch(0.66 0.16 var(--hue)), oklch(0.56 0.18 calc(var(--hue) + 50))); opacity: 0.75; transform-origin: center; transition: transform 240ms, opacity 240ms; }
+.speaker-card[data-enabled="true"]:hover .speaker-voiceprint > i { opacity: 1; transform: scaleY(1.12); }
+.speaker-voiceprint > i:nth-child(odd) { transition-delay: 40ms; }
+.dir-mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11.5px; }
+
+@media (prefers-reduced-motion: reduce) { .dir-card, .dir-card-arrow, .speaker-voiceprint > i { transition: none; transform: none !important; } }

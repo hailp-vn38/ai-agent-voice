@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ArrowLeft, ArrowRight, Layers, Plus, RefreshCw } from '@lucide/vue'
+import { ArrowRight, Layers, Plus, RefreshCw } from '@lucide/vue'
 import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 
@@ -11,7 +11,8 @@ import type {
   GatewayVendor,
   GatewayVendorInfo,
 } from '@/api/types/llm-gateway'
-import { Button } from '@/components/ui/button'
+import DetailHero from '@/components/admin/DetailHero.vue'
+import { Layers as HeroIcon } from '@lucide/vue'
 import { useI18n } from '@/composables/useI18n'
 import { useErrorToast } from '@/composables/useNotify'
 import { vendorMeta } from './llmGatewayUi'
@@ -101,42 +102,19 @@ onMounted(() => {
 
 <template>
   <section class="space-y-4" data-testid="llm-gateway-pools-page">
-    <div class="flex flex-wrap items-center justify-between gap-2">
-      <button
-        type="button"
-        data-detail-back
-        class="inline-flex items-center gap-1.5 rounded-lg border border-border/80 bg-surface/60 px-2.5 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:border-studio-violet/40 hover:text-foreground"
-        @click="router.push({ name: 'llm-gateway' })"
-      >
-        <ArrowLeft class="size-3.5" aria-hidden="true" />
-        {{ t('llmGateway.backToGateway') }}
-      </button>
-    </div>
-
-    <header class="flex flex-wrap items-start justify-between gap-3">
-      <div class="space-y-1">
-        <p class="text-[11px] font-bold tracking-[0.14em] text-studio-violet uppercase">
-          {{ t('llmGateway.poolsPage.eyebrow') }}
-        </p>
-        <h1 class="text-xl font-bold tracking-tight sm:text-2xl">
-          {{ t('llmGateway.poolsPage.title') }}
-        </h1>
-        <p class="max-w-2xl text-xs text-muted-foreground sm:text-sm">
-          {{ t('llmGateway.poolsPage.subtitle') }}
-        </p>
-      </div>
-
-      <div class="flex flex-wrap items-center gap-2">
-        <Button variant="outline" size="sm" :disabled="loading" @click="load">
+    <DetailHero tone="gateway" :eyebrow="t('llmGateway.poolsPage.eyebrow')" :title="t('llmGateway.poolsPage.title')" :description="t('llmGateway.poolsPage.subtitle')" :back-label="t('llmGateway.backToGateway')" @back="router.push({ name: 'llm-gateway' })">
+      <template #icon><HeroIcon :size="28" /></template>
+      <template #actions>
+        <button type="button" class="hero-ghost" :disabled="loading" @click="load">
           <RefreshCw class="size-4" :class="{ 'animate-spin': loading }" aria-hidden="true" />
           {{ t('common.refresh') }}
-        </Button>
-        <Button size="sm" @click="router.push({ name: 'llm-gateway-connect' })">
+        </button>
+        <button type="button" class="hero-primary" @click="router.push({ name: 'llm-gateway-connect' })">
           <Plus class="size-4" aria-hidden="true" />
           {{ t('llmGateway.hub.connectCta') }}
-        </Button>
-      </div>
-    </header>
+        </button>
+      </template>
+    </DetailHero>
 
     <!-- Vendor Filter Pill Tabs -->
     <div class="flex flex-wrap items-center gap-1.5 rounded-xl border border-border/70 bg-surface/40 p-1.5">

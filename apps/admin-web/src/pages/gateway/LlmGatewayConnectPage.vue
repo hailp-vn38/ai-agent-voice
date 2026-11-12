@@ -1,14 +1,5 @@
 <script setup lang="ts">
-import {
-  ArrowLeft,
-  ArrowRight,
-  Check,
-  Copy,
-  ExternalLink,
-  KeyRound,
-  Loader2,
-  RefreshCw,
-} from '@lucide/vue'
+import { ArrowRight, Check, Copy, ExternalLink, KeyRound, Loader2, RefreshCw } from '@lucide/vue'
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
@@ -22,6 +13,8 @@ import type {
 } from '@/api/types/llm-gateway'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import DetailHero from '@/components/admin/DetailHero.vue'
+import { KeyRound as HeroIcon } from '@lucide/vue'
 import { useI18n } from '@/composables/useI18n'
 import { useErrorToast } from '@/composables/useNotify'
 import { loginModeLabel, vendorMeta } from './llmGatewayUi'
@@ -298,29 +291,9 @@ onBeforeUnmount(() => {
 
 <template>
   <section class="space-y-4" data-testid="llm-gateway-connect-page">
-    <div class="flex flex-wrap items-center justify-between gap-2">
-      <button
-        type="button"
-        data-detail-back
-        class="inline-flex items-center gap-1.5 rounded-lg border border-border/80 bg-surface/60 px-2.5 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:border-studio-violet/40 hover:text-foreground"
-        @click="router.push({ name: 'llm-gateway-accounts' })"
-      >
-        <ArrowLeft class="size-3.5" aria-hidden="true" />
-        {{ t('llmGateway.backToAccounts') }}
-      </button>
-    </div>
-
-    <header class="space-y-1">
-      <p class="text-[11px] font-bold tracking-[0.14em] text-studio-violet uppercase">
-        {{ t('llmGateway.connectPage.eyebrow') }}
-      </p>
-      <h1 class="text-xl font-bold tracking-tight sm:text-2xl">
-        {{ t('llmGateway.connectPage.title') }}
-      </h1>
-      <p class="max-w-2xl text-xs text-muted-foreground sm:text-sm">
-        {{ t('llmGateway.connectPage.subtitle') }}
-      </p>
-    </header>
+    <DetailHero tone="gateway" :eyebrow="t('llmGateway.connectPage.eyebrow')" :title="t('llmGateway.connectPage.title')" :description="t('llmGateway.connectPage.subtitle')" :back-label="t('llmGateway.backToAccounts')" @back="router.push({ name: 'llm-gateway-accounts' })">
+      <template #icon><HeroIcon :size="28" /></template>
+    </DetailHero>
 
     <!-- 3 Wizard Steps -->
     <div class="grid gap-2.5 sm:grid-cols-3">

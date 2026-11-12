@@ -39,7 +39,6 @@ describe('AgentHeader option A', () => {
     expect(wrapper.find('svg[viewBox="0 0 48 48"]').exists()).toBe(true)
     expect(wrapper.get('[data-agent-metadata]').text()).toContain('2 templates')
     expect(wrapper.get('[data-agent-metadata]').text()).toContain('1 device')
-    expect(wrapper.get('[data-agent-header]').classes()).toContain('py-3')
     expect(wrapper.get('[data-agent-header]').find('.border-t').exists()).toBe(false)
   })
 

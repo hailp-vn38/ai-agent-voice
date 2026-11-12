@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { MonitorSmartphone, Plus, RefreshCw, Search, ShieldCheck } from '@lucide/vue'
+import { Info, MonitorSmartphone, Plus, RefreshCw, Search, ShieldCheck, ShieldOff, X } from '@lucide/vue'
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 
 import CardListSkeleton from '@/components/admin/CardListSkeleton.vue'
+import DirectoryHero from '@/components/admin/DirectoryHero.vue'
 import { formatApiError } from '@/api/errors'
 import { devicesApi } from '@/api/devices'
 import type { AdminAgent, AgentTemplateLink } from '@/api/types/agents'
@@ -13,7 +14,6 @@ import ConfirmDialog from '@/components/admin/ConfirmDialog.vue'
 import BaseModal from '@/components/admin/BaseModal.vue'
 import DeviceCard from '@/components/devices/DeviceCard.vue'
 import { asDevice } from '@/components/devices/presentation'
-import PageHeader from '@/components/admin/PageHeader.vue'
 import { Button } from '@/components/ui/button'
 import { useI18n } from '@/composables/useI18n'
 import { useErrorToast } from '@/composables/useNotify'
@@ -24,7 +24,7 @@ const router = useRouter()
 const { t } = useI18n()
 const search = ref('')
 const agentFilter = ref('')
-const admissionFilter = ref('all')
+const admissionFilter = ref<'all' | 'enabled' | 'disabled'>('all')
 const rawDevices = ref<AdminDevice[]>([])
 const loading = ref(false)
 const saving = ref(false)
@@ -66,6 +66,19 @@ const filtered = computed(() => {
       .some((part) => part.toLocaleLowerCase().includes(needle))),
   )
 })
+const heroStats = computed(() => [
+  { label: t('deviceDetail.registered'), value: rawDevices.value.length, icon: MonitorSmartphone },
+  { label: t('deviceDetail.permittedCount'), value: permitted.value, icon: ShieldCheck },
+  { label: t('deviceCard.blocked'), value: rawDevices.value.length - permitted.value, icon: ShieldOff },
+])
+const admissionOptions = computed(() => [
+  { value: 'all' as const, label: t('common.all'), count: rawDevices.value.length, tone: '' },
+  { value: 'enabled' as const, label: t('deviceCard.allowed'), count: permitted.value, tone: 'on' },
+  { value: 'disabled' as const, label: t('deviceCard.blocked'), count: rawDevices.value.length - permitted.value, tone: 'off' },
+])
+
+const hasFilters = computed(() => Boolean(search.value.trim() || agentFilter.value || admissionFilter.value !== 'all'))
+function clearFilters() { search.value = ''; agentFilter.value = ''; admissionFilter.value = 'all' }
 
 async function load() {
   activeRequest?.abort()
@@ -150,56 +163,34 @@ onBeforeUnmount(() => activeRequest?.abort())
 </script>
 
 <template>
-  <section class="space-y-6">
-    <PageHeader :eyebrow="t('devices.eyebrow')" :title="t('devices.title')" :description="t('devices.description')">
+  <section class="studio-directory" data-directory="devices">
+    <DirectoryHero tone="devices" :eyebrow="t('directoryUi.devicesEyebrow')" :title="t('devices.title')" :intro="t('directoryUi.devicesIntro')" :stats="heroStats">
       <template #actions>
-        <Button variant="outline" :disabled="loading" @click="load">
-          <RefreshCw class="size-4" :class="{ 'animate-spin': loading }" aria-hidden="true" />
-          {{ t('common.refresh') }}
-        </Button>
-        <Button @click="startEnrollment"><Plus class="size-4" aria-hidden="true" />{{ t('agentDevices.add') }}</Button>
+        <button type="button" class="hero-primary" @click="startEnrollment"><Plus :size="16" aria-hidden="true" />{{ t('agentDevices.add') }}</button>
+        <button type="button" class="hero-ghost" :disabled="loading" @click="load"><RefreshCw :size="16" :class="{ 'animate-spin': loading }" aria-hidden="true" />{{ t('common.refresh') }}</button>
       </template>
-    </PageHeader>
+    </DirectoryHero>
 
-    <div class="grid grid-cols-2 gap-3" aria-label="Device inventory">
-      <div class="studio-panel p-4">
-        <p class="flex items-center gap-2 text-xs text-muted-foreground"><MonitorSmartphone class="size-4" aria-hidden="true" />{{ t('deviceDetail.registered') }}</p>
-        <p class="mt-2 text-2xl font-semibold tabular-nums">{{ rawDevices.length }}</p>
+    <div class="directory-toolbar">
+      <label class="directory-search"><span class="sr-only">{{ t('devices.search') }}</span><Search :size="16" aria-hidden="true" /><input v-model="search" type="search" class="admin-input" :placeholder="t('devices.search')" data-device-search /></label>
+      <div class="directory-chips" role="group" :aria-label="t('devices.admission')">
+        <button v-for="option in admissionOptions" :key="option.value" type="button" class="directory-chip" :aria-pressed="admissionFilter === option.value" @click="admissionFilter = option.value">
+          <i v-if="option.tone" :data-tone="option.tone" aria-hidden="true" />{{ option.label }}<b>{{ option.count }}</b>
+        </button>
       </div>
-      <div class="studio-panel p-4">
-        <p class="flex items-center gap-2 text-xs text-muted-foreground"><ShieldCheck class="size-4" aria-hidden="true" />{{ t('deviceDetail.permittedCount') }}</p>
-        <p class="mt-2 text-2xl font-semibold tabular-nums">{{ permitted }}</p>
-      </div>
+      <select v-model="agentFilter" class="admin-input" :aria-label="t('deviceDetail.filterAgent')"><option value="">{{ t('deviceDetail.allAgents') }}</option><option v-for="agent in sortedAgents" :key="agent.id" :value="agent.id">{{ agent.name }}</option></select>
+      <button v-if="hasFilters" type="button" class="directory-clear" @click="clearFilters"><X :size="14" aria-hidden="true" />{{ t('providers.clearFilters') }}</button>
+      <span v-if="!loading" class="directory-count">{{ t('providers.resultCount', { count: filtered.length }) }}</span>
     </div>
 
-    <div class="studio-panel grid gap-3 p-4 md:grid-cols-[minmax(0,1fr)_minmax(9rem,13rem)_minmax(9rem,13rem)]">
-      <label class="relative block min-w-0">
-        <span class="sr-only">{{ t('devices.search') }}</span>
-        <Search class="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
-        <input v-model="search" type="search" class="admin-input pl-9" :placeholder="t('devices.search')" data-device-search />
-      </label>
-      <label>
-        <span class="sr-only">{{ t('deviceDetail.filterAgent') }}</span>
-        <select v-model="agentFilter" class="admin-input" :aria-label="t('deviceDetail.filterAgent')">
-          <option value="">{{ t('deviceDetail.allAgents') }}</option>
-          <option v-for="agent in sortedAgents" :key="agent.id" :value="agent.id">{{ agent.name }}</option>
-        </select>
-      </label>
-      <label>
-        <span class="sr-only">{{ t('devices.admission') }}</span>
-        <select v-model="admissionFilter" class="admin-input" :aria-label="t('devices.admission')">
-          <option value="all">{{ t('deviceDetail.allStates') }}</option>
-          <option value="enabled">{{ t('deviceCard.allowed') }}</option>
-          <option value="disabled">{{ t('deviceCard.blocked') }}</option>
-        </select>
-      </label>
+    <CardListSkeleton v-if="loading" class="sm:grid-cols-2 xl:grid-cols-3" />
+    <div v-else-if="!filtered.length" class="directory-empty text-center">
+      <span class="directory-empty-icon"><MonitorSmartphone :size="28" :stroke-width="1.6" aria-hidden="true" /></span>
+      <p>{{ hasFilters ? t('deviceDetail.emptyFilter') : t('devices.empty') }}</p>
+      <Button v-if="hasFilters" variant="outline" @click="clearFilters"><X class="size-4" aria-hidden="true" />{{ t('providers.clearFilters') }}</Button>
+      <Button v-else @click="startEnrollment"><Plus class="size-4" aria-hidden="true" />{{ t('agentDevices.add') }}</Button>
     </div>
-
-    <CardListSkeleton v-if="loading" class="gap-3 sm:grid-cols-2 2xl:grid-cols-3" />
-    <div v-else-if="!filtered.length" class="studio-panel px-5 py-12 text-center">
-      <p class="text-sm text-muted-foreground">{{ search || agentFilter || admissionFilter !== 'all' ? t('deviceDetail.emptyFilter') : t('devices.empty') }}</p>
-    </div>
-    <ul v-else class="grid min-w-0 grid-cols-1 gap-3 sm:grid-cols-2 2xl:grid-cols-3" data-devices-grid>
+    <ul v-else class="directory-grid" data-devices-grid>
       <DeviceCard
         v-for="device in filtered"
         :key="device.id"
@@ -211,7 +202,7 @@ onBeforeUnmount(() => activeRequest?.abort())
         @delete="deleteTarget = rawDevices.find((item) => item.device_id === $event.deviceId)"
       />
     </ul>
-    <p class="text-xs text-muted-foreground">{{ t('devices.note') }}</p>
+    <p class="directory-footer-note"><Info :size="14" aria-hidden="true" />{{ t('devices.note') }}</p>
 
     <BaseModal v-model="chooseAgentOpen" :title="t('deviceDetail.addTitle')" :description="t('deviceDetail.addHint')" width-class="max-w-lg">
       <form class="space-y-4" @submit.prevent="nextEnrollment">
@@ -248,3 +239,5 @@ onBeforeUnmount(() => activeRequest?.abort())
     />
   </section>
 </template>
+
+<style scoped src="./studio-directory.css"></style>

@@ -1,9 +1,9 @@
 <script setup lang="ts">
-import { ChevronRight } from '@lucide/vue'
 import { computed } from 'vue'
 
 import { useI18n } from '@/composables/useI18n'
 import { providerTypes, type AgentTemplate } from '@/domain/admin'
+import { providerTypeIcons } from '@/lib/providerTypeIcons'
 
 const props = defineProps<{
   template: AgentTemplate
@@ -15,37 +15,33 @@ const { t, providerTypeLabel } = useI18n()
 
 const chain = computed(() =>
   providerTypes
-    .filter((type) => props.template.providerBindings[type])
     .map((type) => ({
       type,
       label: providerTypeLabel(type),
-      name: props.providerNameById(props.template.providerBindings[type]),
+      name: props.template.providerBindings[type] ? props.providerNameById(props.template.providerBindings[type]) : '',
     })),
 )
 </script>
 
 <template>
-  <p v-if="chain.length === 0" class="text-xs text-muted-foreground">
-    {{ t('templateSummary.noProviders') }}
-  </p>
-
-  <div v-else class="space-y-1.5">
-    <p v-if="chain.length" class="flex flex-wrap items-center gap-x-1.5 gap-y-1 text-xs">
-      <template v-for="(step, index) in chain" :key="step.type">
-        <ChevronRight
-          v-if="index > 0"
-          class="size-3 shrink-0 text-muted-foreground/60"
-          aria-hidden="true"
-        />
-        <span class="inline-flex min-w-0 items-baseline gap-1">
-          <span class="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
-            {{ step.label }}
-          </span>
-          <span class="max-w-32 truncate font-medium text-foreground" :title="step.name">
-            {{ step.name }}
-          </span>
-        </span>
-      </template>
-    </p>
-  </div>
+  <ol class="template-mini-pipeline" :aria-label="t('templateForm.providers')">
+    <li v-for="step in chain" :key="step.type" :data-bound="Boolean(step.name)">
+      <span class="pipeline-node"><component :is="providerTypeIcons[step.type]" :size="15" aria-hidden="true" /></span>
+      <span class="pipeline-label">{{ step.label }}</span>
+      <strong :title="step.name || t('templateForm.noProvider')">{{ step.name || '—' }}</strong>
+    </li>
+  </ol>
 </template>
+
+<style scoped>
+/* Four stages joined by a rail: a filled node means a provider is bound to that stage. */
+.template-mini-pipeline { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.template-mini-pipeline > li { position: relative; display: grid; justify-items: center; gap: 3px; min-width: 0; padding: 0 4px; text-align: center; }
+.template-mini-pipeline > li + li::before { content: ''; position: absolute; top: 16px; right: calc(50% + 20px); width: calc(100% - 40px); height: 2px; border-radius: 2px; background: var(--border); }
+.template-mini-pipeline > li[data-bound="true"] + li[data-bound="true"]::before { background: color-mix(in oklab, var(--ink, var(--studio-violet)) 60%, var(--border)); }
+.pipeline-node { display: grid; place-items: center; width: 34px; height: 34px; margin-bottom: 3px; border: 1.5px dashed var(--border); border-radius: 50%; color: var(--muted-foreground); }
+li[data-bound="true"] > .pipeline-node { border: 0; background: color-mix(in oklab, var(--ink, var(--studio-violet)) 16%, transparent); color: var(--ink, var(--studio-violet)); }
+.pipeline-label { color: var(--muted-foreground); font-size: 10.5px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; }
+.template-mini-pipeline strong { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12.5px; font-weight: 500; }
+li[data-bound="false"] > strong { color: var(--muted-foreground); }
+</style>

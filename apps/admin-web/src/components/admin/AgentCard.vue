@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { Bot, Layers, MonitorSmartphone, Plus, ArrowUpRight } from '@lucide/vue'
+import { Layers, MonitorSmartphone, Plus, ArrowUpRight } from '@lucide/vue'
 
-import ProviderChip from '@/components/admin/ProviderChip.vue'
+import { providerTypeIcons } from '@/lib/providerTypeIcons'
+import { identityHue, monogram } from '@/lib/visualIdentity'
 import { Button } from '@/components/ui/button'
 import { useI18n } from '@/composables/useI18n'
 import type { Agent, AgentTemplate, ProviderInstance } from '@/domain/admin'
@@ -18,55 +19,40 @@ const { t } = useI18n()
 </script>
 
 <template>
-  <article class="studio-panel group relative cursor-pointer p-5 transition-all hover:-translate-y-0.5 hover:border-studio-violet/40 hover:shadow-lg">
-    <!-- One real button covers the card, while Add Device remains a separate button above it. -->
-    <button
-      data-agent-card-open
-      type="button"
-      class="absolute inset-0 z-10 cursor-pointer rounded-2xl focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
-      :aria-label="agent.name"
-      @click="emit('open')"
-    ></button>
-    <div class="flex w-full items-start gap-3 text-left">
-      <span class="flex size-12 shrink-0 items-center justify-center rounded-xl bg-studio-violet/10 text-studio-violet">
-        <Bot class="size-6" aria-hidden="true" />
-      </span>
-      <span class="min-w-0 flex-1">
-        <span class="block truncate text-lg font-semibold">{{ agent.name }}</span>
-        <span class="mt-1 block min-h-10 text-sm text-muted-foreground">{{ agent.description || '—' }}</span>
-      </span>
-      <ArrowUpRight class="size-4 shrink-0 text-muted-foreground transition group-hover:text-studio-violet" aria-hidden="true" />
-    </div>
-
-    <div class="mt-5 flex flex-wrap items-center gap-4 text-xs text-muted-foreground">
-      <span class="inline-flex items-center gap-1.5">
-        <Layers class="size-4" aria-hidden="true" />
-        {{ t('count.templates', { count: templateCount }) }}
-      </span>
-      <span class="inline-flex items-center gap-1.5">
-        <MonitorSmartphone class="size-4" aria-hidden="true" />
-        {{ t('count.devices', { count: deviceCount }) }}
-      </span>
-    </div>
-
-    <div class="mt-4 border-t border-border/70 pt-4">
-      <p v-if="defaultTemplate" class="mb-3 truncate text-xs font-medium text-muted-foreground">
-        {{ t('agents.defaultTemplate', { name: defaultTemplate.name, language: defaultTemplate.language || '—' }) }}
-      </p>
-      <p v-else class="mb-3 text-xs text-muted-foreground">{{ t('agents.noTemplate') }}</p>
-      <div class="flex min-h-7 flex-wrap gap-1.5">
-        <ProviderChip v-for="provider in defaultTemplateProviders" :key="provider.id" :provider="provider" />
-        <span v-if="defaultTemplate && defaultTemplateProviders.length === 0" class="text-xs text-muted-foreground">
-          {{ t('studio.pipeline.default') }}
-        </span>
+  <article class="dir-card agent-card group cursor-pointer" :style="{ '--hue': identityHue(agent.id) }">
+    <button data-agent-card-open type="button" class="dir-card-hit absolute inset-0" :aria-label="agent.name" @click="emit('open')" />
+    <div class="dir-card-head">
+      <span class="dir-avatar" aria-hidden="true">{{ monogram(agent.name, 'A') }}</span>
+      <div class="dir-card-title">
+        <h3>{{ agent.name }}</h3>
+        <code>@{{ agent.id }}</code>
       </div>
+      <ArrowUpRight :size="18" class="dir-card-arrow" aria-hidden="true" />
+    </div>
+    <p class="dir-card-desc">{{ agent.description || t('common.noDescription') }}</p>
+
+    <div class="agent-template">
+      <div class="agent-template-head">
+        <span><Layers :size="12" aria-hidden="true" />{{ t('templateUsage.defaultTemplate') }}</span>
+        <em v-if="defaultTemplate?.language" class="dir-tag">{{ defaultTemplate.language }}</em>
+      </div>
+      <strong :data-empty="!defaultTemplate">{{ defaultTemplate?.name || t('agents.noTemplate') }}</strong>
+      <ul v-if="defaultTemplate" class="agent-providers">
+        <li v-for="provider in defaultTemplateProviders" :key="provider.id">
+          <component :is="providerTypeIcons[provider.type]" :size="12" aria-hidden="true" /><span>{{ provider.name }}</span>
+        </li>
+        <li v-if="!defaultTemplateProviders.length">{{ t('studio.pipeline.default') }}</li>
+      </ul>
     </div>
 
-    <div class="mt-5 flex justify-end">
-      <Button data-agent-card-add-device class="relative z-20 cursor-pointer" size="sm" variant="outline" @click.stop="emit('addDevice')">
-        <Plus class="size-4" aria-hidden="true" />
-        {{ t('agentDevices.add') }}
+    <div class="dir-card-foot">
+      <span><Layers :size="14" aria-hidden="true" />{{ t('count.templates', { count: templateCount }) }}</span>
+      <span><MonitorSmartphone :size="14" aria-hidden="true" />{{ t('count.devices', { count: deviceCount }) }}</span>
+      <Button data-agent-card-add-device class="dir-card-raise dir-card-push" size="sm" variant="outline" @click.stop="emit('addDevice')">
+        <Plus class="size-3.5" aria-hidden="true" />{{ t('agentDevices.add') }}
       </Button>
     </div>
   </article>
 </template>
+
+<style scoped src="./studio-directory-cards.css"></style>

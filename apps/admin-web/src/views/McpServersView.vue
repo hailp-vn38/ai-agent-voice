@@ -8,7 +8,7 @@ import { mcpApi } from '@/api/mcp'
 import { formatApiError, isApiError } from '@/api/errors'
 import type { AdminMcpServer, CreateMcpServerInput, UpdateMcpServerInput } from '@/api/types/mcp'
 import ConfirmDialog from '@/components/admin/ConfirmDialog.vue'
-import DetailHeader from '@/components/admin/DetailHeader.vue'
+import DirectoryHero from '@/components/admin/DirectoryHero.vue'
 import McpServerFormModal from '@/components/mcp/McpServerFormModal.vue'
 import { ActionMenu, MenuItem } from '@/components/ui/action-menu'
 import { Button } from '@/components/ui/button'
@@ -148,36 +148,23 @@ async function removeServer() {
 
 onMounted(() => { void load() })
 onBeforeUnmount(() => controller.abort())
+const enabledCount = computed(() => servers.value.filter((server) => server.enabled).length)
+const heroStats = computed(() => [
+  { label: t('mcp.title'), value: servers.value.length, icon: Server },
+  { label: t('mcp.enabled'), value: enabledCount.value, icon: Power },
+  { label: t('mcp.disabled'), value: servers.value.length - enabledCount.value, icon: ShieldCheck },
+])
 </script>
 
 <template>
   <section class="space-y-6">
-    <DetailHeader :title="t('mcp.title')">
-      <template #icon>
-        <span class="flex size-11 shrink-0 items-center justify-center rounded-xl border border-studio-violet/20 bg-studio-violet/10 text-studio-violet">
-          <Server class="size-6" aria-hidden="true" />
-        </span>
-      </template>
-      <template #details>
-        <p class="font-medium uppercase tracking-wider text-studio-violet">{{ t('mcp.eyebrow') }}</p>
-        <p class="mt-1 max-w-3xl text-sm leading-relaxed">{{ t('mcp.description') }}</p>
-      </template>
+    <DirectoryHero tone="mcp" data-detail-header :eyebrow="t('mcp.eyebrow')" :title="t('mcp.title')" :intro="t('mcp.description')" :stats="heroStats">
       <template #actions>
-        <RouterLink
-          to="/system/mcp"
-          class="inline-flex h-9 items-center justify-center gap-2 rounded-md border border-input bg-background px-3 text-sm font-medium text-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
-        >
-          <ShieldCheck class="size-4 text-studio-violet" aria-hidden="true" />
-          <span>Knowledge MCP Server</span>
-        </RouterLink>
-        <Button variant="outline" :disabled="loading || saving" @click="load()">
-          <RefreshCw class="size-4" aria-hidden="true" />{{ t('common.refresh') }}
-        </Button>
-        <Button :disabled="saving" @click="createServer">
-          <Plus class="size-4" aria-hidden="true" />{{ t('mcp.create') }}
-        </Button>
+        <button type="button" class="hero-primary" :disabled="saving" @click="createServer"><Plus :size="16" aria-hidden="true" />{{ t('mcp.create') }}</button>
+        <RouterLink to="/system/mcp" class="hero-ghost"><ShieldCheck :size="16" aria-hidden="true" /><span>Knowledge MCP Server</span></RouterLink>
+        <button type="button" class="hero-ghost" data-mcp-refresh :disabled="loading || saving" @click="load()"><RefreshCw :size="16" aria-hidden="true" />{{ t('common.refresh') }}</button>
       </template>
-    </DetailHeader>
+    </DirectoryHero>
 
     <div class="studio-panel grid gap-3 p-4 text-sm sm:grid-cols-3">
       <div class="flex items-start gap-3"><Server class="size-5 text-studio-violet" aria-hidden="true" /><div><p class="font-semibold">{{ t('mcp.step1') }}</p><p class="mt-1 text-xs text-muted-foreground">{{ t('mcp.step1Hint') }}</p></div></div>

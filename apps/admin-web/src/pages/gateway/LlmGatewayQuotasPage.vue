@@ -1,12 +1,5 @@
 <script setup lang="ts">
-import {
-  AlertTriangle,
-  ArrowLeft,
-  CheckCircle2,
-  Clock,
-  Gauge,
-  RefreshCw,
-} from '@lucide/vue'
+import { AlertTriangle, CheckCircle2, Clock, Gauge, RefreshCw } from '@lucide/vue'
 import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 
@@ -19,6 +12,8 @@ import type {
   GatewayVendorInfo,
 } from '@/api/types/llm-gateway'
 import { Badge } from '@/components/ui/badge'
+import DetailHero from '@/components/admin/DetailHero.vue'
+import { Gauge as HeroIcon } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import { useI18n } from '@/composables/useI18n'
 import { useErrorToast } from '@/composables/useNotify'
@@ -80,6 +75,12 @@ function statusNote(acc: GatewayAccountView): string {
     default:
       return 'Normal'
   }
+}
+
+// Vendor-reported notice (e.g. account not eligible/verified) that makes requests fail even
+// while the account is active and quota windows look healthy.
+function quotaMessage(acc: GatewayAccountView): string | null {
+  return (quotasByAccount.value[acc.account_key] ?? acc.quota)?.message?.trim() || null
 }
 
 function primaryPct(acc: GatewayAccountView): number | null {
@@ -163,43 +164,19 @@ onMounted(() => {
 
 <template>
   <section class="space-y-4" data-testid="llm-gateway-quotas-page">
-    <div class="flex flex-wrap items-center justify-between gap-2">
-      <button
-        type="button"
-        data-detail-back
-        class="inline-flex items-center gap-1.5 rounded-lg border border-border/80 bg-surface/60 px-2.5 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:border-studio-violet/40 hover:text-foreground"
-        @click="router.push({ name: 'llm-gateway' })"
-      >
-        <ArrowLeft class="size-3.5" aria-hidden="true" />
-        {{ t('llmGateway.backToGateway') }}
-      </button>
-    </div>
-
-    <header class="flex flex-wrap items-start justify-between gap-3">
-      <div class="space-y-1">
-        <p class="text-[11px] font-bold tracking-[0.14em] text-studio-violet uppercase">
-          {{ t('llmGateway.quotasPage.eyebrow') }}
-        </p>
-        <h1 class="text-xl font-bold tracking-tight sm:text-2xl">
-          {{ t('llmGateway.quotasPage.title') }}
-        </h1>
-        <p class="max-w-2xl text-xs text-muted-foreground sm:text-sm">
-          {{ t('llmGateway.quotasPage.subtitle') }}
-        </p>
-      </div>
-
-      <div class="flex flex-wrap items-center gap-2">
-        <Button
-          size="sm"
+    <DetailHero tone="gateway" :eyebrow="t('llmGateway.quotasPage.eyebrow')" :title="t('llmGateway.quotasPage.title')" :description="t('llmGateway.quotasPage.subtitle')" :back-label="t('llmGateway.backToGateway')" @back="router.push({ name: 'llm-gateway' })">
+      <template #icon><HeroIcon :size="28" /></template>
+      <template #actions>
+        <button type="button" class="hero-primary"
           data-action="refresh-quotas"
           :disabled="loadingQuotas || loading"
           @click="fetchAllQuotas(true)"
         >
           <RefreshCw class="size-4" :class="{ 'animate-spin': loadingQuotas }" aria-hidden="true" />
           {{ t('llmGateway.refreshQuotas') }}
-        </Button>
-      </div>
-    </header>
+        </button>
+      </template>
+    </DetailHero>
 
     <!-- 4 KPI Cards -->
     <div class="grid grid-cols-2 gap-3 lg:grid-cols-4">
@@ -336,8 +313,16 @@ onMounted(() => {
                 </template>
                 <span v-else class="text-muted-foreground">—</span>
               </td>
-              <td class="px-4 py-2.5 align-middle text-muted-foreground">
-                {{ statusNote(acc) }}
+              <td class="max-w-xs px-4 py-2.5 align-middle text-muted-foreground">
+                <span
+                  v-if="quotaMessage(acc)"
+                  role="alert"
+                  class="line-clamp-2 break-words text-warning"
+                  :title="quotaMessage(acc) ?? undefined"
+                >
+                  {{ quotaMessage(acc) }}
+                </span>
+                <template v-else>{{ statusNote(acc) }}</template>
               </td>
               <td class="px-4 py-2.5 text-right align-middle" @click.stop>
                 <Button

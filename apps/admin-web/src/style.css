@@ -107,6 +107,54 @@
 
 /* Vela Studio primitives. Keep the existing semantic color tokens. */
 @layer components {
+  /* Controls and facts slotted into DirectoryHero / DetailHero (always on a gradient). */
+  .hero-primary,
+  .hero-ghost {
+    @apply inline-flex h-9 cursor-pointer items-center gap-2 whitespace-nowrap rounded-full text-sm transition disabled:cursor-default disabled:opacity-60;
+  }
+
+  .hero-primary {
+    @apply bg-white px-4 font-semibold text-[#3d27ad] shadow-sm hover:-translate-y-0.5 hover:shadow-md;
+  }
+
+  .hero-ghost {
+    @apply border border-white/30 bg-white/10 px-3.5 font-medium text-white backdrop-blur hover:bg-white/20;
+  }
+
+  .hero-primary:focus-visible,
+  .hero-ghost:focus-visible {
+    outline: 2px solid white;
+    outline-offset: 2px;
+  }
+
+  .hero-menu button {
+    @apply size-9 rounded-full border border-white/30 bg-white/10 text-white hover:bg-white/20 hover:text-white;
+  }
+
+  .hero-fact {
+    @apply min-w-0 rounded-2xl bg-white/12 px-4 py-3 backdrop-blur;
+  }
+
+  .hero-fact > span {
+    @apply flex items-center gap-1.5 text-[11px] uppercase tracking-wider text-white/70;
+  }
+
+  .hero-fact > strong {
+    @apply mt-1 flex min-w-0 items-center gap-2 break-words text-base font-semibold;
+  }
+
+  .hero-code {
+    @apply inline-flex max-w-full items-center gap-2 rounded-full border border-white/25 bg-black/15 py-1 pl-3 pr-1 text-xs text-white/90;
+  }
+
+  .hero-code > code {
+    @apply min-w-0 break-all;
+  }
+
+  .hero-code > button {
+    @apply grid size-7 shrink-0 cursor-pointer place-items-center rounded-full hover:bg-white/20;
+  }
+
   .studio-panel {
     @apply rounded-2xl border border-border/80 bg-card text-card-foreground shadow-sm;
   }

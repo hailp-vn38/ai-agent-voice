@@ -1,0 +1,22 @@
+/* Device Detail body. The hero is DetailHero. */
+.device-workspace { --device-accent: var(--studio-cyan); display: grid; gap: 20px; min-width: 0; }
+.device-presence-dot { width: 9px; height: 9px; flex-shrink: 0; border-radius: 50%; background: rgb(255 255 255 / 0.5); }
+[data-presence="online"] .device-presence-dot { background: #6ee7b7; box-shadow: 0 0 0 4px rgb(110 231 183 / 0.25); }
+[data-presence="offline"] .device-presence-dot { background: #fcd34d; }
+.device-control-grid { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(300px, 0.85fr); align-items: start; gap: 20px; }
+.device-control-primary, .device-control-side { display: grid; min-width: 0; gap: 20px; }
+.device-workspace .device-section { min-width: 0; padding: 22px; border-radius: 20px; }
+.device-section > h2 { font-size: 16px; font-weight: 600; }
+.device-section-eyebrow { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 8px; color: var(--device-accent); font-size: 11px; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; }
+.device-speech-station > h2 { font-size: 20px; }
+.device-speech-station > p { color: var(--muted-foreground); }
+.device-speech-station label { color: var(--muted-foreground); }
+.device-speech-station textarea { min-height: 120px; padding: 14px; border-radius: 14px; font-size: 14px; line-height: 1.6; outline: none; }
+.device-speech-station textarea:focus { border-color: var(--device-accent); box-shadow: 0 0 0 3px color-mix(in oklab, var(--device-accent) 22%, transparent); }
+.device-speech-station [role="status"] { padding: 10px 14px; border-radius: 12px; background: color-mix(in oklab, var(--device-accent) 10%, transparent); }
+.device-ai-section :is(a, div).rounded-lg { padding: 14px; border-radius: 14px; background: var(--background); }
+.device-access-section { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.device-workspace :deep(.device-workspace-reminders) { padding: 22px; border-radius: 20px; }
+@media (max-width: 1000px) { .device-control-grid { grid-template-columns: minmax(0, 1fr); } }
+@media (max-width: 640px) { .device-workspace .device-section { padding: 18px; } }
+@media (prefers-reduced-motion: reduce) { .device-workspace * { transition: none !important; } }

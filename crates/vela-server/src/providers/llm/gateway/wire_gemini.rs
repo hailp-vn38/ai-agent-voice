@@ -15,7 +15,10 @@ use crate::{
 
 use super::{
     config::LlmGatewayConfig,
-    provider::{WireError, apply_lease_headers, check_wire_status, drain_next_sse_line},
+    provider::{
+        ErrorDetailSlot, WireError, apply_lease_headers, drain_next_sse_line, record_wire_detail,
+        summarize_error_body,
+    },
 };
 
 const DAILY_CLOUDCODE_BASE: &str = "https://daily-cloudcode-pa.googleapis.com/v1internal";
@@ -339,6 +342,18 @@ fn build_gemini_envelope(
     })
 }
 
+/// Maps a non-success Cloud Code status. 403 is a project/eligibility rejection here, not an
+/// expired token, so it must not trigger the OAuth refresh path.
+fn gemini_wire_error(status: u16, retry_after_secs: Option<u64>) -> WireError {
+    match status {
+        429 => WireError::RateLimited { retry_after_secs },
+        401 => WireError::Unauthorized,
+        408 => WireError::Other,
+        500..=599 => WireError::HttpUnavailable,
+        _ => WireError::HttpRejected,
+    }
+}
+
 async fn send_gemini_request(
     http: &reqwest::Client,
     endpoint_base: &str,
@@ -346,8 +361,14 @@ async fn send_gemini_request(
     sse: bool,
     lease: &GatewayLease,
     body: &Value,
+    err_slot: &ErrorDetailSlot,
 ) -> Result<reqwest::Response, WireError> {
     let bases = candidate_endpoint_bases(endpoint_base);
+    let model = body.get("model").and_then(Value::as_str).unwrap_or("");
+    let has_project = lease
+        .account_context_id
+        .as_deref()
+        .is_some_and(|s| !s.trim().is_empty());
     let mut last_err = WireError::Other;
 
     for (idx, base) in bases.iter().enumerate() {
@@ -360,24 +381,66 @@ async fn send_gemini_request(
         }
         let resp = match req_builder.json(body).send().await {
             Ok(r) => r,
-            Err(_) => {
+            Err(e) => {
+                record_wire_detail(
+                    err_slot,
+                    format!(
+                        "Gemini HTTP request failed on account '{}' (model '{}', timeout={}, connect={})",
+                        lease.account_key,
+                        model,
+                        e.is_timeout(),
+                        e.is_connect()
+                    ),
+                );
+                tracing::warn!(
+                    event = "llm_gateway_gemini_request_failed",
+                    account_key = %lease.account_key,
+                    model,
+                    timeout = e.is_timeout(),
+                    connect = e.is_connect(),
+                    "Gemini gateway request could not be sent"
+                );
                 last_err = WireError::Other;
                 continue;
             }
         };
         let status = resp.status();
-        if idx + 1 < bases.len() && matches!(status.as_u16(), 400 | 403 | 404 | 502 | 503) {
-            last_err = if status.is_server_error() {
-                WireError::HttpUnavailable
-            } else {
-                WireError::HttpRejected
-            };
+        if status.is_success() {
+            return Ok(resp);
+        }
+        let code = status.as_u16();
+        let retry_after = resp
+            .headers()
+            .get("retry-after")
+            .and_then(|h| h.to_str().ok())
+            .and_then(|s| s.trim().parse::<u64>().ok());
+        let summary = summarize_error_body(&resp.text().await.unwrap_or_default());
+        let project_hint = if has_project {
+            ""
+        } else {
+            "; account has no Code Assist project, so it may be unverified or ineligible for Antigravity"
+        };
+        record_wire_detail(
+            err_slot,
+            format!(
+                "Gemini HTTP {code} on account '{}' (model '{}'): {summary}{project_hint}",
+                lease.account_key, model
+            ),
+        );
+        tracing::warn!(
+            event = "llm_gateway_gemini_upstream_rejected",
+            account_key = %lease.account_key,
+            model,
+            status = code,
+            has_project,
+            detail = %summary,
+            "Gemini gateway upstream rejected the request"
+        );
+        last_err = gemini_wire_error(code, retry_after);
+        if idx + 1 < bases.len() && matches!(code, 400 | 403 | 404 | 502 | 503) {
             continue;
         }
-        if status.as_u16() == 403 {
-            return Err(WireError::HttpRejected);
-        }
-        return check_wire_status(resp);
+        return Err(last_err);
     }
 
     Err(last_err)
@@ -443,6 +506,7 @@ pub(crate) async fn open_sse_stream(
     lease: &GatewayLease,
     config: &LlmGatewayConfig,
     request: &LlmRequest,
+    err_slot: &ErrorDetailSlot,
 ) -> Result<LlmEventStream, WireError> {
     let body = build_gemini_envelope(lease, config, request, None);
     let mut resp = send_gemini_request(
@@ -452,6 +516,7 @@ pub(crate) async fn open_sse_stream(
         true,
         lease,
         &body,
+        err_slot,
     )
     .await?;
 
@@ -529,6 +594,7 @@ pub(crate) async fn execute_vision(
     prompt: &str,
     image_bytes: &[u8],
     mime_type: &str,
+    err_slot: &ErrorDetailSlot,
 ) -> Result<LlmOutput, WireError> {
     let vision_contents = vec![json!({
         "role": "user",
@@ -544,8 +610,16 @@ pub(crate) async fn execute_vision(
     })];
     let dummy_req = LlmRequest::text_turn(prompt.to_owned());
     let body = build_gemini_envelope(lease, config, &dummy_req, Some(vision_contents));
-    let resp =
-        send_gemini_request(http, endpoint_base, "generateContent", false, lease, &body).await?;
+    let resp = send_gemini_request(
+        http,
+        endpoint_base,
+        "generateContent",
+        false,
+        lease,
+        &body,
+        err_slot,
+    )
+    .await?;
     let val: Value = resp.json().await.map_err(|_| WireError::Other)?;
     let mut collected = String::new();
     for_each_visible_part(&val, |part| {

@@ -48,7 +48,7 @@ it('replaces only the item list with shimmer while keeping the header and filter
     expect(wrapper.findAll('.card-shimmer')).toHaveLength(0)
     expect(wrapper.get('article').text()).toContain('Weather')
 
-    await wrapper.get('[data-detail-header] button').trigger('click')
+    await wrapper.get('[data-mcp-refresh]').trigger('click')
     checkLoading()
     finish({ items: [server], page_size: 50 })
     await flushPromises()

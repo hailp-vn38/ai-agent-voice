@@ -3,8 +3,7 @@ import { defineComponent } from 'vue'
 import { createMemoryHistory, createRouter, RouterView } from 'vue-router'
 import { expect, it, vi } from 'vitest'
 
-import DetailHeader from '@/components/admin/DetailHeader.vue'
-import PageHeader from '@/components/admin/PageHeader.vue'
+import DetailHero from '@/components/admin/DetailHero.vue'
 import ProviderCatalogCard from '@/components/providers/ProviderCatalogCard.vue'
 import { providerAdaptersApi } from '@/api/provider-adapters'
 import ProviderCreatePage from '@/pages/providers/ProviderCreatePage.vue'
@@ -53,7 +52,7 @@ it.each(['vad', 'asr', 'llm', 'tts'])('opens Create page with the currently view
     },
   })
   try {
-    await wrapper.getComponent(PageHeader).get('button').trigger('click')
+    await wrapper.get('[data-provider-create]').trigger('click')
     await flushPromises()
     expect(router.currentRoute.value.path).toBe('/providers/create')
     expect(router.currentRoute.value.query.type).toBe(type)
@@ -87,7 +86,7 @@ it.each(['header', 'browser'])('keeps the TTS tab after opening details and goin
     wrapper.getComponent(ProviderCatalogCard).vm.$emit('open')
     await flushPromises()
     expect(router.currentRoute.value.path).toBe('/providers/tts_primary')
-    if (back === 'header') wrapper.getComponent(DetailHeader).vm.$emit('back')
+    if (back === 'header') wrapper.getComponent(DetailHero).vm.$emit('back')
     else router.back()
     await flushPromises()
     expect(router.currentRoute.value.path).toBe('/providers')

@@ -8,10 +8,11 @@ import { speakersApi } from '@/api/speakers'
 import type { Speaker, SpeakerVoiceprint } from '@/api/types/speakers'
 import BaseModal from '@/components/admin/BaseModal.vue'
 import ConfirmDialog from '@/components/admin/ConfirmDialog.vue'
-import DetailHeader from '@/components/admin/DetailHeader.vue'
+import DetailHero from '@/components/admin/DetailHero.vue'
 import SpeakerEnrollmentWizard from '@/components/speakers/SpeakerEnrollmentWizard.vue'
 import { Button } from '@/components/ui/button'
 import { useI18n } from '@/composables/useI18n'
+import { monogram } from '@/lib/visualIdentity'
 import { useErrorToast } from '@/composables/useNotify'
 
 const route = useRoute()
@@ -177,29 +178,19 @@ onBeforeUnmount(() => activeRequest?.abort())
     </div>
 
     <template v-else>
-      <DetailHeader :title="speaker.name" :back-label="t('nav.speakers')" @back="router.push({ name: 'speakers' })">
-        <template #icon>
-          <span class="flex size-11 shrink-0 items-center justify-center rounded-xl bg-studio-violet/10 text-studio-violet">
-            <AudioLines class="size-6" aria-hidden="true" />
-          </span>
-        </template>
-        <template #details>
-          <p class="font-medium uppercase tracking-wider text-studio-violet">{{ t('speakers.eyebrow') }}</p>
-          <p v-if="speaker.description" class="mt-1 max-w-2xl whitespace-pre-wrap break-words text-sm">{{ speaker.description }}</p>
-          <span
-            class="mt-2 inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium"
-            :class="speaker.enabled && voiceprintCount ? 'bg-success/10 text-success-foreground' : 'bg-muted text-muted-foreground'"
-          >
-            <CheckCircle2 v-if="speaker.enabled && voiceprintCount" class="size-3.5" aria-hidden="true" />
-            {{ t(speakerStatusKey) }}
-          </span>
-        </template>
+      <DetailHero tone="speakers" :eyebrow="t('speakers.eyebrow')" :title="speaker.name" :description="speaker.description || undefined" :back-label="t('nav.speakers')" @back="router.push({ name: 'speakers' })">
+        <template #icon>{{ monogram(speaker.name, 'S') }}</template>
         <template #actions>
-          <Button variant="outline" :disabled="loading" @click="load"><RefreshCw class="size-4" />{{ t('common.refresh') }}</Button>
-          <Button variant="outline" @click="openEdit"><Pencil class="size-4" />{{ t('common.edit') }}</Button>
-          <Button @click="enrollOpen = true"><Mic class="size-4" />{{ t('speakers.confirmVoice') }}</Button>
+          <button type="button" class="hero-primary" @click="enrollOpen = true"><Mic :size="16" aria-hidden="true" />{{ t('speakers.confirmVoice') }}</button>
+          <button type="button" class="hero-ghost" @click="openEdit"><Pencil :size="16" aria-hidden="true" />{{ t('common.edit') }}</button>
+          <button type="button" class="hero-ghost" :disabled="loading" @click="load"><RefreshCw :size="16" aria-hidden="true" />{{ t('common.refresh') }}</button>
         </template>
-      </DetailHeader>
+        <template #facts>
+          <div class="hero-fact"><span><AudioLines :size="13" aria-hidden="true" />{{ t('speakers.voiceStatus') }}</span><strong><CheckCircle2 v-if="speaker.enabled && voiceprintCount" :size="16" aria-hidden="true" />{{ t(speakerStatusKey) }}</strong></div>
+          <div class="hero-fact"><span>{{ t('speakers.createdAt') }}</span><strong>{{ formatDateTime(new Date(speaker.created_at * 1000)) }}</strong></div>
+          <div class="hero-fact"><span>{{ t('speakers.updatedAt') }}</span><strong>{{ formatDateTime(new Date(speaker.updated_at * 1000)) }}</strong></div>
+        </template>
+      </DetailHero>
 
       <div class="grid gap-4 lg:grid-cols-[minmax(0,1.35fr)_minmax(0,1fr)]">
         <section class="studio-panel min-w-0 p-5 sm:p-6">

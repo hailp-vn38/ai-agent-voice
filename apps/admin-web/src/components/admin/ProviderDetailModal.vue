@@ -1,17 +1,16 @@
 <script setup lang="ts">
-import { FlaskConical, Pencil } from '@lucide/vue'
+import { ArrowUpRight, FlaskConical, Info, KeyRound, Layers3, LockKeyhole, Pencil, Server } from '@lucide/vue'
 import { computed, nextTick, ref, watch } from 'vue'
+import { RouterLink } from 'vue-router'
 
-import { providersApi } from '@/api/providers'
 import ProviderTestPanel from '@/components/providers/ProviderTestPanel.vue'
 import BaseModal from '@/components/admin/BaseModal.vue'
-import ProviderUsageList from '@/components/providers/ProviderUsageList.vue'
 import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { useI18n } from '@/composables/useI18n'
 import type { ProviderInstance, ProviderType, ProviderUsageEntry } from '@/domain/admin'
 import type { MessageKey } from '@/i18n/messages'
 import { redactEndpoint } from '@/lib/providerEndpoint'
+import { providerTypeIcons } from '@/lib/providerTypeIcons'
 
 const props = withDefaults(
   defineProps<{
@@ -30,125 +29,79 @@ const emit = defineEmits<{ edit: [provider: ProviderInstance] }>()
 const { t, providerTypeLabel, providerStatusLabel } = useI18n()
 
 const testSection = ref<HTMLElement>()
+const activePanel = ref<'overview' | 'usage' | 'test'>('overview')
 
 const testHintKeys: Record<ProviderType, MessageKey> = {
-  vad: 'providers.testHint.vad',
-  asr: 'providers.testHint.asr',
-  speaker: 'providers.testHint.speaker',
+  vad: 'providerInstance.vadHint',
+  asr: 'providerInstance.asrHint',
+  speaker: 'diagnostics.unsupported',
   llm: 'providers.testHint.llm',
   tts: 'providers.testHint.tts',
 }
 
 const testHint = computed(() => (props.provider ? t(testHintKeys[props.provider.type]) : ''))
 
-const endpoint = computed(() => redactEndpoint(props.provider?.endpoint))
-
-const statusTone = computed(() => {
-  if (props.provider?.status === 'error') return 'text-danger'
-  if (props.provider?.status === 'disabled') return 'text-muted-foreground'
-  return 'text-success'
-})
-
+const endpoint = computed(() => redactEndpoint(props.provider?.endpoint || (typeof props.provider?.configJson?.base_url === 'string' ? props.provider.configJson.base_url : undefined)))
+const model = computed(() => props.provider?.model || (typeof props.provider?.configJson?.model === 'string' ? props.provider.configJson.model : ''))
 
 watch(
-  () => [open.value, props.focusTest] as const,
+  () => [open.value, props.focusTest, props.provider?.id] as const,
   async ([isOpen, shouldFocusTest]) => {
-    if (!isOpen || !shouldFocusTest) return
-    await nextTick()
-    testSection.value?.scrollIntoView({ behavior: 'smooth', block: 'start' })
-    testSection.value?.focus({ preventScroll: true })
+    if (!isOpen) return
+    activePanel.value = shouldFocusTest ? 'test' : 'overview'
+    if (shouldFocusTest) {
+      await nextTick()
+      testSection.value?.focus({ preventScroll: true })
+    }
   },
+  { immediate: true },
 )
 
 </script>
 
 <template>
-  <BaseModal
-    v-model="open"
-    :title="provider?.name ?? t('providers.detailTitle')"
-    :description="t('providers.detailDescription')"
-    width-class="max-w-3xl"
-  >
-    <div v-if="provider" class="space-y-5">
-      <div class="flex flex-wrap items-center gap-2">
-        <span class="text-xs font-medium tracking-wide text-muted-foreground uppercase">
-          {{ providerTypeLabel(provider.type) }}
-        </span>
-        <span class="inline-flex items-center gap-1.5 text-xs" :class="statusTone">
-          <span class="size-1.5 rounded-full bg-current" aria-hidden="true" />
-          {{ providerStatusLabel(provider.status) }}
-        </span>
-        <Button size="sm" variant="outline" class="ml-auto" :disabled="provider.source === 'config'" @click="provider.source !== 'config' && emit('edit', provider)">
-          <Pencil class="size-4" />
-          {{ t('common.edit') }}
-        </Button>
-      </div>
-
-      <Card>
-        <CardHeader>
-          <CardTitle>{{ t('providers.information') }}</CardTitle>
-          <CardDescription>{{ provider.description || t('common.noDescription') }}</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <dl class="grid gap-3 text-sm sm:grid-cols-2">
-            <div><dt class="text-xs text-muted-foreground">{{ t('diagnostics.runtime') }}</dt><dd class="mt-1">{{ provider.runtime?.desired_state ?? providerStatusLabel(provider.status) }}</dd></div>
-            <div>
-              <dt class="text-xs tracking-wide text-muted-foreground uppercase">{{ t('providers.type') }}</dt>
-              <dd class="mt-1">{{ providerTypeLabel(provider.type) }}</dd>
-            </div>
-            <div>
-              <dt class="text-xs tracking-wide text-muted-foreground uppercase">{{ t('providers.adapter') }}</dt>
-              <dd class="mt-1 break-all font-mono text-xs">{{ provider.adapter }}</dd>
-            </div>
-            <div>
-              <dt class="text-xs tracking-wide text-muted-foreground uppercase">{{ t('providers.model') }}</dt>
-              <dd class="mt-1 break-all font-mono text-xs">
-                {{ provider.model || t('providers.modelMissing') }}
-              </dd>
-            </div>
-            <div v-if="provider.credential" class="sm:col-span-2"><dt class="text-xs text-muted-foreground">API key</dt><dd class="mt-1 font-mono text-xs">{{ provider.credential.masked_key }} · {{ provider.credential.status }}</dd></div>
-            <div v-else-if="provider.credentialEnv" class="sm:col-span-2">
-              <dt class="text-xs tracking-wide text-muted-foreground uppercase">Credential trên server</dt>
-              <dd class="mt-1 break-all font-mono text-xs">{{ provider.credentialEnv }}</dd>
-              <p class="mt-1 text-xs text-muted-foreground">Credential dự phòng từ môi trường server. Có thể nhập key mới trong form sửa Provider.</p>
-            </div>
-            <div v-if="endpoint" class="sm:col-span-2">
-              <dt class="text-xs tracking-wide text-muted-foreground uppercase">
-                {{ t('providers.endpoint') }}
-              </dt>
-              <dd class="mt-1 break-all font-mono text-xs">{{ endpoint }}</dd>
-            </div>
+  <BaseModal v-model="open" :title="t('providerInstance.title')" :description="t('providerInstance.subtitle')" width-class="max-w-[1020px] h-[min(740px,90dvh)]" body-class="provider-instance-body">
+    <div v-if="provider" class="provider-instance" :data-type="provider.type">
+      <aside class="instance-passport">
+        <div class="instance-eyebrow"><span>PROVIDER STUDIO</span><span>/ {{ provider.type.toUpperCase() }}</span></div>
+        <div class="instance-art" aria-hidden="true"><svg viewBox="0 0 180 135" fill="none"><circle cx="90" cy="64" r="49" /><circle cx="90" cy="64" r="61" stroke-dasharray="1 7" /><path d="M0 64h35m110 0h35M90 0v12m0 104v19" /></svg><span><component :is="providerTypeIcons[provider.type]" :size="28" :stroke-width="1.4" /></span><small>INSTANCE / {{ provider.type.toUpperCase() }}</small></div>
+        <h3 class="instance-name">{{ provider.name }}</h3>
+        <p class="instance-description">{{ provider.description || t('common.noDescription') }}</p>
+        <span class="instance-status" :data-state="provider.status"><i aria-hidden="true" />{{ providerStatusLabel(provider.status) }}</span>
+        <nav class="instance-nav" :aria-label="t('providerInstance.navigation')">
+          <button type="button" :aria-pressed="activePanel === 'overview'" @click="activePanel = 'overview'"><Info :size="14" aria-hidden="true" />{{ t('providerInstance.overview') }}</button>
+          <button type="button" :aria-pressed="activePanel === 'usage'" @click="activePanel = 'usage'"><Layers3 :size="14" aria-hidden="true" />{{ t('providers.templateUsage') }}<small>{{ usage.length }}</small></button>
+          <button type="button" :aria-pressed="activePanel === 'test'" @click="activePanel = 'test'"><FlaskConical :size="14" aria-hidden="true" />{{ t('providers.testAction') }}</button>
+        </nav>
+        <p class="instance-source"><LockKeyhole v-if="provider.source === 'config'" :size="14" /><Server v-else :size="14" />{{ t(provider.source === 'config' ? 'providers.studio.readOnly' : 'providerInstance.catalogSource') }}</p>
+      </aside>
+      <div class="instance-content">
+        <section v-show="activePanel === 'overview'" class="instance-panel">
+          <header class="instance-panel-heading"><div><span>01 / {{ providerTypeLabel(provider.type) }}</span><h3>{{ t('providers.information') }}</h3><p>{{ t('providerInstance.overviewHint') }}</p></div><component :is="providerTypeIcons[provider.type]" :size="23" :stroke-width="1.4" aria-hidden="true" /></header>
+          <dl class="instance-facts">
+            <div class="instance-wide instance-model"><dt>{{ t('providers.model') }}</dt><dd>{{ model || t('providers.modelMissing') }}</dd></div>
+            <div><dt>{{ t('providers.adapter') }}</dt><dd>{{ provider.adapter }}</dd></div>
+            <div><dt>{{ t('diagnostics.runtime') }}</dt><dd>{{ provider.runtime?.desired_state || t('common.unknown') }}</dd></div>
+            <div><dt>{{ t('providers.type') }}</dt><dd>{{ providerTypeLabel(provider.type) }}</dd></div>
+            <div><dt>{{ t('providerInstance.revision') }}</dt><dd>{{ provider.desiredRevision === undefined ? '—' : `r${provider.desiredRevision}` }}</dd></div>
+            <div v-if="endpoint" class="instance-wide"><dt>{{ t('providers.endpoint') }}</dt><dd>{{ endpoint }}</dd></div>
           </dl>
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader>
-          <CardTitle>{{ t('providers.templateUsage') }}</CardTitle>
-          <CardDescription>
-            {{ usage.length ? t('providers.usedBy', { count: usage.length }) : t('providers.unused') }}
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <ProviderUsageList :provider-name="provider.name" :usage="usage" />
-        </CardContent>
-      </Card>
-
-      <div ref="testSection" tabindex="-1" class="scroll-mt-4 focus-visible:outline-none">
-        <Card>
-          <CardHeader>
-            <div class="flex items-center gap-2">
-              <FlaskConical class="size-4" />
-              <CardTitle>{{ t('providers.testTitle') }}</CardTitle>
-            </div>
-            <CardDescription>{{ t('providers.testDescription') }}</CardDescription>
-          </CardHeader>
-          <CardContent class="space-y-3">
-            <p class="text-sm text-muted-foreground">{{ testHint }}</p>
-            <ProviderTestPanel v-if="open" :type="provider.type" :adapter="provider.adapter" :model="provider.model || (typeof provider.configJson?.model === 'string' ? provider.configJson.model : '')" :revision="provider.desiredRevision" :saved-key="provider.id" />
-          </CardContent>
-        </Card>
+          <div v-if="provider.credential || provider.credentialEnv" class="instance-credential"><KeyRound :size="17" aria-hidden="true" /><div><p>{{ t('providerInstance.credential') }}</p><code>{{ provider.credential ? provider.credential.masked_key : provider.credentialEnv }}</code><small>{{ provider.credential ? t('providerInstance.encryptedKey') : t('providerInstance.environmentKey') }}</small></div></div>
+        </section>
+        <section v-show="activePanel === 'usage'" class="instance-panel">
+          <header class="instance-panel-heading"><div><span>02 / TEMPLATES</span><h3>{{ t('providers.templateUsage') }}</h3><p>{{ usage.length ? t('providers.usedBy', { count: usage.length }) : t('providers.unused') }}</p></div><Layers3 :size="23" :stroke-width="1.4" aria-hidden="true" /></header>
+          <ul v-if="usage.length" class="instance-usage-list"><li v-for="entry in usage" :key="entry.templateId"><RouterLink :to="{ name: 'template-detail', params: { templateId: entry.templateId } }" @click="open = false"><Layers3 :size="17" aria-hidden="true" /><div><strong>{{ entry.templateName }}</strong><small>{{ [entry.language, ...entry.agentNames].filter(Boolean).join(' · ') || '—' }}</small></div><ArrowUpRight :size="15" aria-hidden="true" /></RouterLink></li></ul>
+          <div v-else class="instance-empty"><Layers3 :size="30" :stroke-width="1.3" aria-hidden="true" /><p>{{ t('providers.usageEmpty') }}</p></div>
+        </section>
+        <section v-show="activePanel === 'test'" ref="testSection" tabindex="-1" class="instance-panel">
+          <header class="instance-panel-heading"><div><span>03 / TEST BENCH</span><h3>{{ t('providers.testTitle') }}</h3><p>{{ t('diagnostics.draftHint') }}</p></div><FlaskConical :size="23" :stroke-width="1.4" aria-hidden="true" /></header>
+          <p class="instance-test-hint">{{ testHint }}</p>
+          <div class="instance-test-surface"><ProviderTestPanel v-if="open" :type="provider.type" :adapter="provider.adapter" :model="model" :revision="provider.desiredRevision" :saved-key="provider.id" /></div>
+        </section>
       </div>
     </div>
+    <template #footer><div class="instance-footer"><p>{{ provider?.id }}</p><div class="flex gap-2"><Button variant="ghost" @click="open = false">{{ t('common.close') }}</Button><Button v-if="provider" :disabled="provider.source === 'config'" @click="provider.source !== 'config' && emit('edit', provider)"><Pencil class="size-3.5" aria-hidden="true" />{{ t('common.edit') }}</Button></div></div></template>
   </BaseModal>
 </template>
+
+<style scoped src="./provider-instance-modal.css"></style>

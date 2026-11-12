@@ -1,0 +1,44 @@
+/* Shared shell for the Agents, Devices, Speakers and Templates directories. */
+.studio-directory { --dir-accent: var(--studio-violet); display: grid; gap: 20px; min-width: 0; }
+.studio-directory[data-directory="devices"] { --dir-accent: var(--studio-cyan); }
+
+/* Search and filters. */
+.directory-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 12px; padding: 12px; border: 1px solid color-mix(in oklab, var(--border) 80%, transparent); border-radius: 18px; background: var(--card); box-shadow: 0 1px 2px rgb(0 0 0 / 0.04); }
+.directory-search { position: relative; flex: 1 1 280px; min-width: 200px; }
+.directory-search > svg { position: absolute; left: 13px; top: 50%; transform: translateY(-50%); color: var(--muted-foreground); pointer-events: none; }
+.directory-search .admin-input { padding-left: 38px; border-radius: 12px; }
+.directory-toolbar select.admin-input { width: auto; max-width: 220px; border-radius: 12px; }
+.directory-toolbar .admin-input:focus { border-color: var(--dir-accent); --tw-ring-color: color-mix(in oklab, var(--dir-accent) 25%, transparent); }
+.directory-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.directory-chip { display: inline-flex; align-items: center; gap: 7px; height: 34px; padding: 0 12px; border: 1px solid var(--border); border-radius: 999px; background: var(--background); color: var(--muted-foreground); font-size: 13px; font-weight: 500; cursor: pointer; transition: border-color 160ms, background-color 160ms, color 160ms; }
+.directory-chip:hover { border-color: color-mix(in oklab, var(--dir-accent) 50%, var(--border)); color: var(--foreground); }
+.directory-chip[aria-pressed="true"] { border-color: var(--dir-accent); background: color-mix(in oklab, var(--dir-accent) 12%, transparent); color: var(--foreground); }
+.directory-chip > b { min-width: 20px; padding: 1px 6px; border-radius: 999px; background: var(--muted); font-size: 11px; font-weight: 600; font-variant-numeric: tabular-nums; text-align: center; }
+.directory-chip[aria-pressed="true"] > b { background: var(--dir-accent); color: var(--background); }
+.directory-chip > i { width: 7px; height: 7px; border-radius: 50%; background: var(--muted-foreground); }
+.directory-chip > i[data-tone="on"] { background: var(--success); }
+.directory-clear { display: inline-flex; align-items: center; gap: 5px; height: 34px; padding: 0 10px; border-radius: 999px; color: var(--muted-foreground); font-size: 13px; cursor: pointer; }
+.directory-clear:hover { background: var(--muted); color: var(--foreground); }
+.directory-count { margin-left: auto; padding-right: 6px; color: var(--muted-foreground); font-size: 13px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+/* Results. */
+.directory-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 340px), 1fr)); align-items: stretch; gap: 16px; min-width: 0; }
+.directory-grid[data-wide] { grid-template-columns: repeat(auto-fill, minmax(min(100%, 440px), 1fr)); }
+.directory-empty { display: grid; justify-items: center; gap: 6px; padding: 56px 24px; border: 1px dashed var(--border); border-radius: 20px; background: var(--card); }
+.directory-empty-icon { display: grid; place-items: center; width: 56px; height: 56px; margin-bottom: 8px; border-radius: 18px; background: color-mix(in oklab, var(--dir-accent) 12%, transparent); color: var(--dir-accent); }
+.directory-empty strong { font-size: 16px; font-weight: 600; }
+.directory-empty p { max-width: 420px; color: var(--muted-foreground); font-size: 14px; line-height: 1.6; }
+.directory-empty :deep(button) { margin-top: 12px; }
+.directory-footer-note { display: flex; align-items: flex-start; gap: 8px; color: var(--muted-foreground); font-size: 12px; line-height: 1.6; }
+.directory-footer-note > svg { flex-shrink: 0; margin-top: 2px; color: var(--dir-accent); }
+.directory-pagination { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
+.directory-pagination > span { color: var(--muted-foreground); font-size: 13px; font-variant-numeric: tabular-nums; }
+.directory-pagination > div { display: flex; gap: 8px; }
+.studio-directory :is(.directory-chip, .directory-clear):focus-visible { outline: 2px solid var(--dir-accent); outline-offset: 2px; }
+
+@media (max-width: 640px) {
+  .directory-search { flex-basis: 100%; }
+  .directory-toolbar select.admin-input { flex: 1; max-width: none; }
+  .directory-count { margin-left: 0; flex-basis: 100%; }
+}
+@media (prefers-reduced-motion: reduce) { .studio-directory * { transition: none !important; } }

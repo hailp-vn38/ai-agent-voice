@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Bot, CheckCircle2, Copy, Fingerprint, Layers3, Pencil, ShieldOff, Trash2 } from '@lucide/vue'
+import { ArrowRight, Bot, CheckCircle2, Copy, Fingerprint, Layers3, Pencil, Settings2, ShieldOff, Trash2 } from '@lucide/vue'
 import { computed, ref } from 'vue'
 
 import VoiceDeviceIcon from '@/components/icons/VoiceDeviceIcon.vue'
@@ -41,31 +41,16 @@ async function copyDeviceId() {
 </script>
 
 <template>
-  <li class="group relative flex min-w-0 flex-col rounded-xl border border-border/80 bg-card p-4 transition-colors hover:border-studio-cyan/35 hover:bg-surface-elevated/60" data-device-card>
-    <RouterLink
-      v-if="detailLink"
-      :to="{ name: 'device-detail', params: { deviceId: device.deviceId } }"
-      :aria-label="t('deviceDetail.open', { name: device.name })"
-      class="absolute inset-0 z-10 cursor-pointer rounded-xl focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
-      data-device-open
-    />
-    <div class="pointer-events-none flex min-w-0 items-start gap-3">
-
-      <span class="flex size-12 shrink-0 items-center justify-center rounded-xl border border-studio-cyan/20 bg-studio-cyan/10 text-studio-cyan">
-        <VoiceDeviceIcon class="size-8" />
-      </span>
-
-      <div class="min-w-0 flex-1">
-        <h3 class="truncate text-base font-semibold" :title="device.name">{{ device.name }}</h3>
-        <p v-if="device.description" class="mt-1 line-clamp-2 break-words text-xs leading-5 text-muted-foreground">
-          {{ device.description }}
-        </p>
-        <p v-else class="mt-1 text-xs text-muted-foreground">{{ device.kind === 'web_assistant' ? t('assistant.managedDevice') : t('deviceCard.type') }}</p>
+  <li class="dir-card device-card group" :data-enabled="admissionEnabled" data-device-card>
+    <RouterLink v-if="detailLink" :to="{ name: 'device-detail', params: { deviceId: device.deviceId } }" :aria-label="t('deviceDetail.open', { name: device.name })" class="dir-card-hit" data-device-open />
+    <div class="dir-card-head">
+      <span class="device-icon" aria-hidden="true"><VoiceDeviceIcon /><i /></span>
+      <div class="dir-card-title">
+        <h3 :title="device.name">{{ device.name }}</h3>
+        <p>{{ device.description || (device.kind === 'web_assistant' ? t('assistant.managedDevice') : t('deviceCard.type')) }}</p>
       </div>
-
-      <div class="pointer-events-auto relative z-20">
-        <RouterLink v-if="device.kind === 'web_assistant'" to="/system" class="text-xs underline">{{ t('assistant.managedDevice') }}</RouterLink>
-        <ActionMenu v-else :label="t('common.actions')" panel-width="11rem">
+      <div v-if="device.kind !== 'web_assistant'" class="dir-card-raise">
+        <ActionMenu :label="t('common.actions')" panel-width="11rem">
           <MenuItem data-device-edit @select="emit('edit', device)">
             <Pencil class="size-4 shrink-0" aria-hidden="true" />
             {{ t('agentDevices.edit') }}
@@ -79,61 +64,36 @@ async function copyDeviceId() {
       </div>
     </div>
 
-    <div class="pointer-events-none mt-3">
-      <span
-        class="inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium"
-        :class="admissionEnabled ? 'bg-success/10 text-success-foreground' : 'bg-muted text-muted-foreground'"
-        data-device-admission
-      >
-        <CheckCircle2 v-if="admissionEnabled" class="size-3.5" aria-hidden="true" />
-        <ShieldOff v-else class="size-3.5" aria-hidden="true" />
+    <div class="device-status">
+      <span class="dir-pill" :data-enabled="admissionEnabled" data-device-admission>
+        <CheckCircle2 v-if="admissionEnabled" :size="13" aria-hidden="true" /><ShieldOff v-else :size="13" aria-hidden="true" />
         {{ admissionEnabled ? t('deviceCard.allowed') : t('deviceCard.blocked') }}
       </span>
+      <span class="dir-tag">{{ t(device.kind === 'web_assistant' ? 'directoryUi.virtualDevice' : 'directoryUi.physicalDevice') }}</span>
+      <RouterLink v-if="device.kind === 'web_assistant'" to="/system" class="device-managed dir-card-raise"><Settings2 :size="12" aria-hidden="true" />{{ t('nav.system') }}</RouterLink>
     </div>
 
-    <dl class="pointer-events-none mt-4 min-w-0 space-y-3 rounded-lg border border-border/60 bg-surface/60 px-3 py-3">
-      <div class="flex min-w-0 items-center gap-2">
-        <dt class="flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground">
-          <Fingerprint class="size-3.5" aria-hidden="true" />
-          {{ t('deviceCard.deviceId') }}
-        </dt>
-        <dd class="pointer-events-auto relative z-20 ml-auto flex min-w-0 items-center gap-1.5">
-          <code class="block min-w-0 truncate text-xs text-foreground" :title="device.deviceId">{{ device.deviceId }}</code>
-          <button
-            type="button"
-            class="flex size-7 shrink-0 cursor-pointer items-center justify-center rounded-md text-muted-foreground transition hover:bg-accent hover:text-accent-foreground focus-visible:outline-2 focus-visible:outline-ring"
-            :aria-label="copied ? t('deviceCard.copied') : t('deviceCard.copyId')"
-            :title="copied ? t('deviceCard.copied') : t('deviceCard.copyId')"
-            data-device-copy
-            @click="copyDeviceId"
-          >
-            <CheckCircle2 v-if="copied" class="size-3.5" aria-hidden="true" />
-            <Copy v-else class="size-3.5" aria-hidden="true" />
-          </button>
-        </dd>
+    <div class="device-id">
+      <Fingerprint :size="14" aria-hidden="true" />
+      <code :title="t('deviceCard.deviceId')">{{ device.deviceId }}</code>
+      <button type="button" class="device-copy dir-card-raise" :data-copied="copied" :aria-label="copied ? t('deviceCard.copied') : t('deviceCard.copyId')" data-device-copy @click="copyDeviceId">
+        <CheckCircle2 v-if="copied" :size="14" aria-hidden="true" /><Copy v-else :size="14" aria-hidden="true" />
+      </button>
+    </div>
+    <p v-if="copyFailed" role="alert" class="text-xs text-danger-foreground">{{ t('deviceCard.copyFailed') }}</p>
+
+    <dl class="device-route">
+      <div v-if="showAgent">
+        <dt><Bot :size="12" aria-hidden="true" />{{ t('nav.agents') }}</dt>
+        <dd>{{ agentName || device.agentId }}</dd>
       </div>
-      <div v-if="showAgent" class="border-t border-border/60 pt-3">
-        <dt class="flex items-center gap-1.5 text-xs text-muted-foreground">
-          <Bot class="size-3.5" aria-hidden="true" />{{ t('nav.agents') }}
-        </dt>
-        <dd class="mt-1.5 break-words text-sm font-medium">{{ agentName || device.agentId }}</dd>
-      </div>
-      <div class="border-t border-border/60 pt-3">
-        <dt class="flex items-center gap-1.5 text-xs text-muted-foreground">
-          <Layers3 class="size-3.5" aria-hidden="true" />
-          {{ t('agentDevices.template') }}
-        </dt>
-        <dd class="mt-1.5 flex min-w-0 flex-wrap items-center gap-2">
-          <span class="min-w-0 break-words text-sm font-medium">{{ effectiveTemplate?.name ?? t('common.notLinked') }}</span>
-          <span class="shrink-0 rounded-full bg-secondary px-2 py-0.5 text-[10px] font-medium text-secondary-foreground">
-            {{ isOverride ? t('agentDevices.override') : t('agentDevices.default') }}
-          </span>
-        </dd>
+      <ArrowRight v-if="showAgent" :size="16" aria-hidden="true" />
+      <div>
+        <dt><Layers3 :size="12" aria-hidden="true" />{{ t('agentDevices.template') }}</dt>
+        <dd>{{ effectiveTemplate?.name ?? t('common.notLinked') }}<span class="dir-tag">{{ isOverride ? t('agentDevices.override') : t('agentDevices.default') }}</span></dd>
       </div>
     </dl>
-
-    <p v-if="copyFailed" role="alert" class="mt-2 text-xs text-danger-foreground">
-      {{ t('deviceCard.copyFailed') }}
-    </p>
   </li>
 </template>
+
+<style scoped src="../admin/studio-directory-cards.css"></style>

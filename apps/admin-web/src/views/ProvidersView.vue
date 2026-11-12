@@ -6,7 +6,7 @@ import { useRoute, useRouter } from 'vue-router'
 import type { TemplateProviderType } from '@/api/types/templates'
 import CardListSkeleton from '@/components/admin/CardListSkeleton.vue'
 import ConfirmDialog from '@/components/admin/ConfirmDialog.vue'
-import PageHeader from '@/components/admin/PageHeader.vue'
+import DirectoryHero from '@/components/admin/DirectoryHero.vue'
 import ProviderFormModal from '@/components/admin/ProviderFormModal.vue'
 import LinkProviderTemplateDialog from '@/components/providers/LinkProviderTemplateDialog.vue'
 import ProviderCatalogCard from '@/components/providers/ProviderCatalogCard.vue'
@@ -244,71 +244,21 @@ function confirmDelete() {
 function providerNameById(id?: string) {
   return store.getProvider(id)?.name ?? t('providerLink.notLinked')
 }
+const heroStats = computed(() => [
+  { label: t('providers.stat.total'), value: totalProvidersCount.value, icon: Layers },
+  { label: t('providers.stat.ready'), value: readyProvidersCount.value, icon: Check },
+  { label: t('providers.stat.attention'), value: attentionProvidersCount.value, icon: Activity },
+  { label: t('providers.stat.bindings'), value: totalBindingsCount.value, icon: Link2 },
+])
 </script>
 
 <template>
   <section class="space-y-4">
-    <!-- Header -->
-    <PageHeader
-      :eyebrow="t('providers.eyebrow')"
-      :title="t('providers.title')"
-      :description="t('providers.description')"
-    >
+    <DirectoryHero tone="providers" :eyebrow="t('providers.eyebrow')" :title="t('providers.title')" :intro="t('providers.description')" :stats="heroStats">
       <template #actions>
-        <Button :aria-label="t('providers.create')" @click="openCreate()">
-          <Plus class="size-4" />
-          <span class="hidden sm:inline">{{ t('providers.create') }}</span>
-        </Button>
+        <button type="button" class="hero-primary" data-provider-create :aria-label="t('providers.create')" @click="openCreate()"><Plus :size="16" aria-hidden="true" />{{ t('providers.create') }}</button>
       </template>
-    </PageHeader>
-
-    <!-- 4 KPI Summary Cards (Variant A) -->
-    <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-      <div class="studio-panel flex items-center justify-between gap-3 p-3.5">
-        <div>
-          <p class="text-xl font-bold tracking-tight tabular-nums">{{ totalProvidersCount }}</p>
-          <p class="mt-0.5 text-xs text-muted-foreground">{{ t('providers.stat.total') }}</p>
-        </div>
-        <span class="flex size-9 shrink-0 items-center justify-center rounded-lg border border-primary/25 bg-primary/10 text-primary">
-          <Layers class="size-4" aria-hidden="true" />
-        </span>
-      </div>
-
-      <div class="studio-panel flex items-center justify-between gap-3 p-3.5">
-        <div>
-          <p class="text-xl font-bold tracking-tight tabular-nums text-emerald-400">{{ readyProvidersCount }}</p>
-          <p class="mt-0.5 text-xs text-muted-foreground">{{ t('providers.stat.ready') }}</p>
-        </div>
-        <span class="flex size-9 shrink-0 items-center justify-center rounded-lg border border-emerald-500/25 bg-emerald-500/10 text-emerald-400">
-          <Check class="size-4" aria-hidden="true" />
-        </span>
-      </div>
-
-      <div class="studio-panel flex items-center justify-between gap-3 p-3.5">
-        <div>
-          <p
-            class="text-xl font-bold tracking-tight tabular-nums"
-            :class="attentionProvidersCount > 0 ? 'text-amber-400' : 'text-foreground'"
-          >
-            {{ attentionProvidersCount }}
-          </p>
-          <p class="mt-0.5 text-xs text-muted-foreground">{{ t('providers.stat.attention') }}</p>
-        </div>
-        <span class="flex size-9 shrink-0 items-center justify-center rounded-lg border border-amber-500/25 bg-amber-500/10 text-amber-400">
-          <Activity class="size-4" aria-hidden="true" />
-        </span>
-      </div>
-
-      <div class="studio-panel flex items-center justify-between gap-3 p-3.5">
-        <div>
-          <p class="text-xl font-bold tracking-tight tabular-nums">{{ totalBindingsCount }}</p>
-          <p class="mt-0.5 text-xs text-muted-foreground">{{ t('providers.stat.bindings') }}</p>
-        </div>
-        <span class="flex size-9 shrink-0 items-center justify-center rounded-lg border border-sky-500/25 bg-sky-500/10 text-sky-400">
-          <Link2 class="size-4" aria-hidden="true" />
-        </span>
-      </div>
-    </div>
+    </DirectoryHero>
 
     <!-- Type Tabs + Capability Tags + Filter Toolbar -->
     <div class="space-y-2.5">
