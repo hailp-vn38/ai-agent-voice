@@ -72,3 +72,82 @@ impl DevicePush {
 fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
+
+// Broker authorization decisions (ticket 02), kept additive below the credential helpers.
+
+const SERVICE_USERNAME: &str = "vela-server";
+const SERVICE_PASSWORD_PREFIX: &str = "v1-service";
+
+/// What the broker is asking to do with a topic (mosquitto ACL `acc` values).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TopicAccess {
+    Read,
+    Write,
+    ReadWrite,
+    Subscribe,
+}
+
+impl TopicAccess {
+    pub fn from_code(code: i64) -> Option<Self> {
+        match code {
+            1 => Some(Self::Read),
+            2 => Some(Self::Write),
+            3 => Some(Self::ReadWrite),
+            4 => Some(Self::Subscribe),
+            _ => None,
+        }
+    }
+}
+
+impl DevicePush {
+    pub fn is_service_username(username: &str) -> bool {
+        username == SERVICE_USERNAME
+    }
+
+    pub fn service_username() -> &'static str {
+        SERVICE_USERNAME
+    }
+
+    pub fn service_password(&self) -> String {
+        let message = format!("{SERVICE_PASSWORD_PREFIX}:{SERVICE_USERNAME}");
+        hex(hmac::sign(&self.key, message.as_bytes()).as_ref())
+    }
+
+    /// Constant-time check of a Device password. Admission is checked separately by the caller.
+    pub fn verify_device_password(&self, device_id: &str, presented: &str) -> bool {
+        ring::constant_time::verify_slices_are_equal(
+            self.password(device_id).as_bytes(),
+            presented.as_bytes(),
+        )
+        .is_ok()
+    }
+
+    pub fn verify_service_password(&self, presented: &str) -> bool {
+        ring::constant_time::verify_slices_are_equal(
+            self.service_password().as_bytes(),
+            presented.as_bytes(),
+        )
+        .is_ok()
+    }
+
+    /// A Device may only read/subscribe its own `signal` topic; it can never publish.
+    pub fn device_topic_allowed(device_id: &str, topic: &str, access: TopicAccess) -> bool {
+        matches!(access, TopicAccess::Read | TopicAccess::Subscribe)
+            && topic == Self::signal_topic(device_id)
+    }
+
+    /// The service account may only publish to a well-formed `signal` topic.
+    pub fn service_topic_allowed(topic: &str, access: TopicAccess) -> bool {
+        if access != TopicAccess::Write {
+            return false;
+        }
+        let Some(key) = topic
+            .strip_prefix(TOPIC_PREFIX)
+            .and_then(|rest| rest.strip_prefix('/'))
+            .and_then(|rest| rest.strip_suffix("/signal"))
+        else {
+            return false;
+        };
+        key.len() == 32 && key.bytes().all(|b| b.is_ascii_hexdigit())
+    }
+}
