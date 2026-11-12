@@ -1748,7 +1748,7 @@ dependencies = [
  "js-sys",
  "log",
  "wasm-bindgen",
- "windows-core 0.62.2",
+ "windows-core 0.61.2",
 ]
 
 [[package]]
@@ -2692,7 +2692,7 @@ dependencies = [
 [[package]]
 name = "orchestrator-agent"
 version = "0.7.1"
-source = "git+file:///Users/lamphuchai/Desktop/project_rust/libs/orchestrator_agent_rs?branch=feat%2Fjob-skill-catalog-hardening#e4e08582ab67c498ac0c506d69c3fe92483090b4"
+source = "git+file:///Users/lamphuchai/Desktop/project_rust/libs/orchestrator_agent_rs?branch=feat%2Fjob-skill-catalog-hardening#cfb82e96d247883f5b9963d247b8224615306d89"
 dependencies = [
  "async-trait",
  "futures",
@@ -4393,7 +4393,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.4.3",
+ "getrandom 0.3.4",
  "once_cell",
  "rustix",
  "windows-sys 0.61.2",

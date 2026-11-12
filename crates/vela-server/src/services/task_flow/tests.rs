@@ -954,9 +954,14 @@ fn custom_subagents_enforce_flow_tool_boundaries_and_sync_active_subagents_promp
     assert!(CUSTOM_DAILY_SUBAGENT_TOOLS.contains(&"yt_fetch_transcript"));
     assert!(CUSTOM_WIKI_SUBAGENT_TOOLS.contains(&"wiki_lint"));
 
+    // Seed the catalog in the temp dir so the test does not depend on a `skills/` folder
+    // happening to exist in the crate's working directory.
+    let skills_dir = temp_dir.join("skills");
+    ensure_builtin_skills(&skills_dir).unwrap();
     let cfg = OrchestratorSectionConfig {
         store_dir: store_dir.clone(),
         prompts_dir: prompts_dir.clone(),
+        skills_dir: Some(skills_dir),
         ..OrchestratorSectionConfig::default()
     };
     let catalog = vec![default_orchestrator_provider(&cfg)];

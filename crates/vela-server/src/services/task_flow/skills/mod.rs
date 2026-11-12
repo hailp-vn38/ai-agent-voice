@@ -256,6 +256,15 @@ fn read_one_skill_from_dir(root: &Path, id: &str) -> Result<IndexedDiskSkill, Sk
     })
 }
 
+fn skill_rejection_reason(error: &SkillCatalogError) -> String {
+    match error {
+        SkillCatalogError::InvalidArguments(reason) => format!("invalid skill document: {reason}"),
+        SkillCatalogError::Io => "skill file is not readable".into(),
+        SkillCatalogError::InvalidId => "invalid skill id".into(),
+        _ => "skill entry is not a regular directory with SKILL.md".into(),
+    }
+}
+
 fn builtin_indexed(id: &str) -> Option<IndexedDiskSkill> {
     let raw = builtin_skill_raw(id)?;
     let doc = SkillDocument::parse(id, raw, SKILL_MAX_BYTES).ok()?;
@@ -287,19 +296,19 @@ async fn scan_catalog_async(skills_dir: Option<&Path>) -> ScannedCatalog {
     let Ok(scanned) = scan_skill_catalog(root, SKILL_MAX_BYTES).await else {
         return empty();
     };
-    let valid = scanned
-        .skills
-        .into_iter()
-        .filter_map(|summary| {
-            read_one_skill_from_dir(root, &summary.id)
-                .ok()
-                .map(|indexed| (summary.id, indexed))
-        })
-        .collect();
-    ScannedCatalog {
-        valid,
-        skipped: scanned.skipped,
+    let mut valid = BTreeMap::new();
+    let mut skipped = scanned.skipped;
+    for summary in scanned.skills {
+        // The library accepted this skill; if the server's stricter read rejects it, surface it as
+        // invalid instead of dropping it so Admin lists exactly what the scan saw.
+        match read_one_skill_from_dir(root, &summary.id) {
+            Ok(indexed) => {
+                valid.insert(summary.id, indexed);
+            }
+            Err(error) => skipped.push((summary.id, skill_rejection_reason(&error))),
+        }
     }
+    ScannedCatalog { valid, skipped }
 }
 
 /// Sync catalog scan for projections and validation that are not async. Runs the async scan on a
@@ -499,12 +508,13 @@ pub async fn list(state: &AppState) -> Result<Vec<JobSkillSummary>, SkillCatalog
                 .as_ref()
                 .map(|(_, bytes)| (sha256_hex(bytes), bytes.len()))
                 .unwrap_or_else(|| (sha256_hex(&[]), 0));
+            let is_builtin = builtin_skill_raw(&id).is_some();
             items.push(JobSkillSummary {
                 id: id.clone(),
                 name: id,
                 description: String::new(),
                 requires_tools: Vec::new(),
-                is_builtin: false,
+                is_builtin,
                 is_modified: false,
                 default_has_update: false,
                 size_bytes,
@@ -549,7 +559,7 @@ pub async fn get(state: &AppState, id: &str) -> Result<JobSkillDetail, SkillCata
                 name: id.to_owned(),
                 description: String::new(),
                 requires_tools: Vec::new(),
-                is_builtin: false,
+                is_builtin: builtin_skill_raw(id).is_some(),
                 is_modified: false,
                 default_has_update: false,
                 size_bytes: bytes.len(),

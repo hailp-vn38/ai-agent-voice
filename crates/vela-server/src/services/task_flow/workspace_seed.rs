@@ -106,15 +106,18 @@ fn builtin_skill_hash(id: &str, content: &str) -> Option<String> {
 
 fn is_known_legacy_builtin_hash(id: &str, hash: &str) -> bool {
     // Frozen normalized hashes of every Built-in Job Skill version committed to `main` before the
-    // Skill Base Version manifest existed. Each entry was checked against `git log main` by
-    // rendering the historical SKILL.md with `builtin_skill_hash`.
+    // Skill Base Version manifest existed, including the `crates/voice-agent-server/` and
+    // top-level `skills/` locations used before the crate rename. Each entry was produced by
+    // rendering the historical SKILL.md from `git log main` with `builtin_skill_hash`.
     let legacy_hashes: &[&str] = match id {
-        "batch-source-collection" => {
-            &["a5aa74c5bff6fd0e484009f3e11f75a06725759a61ca94a96f1825cf4867cb46"]
-        }
+        "batch-source-collection" => &[
+            "a5aa74c5bff6fd0e484009f3e11f75a06725759a61ca94a96f1825cf4867cb46",
+            "9bc01271a0c80dd806e31349cb740e466ee49b5ad6f7b333973815b715c1350b",
+        ],
         "daily-synthesis-staging" => &[
             "130bafe09321e13a5abbd385bebd3780c7a23cb996f746d5e2e220ce3b32448f",
             "fff4b58bfbec6788ac73113021d37cb4ee695c5240aa488e71d1b01a7719e6e7",
+            "9e4991ea3e623c4d1aefca0b731cbbee14173a83f8c84b94d56e3be200df1ebe",
         ],
         "daily-task-reminder" => &[
             "e835289ce493f1f504d0a6bc4f4f592c94c727403425d724e28bb556d0724d29",
@@ -133,6 +136,8 @@ fn is_known_legacy_builtin_hash(id: &str, hash: &str) -> bool {
             "dcd55eb320ec2ffc6b92c86fe11f9b2248d67b32e86020d7a9e41059eb002896",
             "266b4f2a6588ce386bbcdbcde0fc2625934c2871a676014ede1b2363a86be833",
             "e086e87dfdac8a624e39f6a5121f2c9f79f2ecad48ab6fe8b461f5d48344712d",
+            "6fc7a93a11fad4ac965000656b4830a3be6b1a2b1cf957a0db26d06384ba1b14",
+            "35ec6158a5f40cab9690c276c5bf2fede9e5713ef599f2862b0f26a60389247f",
         ],
         "wiki-lint" => &[
             "d23101e7e27c863d491e671585c88a6d1e530b64ea0f8a4c9d3dc8ae0fd03e29",
@@ -145,10 +150,13 @@ fn is_known_legacy_builtin_hash(id: &str, hash: &str) -> bool {
         "wiki-query" => &[
             "41fd3ddb3df3d68cbe8df9780793e840adf3428c5b15cf395d62c179ef5d1ef2",
             "049790e057e9a676e5be6b0ec3d20363740252fc05bc9602459a473aae63a32b",
+            "612167954d4f4c09d0bf2f0358f80c3b8c03553cb88d1e24183820146816e639",
+            "a6b0bf8c11f6f2a204997c78751798596e2730fb9822995fffba3c0f1217da11",
         ],
         "wiki-taxonomy" => &[
             "563b6255090cfeae85158fd51b75344bd618bed57b41ee4208006f90c58ef82f",
             "1fe2d81f2c0236dd3f4d076718c095877f58de60b8a3e75133857e1a531c8241",
+            "8fa821ab087336981da44777c4658c9004c0adf7b3a4c3edac42495c7ecdcf5a",
         ],
         _ => &[],
     };
@@ -206,65 +214,83 @@ pub(crate) fn builtin_skill_default_has_update(skills_root: &Path, id: &str) -> 
         .is_some_and(|base_hash| base_hash != &current_hash)
 }
 
+/// Seeds and upgrades Built-in Job Skills. A built-in whose directory is unusable (a regular file,
+/// a `SKILL.md` that is a directory, an unreadable file) is logged and skipped: whatever the skills
+/// folder contains must never block server startup or Admin saves (ADR 0142).
 pub(crate) fn ensure_builtin_skills(skills_root: &Path) -> Result<(), std::io::Error> {
     std::fs::create_dir_all(skills_root)?;
     let mut versions = read_builtin_skill_versions(skills_root);
     let original_versions = versions.clone();
     for (skill_name, content) in BUILTIN_SKILLS {
-        let current_hash = builtin_skill_hash(skill_name, content)
-            .ok_or_else(|| io::Error::other("invalid embedded built-in skill document"))?;
-        let dir = skills_root.join(skill_name);
-        std::fs::create_dir_all(&dir)?;
-        let skill_file = dir.join("SKILL.md");
-        let disk_bytes = match std::fs::read(&skill_file) {
-            Ok(existing) => existing,
-            Err(err) if err.kind() == io::ErrorKind::NotFound => {
-                std::fs::write(&skill_file, content)?;
-                versions.0.insert((*skill_name).to_owned(), current_hash);
-                continue;
-            }
-            Err(err) => return Err(err),
-        };
-        let Some(disk_content) = std::str::from_utf8(&disk_bytes).ok() else {
-            backup_malformed_builtin_skill(&dir, &disk_bytes)?;
-            std::fs::write(&skill_file, content)?;
-            versions.0.insert((*skill_name).to_owned(), current_hash);
-            continue;
-        };
-        let Some(disk_hash) = builtin_skill_hash(skill_name, &disk_content) else {
-            backup_malformed_builtin_skill(&dir, &disk_bytes)?;
-            std::fs::write(&skill_file, content)?;
-            versions.0.insert((*skill_name).to_owned(), current_hash);
-            continue;
-        };
-
-        match versions.0.get(*skill_name).map(String::as_str) {
-            Some(base_hash) if base_hash == disk_hash => {
-                if base_hash != current_hash {
-                    std::fs::write(&skill_file, content)?;
-                }
-                versions.0.insert((*skill_name).to_owned(), current_hash);
-            }
-            Some(_) if disk_hash == current_hash => {
-                versions.0.insert((*skill_name).to_owned(), current_hash);
-            }
-            Some(_) => {}
-            None if disk_hash == current_hash => {
-                versions.0.insert((*skill_name).to_owned(), current_hash);
-            }
-            None if is_known_legacy_builtin_hash(skill_name, &disk_hash) => {
-                std::fs::write(&skill_file, content)?;
-                versions.0.insert((*skill_name).to_owned(), current_hash);
-            }
-            None => {
-                // Treat unrecognized pre-manifest content as an Admin edit and use today's
-                // default as its base for future update checks.
-                versions.0.insert((*skill_name).to_owned(), current_hash);
-            }
+        if let Err(error) = seed_builtin_skill(skills_root, skill_name, content, &mut versions) {
+            tracing::warn!(
+                skill_id = skill_name,
+                %error,
+                "skipping built-in job skill that cannot be seeded"
+            );
         }
     }
-    if versions != original_versions || !skills_root.join(BUILTIN_SKILL_VERSIONS_FILE).exists() {
-        write_builtin_skill_versions(skills_root, &versions)?;
+    if (versions != original_versions || !skills_root.join(BUILTIN_SKILL_VERSIONS_FILE).exists())
+        && let Err(error) = write_builtin_skill_versions(skills_root, &versions)
+    {
+        tracing::warn!(%error, "could not persist built-in job skill base versions");
+    }
+    Ok(())
+}
+
+fn seed_builtin_skill(
+    skills_root: &Path,
+    skill_name: &str,
+    content: &str,
+    versions: &mut BuiltinSkillVersions,
+) -> Result<(), io::Error> {
+    let current_hash = builtin_skill_hash(skill_name, content)
+        .ok_or_else(|| io::Error::other("invalid embedded built-in skill document"))?;
+    let dir = skills_root.join(skill_name);
+    std::fs::create_dir_all(&dir)?;
+    let skill_file = dir.join("SKILL.md");
+    let disk_bytes = match std::fs::read(&skill_file) {
+        Ok(existing) => existing,
+        Err(err) if err.kind() == io::ErrorKind::NotFound => {
+            std::fs::write(&skill_file, content)?;
+            versions.0.insert(skill_name.to_owned(), current_hash);
+            return Ok(());
+        }
+        Err(err) => return Err(err),
+    };
+    let disk_hash = std::str::from_utf8(&disk_bytes)
+        .ok()
+        .and_then(|disk_content| builtin_skill_hash(skill_name, disk_content));
+    let Some(disk_hash) = disk_hash else {
+        backup_malformed_builtin_skill(&dir, &disk_bytes)?;
+        std::fs::write(&skill_file, content)?;
+        versions.0.insert(skill_name.to_owned(), current_hash);
+        return Ok(());
+    };
+
+    match versions.0.get(skill_name).map(String::as_str) {
+        Some(base_hash) if base_hash == disk_hash => {
+            if base_hash != current_hash {
+                std::fs::write(&skill_file, content)?;
+            }
+            versions.0.insert(skill_name.to_owned(), current_hash);
+        }
+        Some(_) if disk_hash == current_hash => {
+            versions.0.insert(skill_name.to_owned(), current_hash);
+        }
+        Some(_) => {}
+        None if disk_hash == current_hash => {
+            versions.0.insert(skill_name.to_owned(), current_hash);
+        }
+        None if is_known_legacy_builtin_hash(skill_name, &disk_hash) => {
+            std::fs::write(&skill_file, content)?;
+            versions.0.insert(skill_name.to_owned(), current_hash);
+        }
+        None => {
+            // Treat unrecognized pre-manifest content as an Admin edit and use today's
+            // default as its base for future update checks.
+            versions.0.insert(skill_name.to_owned(), current_hash);
+        }
     }
     Ok(())
 }
@@ -403,5 +429,46 @@ mod tests {
             std::fs::read_to_string(legacy_file).unwrap(),
             WIKI_QUERY_SKILL
         );
+    }
+
+    #[test]
+    fn unusable_builtin_entry_does_not_fail_seeding_other_builtins() {
+        let root = TempRoot::new();
+        std::fs::write(root.0.join("wiki-chat"), b"a file, not a directory").unwrap();
+        let blocked = root.0.join("wiki-lint");
+        std::fs::create_dir_all(blocked.join("SKILL.md")).unwrap();
+
+        ensure_builtin_skills(&root.0).expect("startup seeding must tolerate unusable entries");
+
+        assert!(root.0.join("wiki-query/SKILL.md").is_file());
+        assert!(root.0.join(BUILTIN_SKILL_VERSIONS_FILE).is_file());
+    }
+
+    #[test]
+    fn pre_rename_default_of_a_builtin_is_recognised_as_legacy() {
+        for (id, hash) in [
+            (
+                "wiki-query",
+                "612167954d4f4c09d0bf2f0358f80c3b8c03553cb88d1e24183820146816e639",
+            ),
+            (
+                "wiki-ingest",
+                "35ec6158a5f40cab9690c276c5bf2fede9e5713ef599f2862b0f26a60389247f",
+            ),
+            (
+                "wiki-taxonomy",
+                "8fa821ab087336981da44777c4658c9004c0adf7b3a4c3edac42495c7ecdcf5a",
+            ),
+            (
+                "batch-source-collection",
+                "9bc01271a0c80dd806e31349cb740e466ee49b5ad6f7b333973815b715c1350b",
+            ),
+            (
+                "daily-synthesis-staging",
+                "9e4991ea3e623c4d1aefca0b731cbbee14173a83f8c84b94d56e3be200df1ebe",
+            ),
+        ] {
+            assert!(is_known_legacy_builtin_hash(id, hash), "{id}");
+        }
     }
 }

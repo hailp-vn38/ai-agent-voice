@@ -1171,6 +1171,8 @@ async fn malformed_skill_files_do_not_block_startup_settings_or_provider_saves()
     std::fs::write(broken_builtin.join("SKILL.md"), builtin_bad_bytes).unwrap();
     std::fs::create_dir_all(skills_dir.join("empty-skill-dir")).unwrap();
     std::fs::create_dir_all(skills_dir.join("Bad ID")).unwrap();
+    // A built-in whose directory is a regular file must not block startup.
+    std::fs::write(skills_dir.join("wiki-lint"), b"not a directory").unwrap();
 
     let store_dir = temp_root.join("orch-store");
     std::fs::create_dir_all(&store_dir).unwrap();
