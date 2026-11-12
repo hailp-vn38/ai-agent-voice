@@ -1,11 +1,14 @@
+#[path = "support/admin_web_token.rs"]
+mod admin_web_token_support;
+use admin_web_token_support::admin_web_token;
 use futures_util::{SinkExt, StreamExt};
 use reqwest::{Client, StatusCode};
 use std::{fs, sync::Arc, time::Duration};
 use vela_server::{
-    app::{AppState, router_with_state},
+    app::bootstrap_with_providers_and_secret_resolver,
+    database::secrets::EnvSecretResolver,
     audio::PcmF32Mono,
     config::AppConfig,
-    database::Database,
     providers::{
         AsrError, AsrEvent, AsrProvider, AsrResult, AsrSession, LlmError, LlmProvider, ProviderSet,
         TtsError, TtsProvider,
@@ -46,6 +49,7 @@ url="sqlite://{}"
 [api]
 enabled=true
 admin_token="admin-test-token"
+jwt_secret="web-assistant-test-jwt-signing-secret-0123456789"
 "#,
             database.display()
         ),
@@ -53,22 +57,13 @@ admin_token="admin-test-token"
     .unwrap();
     let config = AppConfig::parse_and_resolve(&path).unwrap();
     fs::remove_file(path).unwrap();
-    let db = Database::connect(&config.database).await.unwrap();
-    let state = AppState::from_provider_set_with_database(config, providers, Some(db));
-    if enabled {
-        let stop = tokio_util::sync::CancellationToken::new();
-        let sampler = state.system_metrics.clone().start(stop.clone());
-        tokio::time::timeout(Duration::from_secs(5), async {
-            while state.system_metrics.latest().is_none() {
-                tokio::task::yield_now().await;
-            }
-        })
-        .await
-        .unwrap();
-        stop.cancel();
-        sampler.await.unwrap();
-    }
-    let router = router_with_state(state);
+    let router = bootstrap_with_providers_and_secret_resolver(
+        config,
+        providers,
+        Arc::new(EnvSecretResolver),
+    )
+    .await
+    .unwrap();
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
     let task = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
@@ -78,6 +73,7 @@ admin_token="admin-test-token"
 #[tokio::test]
 async fn assistant_settings_require_admin_and_do_not_provision_on_read() {
     let (base, task) = server(true).await;
+    let web_token = admin_web_token(&Client::new(), &base).await;
     let client = Client::new();
     let url = format!("{base}/api/admin/system/assistant-device");
     assert_eq!(
@@ -86,7 +82,7 @@ async fn assistant_settings_require_admin_and_do_not_provision_on_read() {
     );
     let response = client
         .get(&url)
-        .bearer_auth("admin-test-token")
+        .bearer_auth(&web_token)
         .send()
         .await
         .unwrap();
@@ -100,8 +96,9 @@ async fn assistant_settings_require_admin_and_do_not_provision_on_read() {
 #[tokio::test]
 async fn assistant_device_is_managed_and_tickets_cannot_bypass_voice_auth() {
     let (base, task) = server(true).await;
+    let web_token = admin_web_token(&Client::new(), &base).await;
     let client = Client::new();
-    let auth = "admin-test-token";
+    let auth = web_token.as_str();
     let settings = format!("{base}/api/admin/system/assistant-device");
     let tickets = format!("{base}/api/admin/assistant/ws-ticket");
     assert_eq!(
@@ -365,8 +362,9 @@ async fn web_assistant_shared_pipeline_completes_text_and_mic_and_caps_connectio
         Arc::new(VoiceTts),
     ));
     let (base, task) = start(providers, "physical-token").await;
+    let web_token = admin_web_token(&Client::new(), &base).await;
     let client = Client::new();
-    let auth = "admin-test-token";
+    let auth = web_token.as_str();
     client
         .post(format!("{base}/api/admin/agents"))
         .bearer_auth(auth)
@@ -575,8 +573,9 @@ async fn capacity_refusal_does_not_consume_the_web_assistant_ticket() {
         Arc::new(VoiceTts),
     ));
     let (base, task) = start(providers, "physical-token").await;
+    let web_token = admin_web_token(&Client::new(), &base).await;
     let client = Client::new();
-    let auth = "admin-test-token";
+    let auth = web_token.as_str();
     client
         .post(format!("{base}/api/admin/agents"))
         .bearer_auth(auth)

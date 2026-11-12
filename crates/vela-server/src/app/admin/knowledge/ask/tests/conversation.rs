@@ -23,10 +23,15 @@ async fn ask_creates_a_saved_conversation_and_returns_its_message_ids_first() {
         "Evidence.",
     )
     .await;
+    let web_token = admin_web_token::admin_web_token(
+        &reqwest::Client::new(),
+        base.trim_end_matches("/api/admin"),
+    )
+    .await;
     let question = format!("Summarize {}", "evidence ".repeat(12));
     let response = reqwest::Client::new()
         .post(format!("{base}/knowledge/ask"))
-        .bearer_auth("wiki-chat-test-token")
+        .bearer_auth(&web_token)
         .json(&serde_json::json!({ "question": question }))
         .send()
         .await
@@ -45,7 +50,7 @@ async fn ask_creates_a_saved_conversation_and_returns_its_message_ids_first() {
     assert_eq!(turn["assistant_message_id"].as_str().unwrap().len(), 36);
     let detail = reqwest::Client::new()
         .get(format!("{base}/knowledge/conversations/{conversation_id}"))
-        .bearer_auth("wiki-chat-test-token")
+        .bearer_auth(&web_token)
         .send()
         .await
         .unwrap();
@@ -88,6 +93,11 @@ async fn ask_creates_a_saved_conversation_and_returns_its_message_ids_first() {
 #[tokio::test]
 async fn a_running_answer_older_than_two_minutes_is_interrupted_before_a_new_turn() {
     let (base, temp_root, server) = wiki_fixture(Vec::new(), "Known evidence.").await;
+    let web_token = admin_web_token::admin_web_token(
+        &reqwest::Client::new(),
+        base.trim_end_matches("/api/admin"),
+    )
+    .await;
     let database = test_database(&temp_root).await;
     sqlx::query(
             "INSERT INTO wiki_conversations (id, title, created_at_ms, updated_at_ms) VALUES ('stale-conversation', 'Stale', 1, 1)",
@@ -105,7 +115,7 @@ async fn a_running_answer_older_than_two_minutes_is_interrupted_before_a_new_tur
 
     let response = reqwest::Client::new()
         .post(format!("{base}/knowledge/ask"))
-        .bearer_auth("wiki-chat-test-token")
+        .bearer_auth(&web_token)
         .json(&serde_json::json!({
             "conversation_id": "stale-conversation",
             "question": "Continue after a stale answer"
@@ -117,7 +127,7 @@ async fn a_running_answer_older_than_two_minutes_is_interrupted_before_a_new_tur
     assert!(response.text().await.unwrap().contains("event: done"));
     let detail: Value = reqwest::Client::new()
         .get(format!("{base}/knowledge/conversations/stale-conversation"))
-        .bearer_auth("wiki-chat-test-token")
+        .bearer_auth(&web_token)
         .send()
         .await
         .unwrap()
@@ -138,10 +148,15 @@ async fn retry_reuses_the_latest_failed_message_and_its_pinned_files() {
     });
     let (base, temp_root, server) =
         wiki_fixture_with_provider(provider.clone(), "Pinned evidence.").await;
+    let web_token = admin_web_token::admin_web_token(
+        &reqwest::Client::new(),
+        base.trim_end_matches("/api/admin"),
+    )
+    .await;
     let client = reqwest::Client::new();
     let first = client
         .post(format!("{base}/knowledge/ask"))
-        .bearer_auth("wiki-chat-test-token")
+        .bearer_auth(&web_token)
         .json(&serde_json::json!({
             "question": "Explain this page",
             "pinned_paths": ["wiki/concepts/known.md"]
@@ -158,7 +173,7 @@ async fn retry_reuses_the_latest_failed_message_and_its_pinned_files() {
 
     let retried = client
         .post(format!("{base}/knowledge/ask"))
-        .bearer_auth("wiki-chat-test-token")
+        .bearer_auth(&web_token)
         .json(&serde_json::json!({
             "conversation_id": conversation_id,
             "retry_message_id": assistant_message_id
@@ -177,7 +192,7 @@ async fn retry_reuses_the_latest_failed_message_and_its_pinned_files() {
 
     let detail: Value = client
         .get(format!("{base}/knowledge/conversations/{conversation_id}"))
-        .bearer_auth("wiki-chat-test-token")
+        .bearer_auth(&web_token)
         .send()
         .await
         .unwrap()
@@ -201,7 +216,7 @@ async fn retry_reuses_the_latest_failed_message_and_its_pinned_files() {
 
     let retry_done = client
         .post(format!("{base}/knowledge/ask"))
-        .bearer_auth("wiki-chat-test-token")
+        .bearer_auth(&web_token)
         .json(&serde_json::json!({
             "conversation_id": conversation_id,
             "retry_message_id": assistant_message_id
@@ -222,6 +237,11 @@ async fn retry_reuses_the_latest_failed_message_and_its_pinned_files() {
 #[tokio::test]
 async fn ask_rejects_a_conversation_at_the_message_limit_without_writing_rows() {
     let (base, temp_root, server) = wiki_fixture(Vec::new(), "Evidence.").await;
+    let web_token = admin_web_token::admin_web_token(
+        &reqwest::Client::new(),
+        base.trim_end_matches("/api/admin"),
+    )
+    .await;
     let database = test_database(&temp_root).await;
     sqlx::query(
             "INSERT INTO wiki_conversations (id, title, created_at_ms, updated_at_ms) VALUES ('full-conversation', 'Full', 1, 1)",
@@ -253,7 +273,7 @@ async fn ask_rejects_a_conversation_at_the_message_limit_without_writing_rows() 
 
     let response = reqwest::Client::new()
         .post(format!("{base}/knowledge/ask"))
-        .bearer_auth("wiki-chat-test-token")
+        .bearer_auth(&web_token)
         .json(&serde_json::json!({
             "conversation_id": "full-conversation",
             "question": "one more question"
@@ -282,10 +302,15 @@ async fn ask_rejects_a_conversation_at_the_message_limit_without_writing_rows() 
 async fn follow_up_history_comes_from_saved_messages() {
     let fake = Arc::new(ScriptedLlm::new(true, Vec::new()));
     let (base, temp_root, server) = wiki_fixture_with_provider(fake.clone(), "Evidence.").await;
+    let web_token = admin_web_token::admin_web_token(
+        &reqwest::Client::new(),
+        base.trim_end_matches("/api/admin"),
+    )
+    .await;
     let client = reqwest::Client::new();
     let first = client
         .post(format!("{base}/knowledge/ask"))
-        .bearer_auth("wiki-chat-test-token")
+        .bearer_auth(&web_token)
         .json(&serde_json::json!({ "question": "first saved question" }))
         .send()
         .await
@@ -298,7 +323,7 @@ async fn follow_up_history_comes_from_saved_messages() {
 
     let second = client
         .post(format!("{base}/knowledge/ask"))
-        .bearer_auth("wiki-chat-test-token")
+        .bearer_auth(&web_token)
         .json(&serde_json::json!({
             "conversation_id": conversation_id,
             "question": "follow-up question"
@@ -341,6 +366,11 @@ async fn database_history_is_bounded_to_twelve_messages_and_sixteen_kibibytes() 
         .collect();
     let fake = Arc::new(ScriptedLlm::new(true, responses));
     let (base, temp_root, server) = wiki_fixture_with_provider(fake.clone(), "Evidence.").await;
+    let web_token = admin_web_token::admin_web_token(
+        &reqwest::Client::new(),
+        base.trim_end_matches("/api/admin"),
+    )
+    .await;
     let client = reqwest::Client::new();
     let mut conversation_id = None;
     for index in 0..7 {
@@ -350,7 +380,7 @@ async fn database_history_is_bounded_to_twelve_messages_and_sixteen_kibibytes() 
         }
         let response = client
             .post(format!("{base}/knowledge/ask"))
-            .bearer_auth("wiki-chat-test-token")
+            .bearer_auth(&web_token)
             .json(&body)
             .send()
             .await
@@ -390,6 +420,11 @@ async fn database_history_is_bounded_to_twelve_messages_and_sixteen_kibibytes() 
 #[tokio::test]
 async fn ask_rejects_browser_history_and_invalid_question_retry_combinations() {
     let (base, temp_root, server) = fixture(true).await;
+    let web_token = admin_web_token::admin_web_token(
+        &reqwest::Client::new(),
+        base.trim_end_matches("/api/admin"),
+    )
+    .await;
     let client = reqwest::Client::new();
     for body in [
         serde_json::json!({ "messages": [{"role":"user","content":"untrusted"}] }),
@@ -400,7 +435,7 @@ async fn ask_rejects_browser_history_and_invalid_question_retry_combinations() {
     ] {
         let response = client
             .post(format!("{base}/knowledge/ask"))
-            .bearer_auth("wiki-chat-test-token")
+            .bearer_auth(&web_token)
             .json(&body)
             .send()
             .await
@@ -414,7 +449,7 @@ async fn ask_rejects_browser_history_and_invalid_question_retry_combinations() {
 
     let missing = client
         .get(format!("{base}/knowledge/conversations/does-not-exist"))
-        .bearer_auth("wiki-chat-test-token")
+        .bearer_auth(&web_token)
         .send()
         .await
         .unwrap();
@@ -431,6 +466,8 @@ async fn ask_rejects_browser_history_and_invalid_question_retry_combinations() {
 #[tokio::test]
 async fn ask_requires_a_database_before_starting_a_turn() {
     let (base, temp_root, server) = fixture_without_database().await;
+    // Without a database there is no admin_auth row, so no Admin Web Token can be issued. The
+    // middleware still checks the static token here, which is why this one request keeps it.
     let response = reqwest::Client::new()
         .post(format!("{base}/knowledge/ask"))
         .bearer_auth("wiki-chat-test-token")

@@ -4,9 +4,14 @@ use super::*;
 #[tokio::test]
 async fn ask_streams_configured_provider_over_authenticated_http() {
     let (base, temp_root, server) = fixture(true).await;
+    let web_token = admin_web_token::admin_web_token(
+        &reqwest::Client::new(),
+        base.trim_end_matches("/api/admin"),
+    )
+    .await;
     let response = reqwest::Client::new()
         .post(format!("{base}/knowledge/ask"))
-        .bearer_auth("wiki-chat-test-token")
+        .bearer_auth(&web_token)
         .json(&serde_json::json!({"question": "question"}))
         .send()
         .await
@@ -31,7 +36,12 @@ async fn ask_streams_configured_provider_over_authenticated_http() {
 async fn ask_answers_after_the_sixth_tool_round() {
     let (base, temp_root, server) =
         wiki_fixture(read_rounds(6), "Known evidence from the wiki.").await;
-    let body = ask_read_more(&base).await;
+    let web_token = admin_web_token::admin_web_token(
+        &reqwest::Client::new(),
+        base.trim_end_matches("/api/admin"),
+    )
+    .await;
+    let body = ask_read_more(&base, &web_token).await;
     assert!(body.contains("\"call_id\":\"read-5\""));
     assert!(body.contains("Wiki answer"));
     assert!(body.contains("\"stop_reason\":\"finished\""));
@@ -44,7 +54,12 @@ async fn ask_answers_after_the_sixth_tool_round() {
 async fn ask_ends_with_step_limit_when_the_model_exceeds_six_tool_rounds() {
     let (base, temp_root, server) =
         wiki_fixture(read_rounds(7), "Known evidence from the wiki.").await;
-    let body = ask_read_more(&base).await;
+    let web_token = admin_web_token::admin_web_token(
+        &reqwest::Client::new(),
+        base.trim_end_matches("/api/admin"),
+    )
+    .await;
+    let body = ask_read_more(&base, &web_token).await;
     assert!(body.contains("\"call_id\":\"read-5\""));
     assert!(!body.contains("\"call_id\":\"read-6\""));
     assert!(body.contains("event: error"));
@@ -53,7 +68,7 @@ async fn ask_ends_with_step_limit_when_the_model_exceeds_six_tool_rounds() {
     let conversation_id = turns[0]["conversation_id"].as_str().unwrap().to_owned();
     let detail: Value = reqwest::Client::new()
         .get(format!("{base}/knowledge/conversations/{conversation_id}"))
-        .bearer_auth("wiki-chat-test-token")
+        .bearer_auth(&web_token)
         .send()
         .await
         .unwrap()
@@ -76,9 +91,14 @@ async fn ask_cancels_provider_stream_when_http_client_disconnects() {
     });
     let (base, temp_root, server) =
         wiki_fixture_with_provider(provider, "Known evidence from the wiki.").await;
+    let web_token = admin_web_token::admin_web_token(
+        &reqwest::Client::new(),
+        base.trim_end_matches("/api/admin"),
+    )
+    .await;
     let response = reqwest::Client::new()
         .post(format!("{base}/knowledge/ask"))
-        .bearer_auth("wiki-chat-test-token")
+        .bearer_auth(&web_token)
         .json(&serde_json::json!({
             "question": "Keep waiting"
         }))
@@ -113,7 +133,7 @@ async fn ask_cancels_provider_stream_when_http_client_disconnects() {
         loop {
             let detail: Value = reqwest::Client::new()
                 .get(format!("{base}/knowledge/conversations/{conversation_id}"))
-                .bearer_auth("wiki-chat-test-token")
+                .bearer_auth(&web_token)
                 .send()
                 .await
                 .unwrap()
@@ -143,10 +163,15 @@ async fn only_one_turn_runs_per_conversation_while_other_conversations_can_run()
         dropped: Arc::clone(&dropped),
     });
     let (base, temp_root, server) = wiki_fixture_with_provider(provider, "Known evidence.").await;
+    let web_token = admin_web_token::admin_web_token(
+        &reqwest::Client::new(),
+        base.trim_end_matches("/api/admin"),
+    )
+    .await;
     let client = reqwest::Client::new();
     let mut first = client
         .post(format!("{base}/knowledge/ask"))
-        .bearer_auth("wiki-chat-test-token")
+        .bearer_auth(&web_token)
         .json(&serde_json::json!({ "question": "first running question" }))
         .send()
         .await
@@ -162,7 +187,7 @@ async fn only_one_turn_runs_per_conversation_while_other_conversations_can_run()
     let conversation_id = first_turn["conversation_id"].as_str().unwrap();
     let retry_busy = client
         .post(format!("{base}/knowledge/ask"))
-        .bearer_auth("wiki-chat-test-token")
+        .bearer_auth(&web_token)
         .json(&serde_json::json!({
             "conversation_id": conversation_id,
             "retry_message_id": first_turn["assistant_message_id"]
@@ -176,7 +201,7 @@ async fn only_one_turn_runs_per_conversation_while_other_conversations_can_run()
 
     let busy = client
         .post(format!("{base}/knowledge/ask"))
-        .bearer_auth("wiki-chat-test-token")
+        .bearer_auth(&web_token)
         .json(&serde_json::json!({
             "conversation_id": conversation_id,
             "question": "must not interleave"
@@ -190,7 +215,7 @@ async fn only_one_turn_runs_per_conversation_while_other_conversations_can_run()
 
     let mut second = client
         .post(format!("{base}/knowledge/ask"))
-        .bearer_auth("wiki-chat-test-token")
+        .bearer_auth(&web_token)
         .json(&serde_json::json!({ "question": "another conversation can run" }))
         .send()
         .await
@@ -228,9 +253,14 @@ async fn ask_reports_timeout_when_provider_stream_exceeds_total_deadline() {
     });
     let (base, temp_root, server) =
         wiki_fixture_with_provider(provider, "Known evidence from the wiki.").await;
+    let web_token = admin_web_token::admin_web_token(
+        &reqwest::Client::new(),
+        base.trim_end_matches("/api/admin"),
+    )
+    .await;
     let response = reqwest::Client::new()
         .post(format!("{base}/knowledge/ask"))
-        .bearer_auth("wiki-chat-test-token")
+        .bearer_auth(&web_token)
         .json(&serde_json::json!({
             "question": "Wait for the provider"
         }))
@@ -259,9 +289,14 @@ async fn ask_reports_timeout_when_provider_stream_exceeds_total_deadline() {
 #[tokio::test]
 async fn ask_streams_provider_from_managed_runtime_lease() {
     let (base, temp_root, server) = managed_fixture().await;
+    let web_token = admin_web_token::admin_web_token(
+        &reqwest::Client::new(),
+        base.trim_end_matches("/api/admin"),
+    )
+    .await;
     let response = reqwest::Client::new()
         .post(format!("{base}/knowledge/ask"))
-        .bearer_auth("wiki-chat-test-token")
+        .bearer_auth(&web_token)
         .json(&serde_json::json!({"question": "question"}))
         .send()
         .await
@@ -277,9 +312,14 @@ async fn ask_streams_provider_from_managed_runtime_lease() {
 #[tokio::test]
 async fn ask_without_provider_returns_not_configured() {
     let (base, temp_root, server) = fixture(false).await;
+    let web_token = admin_web_token::admin_web_token(
+        &reqwest::Client::new(),
+        base.trim_end_matches("/api/admin"),
+    )
+    .await;
     let response = reqwest::Client::new()
         .post(format!("{base}/knowledge/ask"))
-        .bearer_auth("wiki-chat-test-token")
+        .bearer_auth(&web_token)
         .json(&serde_json::json!({"question": "question"}))
         .send()
         .await
@@ -299,9 +339,14 @@ async fn ask_without_provider_returns_not_configured() {
 #[tokio::test]
 async fn chat_settings_reject_provider_without_tool_support() {
     let (base, temp_root, server) = fixture_with_tool_support(false, false).await;
+    let web_token = admin_web_token::admin_web_token(
+        &reqwest::Client::new(),
+        base.trim_end_matches("/api/admin"),
+    )
+    .await;
     let response = reqwest::Client::new()
         .put(format!("{base}/background/settings"))
-        .bearer_auth("wiki-chat-test-token")
+        .bearer_auth(&web_token)
         .header("if-match", "\"1\"")
         .json(&serde_json::json!({
             "enabled": true,

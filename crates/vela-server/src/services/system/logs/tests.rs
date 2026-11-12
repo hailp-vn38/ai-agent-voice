@@ -280,6 +280,7 @@ enabled=true
 [api]
 enabled=true
 admin_token="admin-secret-token"
+jwt_secret="logs-test-jwt-signing-secret-0123456789"
 "#,
     )
     .expect("parse config");

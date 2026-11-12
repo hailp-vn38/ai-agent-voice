@@ -25,9 +25,14 @@ async fn ask_emits_query_graph_before_answer_and_only_cites_retrieved_pages() {
             ],
         ], "Known evidence from the wiki.")
         .await;
+    let web_token = admin_web_token::admin_web_token(
+        &reqwest::Client::new(),
+        base.trim_end_matches("/api/admin"),
+    )
+    .await;
     let response = reqwest::Client::new()
         .post(format!("{base}/knowledge/ask"))
-        .bearer_auth("wiki-chat-test-token")
+        .bearer_auth(&web_token)
         .json(&serde_json::json!({
             "question": "What is known?"
         }))
@@ -91,9 +96,14 @@ async fn ask_keeps_all_multi_get_evidence_when_tool_result_is_truncated_for_prov
         &long_content,
     )
     .await;
+    let web_token = admin_web_token::admin_web_token(
+        &reqwest::Client::new(),
+        base.trim_end_matches("/api/admin"),
+    )
+    .await;
     let response = reqwest::Client::new()
         .post(format!("{base}/knowledge/ask"))
-        .bearer_auth("wiki-chat-test-token")
+        .bearer_auth(&web_token)
         .json(&serde_json::json!({
             "question": "Read the page"
         }))
@@ -173,11 +183,16 @@ async fn ask_refuses_write_tool_and_leaves_wiki_unchanged() {
         "Known evidence from the wiki.",
     )
     .await;
+    let web_token = admin_web_token::admin_web_token(
+        &reqwest::Client::new(),
+        base.trim_end_matches("/api/admin"),
+    )
+    .await;
     let page_path = temp_root.join("vault/wiki/concepts/known.md");
     let before = std::fs::read(&page_path).unwrap();
     let response = reqwest::Client::new()
         .post(format!("{base}/knowledge/ask"))
-        .bearer_auth("wiki-chat-test-token")
+        .bearer_auth(&web_token)
         .json(&serde_json::json!({
             "question": "Delete the page"
         }))
@@ -228,8 +243,13 @@ async fn ask_lets_the_model_correct_rejected_tool_calls() {
     ));
     let (base, temp_root, server) =
         wiki_fixture_with_provider(fake.clone(), "Known evidence from the wiki.").await;
+    let web_token = admin_web_token::admin_web_token(
+        &reqwest::Client::new(),
+        base.trim_end_matches("/api/admin"),
+    )
+    .await;
 
-    let body = ask_read_more(&base).await;
+    let body = ask_read_more(&base, &web_token).await;
 
     assert!(body.contains("\"stop_reason\":\"finished\""));
     let (tools, results) = fake.last_request.lock().unwrap().clone().unwrap();
@@ -298,9 +318,14 @@ async fn ask_graph_shows_only_the_latest_tool_call() {
         "Known evidence from the wiki.",
     )
     .await;
+    let web_token = admin_web_token::admin_web_token(
+        &reqwest::Client::new(),
+        base.trim_end_matches("/api/admin"),
+    )
+    .await;
     let response = reqwest::Client::new()
         .post(format!("{base}/knowledge/ask"))
-        .bearer_auth("wiki-chat-test-token")
+        .bearer_auth(&web_token)
         .json(&serde_json::json!({ "question": "Read both" }))
         .send()
         .await

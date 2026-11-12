@@ -1,3 +1,5 @@
+#[path = "../../../tests/support/admin_web_token.rs"]
+mod admin_web_token;
 use super::*;
 use crate::{config::AppConfig, providers::ProviderSet};
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
@@ -36,6 +38,7 @@ async fn serve(router: Router) -> (String, tokio::task::JoinHandle<()>) {
 }
 async fn fixture() -> (AppState, Arc<SystemMcp>, SystemToolContext) {
     let (core, ctx, db) = crate::tools::system_mcp::tests::fixture(true, 8192).await;
+    admin_web_token::seed_default_admin_password(db.pool()).await;
     let mut config: AppConfig = toml::from_str(
         r#"
 [server]
@@ -56,6 +59,7 @@ allowed_origins=["https://admin.example"]
 [api]
 enabled=true
 admin_token="admin-test-token"
+jwt_secret="mcp-test-jwt-signing-secret-0123456789"
 "#,
     )
     .unwrap();
@@ -249,6 +253,8 @@ async fn admin_auth_and_origin_precede_claim_and_reject() {
         .nest("/api/admin", crate::app::admin::router(state.clone()))
         .with_state(state.clone());
     let (base, task) = serve(router).await;
+    let web_token =
+        admin_web_token::admin_web_token(&reqwest::Client::new(), &base).await;
     let http = reqwest::Client::new();
     for action in ["confirm", "reject"] {
         let url = format!("{base}/api/admin/system-mcp/change-requests/{id}/{action}");
@@ -263,7 +269,7 @@ async fn admin_auth_and_origin_precede_claim_and_reject() {
         );
         assert_eq!(
             http.post(&url)
-                .bearer_auth("admin-test-token")
+                .bearer_auth(&web_token)
                 .header("Origin", "https://evil.example")
                 .send()
                 .await
@@ -276,7 +282,7 @@ async fn admin_auth_and_origin_precede_claim_and_reject() {
     let url = format!("{base}/api/admin/system-mcp/change-requests/{id}/reject");
     let result: Value = http
         .post(url)
-        .bearer_auth("admin-test-token")
+        .bearer_auth(&web_token)
         .header("Origin", "http://localhost")
         .send()
         .await
@@ -465,6 +471,8 @@ async fn admin_web_can_configure_knowledge_mcp_and_create_revoke_tokens_live() {
     }
 
     let (base, task) = serve(crate::app::router_with_state(state)).await;
+    let web_token =
+        admin_web_token::admin_web_token(&reqwest::Client::new(), &base).await;
     let http = reqwest::Client::new();
     let mcp_url = format!("{base}/mcp/knowledge");
     let admin_url = format!("{base}/api/admin/system-mcp/knowledge");
@@ -483,7 +491,7 @@ async fn admin_web_can_configure_knowledge_mcp_and_create_revoke_tokens_live() {
     // Mutating routes reject untrusted Origin with 403 FORBIDDEN
     assert_eq!(
         http.put(&admin_url)
-            .bearer_auth("admin-test-token")
+            .bearer_auth(&web_token)
             .header("Origin", "https://evil.example")
             .json(&json!({"enabled": true, "allow_write": true}))
             .send()
@@ -496,7 +504,7 @@ async fn admin_web_can_configure_knowledge_mcp_and_create_revoke_tokens_live() {
     // Enable via Admin Web API with trusted Origin and If-Match revision
     let updated: Value = http
         .put(&admin_url)
-        .bearer_auth("admin-test-token")
+        .bearer_auth(&web_token)
         .header("Origin", "http://localhost")
         .header("If-Match", "\"1\"")
         .json(&json!({
@@ -519,7 +527,7 @@ async fn admin_web_can_configure_knowledge_mcp_and_create_revoke_tokens_live() {
     // Stale If-Match revision returns 409 CONFLICT
     assert_eq!(
         http.put(&admin_url)
-            .bearer_auth("admin-test-token")
+            .bearer_auth(&web_token)
             .header("Origin", "http://localhost")
             .header("If-Match", "\"1\"")
             .json(&json!({"enabled": false, "allow_write": false}))
@@ -533,7 +541,7 @@ async fn admin_web_can_configure_knowledge_mcp_and_create_revoke_tokens_live() {
     // Create token via Admin Web API
     let created_res: Value = http
         .post(format!("{admin_url}/tokens"))
-        .bearer_auth("admin-test-token")
+        .bearer_auth(&web_token)
         .header("Origin", "http://localhost")
         .json(&json!({
             "name": "Cursor Agent",
@@ -566,7 +574,7 @@ async fn admin_web_can_configure_knowledge_mcp_and_create_revoke_tokens_live() {
     // GET /api/admin/system-mcp/knowledge must also only expose masked_token
     let get_snap: Value = http
         .get(&admin_url)
-        .bearer_auth("admin-test-token")
+        .bearer_auth(&web_token)
         .send()
         .await
         .unwrap()
@@ -601,7 +609,7 @@ async fn admin_web_can_configure_knowledge_mcp_and_create_revoke_tokens_live() {
     // Delete token via Admin Web API -> immediately 401 UNAUTHORIZED
     let del_status = http
         .delete(format!("{admin_url}/tokens/{token_id}"))
-        .bearer_auth("admin-test-token")
+        .bearer_auth(&web_token)
         .header("Origin", "http://localhost")
         .send()
         .await

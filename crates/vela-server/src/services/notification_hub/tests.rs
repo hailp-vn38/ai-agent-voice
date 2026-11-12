@@ -1,3 +1,6 @@
+#[path = "../../../tests/support/admin_web_token.rs"]
+mod admin_web_token;
+
 use super::*;
 use crate::{
     app::admin::Patch,
@@ -477,6 +480,7 @@ async fn settings_patch_secret_redaction_if_match_conflict_and_audit() {
 #[tokio::test]
 async fn admin_http_endpoints_and_sse_stream_work_end_to_end() {
     let (hub, tg, zalo, db) = setup_hub().await;
+    admin_web_token::seed_default_admin_password(db.pool()).await;
 
     let config: crate::config::AppConfig = toml::from_str(
         r#"
@@ -491,6 +495,7 @@ tts = "test"
 [api]
 enabled = true
 admin_token = "notif-admin-secret"
+jwt_secret = "notif-test-jwt-signing-secret-0123456789"
 "#,
     )
     .expect("valid test config");
@@ -514,6 +519,8 @@ admin_token = "notif-admin-secret"
     });
 
     let client = reqwest::Client::new();
+    let web_token =
+        admin_web_token::admin_web_token(&client, base.trim_end_matches("/api/admin")).await;
 
     // 1. Unauthenticated request returns 401
     let unauth = client
@@ -526,7 +533,7 @@ admin_token = "notif-admin-secret"
     // 2. GET /notifications/settings returns initial revision 1
     let settings_resp: serde_json::Value = client
         .get(format!("{base}/notifications/settings"))
-        .bearer_auth("notif-admin-secret")
+        .bearer_auth(&web_token)
         .send()
         .await
         .unwrap()
@@ -539,7 +546,7 @@ admin_token = "notif-admin-secret"
     // 3. PUT /notifications/settings with If-Match: "1" enables Telegram & Zalo
     let put_resp = client
         .put(format!("{base}/notifications/settings"))
-        .bearer_auth("notif-admin-secret")
+        .bearer_auth(&web_token)
         .header("If-Match", "\"1\"")
         .json(&json!({
             "web_ui": {
@@ -580,7 +587,7 @@ admin_token = "notif-admin-secret"
     // 4. POST /notifications/channels/telegram/test & zalo/test
     let test_tg: serde_json::Value = client
         .post(format!("{base}/notifications/channels/telegram/test"))
-        .bearer_auth("notif-admin-secret")
+        .bearer_auth(&web_token)
         .json(&json!({"message": "Ping Telegram"}))
         .send()
         .await
@@ -593,7 +600,7 @@ admin_token = "notif-admin-secret"
 
     let test_zalo: serde_json::Value = client
         .post(format!("{base}/notifications/channels/zalo/test"))
-        .bearer_auth("notif-admin-secret")
+        .bearer_auth(&web_token)
         .json(&json!({"message": "Ping Zalo"}))
         .send()
         .await
@@ -616,7 +623,7 @@ admin_token = "notif-admin-secret"
 
     let inbox_resp: serde_json::Value = client
         .get(format!("{base}/notifications?unread_only=true"))
-        .bearer_auth("notif-admin-secret")
+        .bearer_auth(&web_token)
         .send()
         .await
         .unwrap()
@@ -628,7 +635,7 @@ admin_token = "notif-admin-secret"
 
     let read_resp: serde_json::Value = client
         .post(format!("{base}/notifications/read"))
-        .bearer_auth("notif-admin-secret")
+        .bearer_auth(&web_token)
         .json(&json!({"ids": [published.id], "all": false}))
         .send()
         .await
@@ -641,7 +648,7 @@ admin_token = "notif-admin-secret"
 
     let del_resp: serde_json::Value = client
         .delete(format!("{base}/notifications/{}", published.id))
-        .bearer_auth("notif-admin-secret")
+        .bearer_auth(&web_token)
         .send()
         .await
         .unwrap()

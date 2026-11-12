@@ -62,10 +62,10 @@ impl LlmProvider for ManagementLlm {
     }
 }
 
-async fn connect_assistant(base: &str) -> Socket {
+async fn connect_assistant(base: &str, web_token: &str) -> Socket {
     let ticket: serde_json::Value = Client::new()
         .post(format!("{base}/api/admin/assistant/ws-ticket"))
-        .bearer_auth("admin-test-token")
+        .bearer_auth(&web_token)
         .header("Origin", "http://localhost")
         .send()
         .await
@@ -136,6 +136,7 @@ async fn verified_assistant_reads_six_tools_with_status_results_and_tts() {
         Arc::new(VoiceTts),
     ));
     let (base, task) = start_with_system_mcp(providers, "physical-token", true).await;
+    let web_token = admin_web_token(&Client::new(), &base).await;
     let client = Client::new();
     for (path, body) in [
         (
@@ -149,7 +150,7 @@ async fn verified_assistant_reads_six_tools_with_status_results_and_tts() {
     ] {
         client
             .post(format!("{base}/api/admin/{path}"))
-            .bearer_auth("admin-test-token")
+            .bearer_auth(&web_token)
             .json(&body)
             .send()
             .await
@@ -161,7 +162,7 @@ async fn verified_assistant_reads_six_tools_with_status_results_and_tts() {
         .put(format!(
             "{base}/api/admin/agents/studio/mcp-bindings/weather"
         ))
-        .bearer_auth("admin-test-token")
+        .bearer_auth(&web_token)
         .header("If-Match", "\"1\"")
         .json(&serde_json::json!({"enabled":false}))
         .send()
@@ -171,7 +172,7 @@ async fn verified_assistant_reads_six_tools_with_status_results_and_tts() {
         .unwrap();
     client
         .put(format!("{base}/api/admin/system/assistant-device"))
-        .bearer_auth("admin-test-token")
+        .bearer_auth(&web_token)
         .json(&serde_json::json!({"agent_key":"studio","enabled":true}))
         .send()
         .await
@@ -187,7 +188,7 @@ async fn verified_assistant_reads_six_tools_with_status_results_and_tts() {
             .status(),
         StatusCode::NOT_FOUND
     );
-    let frames = run_turn(&mut connect_assistant(&base).await).await;
+    let frames = run_turn(&mut connect_assistant(&base, &web_token).await).await;
     let status: Vec<_> = frames
         .iter()
         .filter(|frame| frame["type"] == "tool")
@@ -258,10 +259,11 @@ async fn disabled_assistant_and_physical_device_do_not_advertise_system_tools() 
             Arc::new(VoiceTts),
         ));
         let (base, task) = start_with_system_mcp(providers, "physical-token", enabled).await;
+        let web_token = admin_web_token(&Client::new(), &base).await;
         let client = Client::new();
         client
             .post(format!("{base}/api/admin/agents"))
-            .bearer_auth("admin-test-token")
+            .bearer_auth(&web_token)
             .json(&serde_json::json!({"key":"studio","name":"Studio"}))
             .send()
             .await
@@ -271,7 +273,7 @@ async fn disabled_assistant_and_physical_device_do_not_advertise_system_tools() 
         let mut socket = if physical {
             client
                 .post(format!("{base}/api/admin/devices"))
-                .bearer_auth("admin-test-token")
+                .bearer_auth(&web_token)
                 .json(&serde_json::json!({"device_id":"physical","agent_key":"studio"}))
                 .send()
                 .await
@@ -282,14 +284,14 @@ async fn disabled_assistant_and_physical_device_do_not_advertise_system_tools() 
         } else {
             client
                 .put(format!("{base}/api/admin/system/assistant-device"))
-                .bearer_auth("admin-test-token")
+                .bearer_auth(&web_token)
                 .json(&serde_json::json!({"agent_key":"studio","enabled":true}))
                 .send()
                 .await
                 .unwrap()
                 .error_for_status()
                 .unwrap();
-            connect_assistant(&base).await
+            connect_assistant(&base, &web_token).await
         };
         let frames = run_turn(&mut socket).await;
         assert!(frames.iter().all(|frame| frame["type"] != "tool"));
@@ -318,6 +320,7 @@ async fn admin_http_system_logs_sse_stream_and_audit_logs_endpoints() {
         Arc::new(VoiceTts),
     ));
     let (base, task) = start_with_system_mcp(providers, "physical-token", true).await;
+    let web_token = admin_web_token(&Client::new(), &base).await;
     let client = Client::new();
 
     // 1. Unauthenticated request is rejected with 401.
@@ -331,7 +334,7 @@ async fn admin_http_system_logs_sse_stream_and_audit_logs_endpoints() {
     // 2. Create an agent to generate an admin_audit_events row.
     client
         .post(format!("{base}/api/admin/agents"))
-        .bearer_auth("admin-test-token")
+        .bearer_auth(&web_token)
         .json(&serde_json::json!({"key":"studio","name":"Studio"}))
         .send()
         .await
@@ -344,7 +347,7 @@ async fn admin_http_system_logs_sse_stream_and_audit_logs_endpoints() {
         .get(format!(
             "{base}/api/admin/system/audit-logs?resource_type=agent&outcome=success"
         ))
-        .bearer_auth("admin-test-token")
+        .bearer_auth(&web_token)
         .send()
         .await
         .unwrap();
@@ -356,7 +359,7 @@ async fn admin_http_system_logs_sse_stream_and_audit_logs_endpoints() {
     // 4. GET /api/admin/system/logs returns structured items and level summary counts.
     let logs_resp = client
         .get(format!("{base}/api/admin/system/logs?limit=20"))
-        .bearer_auth("admin-test-token")
+        .bearer_auth(&web_token)
         .send()
         .await
         .unwrap();
@@ -367,7 +370,7 @@ async fn admin_http_system_logs_sse_stream_and_audit_logs_endpoints() {
     // 5. GET /api/admin/system/logs/stream emits `ready` SSE frame.
     let sse_resp = client
         .get(format!("{base}/api/admin/system/logs/stream"))
-        .bearer_auth("admin-test-token")
+        .bearer_auth(&web_token)
         .send()
         .await
         .unwrap();
