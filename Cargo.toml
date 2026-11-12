@@ -54,11 +54,6 @@ uuid = { version = "1.26", features = ["v4", "serde"] }
 unicode-normalization = "0.1"
 zeroize = "1.8"
 
-[patch.crates-io]
-llm-wiki-rs = { git = "file:///Users/lamphuchai/Desktop/project_rust/libs/llm-wiki-rs", branch = "feat/job-skill-catalog-hardening" }
-orchestrator-agent = { git = "file:///Users/lamphuchai/Desktop/project_rust/libs/orchestrator_agent_rs", branch = "feat/job-skill-catalog-hardening" }
-orchestrator-flow = { git = "file:///Users/lamphuchai/Desktop/project_rust/libs/orchestrator_task_rs", branch = "feat/job-skill-catalog-hardening" }
-
 [profile.dev]
 debug = "line-tables-only"
 

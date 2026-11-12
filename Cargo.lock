@@ -1748,7 +1748,7 @@ dependencies = [
  "js-sys",
  "log",
  "wasm-bindgen",
- "windows-core 0.61.2",
+ "windows-core 0.62.2",
 ]
 
 [[package]]
@@ -2197,7 +2197,8 @@ dependencies = [
 [[package]]
 name = "llm-wiki-rs"
 version = "0.2.3"
-source = "git+file:///Users/lamphuchai/Desktop/project_rust/libs/llm-wiki-rs?branch=feat%2Fjob-skill-catalog-hardening#ce822380f76a55b4a6c0b27c5dfb862ad7d9d6b0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ac4ac012edbd8ba03fa3061a0d800069ab494ed77835f965f02525e063a5592c"
 dependencies = [
  "blake3",
  "chrono",
@@ -2692,7 +2693,8 @@ dependencies = [
 [[package]]
 name = "orchestrator-agent"
 version = "0.7.1"
-source = "git+file:///Users/lamphuchai/Desktop/project_rust/libs/orchestrator_agent_rs?branch=feat%2Fjob-skill-catalog-hardening#cfb82e96d247883f5b9963d247b8224615306d89"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ec282f0ccae15a2f3a70c297e21814c437d2e1fce927855b10f85069f0187d6a"
 dependencies = [
  "async-trait",
  "futures",
@@ -2709,7 +2711,8 @@ dependencies = [
 [[package]]
 name = "orchestrator-flow"
 version = "0.6.1"
-source = "git+file:///Users/lamphuchai/Desktop/project_rust/libs/orchestrator_task_rs?branch=feat%2Fjob-skill-catalog-hardening#c7bcc2555b01d9bed43992e20373d68b90cb01cb"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2f13bdd9a2336229fe7e81085e1b68b68900529f464d387a685b08af9ce9acb1"
 dependencies = [
  "anydoc",
  "async-trait",
@@ -4393,7 +4396,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.3.4",
+ "getrandom 0.4.3",
  "once_cell",
  "rustix",
  "windows-sys 0.61.2",
