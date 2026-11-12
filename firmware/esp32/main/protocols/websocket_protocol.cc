@@ -206,9 +206,8 @@ std::string WebsocketProtocol::GetHelloMessage() {
     cJSON_AddBoolToObject(features, "aec", true);
 #endif
     cJSON_AddBoolToObject(features, "mcp", true);
-    if (hello_reminders_) {
-        cJSON_AddBoolToObject(features, "reminders", true);
-    }
+    // This firmware plays Direct Speech Reminders and sends Playback ACKs.
+    cJSON_AddBoolToObject(features, "reminders", true);
     cJSON_AddItemToObject(root, "features", features);
     AddTextFontCapabilities(root);
     cJSON_AddStringToObject(root, "transport", "websocket");

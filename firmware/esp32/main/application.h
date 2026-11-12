@@ -21,6 +21,7 @@
 #include "device_state_machine.h"
 #include "notify/notify_player.h"
 #include "push/device_push_channel.h"
+#include "push/reminder_playback.h"
 
 // Main event bits
 #define MAIN_EVENT_SCHEDULE             (1 << 0)
@@ -145,6 +146,7 @@ private:
     uint32_t notification_playback_id_ = 0;
     std::unique_ptr<Ota> ota_;
     std::unique_ptr<DevicePushChannel> push_channel_;
+    reminder_playback::Tracker reminder_tracker_;
 
     std::function<void(const std::string&)> mcp_broadcast_callback_;
 
@@ -184,6 +186,10 @@ private:
     void InitializeProtocol();
     void InitializePushChannel();
     void UpdatePushChannel();
+    static int64_t NowMs();
+    void CheckReminderDrained();
+    void FailReminderPlayback(const char* reason);
+    void SendReminderDecision(const reminder_playback::Decision& decision);
     void HandleWakeSignal();
     void ShowActivationCode(const std::string& code, const std::string& message);
     void SetListeningMode(ListeningMode mode);
