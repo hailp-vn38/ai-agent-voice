@@ -1,4 +1,5 @@
 use super::harness::*;
+use crate::admin_auth::admin_web_token;
 
 #[tokio::test]
 async fn background_http_foundation_is_authenticated_and_fails_closed_without_executor() {
@@ -18,7 +19,7 @@ tts = "test"
 url = "sqlite://{}"
 [api]
 enabled = true
-admin_token = "background-test-token"
+jwt_secret = "background-test-jwt-signing-secret-0123456789"
 [orchestrator]
 store_dir = "{}"
 prompts_dir = "{}"
@@ -34,6 +35,7 @@ prompts_dir = "{}"
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let base = format!("http://{}/api/admin", listener.local_addr().unwrap());
     let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    let web_token = admin_web_token(&reqwest::Client::new(), base.trim_end_matches("/api/admin")).await;
     let client = Client::new();
     assert_eq!(
         client
@@ -46,7 +48,7 @@ prompts_dir = "{}"
     );
     let response = client
         .get(format!("{base}/background/settings"))
-        .bearer_auth("background-test-token")
+        .bearer_auth(&web_token)
         .send()
         .await
         .unwrap();
@@ -56,7 +58,7 @@ prompts_dir = "{}"
     assert_eq!(settings["revision"], 1);
     let updated = client
         .put(format!("{base}/background/settings"))
-        .bearer_auth("background-test-token")
+        .bearer_auth(&web_token)
         .header("If-Match", "\"1\"")
         .json(&json!({"enabled": true}))
         .send()
@@ -68,7 +70,7 @@ prompts_dir = "{}"
     assert_eq!(updated_json["revision"], 2);
     let fetched = client
         .get(format!("{base}/background/settings"))
-        .bearer_auth("background-test-token")
+        .bearer_auth(&web_token)
         .send()
         .await
         .unwrap()
@@ -79,7 +81,7 @@ prompts_dir = "{}"
     assert_eq!(fetched["revision"], 2);
     let conflict = client
         .put(format!("{base}/background/settings"))
-        .bearer_auth("background-test-token")
+        .bearer_auth(&web_token)
         .header("If-Match", "\"1\"")
         .json(&json!({"enabled": false}))
         .send()
@@ -92,7 +94,7 @@ prompts_dir = "{}"
     );
     let response = client
         .post(format!("{base}/jobs"))
-        .bearer_auth("background-test-token")
+        .bearer_auth(&web_token)
         .json(&json!({"goal":"Collect public AI posts"}))
         .send()
         .await
@@ -115,7 +117,7 @@ prompts_dir = "{}"
     );
     let artifacts_resp = client
         .get(format!("{base}/artifacts?page=1&page_size=24"))
-        .bearer_auth("background-test-token")
+        .bearer_auth(&web_token)
         .send()
         .await
         .unwrap();
@@ -147,7 +149,7 @@ tts = "test"
 url = "sqlite://{}"
 [api]
 enabled = true
-admin_token = "background-test-token"
+jwt_secret = "background-test-jwt-signing-secret-0123456789"
 [orchestrator]
 enabled = true
 endpoint = "http://127.0.0.1:9/v1"
@@ -178,11 +180,12 @@ vault_dir = "{}"
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let base = format!("http://{}/api/admin", listener.local_addr().unwrap());
     let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    let web_token = admin_web_token(&reqwest::Client::new(), base.trim_end_matches("/api/admin")).await;
     let client = Client::new();
 
     let created = client
         .post(format!("{base}/jobs"))
-        .bearer_auth("background-test-token")
+        .bearer_auth(&web_token)
         .json(&json!({
             "recipe": {
                 "id": "playlist_sources",
@@ -205,7 +208,7 @@ vault_dir = "{}"
 
     let list: Value = client
         .get(format!("{base}/jobs"))
-        .bearer_auth("background-test-token")
+        .bearer_auth(&web_token)
         .send()
         .await
         .unwrap()

@@ -19,7 +19,6 @@ Mở `http://localhost:5173`, nhập token vào form Connect. Vite listen trên 
 | --- | --- | --- |
 | `VITE_API_BASE_URL` | Rỗng | Request cùng origin; development đi qua Vite proxy |
 | `VITE_DEV_PROXY_TARGET` | `http://127.0.0.1:8000` | Backend của development proxy |
-| `VITE_ADMIN_TOKEN` | Rỗng | Token fallback được nhúng vào bundle; mọi người tải bundle có thể đọc được |
 
 Ưu tiên nhập token lúc chạy. Token nhập được giữ trong `sessionStorage` với key `voice-agent-admin-token`, ưu tiên hơn fallback env. UI hiện chưa có thao tác logout/đổi token sau khi Connect; cách phục hồi khi nhập sai có trong [hướng dẫn vận hành](docs/development.md#token-sai-hoặc-401).
 
@@ -71,10 +70,10 @@ Bổ sung vào cấu hình server hợp lệ để bật Admin API:
 ```toml
 [api]
 enabled = true
-admin_token = "replace-with-your-admin-token"
+jwt_secret = "replace-with-a-random-secret-of-at-least-32-chars"
 ```
 
-Server vẫn cần SQLite và Provider configuration phù hợp. Xem [config.example.toml](../../config.example.toml) và [README server](../../README.md); web không tự thay cấu hình server.
+Admin đăng nhập bằng Admin Password; database mới dùng mật khẩu mặc định `admin` và buộc đổi ở lần đầu. Server vẫn cần SQLite và Provider configuration phù hợp. Xem [config.example.toml](../../config.example.toml) và [README server](../../README.md); web không tự thay cấu hình server.
 
 ```text
 src/

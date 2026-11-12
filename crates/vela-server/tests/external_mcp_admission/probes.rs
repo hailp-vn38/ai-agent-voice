@@ -8,8 +8,9 @@ async fn external_agent_reviews_exact_contract_and_drift_requires_new_review() {
     let server = start_mcp(McpBehaviour::with_tools(vec![tool("Light")])).await;
     let mut configuration = config(database_url());
     configuration.api.enabled = true;
-    configuration.api.admin_token = "review-token".into();
+    configuration.api.jwt_secret = vela_server::config::SecretString::new("external-mcp-probes-signing-secret-0123456789");
     let voice = start_with_config(configuration, ConstantSecrets(None)).await;
+    let admin = crate::admin_auth::admin_web_token(&reqwest::Client::new(), &voice.base).await;
     let pool = voice.database().await;
     seed(&pool).await;
     bind_server(&pool, "home", &server.url(), "{}", ("none", None, None)).await;
@@ -18,7 +19,7 @@ async fn external_agent_reviews_exact_contract_and_drift_requires_new_review() {
     let url = format!("{}/api/admin/agents/agent/tool-allowlist", voice.base);
     let items = client
         .get(&url)
-        .bearer_auth("review-token")
+        .bearer_auth(&admin)
         .send()
         .await
         .unwrap()
@@ -30,7 +31,7 @@ async fn external_agent_reviews_exact_contract_and_drift_requires_new_review() {
     let mut review = serde_json::json!({"server_key":"home","original_name":"Light","observed_revision":observation["observed_revision"],"fingerprint":observation["fingerprint"],"allowed":true,"sensitive":false});
     let response = client
         .put(&url)
-        .bearer_auth("review-token")
+        .bearer_auth(&admin)
         .header("If-Match", "\"1\"")
         .json(&review)
         .send()
@@ -65,7 +66,7 @@ async fn external_agent_reviews_exact_contract_and_drift_requires_new_review() {
     assert_eq!(
         client
             .put(&url)
-            .bearer_auth("review-token")
+            .bearer_auth(&admin)
             .header("If-Match", "\"1\"")
             .json(&review)
             .send()
@@ -77,7 +78,7 @@ async fn external_agent_reviews_exact_contract_and_drift_requires_new_review() {
     assert_eq!(
         client
             .put(&url)
-            .bearer_auth("review-token")
+            .bearer_auth(&admin)
             .header("If-Match", "\"2\"")
             .json(&review)
             .send()
@@ -103,7 +104,7 @@ async fn external_agent_reviews_exact_contract_and_drift_requires_new_review() {
     assert_eq!(
         client
             .put(&url)
-            .bearer_auth("review-token")
+            .bearer_auth(&admin)
             .header("If-Match", "\"3\"")
             .json(&review)
             .send()
@@ -121,13 +122,14 @@ async fn admin_mcp_credential_is_decrypted_for_requests_after_restart_and_rotati
     let server = start_mcp(McpBehaviour::with_tools(vec![tool("Light")])).await;
     let mut configuration = config(database_url());
     configuration.api.enabled = true;
-    configuration.api.admin_token = "review-token".into();
+    configuration.api.jwt_secret = vela_server::config::SecretString::new("external-mcp-probes-signing-secret-0123456789");
     let cipher = || vela_server::database::credentials::CredentialCipher::new(1, &[7; 32]).unwrap();
     let voice = start_with_config(configuration.clone(), cipher()).await;
+    let admin = crate::admin_auth::admin_web_token(&reqwest::Client::new(), &voice.base).await;
     let pool = voice.database().await;
     seed(&pool).await;
     let client = reqwest::Client::new();
-    let response = client.post(format!("{}/api/admin/mcp-servers",voice.base)).bearer_auth("review-token").json(&serde_json::json!({"key":"home","name":"Home","url":server.url(),"auth":{"type":"bearer"},"api_key":"mcp-secret-before-1111"})).send().await.unwrap();
+    let response = client.post(format!("{}/api/admin/mcp-servers",voice.base)).bearer_auth(&admin).json(&serde_json::json!({"key":"home","name":"Home","url":server.url(),"auth":{"type":"bearer"},"api_key":"mcp-secret-before-1111"})).send().await.unwrap();
     assert_eq!(response.status(), StatusCode::CREATED);
     assert_eq!(
         client
@@ -135,7 +137,7 @@ async fn admin_mcp_credential_is_decrypted_for_requests_after_restart_and_rotati
                 "{}/api/admin/agents/agent/mcp-bindings/home",
                 voice.base
             ))
-            .bearer_auth("review-token")
+            .bearer_auth(&admin)
             .header("if-match", "\"1\"")
             .json(&serde_json::json!({"enabled":true,"required":false}))
             .send()
@@ -146,6 +148,7 @@ async fn admin_mcp_credential_is_decrypted_for_requests_after_restart_and_rotati
     );
     voice.task.abort();
     let voice = start_with_config(configuration.clone(), cipher()).await;
+    let admin = crate::admin_auth::admin_web_token(&reqwest::Client::new(), &voice.base).await;
     voice.admit().await;
     assert!(!server.seen().is_empty());
     assert!(server.seen().iter().all(
@@ -154,7 +157,7 @@ async fn admin_mcp_credential_is_decrypted_for_requests_after_restart_and_rotati
     let review_url = format!("{}/api/admin/agents/agent/tool-allowlist", voice.base);
     let observations: serde_json::Value = client
         .get(&review_url)
-        .bearer_auth("review-token")
+        .bearer_auth(&admin)
         .send()
         .await
         .unwrap()
@@ -164,7 +167,7 @@ async fn admin_mcp_credential_is_decrypted_for_requests_after_restart_and_rotati
     let observation = &observations["items"][0];
     assert!(observation["source"]["auth_reference"].is_null());
     assert!(!observations.to_string().contains("mcp-secret-before-1111"));
-    assert_eq!(client.put(&review_url).bearer_auth("review-token").header("if-match",format!("\"{}\"",observation["revision"])).json(&serde_json::json!({"server_key":"home","original_name":"Light","observed_revision":observation["observed_revision"],"fingerprint":observation["fingerprint"],"allowed":true,"sensitive":false})).send().await.unwrap().status(),StatusCode::OK);
+    assert_eq!(client.put(&review_url).bearer_auth(&admin).header("if-match",format!("\"{}\"",observation["revision"])).json(&serde_json::json!({"server_key":"home","original_name":"Light","observed_revision":observation["observed_revision"],"fingerprint":observation["fingerprint"],"allowed":true,"sensitive":false})).send().await.unwrap().status(),StatusCode::OK);
     assert_eq!(
         names(voice.admit().await.external_mcp()),
         vec!["external.home.light"]
@@ -173,7 +176,7 @@ async fn admin_mcp_credential_is_decrypted_for_requests_after_restart_and_rotati
     assert_eq!(
         client
             .patch(format!("{}/api/admin/mcp-servers/home", voice.base))
-            .bearer_auth("review-token")
+            .bearer_auth(&admin)
             .header("if-match", "\"1\"")
             .json(&serde_json::json!({"api_key":"mcp-secret-after-2222"}))
             .send()
@@ -201,6 +204,7 @@ async fn admin_mcp_credential_is_decrypted_for_requests_after_restart_and_rotati
     ] {
         server.rewrite(|script| script.seen.lock().unwrap().clear());
         let voice = start_with_config(configuration.clone(), invalid_cipher).await;
+        let admin = crate::admin_auth::admin_web_token(&reqwest::Client::new(), &voice.base).await;
         assert!(names(voice.admit().await.external_mcp()).is_empty());
         assert!(
             server.seen().is_empty(),
@@ -209,12 +213,14 @@ async fn admin_mcp_credential_is_decrypted_for_requests_after_restart_and_rotati
         voice.task.abort();
     }
     let voice = start_with_config(configuration.clone(), cipher()).await;
-    assert_eq!(client.post(format!("{}/api/admin/mcp-servers",voice.base)).bearer_auth("review-token").json(&serde_json::json!({"key":"donor","name":"Donor","url":server.url(),"auth":{"type":"bearer"},"api_key":"mcp-donor-secret-3333"})).send().await.unwrap().status(),StatusCode::CREATED);
+    let admin = crate::admin_auth::admin_web_token(&reqwest::Client::new(), &voice.base).await;
+    assert_eq!(client.post(format!("{}/api/admin/mcp-servers",voice.base)).bearer_auth(&admin).json(&serde_json::json!({"key":"donor","name":"Donor","url":server.url(),"auth":{"type":"bearer"},"api_key":"mcp-donor-secret-3333"})).send().await.unwrap().status(),StatusCode::CREATED);
     // Fault injection: copying a valid encrypted record to another owner must fail its AAD check.
     sqlx::query("UPDATE mcp_servers SET credential_json=(SELECT credential_json FROM mcp_servers WHERE key='donor') WHERE key='home'").execute(&pool).await.unwrap();
     voice.task.abort();
     server.rewrite(|script| script.seen.lock().unwrap().clear());
     let voice = start_with_config(configuration, cipher()).await;
+    let admin = crate::admin_auth::admin_web_token(&reqwest::Client::new(), &voice.base).await;
     assert!(names(voice.admit().await.external_mcp()).is_empty());
     assert!(
         server.seen().is_empty(),
@@ -237,13 +243,14 @@ async fn admin_draft_connection_does_not_list_or_call_tools_and_discovery_is_com
         let server = start_mcp(behaviour).await;
         let mut configuration = config(database_url());
         configuration.api.enabled = true;
-        configuration.api.admin_token = "probe-token".into();
+        configuration.api.jwt_secret = vela_server::config::SecretString::new("external-mcp-probes-signing-secret-0123456789");
         let voice = start_with_config(configuration, ConstantSecrets(None)).await;
+        let admin = crate::admin_auth::admin_web_token(&reqwest::Client::new(), &voice.base).await;
         let client = reqwest::Client::new();
         let draft = serde_json::json!({"server":{"key":"home","url":server.url(),"auth":{"type":"bearer"},"api_key":"ephemeral-probe-key"}});
         let connection = client
             .post(format!("{}/api/admin/mcp-tests/connection", voice.base))
-            .bearer_auth("probe-token")
+            .bearer_auth(&admin)
             .json(&draft)
             .send()
             .await
@@ -261,7 +268,7 @@ async fn admin_draft_connection_does_not_list_or_call_tools_and_discovery_is_com
         );
         let discovery = client
             .post(format!("{}/api/admin/mcp-tests/discover", voice.base))
-            .bearer_auth("probe-token")
+            .bearer_auth(&admin)
             .json(&draft)
             .send()
             .await
@@ -275,7 +282,7 @@ async fn admin_draft_connection_does_not_list_or_call_tools_and_discovery_is_com
         assert_eq!(calls.lock().unwrap().len(), 0);
         let resources: serde_json::Value = client
             .get(format!("{}/api/admin/mcp-servers", voice.base))
-            .bearer_auth("probe-token")
+            .bearer_auth(&admin)
             .send()
             .await
             .unwrap()
@@ -293,15 +300,16 @@ async fn manual_saved_probes_keep_disabled_config_and_credentials_and_reject_sta
     let server = start_mcp(McpBehaviour::default()).await;
     let mut configuration = config(database_url());
     configuration.api.enabled = true;
-    configuration.api.admin_token = "probe-token".into();
+    configuration.api.jwt_secret = vela_server::config::SecretString::new("external-mcp-probes-signing-secret-0123456789");
     let cipher = vela_server::database::credentials::CredentialCipher::new(1, &[7; 32]).unwrap();
     let voice = start_with_config(configuration, cipher).await;
+    let admin = crate::admin_auth::admin_web_token(&reqwest::Client::new(), &voice.base).await;
     let client = reqwest::Client::new();
-    let create = client.post(format!("{}/api/admin/mcp-servers", voice.base)).bearer_auth("probe-token").json(&serde_json::json!({"key":"home","name":"Home","url":server.url(),"auth":{"type":"bearer"},"api_key":"saved-probe-secret"})).send().await.unwrap();
+    let create = client.post(format!("{}/api/admin/mcp-servers", voice.base)).bearer_auth(&admin).json(&serde_json::json!({"key":"home","name":"Home","url":server.url(),"auth":{"type":"bearer"},"api_key":"saved-probe-secret"})).send().await.unwrap();
     assert_eq!(create.status(), StatusCode::CREATED);
     let disable = client
         .patch(format!("{}/api/admin/mcp-servers/home", voice.base))
-        .bearer_auth("probe-token")
+        .bearer_auth(&admin)
         .header("if-match", "\"1\"")
         .json(&serde_json::json!({"enabled":false}))
         .send()
@@ -315,7 +323,7 @@ async fn manual_saved_probes_keep_disabled_config_and_credentials_and_reject_sta
                 "{}/api/admin/mcp-servers/home/test/{route}",
                 voice.base
             ))
-            .bearer_auth("probe-token")
+            .bearer_auth(&admin)
             .json(&serde_json::json!({}))
             .send()
             .await
@@ -349,13 +357,13 @@ async fn manual_saved_probes_keep_disabled_config_and_credentials_and_reject_sta
             StatusCode::BAD_REQUEST,
         ),
     ] {
-        let response = client.post(format!("{}/api/admin/mcp-tests/connection",voice.base)).bearer_auth("probe-token").json(&serde_json::json!({"server":{"key":"home","url":server.url(),"auth":{"type":"bearer"},"saved_credential":credential}})).send().await.unwrap();
+        let response = client.post(format!("{}/api/admin/mcp-tests/connection",voice.base)).bearer_auth(&admin).json(&serde_json::json!({"server":{"key":"home","url":server.url(),"auth":{"type":"bearer"},"saved_credential":credential}})).send().await.unwrap();
         assert_eq!(response.status(), status);
     }
     assert_eq!(server.behaviour.lock().unwrap().seen().len(), traffic);
     let after: serde_json::Value = client
         .get(format!("{}/api/admin/mcp-servers/home", voice.base))
-        .bearer_auth("probe-token")
+        .bearer_auth(&admin)
         .send()
         .await
         .unwrap()
@@ -377,11 +385,12 @@ async fn manual_discovery_rejects_an_invalid_later_page_without_partial_catalog(
     .await;
     let mut configuration = config(database_url());
     configuration.api.enabled = true;
-    configuration.api.admin_token = "probe-token".into();
+    configuration.api.jwt_secret = vela_server::config::SecretString::new("external-mcp-probes-signing-secret-0123456789");
     let voice = start_with_config(configuration, ConstantSecrets(None)).await;
+    let admin = crate::admin_auth::admin_web_token(&reqwest::Client::new(), &voice.base).await;
     let response = reqwest::Client::new()
         .post(format!("{}/api/admin/mcp-tests/discover", voice.base))
-        .bearer_auth("probe-token")
+        .bearer_auth(&admin)
         .json(
             &serde_json::json!({"server":{"key":"home","url":server.url(),"auth":{"type":"none"}}}),
         )
@@ -407,14 +416,15 @@ async fn manual_probe_admission_stays_bounded_after_waiter_cancellation_and_shut
     let server = start_mcp(behaviour).await;
     let mut configuration = config(database_url());
     configuration.api.enabled = true;
-    configuration.api.admin_token = "probe-token".into();
+    configuration.api.jwt_secret = vela_server::config::SecretString::new("external-mcp-probes-signing-secret-0123456789");
     configuration.api.mcp_tests.max_concurrency = 1;
     let voice = start_with_config(configuration, ConstantSecrets(None)).await;
+    let admin = crate::admin_auth::admin_web_token(&reqwest::Client::new(), &voice.base).await;
     let url = format!("{}/api/admin/mcp-tests/connection", voice.base);
     let draft =
         serde_json::json!({"server":{"key":"home","url":server.url(),"auth":{"type":"none"}}});
     let client = reqwest::Client::new();
-    let request = client.post(&url).bearer_auth("probe-token").json(&draft);
+    let request = client.post(&url).bearer_auth(&admin).json(&draft);
     let pending = tokio::spawn(async move { request.send().await });
     timeout(Duration::from_secs(1), async {
         while !observed
@@ -431,7 +441,7 @@ async fn manual_probe_admission_stays_bounded_after_waiter_cancellation_and_shut
     pending.abort();
     let overloaded = client
         .post(&url)
-        .bearer_auth("probe-token")
+        .bearer_auth(&admin)
         .json(&draft)
         .send()
         .await
@@ -440,7 +450,7 @@ async fn manual_probe_admission_stays_bounded_after_waiter_cancellation_and_shut
     voice.state.lifecycle.gate().close();
     let stopping = client
         .post(&url)
-        .bearer_auth("probe-token")
+        .bearer_auth(&admin)
         .json(&draft)
         .send()
         .await

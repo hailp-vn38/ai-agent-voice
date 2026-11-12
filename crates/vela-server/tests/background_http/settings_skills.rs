@@ -1,4 +1,5 @@
 use super::harness::*;
+use crate::admin_auth::admin_web_token;
 
 /// Points every runtime path of `config` under `root`, so parallel tests never share the default
 /// `data/...` directories (task store ownership and wiki vault would otherwise collide).
@@ -160,7 +161,7 @@ tts = "test"
 url = "sqlite://{}"
 [api]
 enabled = true
-admin_token = "background-test-token"
+jwt_secret = "background-test-jwt-signing-secret-0123456789"
 [orchestrator]
 store_dir = "{}"
 prompts_dir = "{}"
@@ -178,12 +179,13 @@ prompts_dir = "{}"
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let base = format!("http://{}/api/admin", listener.local_addr().unwrap());
     let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    let web_token = admin_web_token(&reqwest::Client::new(), base.trim_end_matches("/api/admin")).await;
     let client = Client::new();
 
     // 1. Create a database LLM provider with full model & generation bounds
     let created_resp = client
         .post(format!("{base}/providers"))
-        .bearer_auth("background-test-token")
+        .bearer_auth(&web_token)
         .json(&json!({
             "name": "DeepSeek R1 Worker",
             "type": "llm",
@@ -208,7 +210,7 @@ prompts_dir = "{}"
     // 1b. Create a database TTS provider (`type = "tts"`) and verify it is selectable for `tts_synthesize`
     let created_tts_resp = client
         .post(format!("{base}/providers"))
-        .bearer_auth("background-test-token")
+        .bearer_auth(&web_token)
         .json(&json!({
             "name": "VieNeu Server TTS",
             "type": "tts",
@@ -224,7 +226,7 @@ prompts_dir = "{}"
 
     let created_muse = client
         .post(format!("{base}/providers"))
-        .bearer_auth("background-test-token")
+        .bearer_auth(&web_token)
         .json(&json!({
             "name": "Muse Cloud",
             "type": "llm",
@@ -243,7 +245,7 @@ prompts_dir = "{}"
     // 2. Fetch GET /api/admin/background/settings and verify provider catalog + 11 agents
     let initial: Value = client
         .get(format!("{base}/background/settings"))
-        .bearer_auth("background-test-token")
+        .bearer_auth(&web_token)
         .send()
         .await
         .unwrap()
@@ -328,7 +330,7 @@ prompts_dir = "{}"
     // 3. Update global worker provider + specific subagent overrides via PUT /api/admin/background/settings
     let update_resp = client
         .put(format!("{base}/background/settings"))
-        .bearer_auth("background-test-token")
+        .bearer_auth(&web_token)
         .header("If-Match", "\"1\"")
         .json(&json!({
             "enabled": true,
@@ -424,7 +426,7 @@ prompts_dir = "{}"
     assert!(daily_subs.contains(&json!("cloud_worker")));
     let rejected_cloud_provider = client
         .put(format!("{base}/background/settings"))
-        .bearer_auth("background-test-token")
+        .bearer_auth(&web_token)
         .header("If-Match", "\"2\"")
         .json(&json!({"enabled": true, "agents": {"cloud_worker": {
             "enabled": true, "tool_providers": {"muse_task": db_provider_key}
@@ -437,7 +439,7 @@ prompts_dir = "{}"
     // 4. Reject invalid provider_ref or disabling a primary root agent
     let bad_provider = client
         .put(format!("{base}/background/settings"))
-        .bearer_auth("background-test-token")
+        .bearer_auth(&web_token)
         .header("If-Match", "\"2\"")
         .json(&json!({
             "enabled": true,
@@ -450,7 +452,7 @@ prompts_dir = "{}"
 
     let disable_root = client
         .put(format!("{base}/background/settings"))
-        .bearer_auth("background-test-token")
+        .bearer_auth(&web_token)
         .header("If-Match", "\"2\"")
         .json(&json!({
             "enabled": true,
@@ -623,7 +625,7 @@ tts = "test"
 url = "sqlite://{}"
 [api]
 enabled = true
-admin_token = "background-test-token"
+jwt_secret = "background-test-jwt-signing-secret-0123456789"
 [orchestrator]
 enabled = true
 store_dir = "{}"
@@ -644,12 +646,13 @@ skills_dir = "{}"
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let base = format!("http://{}/api/admin", listener.local_addr().unwrap());
     let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    let web_token = admin_web_token(&reqwest::Client::new(), base.trim_end_matches("/api/admin")).await;
     let client = Client::new();
 
     // 1. GET /background/settings includes built-in skills and dynamic subagent available_skills
     let initial: Value = client
         .get(format!("{base}/background/settings"))
-        .bearer_auth("background-test-token")
+        .bearer_auth(&web_token)
         .send()
         .await
         .unwrap()
@@ -848,7 +851,7 @@ skills_dir = "{}"
     // 2. GET /background/skills/wiki-ingest returns detail + default + ETag header
     let detail_resp = client
         .get(format!("{base}/background/skills/wiki-ingest"))
-        .bearer_auth("background-test-token")
+        .bearer_auth(&web_token)
         .send()
         .await
         .unwrap();
@@ -877,7 +880,7 @@ skills_dir = "{}"
     // 3. Edit built-in skill wiki-ingest with If-Match
     let edited_resp = client
         .put(format!("{base}/background/skills/wiki-ingest"))
-        .bearer_auth("background-test-token")
+        .bearer_auth(&web_token)
         .header("If-Match", format!("\"{etag1}\""))
         .json(&json!({
             "name": "wiki-ingest",
@@ -901,7 +904,7 @@ skills_dir = "{}"
     // Stale ETag on PUT -> 409 Conflict
     let stale_put = client
         .put(format!("{base}/background/skills/wiki-ingest"))
-        .bearer_auth("background-test-token")
+        .bearer_auth(&web_token)
         .header("If-Match", format!("\"{etag1}\""))
         .json(&json!({
             "name": "wiki-ingest",
@@ -920,7 +923,7 @@ skills_dir = "{}"
     // 4. Deleting a built-in skill is rejected with 400 builtin_skill_cannot_be_deleted
     let del_builtin = client
         .delete(format!("{base}/background/skills/wiki-ingest"))
-        .bearer_auth("background-test-token")
+        .bearer_auth(&web_token)
         .header("If-Match", format!("\"{etag2}\""))
         .send()
         .await
@@ -934,7 +937,7 @@ skills_dir = "{}"
     // 5. Restore default on built-in skill via PUT using `default` fields -> is_modified becomes false
     let restored_resp = client
         .put(format!("{base}/background/skills/wiki-ingest"))
-        .bearer_auth("background-test-token")
+        .bearer_auth(&web_token)
         .header("If-Match", format!("\"{etag2}\""))
         .json(&json!({
             "name": default_name,
@@ -952,7 +955,7 @@ skills_dir = "{}"
     // 6. Create a Custom Job Skill with If-None-Match: *
     let create_resp = client
         .put(format!("{base}/background/skills/custom-seo-audit"))
-        .bearer_auth("background-test-token")
+        .bearer_auth(&web_token)
         .header("If-None-Match", "*")
         .json(&json!({
             "name": "custom-seo-audit",
@@ -973,7 +976,7 @@ skills_dir = "{}"
     // Duplicate create with If-None-Match: * -> 409 already_exists
     let dup_create = client
         .put(format!("{base}/background/skills/custom-seo-audit"))
-        .bearer_auth("background-test-token")
+        .bearer_auth(&web_token)
         .header("If-None-Match", "*")
         .json(&json!({
             "name": "custom-seo-audit-2",
@@ -992,7 +995,7 @@ skills_dir = "{}"
     // Invalid quote in frontmatter name -> 400 invalid_skill_name
     let bad_name = client
         .put(format!("{base}/background/skills/bad-quote-skill"))
-        .bearer_auth("background-test-token")
+        .bearer_auth(&web_token)
         .header("If-None-Match", "*")
         .json(&json!({
             "name": "bad \"quote\"",
@@ -1011,7 +1014,7 @@ skills_dir = "{}"
     // 7. Assign custom-seo-audit to wiki_researcher via PUT /background/settings
     let assign_resp = client
         .put(format!("{base}/background/settings"))
-        .bearer_auth("background-test-token")
+        .bearer_auth(&web_token)
         .header("If-Match", "\"1\"")
         .json(&json!({
             "enabled": true,
@@ -1094,7 +1097,7 @@ skills_dir = "{}"
 
     let custom_detail: Value = client
         .get(format!("{base}/background/skills/custom-seo-audit"))
-        .bearer_auth("background-test-token")
+        .bearer_auth(&web_token)
         .send()
         .await
         .unwrap()
@@ -1106,7 +1109,7 @@ skills_dir = "{}"
     // 8. Delete custom-seo-audit with If-Match -> 204 No Content, and read-time filtering removes it from wiki_researcher
     let wrong_del = client
         .delete(format!("{base}/background/skills/custom-seo-audit"))
-        .bearer_auth("background-test-token")
+        .bearer_auth(&web_token)
         .header("If-Match", "\"wrong-etag\"")
         .send()
         .await
@@ -1115,7 +1118,7 @@ skills_dir = "{}"
 
     let ok_del = client
         .delete(format!("{base}/background/skills/custom-seo-audit"))
-        .bearer_auth("background-test-token")
+        .bearer_auth(&web_token)
         .header("If-Match", format!("\"{custom_etag}\""))
         .send()
         .await
@@ -1124,7 +1127,7 @@ skills_dir = "{}"
 
     let get_deleted = client
         .get(format!("{base}/background/skills/custom-seo-audit"))
-        .bearer_auth("background-test-token")
+        .bearer_auth(&web_token)
         .send()
         .await
         .unwrap();
@@ -1132,7 +1135,7 @@ skills_dir = "{}"
 
     let after_del_settings: Value = client
         .get(format!("{base}/background/settings"))
-        .bearer_auth("background-test-token")
+        .bearer_auth(&web_token)
         .send()
         .await
         .unwrap()
@@ -1853,7 +1856,7 @@ tts = "test"
 url = "sqlite://{}"
 [api]
 enabled = true
-admin_token = "background-test-token"
+jwt_secret = "background-test-jwt-signing-secret-0123456789"
 [orchestrator]
 store_dir = "{}"
 prompts_dir = "{}"
@@ -1871,6 +1874,7 @@ prompts_dir = "{}"
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let base = format!("http://{}/api/admin", listener.local_addr().unwrap());
     let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    let web_token = admin_web_token(&reqwest::Client::new(), base.trim_end_matches("/api/admin")).await;
     let client = Client::new();
     let agent = |settings: &Value, id: &str| {
         settings["agents"]
@@ -1884,7 +1888,7 @@ prompts_dir = "{}"
 
     let initial: Value = client
         .get(format!("{base}/background/settings"))
-        .bearer_auth("background-test-token")
+        .bearer_auth(&web_token)
         .send()
         .await
         .unwrap()
@@ -1907,7 +1911,7 @@ prompts_dir = "{}"
     // A newly chosen ref is still rejected, even while stale refs are carried over.
     let rejected = client
         .put(format!("{base}/background/settings"))
-        .bearer_auth("background-test-token")
+        .bearer_auth(&web_token)
         .header("If-Match", format!("\"{revision}\""))
         .json(&json!({
             "enabled": true,
@@ -1920,7 +1924,7 @@ prompts_dir = "{}"
 
     let saved = client
         .put(format!("{base}/background/settings"))
-        .bearer_auth("background-test-token")
+        .bearer_auth(&web_token)
         .header("If-Match", format!("\"{revision}\""))
         .json(&json!({
             "enabled": true,
@@ -1947,7 +1951,7 @@ prompts_dir = "{}"
 
     let created = client
         .post(format!("{base}/background/agents"))
-        .bearer_auth("background-test-token")
+        .bearer_auth(&web_token)
         .header("If-Match", format!("\"{}\"", saved["revision"]))
         .json(&json!({
             "id": "custom_after_delete",

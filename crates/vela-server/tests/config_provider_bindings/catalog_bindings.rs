@@ -3,7 +3,7 @@ use super::harness::*;
 #[tokio::test]
 async fn catalog_merges_sources_before_filtering_paging_and_never_loads_or_exposes_secrets() {
     let (base, _db, builds, task) = server(true).await;
-    let c = client();
+    let c = client(&base).await;
     let all = get(&c, &format!("{base}/providers?sort=name&page_size=4")).await;
     assert_eq!(all["total"], 7);
     assert_eq!(all["facets"]["vad"], 2);
@@ -104,7 +104,7 @@ async fn catalog_merges_sources_before_filtering_paging_and_never_loads_or_expos
 #[tokio::test]
 async fn bindings_round_trip_replace_sources_preserve_revision_audit_and_admission() {
     let (base, db, _builds, task) = server(true).await;
-    let c = client();
+    let c = client(&base).await;
     for (revision, key) in [
         (1, "primary"),
         (2, "config:llm:primary"),
@@ -197,7 +197,7 @@ async fn bindings_round_trip_replace_sources_preserve_revision_audit_and_admissi
 #[tokio::test]
 async fn legacy_rejects_config_binding_before_mutating_template() {
     let (base, _db, _builds, task) = server(false).await;
-    let c = client();
+    let c = client(&base).await;
     let r = c
         .put(format!("{base}/templates/template/providers/llm"))
         .header("If-Match", "\"1\"")

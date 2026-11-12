@@ -1,3 +1,6 @@
+#[path = "support/admin_auth.rs"]
+mod admin_auth;
+
 use std::sync::Arc;
 
 use axum::Router;
@@ -111,7 +114,7 @@ async fn start_enrollment() -> (String, String, JoinHandle<()>) {
     };
     app_config.api = vela_server::config::AdminApiConfig {
         enabled: true,
-        admin_token: "enrollment-admin".into(),
+        jwt_secret: vela_server::config::SecretString::new("enrollment-signing-secret-0123456789"),
         ..Default::default()
     };
     let router = bootstrap_with_providers(app_config, Arc::new(ProviderSet::unavailable()))
@@ -245,6 +248,7 @@ async fn ota_enrollment_claim_and_activate_create_exactly_one_admitted_device() 
     sqlx::query("INSERT INTO agents (key,name,enabled,created_at,updated_at) VALUES ('agent', 'Agent', 1, 1, 1)")
         .execute(&pool).await.unwrap();
     let client = reqwest::Client::new();
+    let admin = crate::admin_auth::admin_web_token(&client, &base).await;
     let ota = client
         .get(format!("{base}/voice/ota/"))
         .header("Device-Id", "opaque:Device-A")
@@ -274,7 +278,7 @@ async fn ota_enrollment_claim_and_activate_create_exactly_one_admitted_device() 
     assert_eq!(pending.status(), reqwest::StatusCode::ACCEPTED);
     let claimed = client
         .post(format!("{base}/api/admin/device-enrollments/claim"))
-        .bearer_auth("enrollment-admin")
+        .bearer_auth(&admin)
         .json(&serde_json::json!({"code":code,"agent_key":"agent","name":"Loa"}))
         .send()
         .await

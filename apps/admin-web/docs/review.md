@@ -77,8 +77,8 @@ Nguồn: [DeviceFormModal](../src/components/admin/DeviceFormModal.vue), [Agent 
 Nguồn: [App.vue:22](../src/App.vue#L22), [auth store](../src/stores/auth.ts).
 
 - **What this is:** Connect lưu token, gọi loadAll và ẩn form khi token không rỗng.
-- **Problem:** Nhập token sai vẫn làm `auth.adminToken` truthy. Load trả 401, form đã ẩn và chỉ còn Retry với cùng token; không có logout/đổi credential. Operator phải sửa sessionStorage hoặc env ngoài UI để phục hồi.
-- **Fix:** Cho phép đổi/xóa token khi gặp authentication failure, dùng `setAdminToken()` hiện có và làm rõ fallback env. Không cần xây hệ thống account/login mới.
+- **Problem:** Nhập token sai vẫn làm `auth.adminWebToken` truthy. Load trả 401, form đã ẩn và chỉ còn Retry với cùng token; không có logout/đổi credential. Operator phải sửa sessionStorage hoặc env ngoài UI để phục hồi.
+- **Fix:** Cho phép đổi/xóa token khi gặp authentication failure, dùng `setAdminWebToken()` hiện có và làm rõ fallback env. Không cần xây hệ thống account/login mới.
 - **If we skip it:** Một lỗi nhập token khiến app không kết nối được từ chính UI.
 
 **Evidence:** Static trace: connect set token trước await, visibility chỉ dựa vào token; banner Retry không đổi auth state. Workaround nằm trong [development](development.md#token-sai-hoặc-401).

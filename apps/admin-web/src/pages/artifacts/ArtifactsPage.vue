@@ -365,7 +365,7 @@ watch(
   },
 )
 
-watch(() => auth.adminToken, startStream)
+watch(() => auth.adminWebToken, startStream)
 
 onMounted(() => {
   mounted = true

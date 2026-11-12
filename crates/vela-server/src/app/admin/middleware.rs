@@ -35,6 +35,10 @@ pub(super) async fn transport(request: Request, next: Next) -> Response {
             MAX_ASR_TEST_BODY + 80 * 1024
         } else if request.uri().path().ends_with("/knowledge/raw/batch") {
             super::knowledge::MAX_RAW_BATCH_BODY
+        } else if request.uri().path().ends_with("/system/backup/import")
+            || request.uri().path().ends_with("/system/backup/inspect")
+        {
+            crate::database::backup::MAX_BACKUP_BODY_BYTES + 80 * 1024
         } else if request.uri().path().ends_with("/speakers/captures") {
             MAX_QUICK_CAPTURE_BODY
         } else if request.uri().path().contains("/enrollments/")
@@ -85,34 +89,40 @@ pub(super) async fn authenticate(
     {
         return next.run(request).await;
     }
-    let valid = request
+    let header_count = request
         .headers()
         .get_all(header::AUTHORIZATION)
         .iter()
-        .count()
-        == 1
-        && request
+        .count();
+    if header_count > 1 {
+        return error(&request, StatusCode::UNAUTHORIZED, "unauthorized");
+    }
+    let token = if header_count == 1 {
+        request
             .headers()
             .get(header::AUTHORIZATION)
             .and_then(|value| value.to_str().ok())
             .and_then(|value| value.strip_prefix("Bearer "))
-            .is_some_and(|token| {
-                !token.is_empty()
-                    && constant_time_eq(token.as_bytes(), state.config.api.admin_token.as_bytes())
-            });
-    if valid {
-        next.run(request).await
+            .filter(|token| !token.is_empty())
     } else {
-        error(&request, StatusCode::UNAUTHORIZED, "unauthorized")
+        None
+    };
+    let password_change = super::auth::is_password_change_path(request.uri().path())
+        && request.method() == http::Method::POST;
+    if let Some(token) = token {
+        if state.admin_auth.accepts(token) {
+            if state.admin_auth.status().must_change_password && !password_change {
+                return error(&request, StatusCode::FORBIDDEN, "password_change_required");
+            }
+            return next.run(request).await;
+        }
     }
-}
-
-fn constant_time_eq(left: &[u8], right: &[u8]) -> bool {
-    let mut diff = left.len() ^ right.len();
-    for index in 0..left.len().max(right.len()) {
-        diff |= usize::from(*left.get(index).unwrap_or(&0) ^ *right.get(index).unwrap_or(&0));
+    // Password Login switched off: the Admin API admits requests without a credential, as the
+    // Admin has accepted that anyone who can reach the server has full access.
+    if !state.admin_auth.status().password_login_enabled {
+        return next.run(request).await;
     }
-    diff == 0
+    error(&request, StatusCode::UNAUTHORIZED, "unauthorized")
 }
 
 #[derive(Clone)]

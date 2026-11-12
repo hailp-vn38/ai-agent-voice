@@ -9,7 +9,7 @@ async fn memory_routes_need_a_device_that_exists_and_create_no_vault_otherwise()
             let request = server
                 .client
                 .request(method.clone(), url)
-                .bearer_auth(TOKEN);
+                .bearer_auth(&server.token);
             if body.is_null() {
                 request.send()
             } else {

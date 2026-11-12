@@ -223,7 +223,7 @@ export const useAdminStore = defineStore('admin', () => {
 
   function handleAuthFailure(cause: unknown) {
     if (isApiError(cause) && (cause.status === 401 || cause.code === 'unauthorized')) {
-      useAuthStore().setAdminToken(null)
+      useAuthStore().setAdminWebToken(null)
     }
   }
 

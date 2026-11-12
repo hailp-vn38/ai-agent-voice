@@ -89,7 +89,7 @@ async fn gated_voice(
 ) {
     let mut app_config = config(database_url());
     app_config.api.enabled = true;
-    app_config.api.admin_token = "latency-admin-token".into();
+    app_config.api.jwt_secret = vela_server::config::SecretString::new("external-mcp-latency-signing-secret-0123456789");
     app_config.database.devices.enrollment.enabled = true;
     let fixture = AppState::from_provider_set(
         app_config.clone(),
@@ -138,6 +138,7 @@ fn request(voice: &Voice) -> tokio_tungstenite::tungstenite::handshake::client::
 async fn websocket_discovers_mcp_while_selected_runtime_is_still_cold() {
     let server = start_mcp(McpBehaviour::with_tools(vec![tool("Light")])).await;
     let (voice, mut entered, release) = gated_voice(false).await;
+    let admin = crate::admin_auth::admin_web_token(&reqwest::Client::new(), &voice.base).await;
     bind_server(
         &voice.database().await,
         "external",
@@ -228,6 +229,7 @@ async fn a_failed_runtime_rejects_upgrade_without_waiting_for_optional_mcp() {
     })
     .await;
     let (voice, mut entered, release) = gated_voice(true).await;
+    let admin = crate::admin_auth::admin_web_token(&reqwest::Client::new(), &voice.base).await;
     bind_server(
         &voice.database().await,
         "external",
@@ -296,8 +298,9 @@ async fn assert_override_warmed(
 #[tokio::test]
 async fn creating_a_device_prewarms_its_override_before_its_first_websocket() {
     let (voice, mut entered, release) = gated_voice(false).await;
+    let admin = crate::admin_auth::admin_web_token(&reqwest::Client::new(), &voice.base).await;
     seed_override(&voice.database().await).await;
-    let response = reqwest::Client::new().post(format!("{}/api/admin/devices", voice.base)).bearer_auth("latency-admin-token")
+    let response = reqwest::Client::new().post(format!("{}/api/admin/devices", voice.base)).bearer_auth(&admin)
         .json(&serde_json::json!({"device_id":"created", "agent_key":"agent", "template_key":"override"})).send().await.unwrap();
     assert_eq!(response.status(), StatusCode::CREATED);
     assert_override_warmed(&voice, &mut entered, release).await;
@@ -306,10 +309,11 @@ async fn creating_a_device_prewarms_its_override_before_its_first_websocket() {
 #[tokio::test]
 async fn updating_a_device_prewarms_its_new_override_without_a_websocket() {
     let (voice, mut entered, release) = gated_voice(false).await;
+    let admin = crate::admin_auth::admin_web_token(&reqwest::Client::new(), &voice.base).await;
     seed_override(&voice.database().await).await;
     let response = reqwest::Client::new()
         .patch(format!("{}/api/admin/devices/device", voice.base))
-        .bearer_auth("latency-admin-token")
+        .bearer_auth(&admin)
         .header("If-Match", "\"1\"")
         .json(&serde_json::json!({"template_key":"override"}))
         .send()
@@ -322,6 +326,7 @@ async fn updating_a_device_prewarms_its_new_override_without_a_websocket() {
 #[tokio::test]
 async fn claiming_enrollment_prewarms_the_selected_override_before_reconnect() {
     let (voice, mut entered, release) = gated_voice(false).await;
+    let admin = crate::admin_auth::admin_web_token(&reqwest::Client::new(), &voice.base).await;
     seed_override(&voice.database().await).await;
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -347,7 +352,7 @@ async fn claiming_enrollment_prewarms_the_selected_override_before_reconnect() {
         .unwrap();
     let response = reqwest::Client::new()
         .post(format!("{}/api/admin/device-enrollments/claim", voice.base))
-        .bearer_auth("latency-admin-token")
+        .bearer_auth(&admin)
         .json(&serde_json::json!({"code":"123456", "agent_key":"agent", "template_key":"override"}))
         .send()
         .await

@@ -1,11 +1,14 @@
 <script setup lang="ts">
-import { AudioWaveform, PanelLeftClose, PanelLeftOpen } from '@lucide/vue'
+import { AudioWaveform, LogOut, PanelLeftClose, PanelLeftOpen } from '@lucide/vue'
 
+import { signOut } from '@/api/session'
 import LanguageSwitcher from '@/components/LanguageSwitcher.vue'
 import NotificationBell from '@/components/notifications/NotificationBell.vue'
+import { Button } from '@/components/ui/button'
 import ThemeToggle from '@/components/ThemeToggle.vue'
 import { useI18n } from '@/composables/useI18n'
 import { navigationGroups } from '@/config/navigation'
+import { adminWebTokenState } from '@/stores/admin-session'
 
 withDefaults(defineProps<{ collapsible?: boolean; collapsed?: boolean }>(), {
   collapsible: false,
@@ -68,6 +71,18 @@ const { t } = useI18n()
         <span v-if="!collapsed" class="font-medium">{{ t('notifications.title') }}</span>
         <NotificationBell compact placement="sidebar" />
       </div>
+      <Button
+        v-if="adminWebTokenState"
+        variant="ghost"
+        size="sm"
+        class="w-full"
+        :class="collapsed ? 'px-0' : 'mb-3 justify-start'"
+        :aria-label="t('auth.logout')"
+        @click="signOut()"
+      >
+        <LogOut class="size-4" />
+        <span v-if="!collapsed">{{ t('auth.logout') }}</span>
+      </Button>
       <div :class="collapsed ? 'contents' : 'flex items-center justify-between gap-2 text-xs'">
         <span v-if="!collapsed" class="font-medium">{{ t('app.theme') }}</span>
         <ThemeToggle />

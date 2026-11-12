@@ -15,8 +15,9 @@ import type {
   TestChannelInput,
   TestChannelOutput,
 } from '@/api/types/notifications'
-import { readAdminToken } from '@/stores/auth'
+import { readAdminWebToken } from '@/stores/auth'
 import { consumeSse, createSseParserState } from './sse'
+import { handleSessionResponse } from './session'
 
 export interface NotificationStreamHandlers {
   onCreated?: (item: NotificationItem) => void
@@ -757,7 +758,7 @@ export async function listenNotificationStream(
 ): Promise<void> {
   const unsubscribe = subscribeNotificationEvents(handlers)
   try {
-    const token = readAdminToken()
+    const token = readAdminWebToken()
     const response = await fetch(apiUrl('/api/admin/notifications/stream'), {
       headers: {
         Accept: 'text/event-stream',
@@ -766,6 +767,7 @@ export async function listenNotificationStream(
       cache: 'no-store',
       signal,
     })
+    await handleSessionResponse(response)
     if (
       !response.ok ||
       !response.body ||

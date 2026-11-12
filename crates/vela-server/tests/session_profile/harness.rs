@@ -339,6 +339,10 @@ pub async fn start_with_llm(
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
     let url = app_config.database.url.clone();
+    let session_db = Database::connect(&config(address, url.clone()).database)
+        .await
+        .unwrap();
+    crate::admin_auth::seed_default_admin_password(session_db.pool()).await;
     let state = AppState::from_provider_set_with_database(
         app_config,
         Arc::new(ProviderSet::with_all(
@@ -347,11 +351,7 @@ pub async fn start_with_llm(
             llm,
             Arc::new(ShortTts),
         )),
-        Some(
-            Database::connect(&config(address, url.clone()).database)
-                .await
-                .unwrap(),
-        ),
+        Some(session_db),
     );
     let state = extend(state);
     let task = tokio::spawn(async move {
@@ -631,7 +631,7 @@ pub async fn start_with_stalled_switch(
     let (llm, offered_tools) =
         SwitchScriptLlm::with_stall("default-llm", templates, continuation_stall);
     let (base, url, task) = start_with_llm(
-        with_server_default_prompt(config("127.0.0.1:0".parse().unwrap(), database_url())),
+        with_signing_secret(with_server_default_prompt(config("127.0.0.1:0".parse().unwrap(), database_url()))),
         Arc::new(llm),
         with_template_llm,
     )
@@ -677,6 +677,11 @@ impl ControlledBoundary {
     }
 }
 
+fn with_signing_secret(mut config: vela_server::config::AppConfig) -> vela_server::config::AppConfig {
+    config.api.jwt_secret = vela_server::config::SecretString::new("session-profile-switch-signing-secret-0123456789");
+    config
+}
+
 pub async fn start_controlled_switch(
     templates: &[&str],
 ) -> (
@@ -690,7 +695,7 @@ pub async fn start_controlled_switch(
     let slot: Arc<Mutex<Option<ControlledBoundary>>> = Arc::new(Mutex::new(None));
     let installed = Arc::clone(&slot);
     let (base, url, task) = start_with_llm(
-        with_server_default_prompt(config("127.0.0.1:0".parse().unwrap(), database_url())),
+        with_signing_secret(with_server_default_prompt(config("127.0.0.1:0".parse().unwrap(), database_url()))),
         Arc::new(llm),
         move |state| {
             let (at_boundary, at_boundary_rx) = mpsc::unbounded_channel();
@@ -712,7 +717,7 @@ pub async fn start_controlled_switch(
             let mut state = with_template_llm(state).with_writer_outcome_probe(probe);
             let config = Arc::make_mut(&mut state.config);
             config.api.enabled = true;
-            config.api.admin_token = "direct-admin".into();
+            config.api.jwt_secret = vela_server::config::SecretString::new("session-profile-signing-secret-0123456789");
             state
         },
     )

@@ -49,6 +49,11 @@ pub(crate) use knowledge_write_gate::{KnowledgeWriteGate, gate_knowledge_writes}
 pub use state::{AppState, SessionProfileAdmissionError};
 pub(crate) use wiki_sync::WikiSyncService;
 
+/// Recovery command: returns the Admin Password to the public default. See `admin::auth`.
+pub async fn reset_admin_password(config: &crate::config::DatabaseConfig) -> anyhow::Result<()> {
+    admin::auth::reset_to_default(config).await
+}
+
 /// Application seam for tests and other callers that have already initialized providers.
 pub async fn router_with_providers(
     config: AppConfig,
@@ -96,6 +101,13 @@ pub async fn bootstrap_with_providers_and_secret_resolver(
     prepare_memory(&mut state);
     prepare_background(&mut state).await?;
     prepare_enrollment(&mut state).await?;
+    admin::auth::prepare(&state)
+        .await
+        .map_err(|_| DatabaseError::Unavailable)?;
+    state
+        .system_metrics
+        .clone()
+        .start(state.lifecycle.listening().clone());
     Ok(router_with_state(state))
 }
 
@@ -339,6 +351,9 @@ pub async fn startup_with_lifecycle_and_secret_resolver(
     prepare_memory(&mut state);
     prepare_background(&mut state).await?;
     prepare_enrollment(&mut state).await?;
+    admin::auth::prepare(&state)
+        .await
+        .map_err(|_| DatabaseError::Unavailable)?;
     state
         .system_metrics
         .clone()
@@ -516,6 +531,9 @@ async fn managed_startup(
     prepare_memory(&mut state);
     prepare_background(&mut state).await?;
     prepare_enrollment(&mut state).await?;
+    admin::auth::prepare(&state)
+        .await
+        .map_err(|_| DatabaseError::Unavailable)?;
     state
         .system_metrics
         .clone()

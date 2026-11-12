@@ -68,7 +68,7 @@ async fn application_shutdown_uses_its_existing_deadline_for_managed_resources()
 async fn shutdown_rejects_admin_direct_speech_on_an_existing_session() {
     let mut app_config = config(database_url());
     app_config.api.enabled = true;
-    app_config.api.admin_token = "direct-admin".into();
+    app_config.api.jwt_secret = vela_server::config::SecretString::new("lifecycle-signing-secret-0123456789");
     let voice = start(app_config, Duration::from_secs(15)).await;
     seed(&voice.database().await).await;
     let (mut socket, _) = connect_async(request(&voice.base, "device")).await.unwrap();
@@ -78,10 +78,11 @@ async fn shutdown_rejects_admin_direct_speech_on_an_existing_session() {
         .unwrap()
         .unwrap()
         .unwrap();
+    let admin = crate::admin_auth::admin_web_token(&reqwest::Client::new(), &voice.base).await;
     assert!(voice.lifecycle.begin_shutdown());
     let response = reqwest::Client::new()
         .post(format!("{}/api/admin/devices/device/speak", voice.base))
-        .bearer_auth("direct-admin")
+        .bearer_auth(&admin)
         .json(&serde_json::json!({"request_id":"shutdown-1","text":"Do not start new speech."}))
         .send()
         .await
@@ -104,7 +105,7 @@ async fn admin_sse_streams_do_not_hold_graceful_shutdown_past_controlled_close_s
 
     let mut app_config = config(database_url());
     app_config.api.enabled = true;
-    app_config.api.admin_token = "sse-shutdown-admin".into();
+    app_config.api.jwt_secret = vela_server::config::SecretString::new("lifecycle-sse-signing-secret-0123456789");
     app_config.orchestrator.enabled = true;
     app_config.orchestrator.store_dir = temp_root.join("orch-store");
     app_config.orchestrator.tasks_store_dir = temp_root.join("tasks-store");
@@ -117,6 +118,7 @@ async fn admin_sse_streams_do_not_hold_graceful_shutdown_past_controlled_close_s
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
     let database = Database::connect(&app_config.database).await.unwrap();
+    crate::admin_auth::seed_default_admin_password(database.pool()).await;
     let lifecycle = RuntimeLifecycle::new(Duration::from_secs(15));
     let mut state = AppState::from_provider_set_with_database_and_shutdown(
         app_config.clone(),
@@ -141,6 +143,7 @@ async fn admin_sse_streams_do_not_hold_graceful_shutdown_past_controlled_close_s
 
     let base = format!("http://{address}");
     let client = reqwest::Client::new();
+    let admin = crate::admin_auth::admin_web_token(&client, &base).await;
     let mut streams = Vec::new();
     for path in [
         "/api/admin/system/logs/stream",
@@ -149,7 +152,7 @@ async fn admin_sse_streams_do_not_hold_graceful_shutdown_past_controlled_close_s
     ] {
         let resp = client
             .get(format!("{base}{path}"))
-            .bearer_auth("sse-shutdown-admin")
+            .bearer_auth(&admin)
             .send()
             .await
             .unwrap();

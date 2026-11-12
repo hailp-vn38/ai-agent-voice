@@ -7,6 +7,7 @@ use std::{
     time::Duration,
 };
 
+pub use crate::support::admin_auth::admin_web_token;
 pub use futures_util::{SinkExt, StreamExt, stream};
 use opus2::{Application, Channels, Encoder};
 use sqlx::{FromRow, SqlitePool};
@@ -20,7 +21,7 @@ use url::Url;
 pub use vela_server::{
     app::{AppState, router_with_state},
     config::{
-        AdminApiConfig, AppConfig, AudioConfig, AuthConfig, BargeInConfig, DatabaseConfig,
+        AdminApiConfig, AppConfig, AudioConfig, SecretString, AuthConfig, BargeInConfig, DatabaseConfig,
         DatabaseHistoryConfig, DeploymentConfig, LimitsConfig, LlmConfig, McpConfig,
         ProviderDefaultsConfig, ProvidersConfig, RuntimeConfig, ServerConfig, SileroOnnxConfig,
         SpeechOutputConfig, TtsConfig, VadInstanceConfig, VisionConfig, WebsocketConfig,
@@ -43,7 +44,6 @@ pub const PROMPT_MARKER: &str = "SERVER-DEFAULT-PROMPT";
 pub const TEMPLATE_PROMPT_V1: &str = "TEMPLATE-PROMPT-V1";
 pub const TEMPLATE_PROMPT_V2: &str = "TEMPLATE-PROMPT-V2";
 pub const GOODBYE_ARGUMENT: &str = "SECRET-GOODBYE-FROM-A-TOOL-ARGUMENT";
-pub const ADMIN_TOKEN: &str = "transcript-admin-token";
 
 // ---------------------------------------------------------------- scripted providers
 
@@ -281,7 +281,7 @@ pub fn config(url: String, history: DatabaseHistoryConfig) -> AppConfig {
         },
         api: AdminApiConfig {
             enabled: true,
-            admin_token: ADMIN_TOKEN.to_owned(),
+            jwt_secret: SecretString::new("transcript-harness-signing-secret-0123456789".to_owned()),
             ..Default::default()
         },
         shutdown: Default::default(),
@@ -295,6 +295,7 @@ pub fn config(url: String, history: DatabaseHistoryConfig) -> AppConfig {
 
 pub struct Harness {
     pub base: String,
+    pub token: String,
     pub url: String,
     pub metrics: Option<Arc<HistoryWriterMetrics>>,
     pub llm: Arc<ScriptLlm>,
@@ -303,6 +304,39 @@ pub struct Harness {
 
 pub async fn start(llm: Arc<ScriptLlm>, history: DatabaseHistoryConfig) -> Harness {
     start_with_database(llm, history, 30_000).await
+}
+
+/// A server built through the production bootstrap, so the default Admin Password is seeded and
+/// `token` is a usable Admin Web Token. Tests that call the Admin API use this; it exposes no
+/// history metrics, which the archive-writer tests read through `start`.
+pub async fn start_prepared(llm: Arc<ScriptLlm>, history: DatabaseHistoryConfig) -> Harness {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let url = database_url();
+    let app_config = config(url.clone(), history);
+    let shared_llm: Arc<dyn LlmProvider> = llm.clone();
+    let router = vela_server::app::bootstrap_with_providers(
+        app_config,
+        Arc::new(ProviderSet::with_all(
+            Arc::new(SilentVad),
+            Arc::new(FinalAsr),
+            shared_llm,
+            Arc::new(ShortTts),
+        )),
+    )
+    .await
+    .unwrap();
+    let task = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    let base = format!("http://{address}");
+    let token = admin_web_token(&reqwest::Client::new(), &base).await;
+    Harness {
+        base,
+        token,
+        url,
+        metrics: None,
+        llm,
+        task,
+    }
 }
 
 pub async fn start_with_database(
@@ -335,6 +369,7 @@ pub async fn start_with_database(
     });
     Harness {
         base: format!("http://{address}"),
+        token: String::new(),
         url,
         metrics,
         llm,

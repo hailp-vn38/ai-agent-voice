@@ -253,7 +253,7 @@ tts = "test"
 url = "{}"
 [api]
 enabled = {}
-admin_token = "admin-test-token"
+jwt_secret = "admin-harness-signing-secret-0123456789"
 "#,
             database_uri, api_enabled
         ),
@@ -276,9 +276,11 @@ admin_token = "admin-test-token"
 
 /// Creates a Provider through the public Admin API and returns the key the server generated.
 pub async fn create_provider(client: &Client, providers: &str, body: serde_json::Value) -> String {
+    let base = providers.split("/api/admin").next().unwrap();
+    let web_token = admin_web_token(client, base).await;
     let response = client
         .post(providers)
-        .bearer_auth("admin-test-token")
+        .bearer_auth(&web_token)
         .json(&body)
         .send()
         .await
@@ -307,14 +309,16 @@ pub async fn seeded_provider(body: serde_json::Value) -> (String, String) {
 
 /// Keeps the Admin router mounted while making the already-configured database unavailable.
 /// This exercises the public status route's degradation response rather than a startup failure.
-pub async fn server_with_closed_database() -> (String, tokio::task::JoinHandle<()>) {
+pub async fn server_with_closed_database() -> (String, tokio::task::JoinHandle<()>, String) {
     resource_server(true, false).await
 }
 
+/// Returns the base URL, the serving task, and an Admin Web Token minted while the database still
+/// accepts the password login; the database is closed afterwards.
 pub async fn resource_server(
     api_enabled: bool,
     collect: bool,
-) -> (String, tokio::task::JoinHandle<()>) {
+) -> (String, tokio::task::JoinHandle<()>, String) {
     let config_path =
         std::env::temp_dir().join(format!("vela-admin-closed-{}.toml", uuid::Uuid::new_v4()));
     fs::write(
@@ -333,7 +337,7 @@ tts = "test"
 url = "{}"
 [api]
 enabled = {}
-admin_token = "admin-test-token"
+jwt_secret = "admin-harness-signing-secret-0123456789"
 "#,
             database_url(),
             api_enabled
@@ -347,6 +351,18 @@ admin_token = "admin-test-token"
         Arc::new(ProviderSet::unavailable()),
         Some(Database::connect(&config.database).await.unwrap()),
     );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let base = format!("http://{address}");
+    seed_default_admin_password(state.database.as_ref().unwrap().pool()).await;
+    let router = router_with_state(state.clone());
+    let task = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    // The API-disabled case mounts no Admin routes, so there is no login and no token to mint.
+    let token = if api_enabled {
+        admin_web_token(&Client::new(), &base).await
+    } else {
+        String::new()
+    };
     state.database.as_ref().unwrap().pool().close().await;
     if collect {
         let stop = state.lifecycle.listening().clone();
@@ -361,14 +377,7 @@ admin_token = "admin-test-token"
         stop.cancel();
         sampler.await.unwrap();
     }
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let address = listener.local_addr().unwrap();
-    let task = tokio::spawn(async move {
-        axum::serve(listener, router_with_state(state))
-            .await
-            .unwrap()
-    });
-    (format!("http://{address}"), task)
+    (base, task, token)
 }
 
 pub async fn server_with_loaded_llm(
@@ -399,7 +408,7 @@ tts = "test"
 url = "{}"
 [api]
 enabled = true
-admin_token = "admin-test-token"
+jwt_secret = "admin-harness-signing-secret-0123456789"
 [mcp.external.network]
 allowed_hosts = ["mcp.example.test"]
 "#,
@@ -460,7 +469,7 @@ tts = "test"
 url = "{}"
 [api]
 enabled = true
-admin_token = "admin-test-token"
+jwt_secret = "admin-harness-signing-secret-0123456789"
 [mcp.external.network]
 allowed_hosts = ["mcp.example.test"]
 "#,
@@ -522,7 +531,7 @@ tts = "test"
 url = "{}"
 [api]
 enabled = true
-admin_token = "admin-test-token"
+jwt_secret = "admin-harness-signing-secret-0123456789"
 [mcp.external.network]
 allowed_hosts = ["mcp.example.test"]
 "#,
@@ -588,7 +597,7 @@ tts = "test"
 url = "{}"
 [api]
 enabled = true
-admin_token = "admin-test-token"
+jwt_secret = "admin-harness-signing-secret-0123456789"
 "#,
             database_uri
         ),
@@ -663,3 +672,7 @@ pub async fn assert_waits_for_writer(
     assert_eq!(status, expected, "{body}");
     writer.close().await;
 }
+
+pub use crate::support::admin_auth::{
+    HARNESS_ADMIN_PASSWORD, admin_web_token, seed_default_admin_password,
+};

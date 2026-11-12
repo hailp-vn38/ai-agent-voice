@@ -30,7 +30,9 @@ impl AppConfig {
 
     pub fn parse_and_resolve(path: impl AsRef<Path>) -> Result<Self, ConfigError> {
         let path = path.as_ref();
-        let mut config: Self = toml::from_str(&fs::read_to_string(path)?)?;
+        let text = fs::read_to_string(path)?;
+        reject_removed_admin_key(&text)?;
+        let mut config: Self = toml::from_str(&text)?;
         config.resolve_agent(path)?;
         config.resolve_environment(path)?;
         Ok(config)
@@ -100,10 +102,10 @@ impl AppConfig {
                 }
             };
         }
-        if let Ok(token) = std::env::var("VOICE_ADMIN_TOKEN")
-            && !token.is_empty()
+        if let Ok(secret) = std::env::var("VOICE_ADMIN_JWT_SECRET")
+            && !secret.is_empty()
         {
-            self.api.admin_token = token;
+            self.api.jwt_secret = crate::config::SecretString::new(secret);
         }
         if let Ok(db_url) = std::env::var("VOICE_DATABASE_URL")
             && !db_url.trim().is_empty()
@@ -237,10 +239,46 @@ fn apply_provider_env_secret(id: &str, adapter: &str, target: &mut crate::config
     }
 }
 
-fn validate_admin_api(config: &AppConfig) -> Result<(), ConfigError> {
-    if config.api.enabled && config.api.admin_token.trim().is_empty() {
+/// The static Admin bearer setting was removed; a config that still carries it must be fixed by
+/// hand, and its value is never carried over to the signing secret.
+fn reject_removed_admin_key(text: &str) -> Result<(), ConfigError> {
+    let removed = toml::from_str::<toml::Table>(text)
+        .ok()
+        .and_then(|root| root.get("api")?.as_table()?.get("admin_token").cloned())
+        .is_some();
+    if removed {
         return Err(ConfigError::Validation(
-            "api.enabled requires a non-empty admin_token".into(),
+            "api.admin_token was removed: delete it and set api.jwt_secret (at least 32 characters) instead"
+                .into(),
+        ));
+    }
+    Ok(())
+}
+
+fn validate_admin_api(config: &AppConfig) -> Result<(), ConfigError> {
+    let jwt_secret = config.api.jwt_secret.expose().trim();
+    if config.api.enabled && jwt_secret.is_empty() {
+        return Err(ConfigError::Validation(
+            "api.enabled requires api.jwt_secret of at least 32 characters".into(),
+        ));
+    }
+    if !jwt_secret.is_empty() {
+        if jwt_secret.chars().count() < 32 {
+            return Err(ConfigError::Validation(
+                "api.jwt_secret must be at least 32 characters".into(),
+            ));
+        }
+        if jwt_secret == config.auth.token.trim()
+            || std::env::var("VOICE_SYSTEM_MCP_JWT_KEY").is_ok_and(|key| key.trim() == jwt_secret)
+        {
+            return Err(ConfigError::Validation(
+                "api.jwt_secret must not reuse auth.token or the System MCP JWT key".into(),
+            ));
+        }
+    }
+    if !(1..=2_592_000).contains(&config.api.token_ttl_secs) {
+        return Err(ConfigError::Validation(
+            "api.token_ttl_secs must be between 1 and 2592000".into(),
         ));
     }
     if !(1..=8).contains(&config.api.mcp_tests.max_concurrency)

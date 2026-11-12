@@ -7,7 +7,7 @@ token = "docker-test-voice"
 
 [api]
 enabled = true
-admin_token = "docker-test-admin"
+jwt_secret = "docker-test-jwt-signing-secret-0123456789"
 
 [database]
 url = "sqlite://data/vela.db"

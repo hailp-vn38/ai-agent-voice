@@ -7,14 +7,14 @@ pub use std::{
 
 pub use reqwest::{Client, RequestBuilder, Response, StatusCode};
 pub use serde_json::{Value, json};
+pub use crate::support::admin_auth::admin_web_token;
 pub use vela_server::{app::bootstrap_with_providers, config::AppConfig, providers::ProviderSet};
-
-pub const TOKEN: &str = "admin-test-token";
 
 pub struct Server {
     pub base: String,
     pub root: PathBuf,
     pub client: Client,
+    pub token: String,
     pub task: tokio::task::JoinHandle<()>,
 }
 
@@ -42,7 +42,7 @@ tts = "test"
 url = "sqlite://{db}"
 [api]
 enabled = true
-admin_token = "{TOKEN}"
+jwt_secret = "memory-harness-signing-secret-0123456789"
 [orchestrator]
 store_dir = "{root}/orch-store"
 tasks_store_dir = "{root}/tasks-store"
@@ -64,10 +64,13 @@ skills_dir = "{root}/skills"
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
     let task = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    let client = Client::new();
+    let token = admin_web_token(&client, &format!("http://{address}")).await;
     Server {
         base: format!("http://{address}/api/admin"),
         root: root.to_path_buf(),
-        client: Client::new(),
+        client,
+        token,
         task,
     }
 }
@@ -89,20 +92,20 @@ impl Server {
     pub fn get(&self, path: &str) -> RequestBuilder {
         self.client
             .get(format!("{}{path}", self.base))
-            .bearer_auth(TOKEN)
+            .bearer_auth(&self.token)
     }
 
     pub fn post(&self, path: &str, body: Value) -> RequestBuilder {
         self.client
             .post(format!("{}{path}", self.base))
-            .bearer_auth(TOKEN)
+            .bearer_auth(&self.token)
             .json(&body)
     }
 
     pub fn put(&self, path: &str, body: Value) -> RequestBuilder {
         self.client
             .put(format!("{}{path}", self.base))
-            .bearer_auth(TOKEN)
+            .bearer_auth(&self.token)
             .json(&body)
     }
 
@@ -210,7 +213,7 @@ pub async fn delete_device(server: &Server, device: &str, revision: i64) -> Resp
     server
         .client
         .delete(format!("{}/devices/{device}", server.base))
-        .bearer_auth(TOKEN)
+        .bearer_auth(&server.token)
         .header("if-match", format!("\"{revision}\""))
         .send()
         .await

@@ -1,3 +1,6 @@
+#[path = "../../../../tests/support/admin_auth.rs"]
+mod admin_web_token;
+
 use crate::{
     app::{AppState, new_lifecycle, router_with_state},
     config::AppConfig,
@@ -35,7 +38,7 @@ llm = "test"
 tts = "test"
 [api]
 enabled = true
-admin_token = "gateway-admin-token"
+jwt_secret = "llm-gateway-test-jwt-signing-secret-0123456789"
 "#,
         db_path.display()
     );
@@ -60,6 +63,9 @@ admin_token = "gateway-admin-token"
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
+    if let Some(database) = state.database.as_ref() {
+        admin_web_token::seed_default_admin_password(database.pool()).await;
+    }
     let router = router_with_state(state);
     let handle = tokio::spawn(async move {
         axum::serve(listener, router).await.unwrap();
@@ -70,12 +76,13 @@ admin_token = "gateway-admin-token"
 #[tokio::test]
 async fn admin_llm_gateway_routes_and_provider_binding_lifecycle() {
     let (base, _hub, temp_dir, handle) = spawn_gateway_admin_server().await;
+    let web_token = admin_web_token::admin_web_token(&reqwest::Client::new(), base.trim_end_matches("/api/admin")).await;
     let client = reqwest::Client::new();
 
     // 1. GET /llm-gateway/vendors returns all 5 supported vendors
     let vendors_resp = client
         .get(format!("{base}/llm-gateway/vendors"))
-        .bearer_auth("gateway-admin-token")
+        .bearer_auth(&web_token)
         .send()
         .await
         .unwrap();
@@ -90,7 +97,7 @@ async fn admin_llm_gateway_routes_and_provider_binding_lifecycle() {
     // Muse connects through pasted cookies only, never through an OAuth session.
     let muse_start = client
         .post(format!("{base}/llm-gateway/oauth/start"))
-        .bearer_auth("gateway-admin-token")
+        .bearer_auth(&web_token)
         .json(&json!({ "vendor": "muse", "label": "Muse Browser Login" }))
         .send()
         .await
@@ -107,7 +114,7 @@ async fn admin_llm_gateway_routes_and_provider_binding_lifecycle() {
 
     let cookie_import_wrong_vendor = client
         .post(format!("{base}/llm-gateway/accounts/cookie-import"))
-        .bearer_auth("gateway-admin-token")
+        .bearer_auth(&web_token)
         .json(&json!({ "vendor": "anthropic", "label": "Claude", "cookies": "a=b" }))
         .send()
         .await
@@ -116,7 +123,7 @@ async fn admin_llm_gateway_routes_and_provider_binding_lifecycle() {
 
     let cookie_import = client
         .post(format!("{base}/llm-gateway/accounts/cookie-import"))
-        .bearer_auth("gateway-admin-token")
+        .bearer_auth(&web_token)
         .json(&json!({
             "vendor": "muse",
             "label": "Muse Cookie #1",
@@ -136,7 +143,7 @@ async fn admin_llm_gateway_routes_and_provider_binding_lifecycle() {
         .to_owned();
     let muse_delete = client
         .delete(format!("{base}/llm-gateway/accounts/{muse_account_key}"))
-        .bearer_auth("gateway-admin-token")
+        .bearer_auth(&web_token)
         .send()
         .await
         .unwrap();
@@ -145,7 +152,7 @@ async fn admin_llm_gateway_routes_and_provider_binding_lifecycle() {
     // 2. Start OAuth login via POST /llm-gateway/oauth/start and complete via GET /llm-gateway/oauth/callback (browser redirect without Bearer header)
     let start_resp = client
         .post(format!("{base}/llm-gateway/oauth/start"))
-        .bearer_auth("gateway-admin-token")
+        .bearer_auth(&web_token)
         .json(&json!({
             "vendor": "openai_codex",
             "label": "OpenAI Team #1"
@@ -186,7 +193,7 @@ async fn admin_llm_gateway_routes_and_provider_binding_lifecycle() {
         .post(format!(
             "{base}/llm-gateway/oauth/sessions/{session_id}/poll"
         ))
-        .bearer_auth("gateway-admin-token")
+        .bearer_auth(&web_token)
         .json(&json!({}))
         .send()
         .await
@@ -201,7 +208,7 @@ async fn admin_llm_gateway_routes_and_provider_binding_lifecycle() {
 
     let list_resp = client
         .get(format!("{base}/llm-gateway/accounts?vendor=openai_codex"))
-        .bearer_auth("gateway-admin-token")
+        .bearer_auth(&web_token)
         .send()
         .await
         .unwrap();
@@ -215,7 +222,7 @@ async fn admin_llm_gateway_routes_and_provider_binding_lifecycle() {
     // Invalid vendor query returns 400 invalid_vendor
     let bad_vendor = client
         .get(format!("{base}/llm-gateway/accounts?vendor=unknown_vendor"))
-        .bearer_auth("gateway-admin-token")
+        .bearer_auth(&web_token)
         .send()
         .await
         .unwrap();
@@ -224,7 +231,7 @@ async fn admin_llm_gateway_routes_and_provider_binding_lifecycle() {
     // 3. PATCH /llm-gateway/accounts/{account_key}, refresh, and clear-cooldown
     let patch_resp = client
         .patch(format!("{base}/llm-gateway/accounts/{account_key}"))
-        .bearer_auth("gateway-admin-token")
+        .bearer_auth(&web_token)
         .json(&json!({
             "label": "OpenAI Team Primary",
             "priority": 25,
@@ -240,7 +247,7 @@ async fn admin_llm_gateway_routes_and_provider_binding_lifecycle() {
 
     let refresh_resp = client
         .post(format!("{base}/llm-gateway/accounts/{account_key}/refresh"))
-        .bearer_auth("gateway-admin-token")
+        .bearer_auth(&web_token)
         .json(&json!({}))
         .send()
         .await
@@ -251,7 +258,7 @@ async fn admin_llm_gateway_routes_and_provider_binding_lifecycle() {
         .post(format!(
             "{base}/llm-gateway/accounts/{account_key}/clear-cooldown"
         ))
-        .bearer_auth("gateway-admin-token")
+        .bearer_auth(&web_token)
         .json(&json!({}))
         .send()
         .await
@@ -261,7 +268,7 @@ async fn admin_llm_gateway_routes_and_provider_binding_lifecycle() {
     // 3c. GET & POST /llm-gateway/accounts/{account_key}/quota and GET /llm-gateway/quotas
     let quota_resp = client
         .get(format!("{base}/llm-gateway/accounts/{account_key}/quota"))
-        .bearer_auth("gateway-admin-token")
+        .bearer_auth(&web_token)
         .send()
         .await
         .unwrap();
@@ -273,7 +280,7 @@ async fn admin_llm_gateway_routes_and_provider_binding_lifecycle() {
 
     let list_quotas_resp = client
         .get(format!("{base}/llm-gateway/quotas?vendor=openai_codex"))
-        .bearer_auth("gateway-admin-token")
+        .bearer_auth(&web_token)
         .send()
         .await
         .unwrap();
@@ -284,7 +291,7 @@ async fn admin_llm_gateway_routes_and_provider_binding_lifecycle() {
     // 4. Create an `openai` provider with Static API Key, then switch to `gateway_binding`
     let create_prov = client
         .post(format!("{base}/providers"))
-        .bearer_auth("gateway-admin-token")
+        .bearer_auth(&web_token)
         .json(&json!({
             "name": "OpenAI Main",
             "type": "llm",
@@ -307,7 +314,7 @@ async fn admin_llm_gateway_routes_and_provider_binding_lifecycle() {
     // Switch provider to OAuth Gateway Account (1-1) -> clears credential & credential_env
     let patch_prov = client
         .patch(format!("{base}/providers/{prov_key}"))
-        .bearer_auth("gateway-admin-token")
+        .bearer_auth(&web_token)
         .header("if-match", "\"1\"")
         .json(&json!({
             "config_json": {
@@ -328,7 +335,7 @@ async fn admin_llm_gateway_routes_and_provider_binding_lifecycle() {
     // 5. DELETE /llm-gateway/accounts/{account_key} while bound returns 409 Conflict
     let del_conflict = client
         .delete(format!("{base}/llm-gateway/accounts/{account_key}"))
-        .bearer_auth("gateway-admin-token")
+        .bearer_auth(&web_token)
         .send()
         .await
         .unwrap();
@@ -339,7 +346,7 @@ async fn admin_llm_gateway_routes_and_provider_binding_lifecycle() {
     // Switch provider to pool binding `pool:openai_codex`, then delete account succeeds
     let patch_pool = client
         .patch(format!("{base}/providers/{prov_key}"))
-        .bearer_auth("gateway-admin-token")
+        .bearer_auth(&web_token)
         .header("if-match", "\"2\"")
         .json(&json!({
             "config_json": {
@@ -355,7 +362,7 @@ async fn admin_llm_gateway_routes_and_provider_binding_lifecycle() {
 
     let del_ok = client
         .delete(format!("{base}/llm-gateway/accounts/{account_key}"))
-        .bearer_auth("gateway-admin-token")
+        .bearer_auth(&web_token)
         .send()
         .await
         .unwrap();
@@ -367,7 +374,7 @@ async fn admin_llm_gateway_routes_and_provider_binding_lifecycle() {
     // (`GET /llm-gateway/pools/openai_codex` already contains the `prov_key` provider from step 5)
     let pool_resp = client
         .get(format!("{base}/llm-gateway/pools/openai_codex"))
-        .bearer_auth("gateway-admin-token")
+        .bearer_auth(&web_token)
         .send()
         .await
         .unwrap();
@@ -385,7 +392,7 @@ async fn admin_llm_gateway_routes_and_provider_binding_lifecycle() {
     // Add a new model directly into the Anthropic pool
     let create_model_resp = client
         .post(format!("{base}/llm-gateway/pools/anthropic/models"))
-        .bearer_auth("gateway-admin-token")
+        .bearer_auth(&web_token)
         .json(&json!({
             "model": "claude-sonnet-4-20250514",
             "display_name": "Claude Sonnet 4 Pool",
@@ -419,7 +426,7 @@ async fn admin_llm_gateway_routes_and_provider_binding_lifecycle() {
         .patch(format!(
             "{base}/llm-gateway/pools/anthropic/models/{anthropic_model_key}"
         ))
-        .bearer_auth("gateway-admin-token")
+        .bearer_auth(&web_token)
         .json(&json!({
             "model": "claude-opus-4-20250514",
             "display_name": "Claude Opus 4 Pool",
@@ -447,7 +454,7 @@ async fn admin_llm_gateway_routes_and_provider_binding_lifecycle() {
         .patch(format!(
             "{base}/llm-gateway/pools/anthropic/models/{anthropic_model_key}"
         ))
-        .bearer_auth("gateway-admin-token")
+        .bearer_auth(&web_token)
         .json(&json!({
             "enabled": true
         }))
@@ -459,7 +466,7 @@ async fn admin_llm_gateway_routes_and_provider_binding_lifecycle() {
     // Bind a template to the Anthropic pool model and verify DELETE returns 409 Conflict (gateway_pool_model_in_use)
     let create_tpl_resp = client
         .post(format!("{base}/templates"))
-        .bearer_auth("gateway-admin-token")
+        .bearer_auth(&web_token)
         .json(&json!({
             "key": "tpl_gateway_test",
             "name": "Gateway Test Template",
@@ -473,7 +480,7 @@ async fn admin_llm_gateway_routes_and_provider_binding_lifecycle() {
 
     let bind_tpl_resp = client
         .put(format!("{base}/templates/tpl_gateway_test/providers/llm"))
-        .bearer_auth("gateway-admin-token")
+        .bearer_auth(&web_token)
         .header("if-match", "\"1\"")
         .json(&json!({
             "provider_key": anthropic_model_key
@@ -487,7 +494,7 @@ async fn admin_llm_gateway_routes_and_provider_binding_lifecycle() {
         .delete(format!(
             "{base}/llm-gateway/pools/anthropic/models/{anthropic_model_key}"
         ))
-        .bearer_auth("gateway-admin-token")
+        .bearer_auth(&web_token)
         .send()
         .await
         .unwrap();
@@ -504,7 +511,7 @@ async fn admin_llm_gateway_routes_and_provider_binding_lifecycle() {
 
     let unbind_tpl_resp = client
         .delete(format!("{base}/templates/tpl_gateway_test/providers/llm"))
-        .bearer_auth("gateway-admin-token")
+        .bearer_auth(&web_token)
         .header("if-match", "\"2\"")
         .send()
         .await
@@ -516,7 +523,7 @@ async fn admin_llm_gateway_routes_and_provider_binding_lifecycle() {
         .delete(format!(
             "{base}/llm-gateway/pools/anthropic/models/{anthropic_model_key}"
         ))
-        .bearer_auth("gateway-admin-token")
+        .bearer_auth(&web_token)
         .send()
         .await
         .unwrap();

@@ -14,7 +14,7 @@ import { useServerStore } from '@/stores/server'
 const { t } = useI18n()
 const admin = useAdminStore()
 const auth = useAuthStore()
-const countsVisible = computed(() => Boolean(auth.adminToken) && !admin.loading && !admin.error)
+const countsVisible = computed(() => auth.hasAdminAccess && !admin.loading && !admin.error)
 const server = useServerStore()
 const aborter = new AbortController()
 
@@ -30,7 +30,7 @@ onBeforeUnmount(() => aborter.abort())
   <section class="space-y-7">
     <PageHeader :eyebrow="t('overview.eyebrow')" :title="t('overview.title')" :description="t('overview.description')">
       <template #actions>
-        <Button variant="outline" :disabled="admin.loading || !auth.adminToken" @click="refresh()">
+        <Button variant="outline" :disabled="admin.loading || !auth.hasAdminAccess" @click="refresh()">
           <RefreshCw class="size-4" />
           {{ t('common.refresh') }}
         </Button>

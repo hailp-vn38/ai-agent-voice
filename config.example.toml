@@ -46,10 +46,12 @@ retention_days = 30
 # row and nothing else: never a turn, a WebSocket close, or a change to Dialogue History.
 queue_capacity = 256
 
-# The Admin API mounts only when api.enabled is true and uses its own bearer token.
+# The Admin API mounts only when api.enabled is true. Admins sign in with the Admin Password and
+# receive an Admin Web Token signed with jwt_secret (at least 32 characters, never reused as
+# auth.token or the System MCP JWT key). Override with VOICE_ADMIN_JWT_SECRET.
 [api]
 enabled = false
-admin_token = ""
+jwt_secret = ""
 
 [orchestrator]
 enabled = true

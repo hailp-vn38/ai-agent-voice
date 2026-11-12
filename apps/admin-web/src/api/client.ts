@@ -1,6 +1,7 @@
-import { readAdminToken } from '@/stores/auth'
+import { readAdminWebToken } from '@/stores/auth'
 
 import { toApiError } from './errors'
+import { applySessionFailure } from './session'
 
 const rawBaseUrl = import.meta.env.VITE_API_BASE_URL?.trim() ?? ''
 const apiBaseUrl = rawBaseUrl.replace(/\/+$/, '')
@@ -10,6 +11,8 @@ export interface RequestOptions {
   signal?: AbortSignal
   headers?: HeadersInit
   body?: BodyInit | null
+  /** Login and status calls carry no session, so a 401 from them must not sign the Admin out. */
+  anonymous?: boolean
 }
 
 export type QueryValue = string | number | boolean | null | undefined
@@ -36,10 +39,10 @@ export function apiUrl(path: string): string {
   return `${apiBaseUrl}${normalizedPath}`
 }
 
-function requestHeaders(initHeaders: HeadersInit | undefined, optionHeaders: HeadersInit | undefined, revision: number | undefined): Headers {
+function requestHeaders(initHeaders: HeadersInit | undefined, optionHeaders: HeadersInit | undefined, revision: number | undefined, optionsAnonymous: boolean | undefined): Headers {
   const headers = new Headers(initHeaders)
   new Headers(optionHeaders).forEach((value, key) => headers.set(key, value))
-  const token = readAdminToken()
+  const token = optionsAnonymous ? null : readAdminWebToken()
   if (token) headers.set('Authorization', `Bearer ${token}`)
   if (revision !== undefined) headers.set('If-Match', `"${revision}"`)
   return headers
@@ -49,10 +52,14 @@ export async function request(path: string, init: RequestInit = {}, options: Req
   const response = await fetch(apiUrl(path), {
     ...init,
     body: options.body ?? init.body,
-    headers: requestHeaders(init.headers, options.headers, options.revision),
+    headers: requestHeaders(init.headers, options.headers, options.revision, options.anonymous),
     signal: options.signal,
   })
-  if (!response.ok) throw await toApiError(response)
+  if (!response.ok) {
+    const error = await toApiError(response)
+    if (!options.anonymous) applySessionFailure(error)
+    throw error
+  }
   return response
 }
 

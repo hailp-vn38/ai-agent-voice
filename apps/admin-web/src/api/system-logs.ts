@@ -13,7 +13,8 @@ import type {
   SystemLogPage,
   SystemLogStreamCallbacks,
 } from '@/api/types/system-logs'
-import { readAdminToken } from '@/stores/auth'
+import { readAdminWebToken } from '@/stores/auth'
+import { handleSessionResponse } from './session'
 
 const LEVEL_SEVERITY: Record<LogLevel, number> = {
   ERROR: 5,
@@ -526,7 +527,7 @@ export async function listenSystemLogStream(
   demoSubscribers.add(demoSubscriber)
 
   try {
-    const token = readAdminToken()
+    const token = readAdminWebToken()
     const path = withQuery('/api/admin/system/logs/stream', toLogQueryRecord(filter))
 
     const response = await fetch(apiUrl(path), {
@@ -538,6 +539,7 @@ export async function listenSystemLogStream(
       signal,
     })
 
+    await handleSessionResponse(response)
     if (response.status === 401 || response.status === 403) {
       callbacks.onError?.(
         new ApiError('Unauthorized log stream request', response.status, 'unauthorized'),

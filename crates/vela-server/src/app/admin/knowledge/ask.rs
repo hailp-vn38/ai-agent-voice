@@ -1580,7 +1580,7 @@ llm = "test"
 tts = "test"
 [api]
 enabled = true
-admin_token = "wiki-chat-test-token"
+jwt_secret = "wiki-chat-test-jwt-signing-secret-0123456789"
 [wiki.mcp]
 enabled = false
 [providers.llm.instances.test]
@@ -1606,6 +1606,9 @@ model = "fake"
         } else {
             None
         };
+        if let Some(database) = database.as_ref() {
+            admin_web_token::seed_default_admin_password(database.pool()).await;
+        }
         let mut state = AppState::from_provider_set_with_database(config, providers, database);
         state.wiki_engine = Some(engine);
         if configured {
@@ -1674,7 +1677,7 @@ llm = "test"
 tts = "test"
 [api]
 enabled = true
-admin_token = "wiki-chat-test-token"
+jwt_secret = "wiki-chat-test-jwt-signing-secret-0123456789"
 [wiki.mcp]
 enabled = false
 [providers.llm.instances.test]
@@ -1692,6 +1695,7 @@ model = "fake"
             Arc::new(crate::providers::tts::UnavailableTts),
         ));
         let database = test_database(&temp_root).await;
+        admin_web_token::seed_default_admin_password(database.pool()).await;
         let mut state =
             AppState::from_provider_set_with_database(config, providers, Some(database));
         state.wiki_engine = Some(engine);
@@ -1754,7 +1758,7 @@ model = "fake"
             tts = "test"
             [api]
             enabled = true
-            admin_token = "wiki-chat-test-token"
+            jwt_secret = "wiki-chat-test-jwt-signing-secret-0123456789"
             [providers.llm.instances.managed_chat]
             adapter = "openai"
             api_key = "test-key"
@@ -1790,6 +1794,7 @@ model = "fake"
             std::env::temp_dir().join(format!("wiki-chat-managed-{}", uuid::Uuid::new_v4()));
         let engine = Arc::new(llm_wiki::WikiEngine::open(temp_root.join("vault")).unwrap());
         let database = test_database(&temp_root).await;
+        admin_web_token::seed_default_admin_password(database.pool()).await;
         let mut state =
             AppState::from_provider_set_with_database(config, providers, Some(database))
                 .with_runtime_manager(manager);
@@ -1824,10 +1829,10 @@ model = "fake"
             .collect()
     }
 
-    async fn ask_read_more(base: &str) -> String {
+    async fn ask_read_more(base: &str, web_token: &str) -> String {
         reqwest::Client::new()
             .post(format!("{base}/knowledge/ask"))
-            .bearer_auth("wiki-chat-test-token")
+            .bearer_auth(web_token)
             .json(&serde_json::json!({
                 "question": "Read more"
             }))
@@ -1839,6 +1844,8 @@ model = "fake"
             .unwrap()
     }
 
+    #[path = "../../../../../../tests/support/admin_auth.rs"]
+    mod admin_web_token;
     #[path = "conversation.rs"]
     mod conversation;
     #[path = "pinned_files.rs"]

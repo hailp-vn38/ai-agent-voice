@@ -173,6 +173,10 @@ pub(in crate::app::admin) async fn knowledge_conversation(
 }
 
 #[cfg(test)]
+#[path = "../../../../tests/support/admin_auth.rs"]
+mod admin_web_token;
+
+#[cfg(test)]
 mod tests {
     use crate::{
         app::{AppState, router_with_state},
@@ -183,6 +187,8 @@ mod tests {
     use reqwest::StatusCode;
     use serde_json::{Value, json};
     use std::sync::Arc;
+
+    use super::admin_web_token;
 
     async fn fixture() -> (
         String,
@@ -200,6 +206,7 @@ mod tests {
             ..DatabaseConfig::default()
         };
         let database = Database::connect(&config).await.unwrap();
+        admin_web_token::seed_default_admin_password(database.pool()).await;
         let mut app_config: AppConfig = toml::from_str(
             r#"
 [server]
@@ -212,7 +219,7 @@ llm = "test"
 tts = "test"
 [api]
 enabled = true
-admin_token = "wiki-conversations-test-token"
+jwt_secret = "wiki-conversations-test-jwt-signing-secret-0123456789"
 "#,
         )
         .unwrap();
@@ -246,6 +253,11 @@ admin_token = "wiki-conversations-test-token"
     #[tokio::test]
     async fn conversation_routes_list_rename_and_delete_without_exposing_message_content() {
         let (base, database, root, server) = fixture().await;
+        let web_token = admin_web_token::admin_web_token(
+            &reqwest::Client::new(),
+            base.trim_end_matches("/api/admin"),
+        )
+        .await;
         seed_conversation(&database, "older", "Older research", 10).await;
         seed_conversation(&database, "latest", "Latest research", 20).await;
         sqlx::query("INSERT INTO wiki_conversation_messages (id, conversation_id, seq, role, content, status, created_at_ms, updated_at_ms) VALUES ('older-running', 'older', 1, 'assistant', '', 'running', 10, ?)")
@@ -261,7 +273,7 @@ admin_token = "wiki-conversations-test-token"
         let client = reqwest::Client::new();
         let list = client
             .get(format!("{base}/knowledge/conversations"))
-            .bearer_auth("wiki-conversations-test-token")
+            .bearer_auth(&web_token)
             .send()
             .await
             .unwrap();
@@ -286,7 +298,7 @@ admin_token = "wiki-conversations-test-token"
 
         let renamed = client
             .patch(format!("{base}/knowledge/conversations/latest"))
-            .bearer_auth("wiki-conversations-test-token")
+            .bearer_auth(&web_token)
             .json(&json!({ "title": "  Field notes  " }))
             .send()
             .await
@@ -295,7 +307,7 @@ admin_token = "wiki-conversations-test-token"
         assert_eq!(renamed.headers()["cache-control"], "no-store");
         let invalid_title = client
             .patch(format!("{base}/knowledge/conversations/latest"))
-            .bearer_auth("wiki-conversations-test-token")
+            .bearer_auth(&web_token)
             .json(&json!({ "title": " " }))
             .send()
             .await
@@ -307,7 +319,7 @@ admin_token = "wiki-conversations-test-token"
         );
         let too_long_title = client
             .patch(format!("{base}/knowledge/conversations/latest"))
-            .bearer_auth("wiki-conversations-test-token")
+            .bearer_auth(&web_token)
             .json(&json!({ "title": "é".repeat(121) }))
             .send()
             .await
@@ -328,7 +340,7 @@ admin_token = "wiki-conversations-test-token"
 
         let deleted = client
             .delete(format!("{base}/knowledge/conversations/latest"))
-            .bearer_auth("wiki-conversations-test-token")
+            .bearer_auth(&web_token)
             .send()
             .await
             .unwrap();
@@ -350,7 +362,7 @@ admin_token = "wiki-conversations-test-token"
         assert_eq!(audit, ("wiki_conversation".into(), "delete".into(), None));
         let missing = client
             .delete(format!("{base}/knowledge/conversations/latest"))
-            .bearer_auth("wiki-conversations-test-token")
+            .bearer_auth(&web_token)
             .send()
             .await
             .unwrap();

@@ -1,4 +1,8 @@
 #![cfg(feature = "qualification-providers")]
+
+#[path = "support/admin_auth.rs"]
+mod admin_auth;
+
 use std::{collections::HashMap, sync::Arc};
 use vela_server::{
     app::{AppState, router_with_state},
@@ -28,7 +32,7 @@ tts = "test"
 url = "sqlite://{}"
 [api]
 enabled = true
-admin_token = "draft-test-token"
+jwt_secret = "draft-test-signing-secret-0123456789"
 "#,
             path.with_extension("db").display()
         ),
@@ -37,6 +41,7 @@ admin_token = "draft-test-token"
     let config = AppConfig::parse_and_resolve(&path).unwrap();
     std::fs::remove_file(&path).unwrap();
     let db = Database::connect(&config.database).await.unwrap();
+    admin_auth::seed_default_admin_password(db.pool()).await;
     let secrets = Arc::new(EnvSecretResolver);
     let lifecycle = RuntimeLifecycle::new(std::time::Duration::from_secs(1));
     let mut state = AppState::from_provider_set_with_database_resolver_and_shutdown(
@@ -82,13 +87,14 @@ admin_token = "draft-test-token"
             .unwrap()
     });
     let client = reqwest::Client::new();
-    let llm = client.post(format!("{base}/provider-tests/llm")).bearer_auth("draft-test-token").json(&serde_json::json!({"provider":{"type":"llm","adapter":"qualification_llm","config_json":{}},"input":{"text":"hello"}})).send().await.unwrap();
+    let admin = admin_auth::admin_web_token(&client, base.trim_end_matches("/api/admin")).await;
+    let llm = client.post(format!("{base}/provider-tests/llm")).bearer_auth(&admin).json(&serde_json::json!({"provider":{"type":"llm","adapter":"qualification_llm","config_json":{}},"input":{"text":"hello"}})).send().await.unwrap();
     assert_eq!(llm.status(), 200);
     let result: serde_json::Value = llm.json().await.unwrap();
     assert_eq!(result["result"]["text"], "qualification response");
     assert!(result.get("provider_key").is_none());
     assert_eq!(result["runtime"]["persisted_runtime_modified"], false);
-    let tts = client.post(format!("{base}/provider-tests/tts")).bearer_auth("draft-test-token").json(&serde_json::json!({"provider":{"type":"tts","adapter":"qualification_tts","config_json":{}},"input":{"text":"hello"}})).send().await.unwrap();
+    let tts = client.post(format!("{base}/provider-tests/tts")).bearer_auth(&admin).json(&serde_json::json!({"provider":{"type":"tts","adapter":"qualification_tts","config_json":{}},"input":{"text":"hello"}})).send().await.unwrap();
     assert_eq!(tts.status(), 200);
     assert_eq!(tts.headers()["content-type"], "audio/wav");
     let wav = tts.bytes().await.unwrap();
@@ -123,7 +129,7 @@ admin_token = "draft-test-token"
         );
     let asr = client
         .post(format!("{base}/provider-tests/asr"))
-        .bearer_auth("draft-test-token")
+        .bearer_auth(&admin)
         .multipart(form)
         .send()
         .await
@@ -134,14 +140,22 @@ admin_token = "draft-test-token"
     assert_eq!(result["metrics"]["audio_duration_ms"], 100);
     let providers: serde_json::Value = client
         .get(format!("{base}/providers"))
-        .bearer_auth("draft-test-token")
+        .bearer_auth(&admin)
         .send()
         .await
         .unwrap()
         .json()
         .await
         .unwrap();
-    assert!(providers["items"].as_array().unwrap().is_empty());
+    // Only the config-declared provider exists: drafts left no saved row behind.
+    assert!(
+        providers["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|item| item["source"] == "config" && item["key"] == "config:vad:test"),
+        "{providers}"
+    );
     assert_eq!(manager.accounting().active_leases, 0);
     task.abort();
 }

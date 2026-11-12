@@ -2,7 +2,8 @@ import type { AnswerGraph, WikiChatTool, WikiConversationSummary } from '@vela/k
 export type { AnswerGraph, WikiChatTool, WikiConversationSummary } from '@vela/knowledge-ui/chat'
 import { apiUrl, jsonRequest, requestJson, withQuery } from './client'
 import { consumeSse, createSseParserState } from './sse'
-import { readAdminToken } from '@/stores/auth'
+import { readAdminWebToken } from '@/stores/auth'
+import { handleSessionResponse } from './session'
 
 export interface WikiChatInputMessage {
   role: 'user' | 'assistant'
@@ -149,7 +150,7 @@ export async function askWiki(
   handlers: WikiChatHandlers,
   signal: AbortSignal,
 ): Promise<void> {
-  const token = readAdminToken()
+  const token = readAdminWebToken()
   const response = await fetch(apiUrl('/api/admin/knowledge/ask'), {
     method: 'POST',
     headers: {
@@ -162,6 +163,7 @@ export async function askWiki(
     body: JSON.stringify(input),
   })
   if (!response.ok) {
+    await handleSessionResponse(response.clone())
     let body: unknown
     try { body = await response.json() } catch { /* keep status fallback */ }
     throw new WikiChatRequestError(apiErrorCode(body, `http_${response.status}`))

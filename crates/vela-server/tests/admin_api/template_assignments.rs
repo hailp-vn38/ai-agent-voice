@@ -4,7 +4,8 @@ use super::super::*;
 async fn first_assignment_to_an_agent_becomes_its_enabled_default() {
     let (base, task) = server(true).await;
     let client = Client::new();
-    let auth = "admin-test-token";
+    let web_token = admin_web_token(&client, &base).await;
+    let auth = web_token.as_str();
     let agents = format!("{base}/api/admin/agents");
     let templates = format!("{base}/api/admin/templates");
     let providers = format!("{base}/api/admin/providers");
@@ -163,7 +164,8 @@ async fn first_assignment_to_an_agent_becomes_its_enabled_default() {
 async fn first_assignment_with_a_partial_core_becomes_the_default() {
     let (base, task) = server(true).await;
     let client = Client::new();
-    let auth = "admin-test-token";
+    let web_token = admin_web_token(&client, &base).await;
+    let auth = web_token.as_str();
     let agents = format!("{base}/api/admin/agents");
     let templates = format!("{base}/api/admin/templates");
     let providers = format!("{base}/api/admin/providers");

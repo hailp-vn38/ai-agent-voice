@@ -449,7 +449,7 @@ tts = "test"
 url = "sqlite://{}"
 [api]
 enabled = true
-admin_token = "gw-draft-test-token"
+jwt_secret = "gw-draft-test-jwt-signing-secret-0123456789"
 "#,
             cfg_path.with_extension("db").display()
         ),

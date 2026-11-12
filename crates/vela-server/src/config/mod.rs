@@ -1102,17 +1102,33 @@ impl Default for DatabaseHistoryConfig {
 }
 
 /// Optional, separately authenticated administrative control plane.
-#[derive(Clone, Debug, Default, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AdminApiConfig {
     #[serde(default)]
     pub enabled: bool,
+    /// Admin Signing Secret: HS256 key for Admin Web Tokens. Kept out of SQLite on purpose.
     #[serde(default)]
-    pub admin_token: String,
+    pub jwt_secret: SecretString,
+    /// Lifetime of an Admin Web Token issued by password login, in seconds.
+    #[serde(default = "default_admin_token_ttl_secs")]
+    pub token_ttl_secs: u64,
     #[serde(default)]
     pub provider_tests: ProviderTestsConfig,
     #[serde(default)]
     pub mcp_tests: ProviderTestsConfig,
+}
+
+impl Default for AdminApiConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            jwt_secret: SecretString::default(),
+            token_ttl_secs: default_admin_token_ttl_secs(),
+            provider_tests: ProviderTestsConfig::default(),
+            mcp_tests: ProviderTestsConfig::default(),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Deserialize)]

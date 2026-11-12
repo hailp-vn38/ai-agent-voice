@@ -4,7 +4,7 @@ use super::harness::*;
 async fn config_diagnostics_acquire_unbound_cold_deployment_and_reuse_prepare_without_db_collision()
 {
     let (base, _db, builds, task) = server(true).await;
-    let c = client();
+    let c = client(&base).await;
     for key in ["primary", "config:llm:primary", "config:llm:primary"] {
         let response = c
             .post(format!("{base}/providers/{key}/test/llm"))
@@ -80,7 +80,7 @@ async fn config_diagnostics_acquire_unbound_cold_deployment_and_reuse_prepare_wi
 #[tokio::test]
 async fn legacy_config_diagnostic_requires_manager_and_never_uses_matching_db_key() {
     let (base, _db, builds, task) = server(false).await;
-    let response = client()
+    let response = client(&base).await
         .post(format!("{base}/providers/config:llm:primary/test/llm"))
         .json(&json!({"input":"hello"}))
         .send()
@@ -101,7 +101,7 @@ async fn legacy_config_diagnostic_requires_manager_and_never_uses_matching_db_ke
 #[tokio::test]
 async fn config_vad_and_asr_keep_validation_and_public_provenance() {
     let (base, _db, builds, task) = server(true).await;
-    let c = client();
+    let c = client(&base).await;
     let result = c
         .post(format!("{base}/providers/config:vad:vad/test/vad"))
         .send()
@@ -155,7 +155,7 @@ async fn config_cold_acquisition_is_bounded_and_busy_without_releasing_the_nativ
     let (base, _db, builds, task, manager) =
         server_configured(true, std::time::Duration::from_millis(300), false, 100).await;
     let manager = manager.unwrap();
-    let c = client();
+    let c = client(&base).await;
     let url = format!("{base}/providers/config:llm:primary/test/llm");
     let pending = tokio::spawn({
         let c = c.clone();
@@ -209,7 +209,7 @@ async fn config_operation_timeout_quarantines_deployment_lease_without_terminal_
     let (base, _db, builds, task, manager) =
         server_configured(true, std::time::Duration::ZERO, true, 100).await;
     let manager = manager.unwrap();
-    let c = client();
+    let c = client(&base).await;
     let url = format!("{base}/providers/config:llm:primary/test/llm");
     let response = c
         .post(&url)

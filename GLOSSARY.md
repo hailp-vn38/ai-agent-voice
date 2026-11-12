@@ -405,5 +405,18 @@ Bước đánh giá chỉ đọc trên một bản sao lưu ứng viên để b�
 _Avoid_: dry-run migration, schema diff, live import
 
 
+**Admin Password**:
+Mật khẩu duy nhất của deployment để đăng nhập Admin API; không phải Resource Credential và không gắn với người dùng cụ thể.
+_Avoid_: admin_token, admin user password
 
+**Admin Web Token**:
+JWT có hạn do server cấp sau khi kiểm Admin Password; là credential duy nhất của Admin API, không phải token System MCP.
+_Avoid_: admin_token, session token
 
+**Admin Signing Secret**:
+Chuỗi khoá bí mật trong config dùng để ký và kiểm Admin Web Token; không lưu trong SQLite và không phải credential gửi lên API.
+_Avoid_: admin password, JWT key
+
+**Password Login**:
+Công tắc cấp deployment quyết định Admin API có đòi Admin Web Token hay không; khi tắt, mọi request tới được server đều được chấp nhận.
+_Avoid_: auth mode, anonymous mode

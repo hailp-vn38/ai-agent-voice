@@ -362,7 +362,7 @@ pub async fn start_router_with_limits(
         database: vela_server::config::DatabaseConfig::default(),
         api: vela_server::config::AdminApiConfig {
             enabled: true,
-            admin_token: "direct-admin".into(),
+            jwt_secret: vela_server::config::SecretString::new("speechoutput-signing-secret-0123456789"),
             ..Default::default()
         },
         shutdown: vela_server::config::ShutdownConfig::default(),

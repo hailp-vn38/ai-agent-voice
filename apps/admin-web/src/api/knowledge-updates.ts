@@ -1,7 +1,8 @@
 import { apiUrl } from './client'
 import { consumeSse, createSseParserState } from './sse'
-import { readAdminToken } from '@/stores/auth'
+import { readAdminWebToken } from '@/stores/auth'
 import type { SyncStatus } from '@vela/knowledge-ui'
+import { handleSessionResponse } from './session'
 
 export interface KnowledgeChangeCallbacks {
   /** The vault changed. `paths` is empty when the server could not list every path. */
@@ -39,7 +40,7 @@ export const listenKnowledgeChanges: ListenKnowledgeChanges = async (callbacks, 
   let delay = 1000
   while (!signal.aborted) {
     try {
-      const token = readAdminToken()
+      const token = readAdminWebToken()
       const response = await fetch(apiUrl('/api/admin/knowledge/events'), {
         headers: {
           Accept: 'text/event-stream',
@@ -48,6 +49,7 @@ export const listenKnowledgeChanges: ListenKnowledgeChanges = async (callbacks, 
         cache: 'no-store',
         signal,
       })
+      await handleSessionResponse(response)
       if (response.status === 401 || response.status === 403) return
       if (!response.ok || !response.body ||
         !response.headers.get('content-type')?.startsWith('text/event-stream')) {

@@ -206,7 +206,7 @@ async fn public_api_created_provider_is_used_by_new_ws_and_patch_keeps_old_sessi
     let url = database_url();
     let mut app_config = config("127.0.0.1:0".parse().unwrap(), url);
     app_config.api.enabled = true;
-    app_config.api.admin_token = "managed-test-token".into();
+    app_config.api.jwt_secret = vela_server::config::SecretString::new("managed-runtime-signing-secret-0123456789");
     let builds = Arc::new(Mutex::new(Vec::new()));
     let recorded = builds.clone();
     let (base, url, task) = start_with_state(app_config, |state| {
@@ -236,7 +236,8 @@ async fn public_api_created_provider_is_used_by_new_ws_and_patch_keeps_old_sessi
     let pool = seed(&url).await;
     sqlx::query("INSERT INTO devices (device_id,agent_id,enabled,created_at,updated_at) VALUES ('second',1,1,1,1)").execute(&pool).await.unwrap();
     let client = reqwest::Client::new();
-    let auth = "managed-test-token";
+    let auth_token = crate::admin_auth::admin_web_token(&client, &base).await;
+    let auth = auth_token.as_str();
     let providers = format!("{base}/api/admin/providers");
     let mut generated = Vec::new();
     for (kind, adapter, config_json) in [
@@ -508,7 +509,7 @@ async fn prepare_public_api_returns_accepted_then_ready_and_rejects_loader_flood
     use vela_server::services::provider_runtime::{ProviderRuntimeManager, RuntimeLimits};
     let mut cfg = config("127.0.0.1:0".parse().unwrap(), database_url());
     cfg.api.enabled = true;
-    cfg.api.admin_token = "prepare-test-token".into();
+    cfg.api.jwt_secret = vela_server::config::SecretString::new("prepare-runtime-signing-secret-0123456789");
     let (entered, mut entered_rx) = tokio::sync::mpsc::unbounded_channel();
     let (release, release_rx) = std::sync::mpsc::channel();
     let (base, _, task) = start_with_state(cfg, |state| {
@@ -540,10 +541,11 @@ async fn prepare_public_api_returns_accepted_then_ready_and_rejects_loader_flood
     })
     .await;
     let client = reqwest::Client::new();
+    let auth_token = crate::admin_auth::admin_web_token(&client, &base).await;
     let providers = format!("{base}/api/admin/providers");
     let mut generated = Vec::new();
     for name in ["first", "second"] {
-        let created = client.post(&providers).bearer_auth("prepare-test-token")
+        let created = client.post(&providers).bearer_auth(&auth_token)
             .json(&serde_json::json!({"name":name,"type":"llm","adapter":"openai","config_json":{"base_url":"https://example.test/v1","model":"fixture"}}))
             .send().await.unwrap();
         assert_eq!(created.status(), reqwest::StatusCode::CREATED);
@@ -553,7 +555,7 @@ async fn prepare_public_api_returns_accepted_then_ready_and_rejects_loader_flood
     let (first_key, second_key) = (&generated[0], &generated[1]);
     let first = client
         .post(format!("{providers}/{first_key}/prepare"))
-        .bearer_auth("prepare-test-token")
+        .bearer_auth(&auth_token)
         .json(&serde_json::json!({}))
         .send()
         .await
@@ -565,7 +567,7 @@ async fn prepare_public_api_returns_accepted_then_ready_and_rejects_loader_flood
     entered_rx.recv().await.unwrap();
     let blocked = client
         .post(format!("{providers}/{second_key}/prepare"))
-        .bearer_auth("prepare-test-token")
+        .bearer_auth(&auth_token)
         .json(&serde_json::json!({}))
         .send()
         .await
@@ -576,7 +578,7 @@ async fn prepare_public_api_returns_accepted_then_ready_and_rejects_loader_flood
     loop {
         let response = client
             .get(format!("{providers}/{first_key}"))
-            .bearer_auth("prepare-test-token")
+            .bearer_auth(&auth_token)
             .send()
             .await
             .unwrap();
@@ -589,7 +591,7 @@ async fn prepare_public_api_returns_accepted_then_ready_and_rejects_loader_flood
     }
     let ready = client
         .post(format!("{providers}/{first_key}/prepare"))
-        .bearer_auth("prepare-test-token")
+        .bearer_auth(&auth_token)
         .json(&serde_json::json!({}))
         .send()
         .await

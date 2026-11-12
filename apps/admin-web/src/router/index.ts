@@ -1,9 +1,26 @@
 import { createRouter, createWebHistory, type RouteRecordRaw } from 'vue-router'
 
+import { authApi } from '@/api/auth'
+import { setSessionHandler } from '@/api/session'
 import { translate } from '@/composables/useI18n'
 import type { MessageKey } from '@/i18n/messages'
+import { useAuthStore, type LoginStatus } from '@/stores/auth'
+
+import { authRedirect } from './auth-guard'
 
 const routes: RouteRecordRaw[] = [
+  {
+    path: '/login',
+    name: 'login',
+    component: () => import('@/pages/auth/LoginPage.vue'),
+    meta: { public: true, titleKey: 'auth.loginTitle' },
+  },
+  {
+    path: '/change-password',
+    name: 'change-password',
+    component: () => import('@/pages/auth/ChangePasswordPage.vue'),
+    meta: { public: true, titleKey: 'auth.changePasswordTitle' },
+  },
   { path: '/', redirect: '/overview' },
   { path: '/dashboard', redirect: '/overview' },
   {
@@ -282,6 +299,12 @@ const routes: RouteRecordRaw[] = [
     meta: { titleKey: 'notifications.settings.title' },
   },
   {
+    path: '/system/security',
+    name: 'system-security',
+    component: () => import('@/pages/system/SystemSecurityPage.vue'),
+    meta: { titleKey: 'system.hub.securityTitle' },
+  },
+  {
     path: '/system/logs',
     alias: ['/logs'],
     name: 'system-logs',
@@ -295,6 +318,40 @@ export const router = createRouter({
   history: createWebHistory(),
   routes,
   scrollBehavior: () => ({ top: 0 }),
+})
+
+// Startup reads the login state before any data loads. A failed read is not cached, so the next
+// navigation tries again; until then the app behaves as if Password Login were on.
+async function currentLoginStatus(): Promise<LoginStatus> {
+  const auth = useAuthStore()
+  if (auth.loginStatus) return auth.loginStatus
+  try {
+    const response = await authApi.status()
+    const status = { passwordLoginEnabled: response.password_login_enabled, mustChangePassword: response.must_change_password }
+    auth.setLoginStatus(status)
+    return status
+  } catch {
+    return { passwordLoginEnabled: true, mustChangePassword: false }
+  }
+}
+
+router.beforeEach(async to => {
+  const status = await currentLoginStatus()
+  return authRedirect(to, { status, token: useAuthStore().adminWebToken })
+})
+
+setSessionHandler(event => {
+  const current = router.currentRoute.value
+  if (event.kind === 'password_change_required') {
+    if (current.name !== 'change-password') void router.replace({ name: 'change-password', query: { redirect: current.fullPath } })
+    return
+  }
+  if (event.kind === 'signed_out_by_user') {
+    void router.replace({ name: 'login' })
+    return
+  }
+  if (current.meta.public) return
+  void router.replace({ name: 'login', query: { redirect: current.fullPath } })
 })
 
 router.afterEach((to) => {

@@ -1,6 +1,9 @@
 use std::{fs, sync::Arc};
 
 use reqwest::{Client, Method, StatusCode};
+#[path = "support/admin_auth.rs"]
+mod admin_auth;
+
 use vela_server::{app::bootstrap_with_providers, config::AppConfig, providers::ProviderSet};
 
 async fn server() -> (String, tokio::task::JoinHandle<()>) {
@@ -20,7 +23,7 @@ tts = "test"
 url = "sqlite::memory:"
 [api]
 enabled = true
-admin_token = "admin-test-token"
+jwt_secret = "cors-test-signing-secret-0123456789"
 "#,
     )
     .unwrap();
@@ -39,6 +42,7 @@ admin_token = "admin-test-token"
 async fn lan_browser_preflight_and_authenticated_requests() {
     let (base, task) = server().await;
     let client = Client::new();
+    let admin = admin_auth::admin_web_token(&client, &base).await;
     let origin = "http://192.168.1.158:5173";
     for method in ["GET", "POST", "PUT", "PATCH", "DELETE"] {
         let response = client
@@ -72,7 +76,7 @@ async fn lan_browser_preflight_and_authenticated_requests() {
             assert!(headers.contains(header));
         }
     }
-    for token in [None, Some("admin-test-token")] {
+    for token in [None, Some(admin.as_str())] {
         let mut request = client
             .get(format!("{base}/api/admin/agents"))
             .header("Origin", origin);
@@ -163,6 +167,7 @@ async fn public_and_opaque_origins_are_not_allowed_for_admin() {
 async fn local_ipv4_and_ipv6_origins_are_allowed() {
     let (base, task) = server().await;
     let client = Client::new();
+    let admin = admin_auth::admin_web_token(&client, &base).await;
     for origin in [
         "http://localhost:5173",
         "http://127.0.0.1:5173",
@@ -175,7 +180,7 @@ async fn local_ipv4_and_ipv6_origins_are_allowed() {
     ] {
         let response = client
             .get(format!("{base}/api/admin/agents"))
-            .bearer_auth("admin-test-token")
+            .bearer_auth(&admin)
             .header("Origin", origin)
             .send()
             .await

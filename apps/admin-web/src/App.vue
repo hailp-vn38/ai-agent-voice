@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { storeToRefs } from 'pinia'
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 
 import { Button } from '@/components/ui/button'
 import { useI18n } from '@/composables/useI18n'
@@ -10,42 +11,33 @@ import { useAuthStore } from '@/stores/auth'
 
 const admin = useAdminStore()
 const auth = useAuthStore()
+const route = useRoute()
+const router = useRouter()
 const { error, loading } = storeToRefs(admin)
 const { t } = useI18n()
 
-const tokenDraft = ref('')
+const isPublicRoute = computed(() => route.meta.public === true)
 
-onMounted(() => {
-  if (auth.adminToken) void admin.loadAll()
+// Data loads only once the router has decided where the Admin goes, and never while a password change is pending.
+function canLoadData(): boolean {
+  if (auth.mustChangePassword) return false
+  return auth.hasAdminAccess
+}
+
+onMounted(async () => {
+  await router.isReady()
+  if (!isPublicRoute.value && canLoadData()) void admin.loadAll()
 })
 
-async function connect() {
-  auth.setAdminToken(tokenDraft.value)
-  tokenDraft.value = ''
-  await admin.loadAll()
-}
+// Signing in navigates from the public login page into the app; that is when data starts loading.
+watch(isPublicRoute, (isPublic, wasPublic) => {
+  if (wasPublic && !isPublic && canLoadData()) void admin.loadAll()
+})
 </script>
 
 <template>
-  <AdminShell>
-    <form
-      v-if="!auth.adminToken"
-      class="mb-4 flex flex-wrap items-end gap-3 rounded-lg border bg-card px-4 py-3"
-      @submit.prevent="connect"
-    >
-      <label class="flex-1 space-y-1">
-        <span class="text-sm font-medium">{{ t('auth.tokenLabel') }}</span>
-        <input
-          v-model="tokenDraft"
-          type="password"
-          autocomplete="off"
-          class="admin-input w-full"
-          :placeholder="t('auth.tokenPlaceholder')"
-        />
-      </label>
-      <Button type="submit" :disabled="!tokenDraft.trim()">{{ t('auth.connect') }}</Button>
-    </form>
-
+  <RouterView v-if="isPublicRoute" />
+  <AdminShell v-else>
     <div
       v-if="error"
       role="alert"
@@ -53,7 +45,7 @@ async function connect() {
     >
       <span>{{ error }}</span>
       <span class="flex gap-2">
-        <Button v-if="auth.adminToken" size="sm" variant="outline" :disabled="loading" @click="admin.refreshAll()">
+        <Button v-if="auth.hasAdminAccess" size="sm" variant="outline" :disabled="loading" @click="admin.refreshAll()">
           {{ t('common.retry') }}
         </Button>
         <Button size="sm" variant="ghost" @click="admin.clearError()">
@@ -61,6 +53,6 @@ async function connect() {
         </Button>
       </span>
     </div>
-    <RouterView v-if="auth.adminToken" />
+    <RouterView />
   </AdminShell>
 </template>

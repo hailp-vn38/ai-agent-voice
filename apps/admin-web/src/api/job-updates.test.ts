@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { listenJobChanges } from './job-updates'
 
-vi.mock('@/stores/auth', () => ({ readAdminToken: () => 'test-admin-token' }))
+vi.mock('@/stores/auth', () => ({ readAdminWebToken: () => 'test-admin-token' }))
 
 afterEach(() => vi.unstubAllGlobals())
 

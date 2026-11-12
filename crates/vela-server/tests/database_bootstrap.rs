@@ -1,3 +1,6 @@
+#[path = "support/admin_auth.rs"]
+mod admin_auth;
+
 use std::{fs, str::FromStr, sync::Arc};
 
 use sha2::{Digest, Sha384};
@@ -136,7 +139,6 @@ async fn fresh_database_migrates_then_boots_health_and_ready_routes() {
 
 #[tokio::test]
 async fn startup_marks_running_wiki_answers_interrupted_before_serving_http() {
-    const ADMIN_TOKEN: &str = "wiki-conversation-startup-test-token";
     let database = database_config(temp_database_url("wiki-conversation-recovery"));
     let db = Database::connect(&database).await.unwrap();
     sqlx::query(
@@ -155,7 +157,7 @@ async fn startup_marks_running_wiki_answers_interrupted_before_serving_http() {
 
     let mut config = config_for_database(database);
     config.api.enabled = true;
-    config.api.admin_token = ADMIN_TOKEN.to_owned();
+    config.api.jwt_secret = vela_server::config::SecretString::new("bootstrap-signing-secret-0123456789");
     let router = bootstrap_with_providers(config, Arc::new(ProviderSet::unavailable()))
         .await
         .unwrap();
@@ -164,7 +166,7 @@ async fn startup_marks_running_wiki_answers_interrupted_before_serving_http() {
         .get(format!(
             "{base}/api/admin/knowledge/conversations/startup-conversation"
         ))
-        .bearer_auth(ADMIN_TOKEN)
+        .bearer_auth(admin_auth::admin_web_token(&reqwest::Client::new(), &base).await)
         .send()
         .await
         .unwrap();

@@ -1,3 +1,6 @@
+#[path = "../../../../tests/support/admin_auth.rs"]
+mod admin_web_token;
+
 use super::attachments::{
     JobAttachmentMediaKind, decode_attachment_base64, sanitize_job_attachment_name,
     sanitize_wav_attachment_name, valid_attachment_mime_for_kind, valid_mp4_mime, valid_wav_mime,
@@ -116,7 +119,7 @@ llm = "test"
 tts = "test"
 [api]
 enabled = true
-admin_token = "jobs-admin-token"
+jwt_secret = "jobs-test-jwt-signing-secret-0123456789"
 "#,
         db_path.display()
     );
@@ -168,11 +171,15 @@ admin_token = "jobs-admin-token"
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
+    if let Some(database) = state.database.as_ref() {
+        admin_web_token::seed_default_admin_password(database.pool()).await;
+    }
     let router = router_with_state(state);
     let server_handle = tokio::spawn(async move {
         axum::serve(listener, router).await.unwrap();
     });
     let base = format!("http://{addr}/api/admin");
+    let web_token = admin_web_token::admin_web_token(&reqwest::Client::new(), base.trim_end_matches("/api/admin")).await;
     let client = reqwest::Client::new();
 
     let created = task_mgr
@@ -194,7 +201,7 @@ admin_token = "jobs-admin-token"
     // POST /api/admin/jobs/{id}/resume on waiting task -> 200 OK
     let resume_resp = client
         .post(format!("{base}/jobs/{}/resume", created.id))
-        .bearer_auth("jobs-admin-token")
+        .bearer_auth(&web_token)
         .send()
         .await
         .unwrap();
@@ -220,7 +227,7 @@ admin_token = "jobs-admin-token"
     // POST /api/admin/jobs/{id}/resume on completed task -> 409 CONFLICT
     let conflict_resp = client
         .post(format!("{base}/jobs/{}/resume", created.id))
-        .bearer_auth("jobs-admin-token")
+        .bearer_auth(&web_token)
         .send()
         .await
         .unwrap();
@@ -309,7 +316,7 @@ async fn recipe_admin_http_lists_validates_and_runs_playlist_recipe() {
         std::fs::set_permissions(&fake_ytdlp, std::fs::Permissions::from_mode(0o755)).unwrap();
     }
 
-    let config: AppConfig = toml::from_str(&format!("[server]\nbind='127.0.0.1:0'\npublic_ws_url='ws://127.0.0.1:0/voice/v1/'\n[database]\nurl='sqlite://{}?mode=rwc'\n[provider_defaults]\nvad='test'\nasr='test'\nllm='test'\ntts='test'\n[api]\nenabled=true\nadmin_token='recipe-admin-token'\n", temp.join("server.db").display())).unwrap();
+    let config: AppConfig = toml::from_str(&format!("[server]\nbind='127.0.0.1:0'\npublic_ws_url='ws://127.0.0.1:0/voice/v1/'\n[database]\nurl='sqlite://{}?mode=rwc'\n[provider_defaults]\nvad='test'\nasr='test'\nllm='test'\ntts='test'\n[api]\nenabled=true\njwt_secret='recipe-test-jwt-signing-secret-0123456789'\n", temp.join("server.db").display())).unwrap();
     let engine = Arc::new(llm_wiki::WikiEngine::open(&vault).unwrap());
     let init = TaskManager::prepare(
         TaskConfig::new(temp.join("tasks"))
@@ -400,15 +407,19 @@ async fn recipe_admin_http_lists_validates_and_runs_playlist_recipe() {
     state.wiki_engine = Some(engine);
     state.orchestrator = Some(orchestrator);
     state.task_manager = Some(manager.clone());
+    if let Some(database) = state.database.as_ref() {
+        admin_web_token::seed_default_admin_password(database.pool()).await;
+    }
     let router = router_with_state(state);
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let base = format!("http://{}/api/admin", listener.local_addr().unwrap());
     let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    let web_token = admin_web_token::admin_web_token(&reqwest::Client::new(), base.trim_end_matches("/api/admin")).await;
     let client = reqwest::Client::new();
 
     let list = client
         .get(format!("{base}/background/recipes"))
-        .bearer_auth("recipe-admin-token")
+        .bearer_auth(&web_token)
         .send()
         .await
         .unwrap();
@@ -436,7 +447,7 @@ async fn recipe_admin_http_lists_validates_and_runs_playlist_recipe() {
         gateway.push_text_with_usage(r#"{"domain":"youtube","topic":"playlist"}"#, 12, 4);
     };
 
-    let invalid = client.post(format!("{base}/jobs")).bearer_auth("recipe-admin-token")
+    let invalid = client.post(format!("{base}/jobs")).bearer_auth(&web_token)
         .json(&serde_json::json!({"recipe":{"id":"playlist_sources","params":{"url":"file:///private/list"}}})).send().await.unwrap();
     assert_eq!(invalid.status(), reqwest::StatusCode::BAD_REQUEST);
     assert_eq!(
@@ -445,7 +456,7 @@ async fn recipe_admin_http_lists_validates_and_runs_playlist_recipe() {
     );
 
     enqueue_topic_selection();
-    let created = client.post(format!("{base}/jobs")).bearer_auth("recipe-admin-token")
+    let created = client.post(format!("{base}/jobs")).bearer_auth(&web_token)
         .json(&serde_json::json!({"recipe":{"id":"playlist_sources","params":{"url":"https://www.youtube.com/playlist?list=PL1"}}})).send().await.unwrap();
     assert_eq!(created.status(), reqwest::StatusCode::CREATED);
     let job: serde_json::Value = created.json().await.unwrap();
@@ -489,7 +500,7 @@ async fn recipe_admin_http_lists_validates_and_runs_playlist_recipe() {
     enqueue_topic_selection();
     let video_list = client
         .post(format!("{base}/jobs"))
-        .bearer_auth("recipe-admin-token")
+        .bearer_auth(&web_token)
         .json(&serde_json::json!({
             "title": "Video URL batch",
             "recipe": {"id":"playlist_sources", "params": {
@@ -540,7 +551,7 @@ async fn recipe_admin_http_lists_validates_and_runs_playlist_recipe() {
     enqueue_topic_selection();
     let mixed = client
         .post(format!("{base}/jobs"))
-        .bearer_auth("recipe-admin-token")
+        .bearer_auth(&web_token)
         .json(&serde_json::json!({"recipe":{"id":"playlist_sources","params":{"url":"https://www.youtube.com/playlist?list=mixed"}}}))
         .send()
         .await
@@ -591,7 +602,7 @@ async fn recipe_admin_http_lists_validates_and_runs_playlist_recipe() {
     enqueue_topic_selection();
     let failed = client
         .post(format!("{base}/jobs"))
-        .bearer_auth("recipe-admin-token")
+        .bearer_auth(&web_token)
         .json(&serde_json::json!({"recipe":{"id":"playlist_sources","params":{"url":"https://www.youtube.com/playlist?list=fail"}}}))
         .send()
         .await

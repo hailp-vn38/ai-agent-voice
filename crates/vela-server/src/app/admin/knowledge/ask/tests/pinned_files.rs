@@ -12,10 +12,15 @@ async fn ask_reads_pinned_files_first_and_lets_the_answer_cite_them() {
     ));
     let (base, temp_root, server) =
         wiki_fixture_with_provider(fake.clone(), "Known evidence from the wiki.").await;
+    let web_token = admin_web_token::admin_web_token(
+        &reqwest::Client::new(),
+        base.trim_end_matches("/api/admin"),
+    )
+    .await;
 
     let body = reqwest::Client::new()
         .post(format!("{base}/knowledge/ask"))
-        .bearer_auth("wiki-chat-test-token")
+        .bearer_auth(&web_token)
         .json(&serde_json::json!({
             "question": "Summarize this file",
             "pinned_paths": ["wiki/concepts/known.md"]
@@ -52,10 +57,15 @@ async fn ask_tells_the_model_when_a_pinned_file_is_gone() {
     let fake = Arc::new(ScriptedLlm::new(true, Vec::new()));
     let (base, temp_root, server) =
         wiki_fixture_with_provider(fake.clone(), "Known evidence from the wiki.").await;
+    let web_token = admin_web_token::admin_web_token(
+        &reqwest::Client::new(),
+        base.trim_end_matches("/api/admin"),
+    )
+    .await;
 
     let body = reqwest::Client::new()
         .post(format!("{base}/knowledge/ask"))
-        .bearer_auth("wiki-chat-test-token")
+        .bearer_auth(&web_token)
         .json(&serde_json::json!({
             "question": "Summarize this file",
             "pinned_paths": ["wiki/concepts/deleted.md"]
@@ -79,9 +89,14 @@ async fn ask_tells_the_model_when_a_pinned_file_is_gone() {
 async fn pinned_read_does_not_use_up_the_model_tool_rounds() {
     let (base, temp_root, server) =
         wiki_fixture(read_rounds(6), "Known evidence from the wiki.").await;
+    let web_token = admin_web_token::admin_web_token(
+        &reqwest::Client::new(),
+        base.trim_end_matches("/api/admin"),
+    )
+    .await;
     let body = reqwest::Client::new()
         .post(format!("{base}/knowledge/ask"))
-        .bearer_auth("wiki-chat-test-token")
+        .bearer_auth(&web_token)
         .json(&serde_json::json!({
             "question": "Read more",
             "pinned_paths": ["wiki/concepts/known.md"]

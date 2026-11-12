@@ -5,6 +5,9 @@
 //! - Websocket Admission: mixed provider source resolution, session lifetime isolation, and dynamic eviction.
 //! - Diagnostics: diagnostic acquisition for cold deployment providers, bounds, timeouts, and quarantine.
 
+#[path = "support/admin_auth.rs"]
+mod admin_auth;
+
 #[path = "config_provider_bindings/harness.rs"]
 mod harness;
 
