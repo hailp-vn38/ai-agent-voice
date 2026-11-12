@@ -47,6 +47,8 @@ public:
     inline int server_sample_rate() const { return server_sample_rate_; }
     inline int server_frame_duration() const { return server_frame_duration_; }
     inline const std::string& session_id() const { return session_id_; }
+    // Declare the `reminders` feature in the next hello (sessions opened by a Wake Signal).
+    void SetHelloReminders(bool enabled) { hello_reminders_ = enabled; }
 
     void OnIncomingAudio(std::function<void(std::unique_ptr<AudioStreamPacket> packet)> callback);
     void OnIncomingJson(std::function<void(const cJSON* root)> callback);
@@ -79,6 +81,7 @@ protected:
     int server_sample_rate_ = 24000;
     int server_frame_duration_ = 60;
     bool error_occurred_ = false;
+    bool hello_reminders_ = false;
     std::string session_id_;
     std::chrono::time_point<std::chrono::steady_clock> last_incoming_time_;
 

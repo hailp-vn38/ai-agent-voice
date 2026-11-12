@@ -573,6 +573,7 @@ void Application::InitializeProtocol() {
             auto display = Board::GetInstance().GetDisplay();
             display->SetChatMessage("system", "");
             SetDeviceState(kDeviceStateIdle);
+            UpdatePushChannel();
         });
     });
 
@@ -723,6 +724,66 @@ void Application::InitializeProtocol() {
     });
 
     protocol_->Start();
+    InitializePushChannel();
+}
+
+void Application::InitializePushChannel() {
+    // Optional feature: absent OTA `push` block (or an unreachable broker) leaves the Device
+    // exactly as before. The channel lives in its own task and never blocks voice paths.
+    if (!ota_ || !ota_->HasPushConfig() || !DevicePushChannel::HasConfig()) {
+        push_channel_.reset();
+        return;
+    }
+    if (push_channel_ == nullptr) {
+        push_channel_ = std::make_unique<DevicePushChannel>(
+            [this]() {
+                // Runs on the push task: only hand off to the main task.
+                Schedule([this]() { HandleWakeSignal(); });
+                return true;
+            },
+            [this]() { return GetDeviceState() != kDeviceStateIdle; });
+    }
+    Schedule([this]() { UpdatePushChannel(); });
+}
+
+void Application::UpdatePushChannel() {
+    if (!push_channel_) {
+        return;
+    }
+    // Hold the push connection only while no voice session exists, so a Device with little
+    // RAM never keeps two TLS sessions.
+    bool session = protocol_ && protocol_->IsAudioChannelOpened();
+    if (GetDeviceState() == kDeviceStateIdle && !session) {
+        push_channel_->Start();
+    } else {
+        push_channel_->Stop();
+    }
+}
+
+void Application::HandleWakeSignal() {
+    if (GetDeviceState() != kDeviceStateIdle || !protocol_ || protocol_->IsAudioChannelOpened()) {
+        ESP_LOGI(TAG, "Wake signal ignored: session already active");
+        return;
+    }
+    ESP_LOGI(TAG, "Opening reminder session on wake signal");
+    protocol_->SetHelloReminders(true);
+    SetDeviceState(kDeviceStateConnecting);
+    Schedule([this]() {
+        if (GetDeviceState() != kDeviceStateConnecting) {
+            protocol_->SetHelloReminders(false);
+            return;
+        }
+        Board::GetInstance().SetPowerSaveLevel(PowerSaveLevel::PERFORMANCE);
+        bool opened = protocol_->OpenAudioChannel();
+        protocol_->SetHelloReminders(false);
+        // Open the channel only: no mic, no listening state. Playback is handled by the
+        // reminder delivery path; an empty session is closed by the server.
+        SetDeviceState(kDeviceStateIdle);
+        if (!opened) {
+            Board::GetInstance().SetPowerSaveLevel(PowerSaveLevel::LOW_POWER);
+        }
+        UpdatePushChannel();
+    });
 }
 
 void Application::ShowActivationCode(const std::string& code, const std::string& message) {
@@ -1066,6 +1127,7 @@ void Application::HandleStateChangedEvent() {
             // Do nothing
             break;
     }
+    UpdatePushChannel();
 }
 
 void Application::StartListeningAudio() {
@@ -1193,6 +1255,9 @@ void Application::Reboot() {
     ESP_LOGI(TAG, "Rebooting...");
     if (GetDeviceState() == kDeviceStateNotifying) {
         StopNotification();
+    }
+    if (push_channel_) {
+        push_channel_->Stop();
     }
     // Disconnect the audio channel
     if (protocol_ && protocol_->IsAudioChannelOpened()) {

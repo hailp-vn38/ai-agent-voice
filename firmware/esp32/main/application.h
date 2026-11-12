@@ -20,6 +20,7 @@
 #include "device_state.h"
 #include "device_state_machine.h"
 #include "notify/notify_player.h"
+#include "push/device_push_channel.h"
 
 // Main event bits
 #define MAIN_EVENT_SCHEDULE             (1 << 0)
@@ -143,6 +144,7 @@ private:
     NotifyPlayer notify_player_;
     uint32_t notification_playback_id_ = 0;
     std::unique_ptr<Ota> ota_;
+    std::unique_ptr<DevicePushChannel> push_channel_;
 
     std::function<void(const std::string&)> mcp_broadcast_callback_;
 
@@ -180,6 +182,9 @@ private:
     void CheckAssetsVersion();
     void CheckNewVersion();
     void InitializeProtocol();
+    void InitializePushChannel();
+    void UpdatePushChannel();
+    void HandleWakeSignal();
     void ShowActivationCode(const std::string& code, const std::string& message);
     void SetListeningMode(ListeningMode mode);
     ListeningMode GetDefaultListeningMode() const;

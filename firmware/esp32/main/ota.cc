@@ -198,6 +198,31 @@ NetworkResult<> Ota::CheckVersion() {
         ESP_LOGI(TAG, "No websocket section found!");
     }
 
+    // Device Push Channel grant. Kept in its own "push" namespace, never mixed with the
+    // voice-protocol "mqtt"/"websocket" keys. Absent block => feature off, stale grant erased.
+    has_push_config_ = false;
+    cJSON *push = cJSON_GetObjectItem(root, "push");
+    if (cJSON_IsObject(push)) {
+        Settings settings("push", true);
+        cJSON *item = NULL;
+        cJSON_ArrayForEach(item, push) {
+            if (cJSON_IsString(item)) {
+                if (settings.GetString(item->string) != item->valuestring) {
+                    settings.SetString(item->string, item->valuestring);
+                }
+            } else if (cJSON_IsNumber(item)) {
+                if (settings.GetInt(item->string) != item->valueint) {
+                    settings.SetInt(item->string, item->valueint);
+                }
+            }
+        }
+        has_push_config_ = true;
+    } else {
+        Settings settings("push", true);
+        settings.EraseAll();
+        ESP_LOGI(TAG, "No push section found");
+    }
+
     has_server_time_ = false;
     cJSON *server_time = cJSON_GetObjectItem(root, "server_time");
     if (cJSON_IsObject(server_time)) {
