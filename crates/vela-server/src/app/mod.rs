@@ -104,6 +104,10 @@ pub async fn bootstrap_with_providers_and_secret_resolver(
     admin::auth::prepare(&state)
         .await
         .map_err(|_| DatabaseError::Unavailable)?;
+    state
+        .system_metrics
+        .clone()
+        .start(state.lifecycle.listening().clone());
     Ok(router_with_state(state))
 }
 
