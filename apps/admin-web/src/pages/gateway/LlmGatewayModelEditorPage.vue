@@ -17,6 +17,7 @@ import ConfirmDialog from '@/components/admin/ConfirmDialog.vue'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { useI18n } from '@/composables/useI18n'
+import { useErrorToast } from '@/composables/useNotify'
 import { ALL_CAPABILITY_TAGS } from './llmGatewayUi'
 
 const route = useRoute()
@@ -52,6 +53,7 @@ const loading = ref(true)
 const saving = ref(false)
 const deleteOpen = ref(false)
 const errorMessage = ref('')
+useErrorToast(() => errorMessage.value, { retry: () => load() })
 
 const vendorInfo = computed(
   () => vendors.value.find((v) => v.vendor === selectedVendor.value) ?? null,
@@ -334,14 +336,6 @@ onMounted(() => {
         </Button>
       </div>
     </header>
-
-    <p
-      v-if="errorMessage"
-      role="alert"
-      class="rounded-lg border border-danger/30 bg-danger/5 px-4 py-3 text-sm text-danger"
-    >
-      {{ errorMessage }}
-    </p>
 
     <form
       data-testid="pool-model-form"

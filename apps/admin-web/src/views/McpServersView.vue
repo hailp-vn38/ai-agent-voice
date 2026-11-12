@@ -13,6 +13,7 @@ import McpServerFormModal from '@/components/mcp/McpServerFormModal.vue'
 import { ActionMenu, MenuItem } from '@/components/ui/action-menu'
 import { Button } from '@/components/ui/button'
 import { useI18n } from '@/composables/useI18n'
+import { useErrorToast, useSuccessToast } from '@/composables/useNotify'
 
 const { t } = useI18n()
 const servers = ref<AdminMcpServer[]>([])
@@ -24,7 +25,9 @@ const loading = ref(false)
 const saving = ref(false)
 const error = ref('')
 const notice = ref('')
+useSuccessToast(() => notice.value, { onDismiss: () => (notice.value = '') })
 const formOpen = ref(false)
+useErrorToast(() => (formOpen.value ? '' : error.value), { retry: () => load() })
 const editing = ref<AdminMcpServer>()
 const deleteTarget = ref<AdminMcpServer>()
 const confirmDeleteOpen = computed({
@@ -181,9 +184,6 @@ onBeforeUnmount(() => controller.abort())
       <div class="flex items-start gap-3"><Link2 class="size-5 text-studio-violet" aria-hidden="true" /><div><p class="font-semibold">{{ t('mcp.step2') }}</p><p class="mt-1 text-xs text-muted-foreground">{{ t('mcp.step2Hint') }}</p></div></div>
       <div class="flex items-start gap-3"><ShieldCheck class="size-5 text-studio-cyan" aria-hidden="true" /><div><p class="font-semibold">{{ t('mcp.step3') }}</p><p class="mt-1 text-xs text-muted-foreground">{{ t('mcp.step3Hint') }}</p></div></div>
     </div>
-
-    <div v-if="error" class="rounded-lg border border-danger/40 p-3 text-sm text-danger" role="alert">{{ error }}</div>
-    <div v-if="notice" class="rounded-lg border border-border p-3 text-sm text-muted-foreground" role="status">{{ notice }}</div>
 
     <div class="flex flex-wrap items-center gap-3">
       <label class="relative min-w-60 flex-1 sm:max-w-sm">

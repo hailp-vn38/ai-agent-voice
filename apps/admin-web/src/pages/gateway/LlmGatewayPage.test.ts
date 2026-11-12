@@ -20,6 +20,7 @@ import LlmGatewayPage from './LlmGatewayPage.vue'
 import LlmGatewayPoolDetailPage from './LlmGatewayPoolDetailPage.vue'
 import LlmGatewayPoolsPage from './LlmGatewayPoolsPage.vue'
 import LlmGatewayQuotasPage from './LlmGatewayQuotasPage.vue'
+import { useNotifyState } from '@/composables/useNotify'
 
 const sampleCodexModel: GatewayPoolModelView = {
   provider_key: 'llm_codex_pool_1',
@@ -518,7 +519,7 @@ describe('LLM Gateway Hub (Variant A) & Sub-pages', () => {
     await wrapper.find('form').trigger('submit')
     await flushPromises()
     expect(importCookieAccount).not.toHaveBeenCalled()
-    expect(wrapper.find('[role="alert"]').exists()).toBe(true)
+    expect(useNotifyState().toasts.filter(toast => toast.tone === 'error').map(toast => toast.message).join('\n')).not.toBe('')
 
     await cookies.setValue('  hatch_sess=s1; hatch_gw=g1  ')
     await wrapper.find('form').trigger('submit')

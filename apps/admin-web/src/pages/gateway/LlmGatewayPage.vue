@@ -28,6 +28,7 @@ import type {
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { useI18n } from '@/composables/useI18n'
+import { useErrorToast } from '@/composables/useNotify'
 import {
   primaryQuotaPercent,
   quotaBarColorClass,
@@ -44,6 +45,7 @@ const quotasByAccount = ref<Record<string, GatewayAccountQuota>>({})
 const loading = ref(true)
 const loadingQuotas = ref(false)
 const errorMessage = ref('')
+useErrorToast(() => errorMessage.value, { retry: () => load() })
 
 interface PoolSummaryCard {
   vendor: GatewayVendor
@@ -218,14 +220,6 @@ onMounted(() => {
         </Button>
       </div>
     </header>
-
-    <p
-      v-if="errorMessage"
-      role="alert"
-      class="rounded-lg border border-danger/30 bg-danger/5 px-4 py-3 text-sm text-danger"
-    >
-      {{ errorMessage }}
-    </p>
 
     <!-- Hero Control Center Banner -->
     <section

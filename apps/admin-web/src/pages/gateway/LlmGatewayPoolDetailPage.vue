@@ -26,6 +26,7 @@ import ConfirmDialog from '@/components/admin/ConfirmDialog.vue'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { useI18n } from '@/composables/useI18n'
+import { useErrorToast } from '@/composables/useNotify'
 import {
   loginModeLabel,
   primaryQuotaPercent,
@@ -48,6 +49,7 @@ const activeTab = ref<'accounts' | 'models' | 'presets' | 'config'>('accounts')
 const loading = ref(true)
 const busyKey = ref<string | null>(null)
 const errorMessage = ref('')
+useErrorToast(() => errorMessage.value, { retry: () => load() })
 
 const deleteModelOpen = ref(false)
 const deletingModel = ref<GatewayPoolModelView | null>(null)
@@ -218,14 +220,6 @@ onMounted(() => {
         </Button>
       </div>
     </header>
-
-    <p
-      v-if="errorMessage"
-      role="alert"
-      class="rounded-lg border border-danger/30 bg-danger/5 px-4 py-3 text-sm text-danger"
-    >
-      {{ errorMessage }}
-    </p>
 
     <div
       v-if="loading && !poolDetail"

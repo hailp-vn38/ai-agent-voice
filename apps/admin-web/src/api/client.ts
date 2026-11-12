@@ -2,6 +2,7 @@ import { readAdminWebToken } from '@/stores/auth'
 
 import { toApiError } from './errors'
 import { applySessionFailure } from './session'
+import { reportConnectionLost } from '@/composables/useNotify'
 
 const rawBaseUrl = import.meta.env.VITE_API_BASE_URL?.trim() ?? ''
 const apiBaseUrl = rawBaseUrl.replace(/\/+$/, '')
@@ -48,16 +49,28 @@ function requestHeaders(initHeaders: HeadersInit | undefined, optionHeaders: Hea
   return headers
 }
 
+/** Statuses a reverse proxy returns when the server behind it is down. */
+const GATEWAY_FAILURES = new Set([502, 503, 504])
+
 export async function request(path: string, init: RequestInit = {}, options: RequestOptions = {}) {
-  const response = await fetch(apiUrl(path), {
-    ...init,
-    body: options.body ?? init.body,
-    headers: requestHeaders(init.headers, options.headers, options.revision, options.anonymous),
-    signal: options.signal,
-  })
+  let response: Response
+  try {
+    response = await fetch(apiUrl(path), {
+      ...init,
+      body: options.body ?? init.body,
+      headers: requestHeaders(init.headers, options.headers, options.revision, options.anonymous),
+      signal: options.signal,
+    })
+  } catch (error) {
+    // fetch rejects with a TypeError when the network or server is unreachable.
+    if (error instanceof TypeError && !options.signal?.aborted) reportConnectionLost()
+    throw error
+  }
   if (!response.ok) {
     const error = await toApiError(response)
     if (!options.anonymous) applySessionFailure(error)
+    // Only a bare gateway failure means the server is gone; a JSON 503 is the server speaking.
+    if (GATEWAY_FAILURES.has(error.status) && error.code === `http_${error.status}`) reportConnectionLost()
     throw error
   }
   return response

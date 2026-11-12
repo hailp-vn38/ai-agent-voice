@@ -12,6 +12,7 @@ import DetailHeader from '@/components/admin/DetailHeader.vue'
 import SpeakerEnrollmentWizard from '@/components/speakers/SpeakerEnrollmentWizard.vue'
 import { Button } from '@/components/ui/button'
 import { useI18n } from '@/composables/useI18n'
+import { useErrorToast } from '@/composables/useNotify'
 
 const route = useRoute()
 const router = useRouter()
@@ -24,6 +25,7 @@ const engineAvailable = ref(false)
 const loading = ref(false)
 const saving = ref(false)
 const error = ref('')
+useErrorToast(() => error.value, { retry: () => load() })
 const copied = ref(false)
 const editOpen = ref(false)
 const deleteOpen = ref(false)
@@ -163,10 +165,6 @@ onBeforeUnmount(() => activeRequest?.abort())
 
 <template>
   <section class="space-y-6">
-    <div v-if="error" role="alert" class="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-destructive/40 bg-destructive/10 px-4 py-3 text-sm text-destructive">
-      <span>{{ error }}</span>
-      <Button v-if="!speaker" variant="outline" size="sm" @click="load">{{ t('common.retry') }}</Button>
-    </div>
 
     <div v-if="loading" class="space-y-4" aria-busy="true">
       <div class="studio-panel h-36 animate-pulse bg-muted/20" />

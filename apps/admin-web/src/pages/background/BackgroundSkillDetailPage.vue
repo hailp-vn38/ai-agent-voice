@@ -21,6 +21,7 @@ import DetailHeader from '@/components/admin/DetailHeader.vue'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { useI18n } from '@/composables/useI18n'
+import { useErrorToast, useSuccessToast } from '@/composables/useNotify'
 import { renderMarkdown } from '@/lib/markdown'
 
 const route = useRoute()
@@ -39,8 +40,10 @@ const loading = ref(false)
 const saving = ref(false)
 const deleting = ref(false)
 const error = ref('')
+useErrorToast(() => error.value)
 const requiresToolsError = ref('')
 const notice = ref('')
+useSuccessToast(() => notice.value, { onDismiss: () => (notice.value = '') })
 const detail = ref<JobSkillDetail | null>(null)
 const settings = ref<BackgroundSettings | null>(null)
 const editorMode = ref<'edit' | 'preview' | 'split' | 'default'>('edit')
@@ -339,22 +342,6 @@ onBeforeUnmount(() => controller?.abort())
         </Button>
       </template>
     </DetailHeader>
-
-    <div
-      v-if="error"
-      role="alert"
-      class="rounded-lg border border-danger/30 bg-danger/5 p-3.5 text-sm text-danger"
-      data-skill-modal-error
-    >
-      {{ error }}
-    </div>
-    <p
-      v-if="notice"
-      role="status"
-      class="rounded-lg border border-success/30 bg-success/5 p-3 text-sm text-success-foreground"
-    >
-      {{ notice }}
-    </p>
 
     <div
       v-if="loading && !detail"

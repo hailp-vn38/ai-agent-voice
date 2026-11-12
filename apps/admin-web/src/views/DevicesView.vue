@@ -16,6 +16,7 @@ import { asDevice } from '@/components/devices/presentation'
 import PageHeader from '@/components/admin/PageHeader.vue'
 import { Button } from '@/components/ui/button'
 import { useI18n } from '@/composables/useI18n'
+import { useErrorToast } from '@/composables/useNotify'
 import { useAdminStore } from '@/stores/admin'
 
 const store = useAdminStore()
@@ -28,6 +29,7 @@ const rawDevices = ref<AdminDevice[]>([])
 const loading = ref(false)
 const saving = ref(false)
 const error = ref('')
+useErrorToast(() => error.value, { retry: () => load() })
 const chooseAgentOpen = ref(false)
 const enrollmentOpen = ref(false)
 const selectedAgentKey = ref('')
@@ -193,9 +195,6 @@ onBeforeUnmount(() => activeRequest?.abort())
       </label>
     </div>
 
-    <div v-if="error" role="alert" class="rounded-lg border border-danger/30 bg-danger/10 p-3 text-sm text-danger-foreground">
-      {{ error }}
-    </div>
     <CardListSkeleton v-if="loading" class="gap-3 sm:grid-cols-2 2xl:grid-cols-3" />
     <div v-else-if="!filtered.length" class="studio-panel px-5 py-12 text-center">
       <p class="text-sm text-muted-foreground">{{ search || agentFilter || admissionFilter !== 'all' ? t('deviceDetail.emptyFilter') : t('devices.empty') }}</p>

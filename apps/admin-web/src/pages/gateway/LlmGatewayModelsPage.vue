@@ -12,6 +12,7 @@ import type {
 } from '@/api/types/llm-gateway'
 import { Button } from '@/components/ui/button'
 import { useI18n } from '@/composables/useI18n'
+import { useErrorToast } from '@/composables/useNotify'
 
 const router = useRouter()
 const { t } = useI18n()
@@ -21,6 +22,7 @@ const searchQuery = ref('')
 const vendorFilter = ref<'all' | GatewayVendor>('all')
 const loading = ref(true)
 const errorMessage = ref('')
+useErrorToast(() => errorMessage.value, { retry: () => load() })
 
 const allModels = computed<GatewayPoolModelView[]>(() => {
   const list: GatewayPoolModelView[] = []
@@ -121,14 +123,6 @@ onMounted(() => {
         </Button>
       </div>
     </header>
-
-    <p
-      v-if="errorMessage"
-      role="alert"
-      class="rounded-lg border border-danger/30 bg-danger/5 px-4 py-3 text-sm text-danger"
-    >
-      {{ errorMessage }}
-    </p>
 
     <div class="studio-panel overflow-hidden">
       <div class="border-b border-border/70 p-4">

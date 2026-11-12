@@ -12,6 +12,7 @@ import McpServerFormModal from '@/components/mcp/McpServerFormModal.vue'
 import { ActionMenu, MenuItem } from '@/components/ui/action-menu'
 import { Button } from '@/components/ui/button'
 import { useI18n } from '@/composables/useI18n'
+import { useErrorToast } from '@/composables/useNotify'
 const { t } = useI18n()
 const route = useRoute()
 const router = useRouter()
@@ -20,6 +21,7 @@ const server = ref<AdminMcpServer>()
 const loading = ref(false)
 const saving = ref(false)
 const error = ref('')
+useErrorToast(() => error.value, { retry: () => load() })
 const editOpen = ref(false)
 const deleteOpen = ref(false)
 let controller: AbortController | undefined
@@ -75,7 +77,6 @@ onBeforeUnmount(() => controller?.abort())
       <p class="flex items-center gap-2 text-xs text-muted-foreground"><Server class="size-4" aria-hidden="true" /><span class="font-mono">{{ server.key }}</span> · {{ endpoint }} · {{ server.auth.type }} <span v-if="server.credential">· {{ server.credential.masked_key }}</span></p>
       <p v-if="server.url.startsWith('http:') && server.auth.type !== 'none'" class="text-xs text-warning">{{ t('diagnostics.httpWarning') }}</p>
     </section>
-    <p v-if="error" role="alert" class="rounded-lg border border-danger/40 p-3 text-sm text-danger">{{ error }}</p>
     <div v-if="loading" class="studio-panel p-8 text-center text-muted-foreground" role="status">{{ t('common.loading') }}</div>
     <template v-if="server">
       <McpDiagnosticPanel :saved-key="server.key" :revision="server.revision" />

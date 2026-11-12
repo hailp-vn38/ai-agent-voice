@@ -23,6 +23,7 @@ import type {
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { useI18n } from '@/composables/useI18n'
+import { useErrorToast } from '@/composables/useNotify'
 import { loginModeLabel, vendorMeta } from './llmGatewayUi'
 
 const route = useRoute()
@@ -40,6 +41,7 @@ const starting = ref(false)
 const completing = ref(false)
 const copied = ref(false)
 const errorMessage = ref('')
+useErrorToast(() => errorMessage.value)
 
 let pollTimer: ReturnType<typeof setTimeout> | undefined
 let activePollSessionId: string | null = null
@@ -353,14 +355,6 @@ onBeforeUnmount(() => {
         {{ t('llmGateway.connectPage.step3') }}
       </div>
     </div>
-
-    <p
-      v-if="errorMessage"
-      role="alert"
-      class="rounded-lg border border-danger/30 bg-danger/5 px-4 py-3 text-sm text-danger"
-    >
-      {{ errorMessage }}
-    </p>
 
     <div class="grid gap-4 lg:grid-cols-[minmax(0,1fr)_315px]">
       <section class="studio-panel overflow-hidden">

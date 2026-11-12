@@ -21,6 +21,7 @@ import type {
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { useI18n } from '@/composables/useI18n'
+import { useErrorToast } from '@/composables/useNotify'
 import {
   primaryQuotaPercent,
   quotaBarColorClass,
@@ -38,6 +39,7 @@ const loading = ref(true)
 const loadingQuotas = ref(false)
 const quotaBusyKey = ref<string | null>(null)
 const errorMessage = ref('')
+useErrorToast(() => errorMessage.value, { retry: () => load() })
 
 const activeCount = computed(
   () => accounts.value.filter((a) => a.status === 'active').length,
@@ -198,14 +200,6 @@ onMounted(() => {
         </Button>
       </div>
     </header>
-
-    <p
-      v-if="errorMessage"
-      role="alert"
-      class="rounded-lg border border-danger/30 bg-danger/5 px-4 py-3 text-sm text-danger"
-    >
-      {{ errorMessage }}
-    </p>
 
     <!-- 4 KPI Cards -->
     <div class="grid grid-cols-2 gap-3 lg:grid-cols-4">

@@ -17,6 +17,7 @@ import ConfirmDialog from '@/components/admin/ConfirmDialog.vue'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { useI18n } from '@/composables/useI18n'
+import { useErrorToast, useSuccessToast } from '@/composables/useNotify'
 
 const route = useRoute()
 const router = useRouter()
@@ -29,8 +30,10 @@ const loading = ref(true)
 const refreshing = ref(false)
 const busy = ref(false)
 const error = ref('')
+useErrorToast(() => error.value, { retry: () => load() })
 const eventsError = ref('')
 const notice = ref('')
+useSuccessToast(() => notice.value, { onDismiss: () => (notice.value = '') })
 const retryOpen = ref(false)
 const deleteOpen = ref(false)
 let controller: AbortController | undefined
@@ -272,8 +275,6 @@ onBeforeUnmount(() => {
       </template>
     </DetailHeader>
 
-    <div v-if="error" role="alert" class="rounded-xl border border-danger/30 bg-danger/5 p-4 text-sm text-danger">{{ error }}</div>
-    <p v-if="notice" role="status" class="rounded-xl border border-success/30 bg-success/5 p-3 text-sm text-success-foreground">{{ notice }}</p>
     <div
       v-if="loading"
       data-job-detail-skeleton

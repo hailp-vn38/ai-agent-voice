@@ -37,6 +37,7 @@ import ArtifactPreviewDialog, {
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { useI18n } from '@/composables/useI18n'
+import { useErrorToast } from '@/composables/useNotify'
 import { useAuthStore } from '@/stores/auth'
 
 const route = useRoute()
@@ -68,6 +69,7 @@ const pageSize = ref(24)
 const total = ref(0)
 const loading = ref(true)
 const error = ref('')
+useErrorToast(() => error.value, { title: () => (backendPending.value ? t('jobUi.backendPending') : t('jobUi.loadFailed')), retry: () => load() })
 const backendPending = ref(false)
 const selectedArtifact = ref<AdminArtifactItem | null>(null)
 const downloadingId = ref<string | null>(null)
@@ -414,11 +416,6 @@ onBeforeUnmount(() => {
         </Button>
       </template>
     </PageHeader>
-
-    <div v-if="error" role="alert" class="rounded-lg border border-danger/30 bg-danger/5 p-4 text-sm text-danger">
-      <p class="font-medium">{{ backendPending ? t('jobUi.backendPending') : t('jobUi.loadFailed') }}</p>
-      <p class="mt-1 break-words">{{ error }}</p>
-    </div>
 
     <div class="grid gap-3 sm:grid-cols-2 xl:grid-cols-4" data-artifact-summary-cards>
       <div class="studio-panel flex items-center gap-3 p-4" :class="{ 'card-shimmer': loading }">
