@@ -1,6 +1,6 @@
 #[path = "support/admin_auth.rs"]
-mod admin_web_token_support;
-use admin_web_token_support::admin_web_token;
+mod admin_auth;
+use admin_auth::admin_web_token;
 use futures_util::{SinkExt, StreamExt};
 use reqwest::{Client, StatusCode};
 use std::{fs, sync::Arc, time::Duration};

@@ -177,7 +177,7 @@ INSERT INTO agents (key,name,created_at,updated_at) VALUES ('agent','Agent',1,1)
 INSERT INTO devices (device_id,agent_id,created_at,updated_at) VALUES ('device',1,1,1);
 INSERT INTO agent_template_assignments (agent_id,template_id,is_default,created_at) VALUES (1,1,1,1);
 "#).execute(db.pool()).await.unwrap();
-    crate::admin_web::seed_default_admin(db.pool()).await;
+    crate::admin_auth::seed_default_admin_password(db.pool()).await;
     let builds = Arc::new(AtomicUsize::new(0));
     let mut state = AppState::from_provider_set_with_database(
         config,
@@ -223,7 +223,7 @@ INSERT INTO agent_template_assignments (agent_id,template_id,is_default,created_
 }
 
 pub async fn client(base: &str) -> Client {
-    let token = crate::admin_web::admin_web_token(
+    let token = crate::admin_auth::admin_web_token(
         &Client::new(),
         base.trim_end_matches("/api/admin"),
     )

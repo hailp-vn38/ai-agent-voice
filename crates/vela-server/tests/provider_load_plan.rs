@@ -1,5 +1,5 @@
-#[path = "support/admin_web.rs"]
-mod admin_web;
+#[path = "support/admin_auth.rs"]
+mod admin_auth;
 
 use std::sync::Arc;
 
@@ -226,7 +226,7 @@ async fn serve_with_credentials(url: String) -> (String, JoinHandle<()>) {
 
 async fn provider_view(base: &str, key: &str) -> serde_json::Value {
     let client = Client::new();
-    let admin = admin_web::admin_web_token(&client, base).await;
+    let admin = admin_auth::admin_web_token(&client, base).await;
     client
         .get(format!("{base}/api/admin/providers/{key}"))
         .bearer_auth(admin)
@@ -280,7 +280,7 @@ async fn an_optional_non_default_provider_failure_starts_and_reports_unavailable
 
     let (base, task) = serve(url).await;
     let client = Client::new();
-    let admin = admin_web::admin_web_token(&client, &base).await;
+    let admin = admin_auth::admin_web_token(&client, &base).await;
     let response = client
         .get(format!("{base}/api/admin/providers/db_llm"))
         .bearer_auth(admin)

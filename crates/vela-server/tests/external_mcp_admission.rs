@@ -5,8 +5,8 @@
 //! does not.  The assertions are about what a session may call, what it may not, and what an
 //! External MCP failure may never change.
 
-#[path = "support/admin_web.rs"]
-mod admin_web;
+#[path = "support/admin_auth.rs"]
+mod admin_auth;
 
 #[path = "external_mcp_admission/harness.rs"]
 mod harness;

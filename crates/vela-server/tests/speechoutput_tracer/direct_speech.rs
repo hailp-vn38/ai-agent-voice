@@ -11,7 +11,7 @@ async fn admin_direct_speech_uses_current_session_and_rejects_offline_legacy_and
         Arc::new(RecordingTts(Arc::clone(&requests))),
     ));
     let (base, task) = start_router_with(providers).await;
-    let admin = crate::admin_web::admin_web_token(&reqwest::Client::new(), &base).await;
+    let admin = crate::support::admin_auth::admin_web_token(&reqwest::Client::new(), &base).await;
     let http = reqwest::Client::new();
     let path = format!("{base}/api/admin/devices/tracer-device/speak");
     let body = serde_json::json!({"request_id":"admin-1","text":"An admin notification: {\"voltage\":5}."});

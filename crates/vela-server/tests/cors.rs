@@ -1,8 +1,8 @@
 use std::{fs, sync::Arc};
 
 use reqwest::{Client, Method, StatusCode};
-#[path = "support/admin_web.rs"]
-mod admin_web;
+#[path = "support/admin_auth.rs"]
+mod admin_auth;
 
 use vela_server::{app::bootstrap_with_providers, config::AppConfig, providers::ProviderSet};
 
@@ -42,7 +42,7 @@ jwt_secret = "cors-test-signing-secret-0123456789"
 async fn lan_browser_preflight_and_authenticated_requests() {
     let (base, task) = server().await;
     let client = Client::new();
-    let admin = admin_web::admin_web_token(&client, &base).await;
+    let admin = admin_auth::admin_web_token(&client, &base).await;
     let origin = "http://192.168.1.158:5173";
     for method in ["GET", "POST", "PUT", "PATCH", "DELETE"] {
         let response = client
@@ -167,7 +167,7 @@ async fn public_and_opaque_origins_are_not_allowed_for_admin() {
 async fn local_ipv4_and_ipv6_origins_are_allowed() {
     let (base, task) = server().await;
     let client = Client::new();
-    let admin = admin_web::admin_web_token(&client, &base).await;
+    let admin = admin_auth::admin_web_token(&client, &base).await;
     for origin in [
         "http://localhost:5173",
         "http://127.0.0.1:5173",

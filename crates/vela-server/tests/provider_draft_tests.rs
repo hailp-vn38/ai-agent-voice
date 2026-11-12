@@ -1,7 +1,7 @@
 #![cfg(feature = "qualification-providers")]
 
-#[path = "support/admin_web.rs"]
-mod admin_web;
+#[path = "support/admin_auth.rs"]
+mod admin_auth;
 
 use std::{collections::HashMap, sync::Arc};
 use vela_server::{
@@ -41,6 +41,7 @@ jwt_secret = "draft-test-signing-secret-0123456789"
     let config = AppConfig::parse_and_resolve(&path).unwrap();
     std::fs::remove_file(&path).unwrap();
     let db = Database::connect(&config.database).await.unwrap();
+    admin_auth::seed_default_admin_password(db.pool()).await;
     let secrets = Arc::new(EnvSecretResolver);
     let lifecycle = RuntimeLifecycle::new(std::time::Duration::from_secs(1));
     let mut state = AppState::from_provider_set_with_database_resolver_and_shutdown(
@@ -86,7 +87,7 @@ jwt_secret = "draft-test-signing-secret-0123456789"
             .unwrap()
     });
     let client = reqwest::Client::new();
-    let admin = admin_web::admin_web_token(&client, base.trim_end_matches("/api/admin")).await;
+    let admin = admin_auth::admin_web_token(&client, base.trim_end_matches("/api/admin")).await;
     let llm = client.post(format!("{base}/provider-tests/llm")).bearer_auth(&admin).json(&serde_json::json!({"provider":{"type":"llm","adapter":"qualification_llm","config_json":{}},"input":{"text":"hello"}})).send().await.unwrap();
     assert_eq!(llm.status(), 200);
     let result: serde_json::Value = llm.json().await.unwrap();
@@ -146,7 +147,15 @@ jwt_secret = "draft-test-signing-secret-0123456789"
         .json()
         .await
         .unwrap();
-    assert!(providers["items"].as_array().unwrap().is_empty());
+    // Only the config-declared provider exists: drafts left no saved row behind.
+    assert!(
+        providers["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|item| item["source"] == "config" && item["key"] == "config:vad:test"),
+        "{providers}"
+    );
     assert_eq!(manager.accounting().active_leases, 0);
     task.abort();
 }

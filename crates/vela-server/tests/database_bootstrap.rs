@@ -1,5 +1,5 @@
-#[path = "support/admin_web.rs"]
-mod admin_web;
+#[path = "support/admin_auth.rs"]
+mod admin_auth;
 
 use std::{fs, str::FromStr, sync::Arc};
 
@@ -166,7 +166,7 @@ async fn startup_marks_running_wiki_answers_interrupted_before_serving_http() {
         .get(format!(
             "{base}/api/admin/knowledge/conversations/startup-conversation"
         ))
-        .bearer_auth(admin_web::admin_web_token(&reqwest::Client::new(), &base).await)
+        .bearer_auth(admin_auth::admin_web_token(&reqwest::Client::new(), &base).await)
         .send()
         .await
         .unwrap();

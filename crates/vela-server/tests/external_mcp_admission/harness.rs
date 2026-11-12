@@ -509,7 +509,7 @@ pub async fn start_with_materializer(
     let address = listener.local_addr().unwrap();
     let url = app_config.database.url.clone();
     let database = Database::connect(&app_config.database).await.unwrap();
-    crate::admin_web::seed_default_admin(database.pool()).await;
+    crate::admin_auth::seed_default_admin_password(database.pool()).await;
     let mut state = AppState::from_provider_set_with_database_resolver_and_shutdown(
         app_config,
         Arc::new(ProviderSet::with_all(

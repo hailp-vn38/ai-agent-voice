@@ -1,5 +1,5 @@
-#[path = "support/admin_web.rs"]
-mod admin_web;
+#[path = "support/admin_auth.rs"]
+mod admin_auth;
 
 use std::sync::Arc;
 
@@ -248,7 +248,7 @@ async fn ota_enrollment_claim_and_activate_create_exactly_one_admitted_device() 
     sqlx::query("INSERT INTO agents (key,name,enabled,created_at,updated_at) VALUES ('agent', 'Agent', 1, 1, 1)")
         .execute(&pool).await.unwrap();
     let client = reqwest::Client::new();
-    let admin = crate::admin_web::admin_web_token(&client, &base).await;
+    let admin = crate::admin_auth::admin_web_token(&client, &base).await;
     let ota = client
         .get(format!("{base}/voice/ota/"))
         .header("Device-Id", "opaque:Device-A")

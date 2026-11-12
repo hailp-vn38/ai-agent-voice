@@ -78,7 +78,7 @@ async fn shutdown_rejects_admin_direct_speech_on_an_existing_session() {
         .unwrap()
         .unwrap()
         .unwrap();
-    let admin = crate::admin_web::admin_web_token(&reqwest::Client::new(), &voice.base).await;
+    let admin = crate::admin_auth::admin_web_token(&reqwest::Client::new(), &voice.base).await;
     assert!(voice.lifecycle.begin_shutdown());
     let response = reqwest::Client::new()
         .post(format!("{}/api/admin/devices/device/speak", voice.base))
@@ -118,7 +118,7 @@ async fn admin_sse_streams_do_not_hold_graceful_shutdown_past_controlled_close_s
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
     let database = Database::connect(&app_config.database).await.unwrap();
-    crate::admin_web::seed_default_admin(database.pool()).await;
+    crate::admin_auth::seed_default_admin_password(database.pool()).await;
     let lifecycle = RuntimeLifecycle::new(Duration::from_secs(15));
     let mut state = AppState::from_provider_set_with_database_and_shutdown(
         app_config.clone(),
@@ -143,7 +143,7 @@ async fn admin_sse_streams_do_not_hold_graceful_shutdown_past_controlled_close_s
 
     let base = format!("http://{address}");
     let client = reqwest::Client::new();
-    let admin = crate::admin_web::admin_web_token(&client, &base).await;
+    let admin = crate::admin_auth::admin_web_token(&client, &base).await;
     let mut streams = Vec::new();
     for path in [
         "/api/admin/system/logs/stream",

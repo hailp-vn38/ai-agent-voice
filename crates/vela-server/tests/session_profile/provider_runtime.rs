@@ -236,7 +236,7 @@ async fn public_api_created_provider_is_used_by_new_ws_and_patch_keeps_old_sessi
     let pool = seed(&url).await;
     sqlx::query("INSERT INTO devices (device_id,agent_id,enabled,created_at,updated_at) VALUES ('second',1,1,1,1)").execute(&pool).await.unwrap();
     let client = reqwest::Client::new();
-    let auth_token = crate::admin_web::admin_web_token(&client, &base).await;
+    let auth_token = crate::admin_auth::admin_web_token(&client, &base).await;
     let auth = auth_token.as_str();
     let providers = format!("{base}/api/admin/providers");
     let mut generated = Vec::new();
@@ -541,7 +541,7 @@ async fn prepare_public_api_returns_accepted_then_ready_and_rejects_loader_flood
     })
     .await;
     let client = reqwest::Client::new();
-    let auth_token = crate::admin_web::admin_web_token(&client, &base).await;
+    let auth_token = crate::admin_auth::admin_web_token(&client, &base).await;
     let providers = format!("{base}/api/admin/providers");
     let mut generated = Vec::new();
     for name in ["first", "second"] {

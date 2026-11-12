@@ -1,5 +1,5 @@
 use super::harness::*;
-use crate::admin_web_token_support::admin_web_token;
+use crate::admin_auth::admin_web_token;
 
 #[tokio::test]
 async fn background_http_foundation_is_authenticated_and_fails_closed_without_executor() {

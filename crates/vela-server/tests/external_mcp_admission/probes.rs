@@ -10,7 +10,7 @@ async fn external_agent_reviews_exact_contract_and_drift_requires_new_review() {
     configuration.api.enabled = true;
     configuration.api.jwt_secret = vela_server::config::SecretString::new("external-mcp-probes-signing-secret-0123456789");
     let voice = start_with_config(configuration, ConstantSecrets(None)).await;
-    let admin = crate::admin_web::admin_web_token(&reqwest::Client::new(), &voice.base).await;
+    let admin = crate::admin_auth::admin_web_token(&reqwest::Client::new(), &voice.base).await;
     let pool = voice.database().await;
     seed(&pool).await;
     bind_server(&pool, "home", &server.url(), "{}", ("none", None, None)).await;
@@ -125,7 +125,7 @@ async fn admin_mcp_credential_is_decrypted_for_requests_after_restart_and_rotati
     configuration.api.jwt_secret = vela_server::config::SecretString::new("external-mcp-probes-signing-secret-0123456789");
     let cipher = || vela_server::database::credentials::CredentialCipher::new(1, &[7; 32]).unwrap();
     let voice = start_with_config(configuration.clone(), cipher()).await;
-    let admin = crate::admin_web::admin_web_token(&reqwest::Client::new(), &voice.base).await;
+    let admin = crate::admin_auth::admin_web_token(&reqwest::Client::new(), &voice.base).await;
     let pool = voice.database().await;
     seed(&pool).await;
     let client = reqwest::Client::new();
@@ -148,7 +148,7 @@ async fn admin_mcp_credential_is_decrypted_for_requests_after_restart_and_rotati
     );
     voice.task.abort();
     let voice = start_with_config(configuration.clone(), cipher()).await;
-    let admin = crate::admin_web::admin_web_token(&reqwest::Client::new(), &voice.base).await;
+    let admin = crate::admin_auth::admin_web_token(&reqwest::Client::new(), &voice.base).await;
     voice.admit().await;
     assert!(!server.seen().is_empty());
     assert!(server.seen().iter().all(
@@ -204,7 +204,7 @@ async fn admin_mcp_credential_is_decrypted_for_requests_after_restart_and_rotati
     ] {
         server.rewrite(|script| script.seen.lock().unwrap().clear());
         let voice = start_with_config(configuration.clone(), invalid_cipher).await;
-        let admin = crate::admin_web::admin_web_token(&reqwest::Client::new(), &voice.base).await;
+        let admin = crate::admin_auth::admin_web_token(&reqwest::Client::new(), &voice.base).await;
         assert!(names(voice.admit().await.external_mcp()).is_empty());
         assert!(
             server.seen().is_empty(),
@@ -213,14 +213,14 @@ async fn admin_mcp_credential_is_decrypted_for_requests_after_restart_and_rotati
         voice.task.abort();
     }
     let voice = start_with_config(configuration.clone(), cipher()).await;
-    let admin = crate::admin_web::admin_web_token(&reqwest::Client::new(), &voice.base).await;
+    let admin = crate::admin_auth::admin_web_token(&reqwest::Client::new(), &voice.base).await;
     assert_eq!(client.post(format!("{}/api/admin/mcp-servers",voice.base)).bearer_auth(&admin).json(&serde_json::json!({"key":"donor","name":"Donor","url":server.url(),"auth":{"type":"bearer"},"api_key":"mcp-donor-secret-3333"})).send().await.unwrap().status(),StatusCode::CREATED);
     // Fault injection: copying a valid encrypted record to another owner must fail its AAD check.
     sqlx::query("UPDATE mcp_servers SET credential_json=(SELECT credential_json FROM mcp_servers WHERE key='donor') WHERE key='home'").execute(&pool).await.unwrap();
     voice.task.abort();
     server.rewrite(|script| script.seen.lock().unwrap().clear());
     let voice = start_with_config(configuration, cipher()).await;
-    let admin = crate::admin_web::admin_web_token(&reqwest::Client::new(), &voice.base).await;
+    let admin = crate::admin_auth::admin_web_token(&reqwest::Client::new(), &voice.base).await;
     assert!(names(voice.admit().await.external_mcp()).is_empty());
     assert!(
         server.seen().is_empty(),
@@ -245,7 +245,7 @@ async fn admin_draft_connection_does_not_list_or_call_tools_and_discovery_is_com
         configuration.api.enabled = true;
         configuration.api.jwt_secret = vela_server::config::SecretString::new("external-mcp-probes-signing-secret-0123456789");
         let voice = start_with_config(configuration, ConstantSecrets(None)).await;
-        let admin = crate::admin_web::admin_web_token(&reqwest::Client::new(), &voice.base).await;
+        let admin = crate::admin_auth::admin_web_token(&reqwest::Client::new(), &voice.base).await;
         let client = reqwest::Client::new();
         let draft = serde_json::json!({"server":{"key":"home","url":server.url(),"auth":{"type":"bearer"},"api_key":"ephemeral-probe-key"}});
         let connection = client
@@ -303,7 +303,7 @@ async fn manual_saved_probes_keep_disabled_config_and_credentials_and_reject_sta
     configuration.api.jwt_secret = vela_server::config::SecretString::new("external-mcp-probes-signing-secret-0123456789");
     let cipher = vela_server::database::credentials::CredentialCipher::new(1, &[7; 32]).unwrap();
     let voice = start_with_config(configuration, cipher).await;
-    let admin = crate::admin_web::admin_web_token(&reqwest::Client::new(), &voice.base).await;
+    let admin = crate::admin_auth::admin_web_token(&reqwest::Client::new(), &voice.base).await;
     let client = reqwest::Client::new();
     let create = client.post(format!("{}/api/admin/mcp-servers", voice.base)).bearer_auth(&admin).json(&serde_json::json!({"key":"home","name":"Home","url":server.url(),"auth":{"type":"bearer"},"api_key":"saved-probe-secret"})).send().await.unwrap();
     assert_eq!(create.status(), StatusCode::CREATED);
@@ -387,7 +387,7 @@ async fn manual_discovery_rejects_an_invalid_later_page_without_partial_catalog(
     configuration.api.enabled = true;
     configuration.api.jwt_secret = vela_server::config::SecretString::new("external-mcp-probes-signing-secret-0123456789");
     let voice = start_with_config(configuration, ConstantSecrets(None)).await;
-    let admin = crate::admin_web::admin_web_token(&reqwest::Client::new(), &voice.base).await;
+    let admin = crate::admin_auth::admin_web_token(&reqwest::Client::new(), &voice.base).await;
     let response = reqwest::Client::new()
         .post(format!("{}/api/admin/mcp-tests/discover", voice.base))
         .bearer_auth(&admin)
@@ -419,7 +419,7 @@ async fn manual_probe_admission_stays_bounded_after_waiter_cancellation_and_shut
     configuration.api.jwt_secret = vela_server::config::SecretString::new("external-mcp-probes-signing-secret-0123456789");
     configuration.api.mcp_tests.max_concurrency = 1;
     let voice = start_with_config(configuration, ConstantSecrets(None)).await;
-    let admin = crate::admin_web::admin_web_token(&reqwest::Client::new(), &voice.base).await;
+    let admin = crate::admin_auth::admin_web_token(&reqwest::Client::new(), &voice.base).await;
     let url = format!("{}/api/admin/mcp-tests/connection", voice.base);
     let draft =
         serde_json::json!({"server":{"key":"home","url":server.url(),"auth":{"type":"none"}}});

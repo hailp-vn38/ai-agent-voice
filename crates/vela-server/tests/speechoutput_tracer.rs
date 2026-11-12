@@ -6,9 +6,6 @@
 //! - WebSocket Protocol: full-stack TTS lifecycle events, streaming text synchronization, and TTS failure fences.
 //! - Direct Speech: admin direct speech injection, device presence, session collision, and rate limits.
 
-#[path = "support/admin_web.rs"]
-mod admin_web;
-
 mod support;
 
 #[path = "speechoutput_tracer/harness.rs"]

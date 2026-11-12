@@ -1,4 +1,5 @@
-//! Shared Admin Web Token helper for the Admin API test binaries.
+//! Shared Admin Web Token helper for test binaries that call protected Admin routes.
+#![allow(dead_code)]
 
 use reqwest::Client;
 use serde_json::{Value, json};

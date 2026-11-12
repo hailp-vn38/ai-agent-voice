@@ -342,7 +342,7 @@ pub async fn start_with_llm(
     let session_db = Database::connect(&config(address, url.clone()).database)
         .await
         .unwrap();
-    crate::admin_web::seed_default_admin(session_db.pool()).await;
+    crate::admin_auth::seed_default_admin_password(session_db.pool()).await;
     let state = AppState::from_provider_set_with_database(
         app_config,
         Arc::new(ProviderSet::with_all(

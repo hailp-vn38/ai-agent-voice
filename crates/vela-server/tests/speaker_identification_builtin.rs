@@ -1,8 +1,8 @@
 //! End-to-end Speaker enrollment with the in-process CAM++ interface and SQLite.
 //! No Provider record, Template grant, calibration, or voice authentication required.
 
-#[path = "support/admin_web.rs"]
-mod admin_web;
+#[path = "support/admin_auth.rs"]
+mod admin_auth;
 
 use reqwest::{Client, StatusCode};
 use serde_json::Value;
@@ -85,7 +85,7 @@ max_window_ms = 6000
     let config = AppConfig::parse_and_resolve(&path).unwrap();
     fs::remove_file(&path).unwrap();
     let db = Database::connect(&config.database).await.unwrap();
-    crate::admin_web::seed_default_admin(db.pool()).await;
+    crate::admin_auth::seed_default_admin_password(db.pool()).await;
     let pool = db.pool().clone();
     let mut state = AppState::from_provider_set_with_database(
         config,
@@ -109,7 +109,7 @@ max_window_ms = 6000
 async fn single_capture_registers_and_reenrolls_without_a_provider() {
     let (base, task, pool) = harness().await;
     let client = Client::new();
-    let token = admin_web::admin_web_token(&client, &base).await;
+    let token = admin_auth::admin_web_token(&client, &base).await;
     let summary: Value = client
         .get(format!("{base}/api/admin/speaker-recognition"))
         .bearer_auth(&token)
@@ -317,7 +317,7 @@ async fn single_capture_registers_and_reenrolls_without_a_provider() {
 async fn required_authentication_and_template_provider_api_are_not_available() {
     let (base, task, _) = harness().await;
     let client = Client::new();
-    let token = admin_web::admin_web_token(&client, &base).await;
+    let token = admin_auth::admin_web_token(&client, &base).await;
     client
         .post(format!("{base}/api/admin/agents"))
         .bearer_auth(&token)
@@ -359,7 +359,7 @@ async fn required_authentication_and_template_provider_api_are_not_available() {
 async fn capture_accepts_wav_above_json_limit_but_enforces_audio_limit() {
     let (base, task, _) = harness().await;
     let client = Client::new();
-    let token = admin_web::admin_web_token(&client, &base).await;
+    let token = admin_auth::admin_web_token(&client, &base).await;
     let audio = wav(9);
     assert!(audio.len() > 256 * 1024);
     let captured = client

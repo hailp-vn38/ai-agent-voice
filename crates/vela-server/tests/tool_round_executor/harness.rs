@@ -573,7 +573,7 @@ pub async fn start(mut app_config: AppConfig, llm: ScriptedLlm) -> Voice {
     // this server actually got rather than the ephemeral placeholder in the fixture.
     app_config.server.public_ws_url = Url::parse(&format!("ws://{address}/voice/v1/")).unwrap();
     let database = Database::connect(&app_config.database).await.unwrap();
-    crate::admin_web::seed_default_admin(database.pool()).await;
+    crate::admin_auth::seed_default_admin_password(database.pool()).await;
     let state = AppState::from_provider_set_with_database_resolver_and_shutdown(
         app_config,
         Arc::new(ProviderSet::with_all(
@@ -642,7 +642,7 @@ pub async fn approve_external_tool(base: &str) {
     let observer = Peer::open(base).await;
     drop(observer);
     let client = reqwest::Client::new();
-    let admin = crate::admin_web::admin_web_token(&client, base).await;
+    let admin = crate::admin_auth::admin_web_token(&client, base).await;
     let path = format!("{base}/api/admin/agents/agent/tool-allowlist");
     let observation = client
         .get(&path)

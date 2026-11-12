@@ -1,5 +1,5 @@
-#[path = "support/admin_web.rs"]
-mod admin_web;
+#[path = "support/admin_auth.rs"]
+mod admin_auth;
 
 use futures_util::{SinkExt, StreamExt};
 use std::{path::PathBuf, sync::Arc};
@@ -124,7 +124,7 @@ async fn start() -> Server {
         effective_agent: Default::default(),
     };
     let database = Database::connect(&config.database).await.unwrap();
-    crate::admin_web::seed_default_admin(database.pool()).await;
+    crate::admin_auth::seed_default_admin_password(database.pool()).await;
     sqlx::query("INSERT INTO agents (key,name,enabled,created_at,updated_at) VALUES ('agent','Agent',1,1,1)")
         .execute(database.pool()).await.unwrap();
     let lifecycle = new_lifecycle(&config);
@@ -259,7 +259,7 @@ async fn ota_ws_prompt_claim_and_reconnect_preserve_database_admission() {
     let server = start().await;
     seed_code(&server, "unknown", "042731").await;
     let client = reqwest::Client::new();
-    let admin = crate::admin_web::admin_web_token(&client, &server.base).await;
+    let admin = crate::admin_auth::admin_web_token(&client, &server.base).await;
     let ota: serde_json::Value = client
         .get(format!("{}/voice/ota/", server.base))
         .header("Device-Id", "unknown")
