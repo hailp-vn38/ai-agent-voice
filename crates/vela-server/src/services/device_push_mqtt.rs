@@ -8,20 +8,6 @@ use std::sync::{
 };
 use std::time::Duration;
 
-/// Username of the server's own broker account (the only subject allowed to publish).
-pub const SERVICE_USERNAME: &str = "vela-server";
-
-/// Password of the server's broker account, derived from the shared secret with a prefix
-/// distinct from the Device password prefix.
-pub fn service_password(secret: &str) -> String {
-    let key = ring::hmac::Key::new(ring::hmac::HMAC_SHA256, secret.as_bytes());
-    ring::hmac::sign(&key, b"service:v1")
-        .as_ref()
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect()
-}
-
 /// An MQTT client that reconnects on its own and publishes QoS 1, retained.
 pub struct MqttPublisher {
     client: rumqttc::AsyncClient,
@@ -45,7 +31,7 @@ impl MqttPublisher {
             .rsplit_once(':')
             .and_then(|(host, port)| Some((host, port.parse::<u16>().ok()?)))
             .ok_or_else(|| WakePublishError(format!("invalid broker_url `{broker_url}`")))?;
-        let mut options = rumqttc::MqttOptions::new(SERVICE_USERNAME, host, port);
+        let mut options = rumqttc::MqttOptions::new(username, host, port);
         options.set_credentials(username, password);
         options.set_keep_alive(Duration::from_secs(keepalive_seconds.into()));
         let (client, mut eventloop) = rumqttc::AsyncClient::new(options, 64);

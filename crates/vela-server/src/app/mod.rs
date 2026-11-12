@@ -40,8 +40,8 @@ pub(crate) mod admin;
 mod assistant;
 mod enrollment;
 mod knowledge_write_gate;
-mod mqtt_auth;
 pub(crate) mod mcp_server;
+mod mqtt_auth;
 mod state;
 mod transport;
 mod wiki_sync;
@@ -158,13 +158,13 @@ pub fn router_with_state(mut state: AppState) -> Router {
         && let Some(database) = state.database.clone()
     {
         let wake: Option<std::sync::Arc<dyn crate::services::device_push_wake::WakePublisher>> =
-            state.device_push.as_ref().and_then(|_| {
-                use crate::services::device_push_mqtt as mqtt;
+            state.device_push.as_ref().and_then(|device_push| {
+                use crate::services::{device_push::DevicePush, device_push_mqtt as mqtt};
                 let push = &state.config.device_push;
                 match mqtt::MqttPublisher::start(
                     &push.broker_url,
-                    mqtt::SERVICE_USERNAME,
-                    &mqtt::service_password(push.secret.expose()),
+                    DevicePush::service_username(),
+                    &device_push.service_password(),
                     push.keepalive_seconds,
                     state.lifecycle.stopping().clone(),
                 ) {

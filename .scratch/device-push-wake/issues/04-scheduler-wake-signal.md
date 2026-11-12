@@ -21,5 +21,5 @@ Spec: [device-push-wake](../spec.md) · [ADR 0145](../../../docs/adr/0145-device
 
 - Seam: `services::device_push_wake` (`WakePublisher`, `RecordingPublisher`) and `services::device_push_mqtt` (`MqttPublisher` on rumqttc, reconnects, QoS 1 retained). Scheduler entry: `reminder_scheduler::start_with_wake`; query `DeviceNotifications::wake_candidates`.
 - Dedup is in memory per (reminder, trigger moment); a restart may re-publish once (retained, harmless).
-- Service account credentials (`SERVICE_USERNAME`, `service_password`) live in `device_push_mqtt.rs`; reconcile with ticket 02 broker authorization.
+- The MQTT client logs in with ticket 02's `DevicePush::service_username()` / `service_password()`.
 - Tests: `tests/device_push_wake_scheduler.rs` simulates the Device session in-process (no real WebSocket, no real broker).
