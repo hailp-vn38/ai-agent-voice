@@ -116,7 +116,9 @@ async fn start() -> Server {
         },
         api: AdminApiConfig {
             enabled: true,
-            jwt_secret: vela_server::config::SecretString::new("enrollment-signing-secret-0123456789"),
+            jwt_secret: vela_server::config::SecretString::new(
+                "enrollment-signing-secret-0123456789",
+            ),
             ..Default::default()
         },
         shutdown: Default::default(),

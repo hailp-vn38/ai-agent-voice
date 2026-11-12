@@ -1844,8 +1844,7 @@ model = "fake"
             .unwrap()
     }
 
-    #[path = "../../../../../../tests/support/admin_auth.rs"]
-    mod admin_web_token;
+    use crate::app::admin_web_token;
     #[path = "conversation.rs"]
     mod conversation;
     #[path = "pinned_files.rs"]

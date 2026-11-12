@@ -1,5 +1,4 @@
-#[path = "../../../../tests/support/admin_auth.rs"]
-mod admin_web_token;
+use crate::app::admin_web_token;
 
 use crate::{
     app::{AppState, router_with_state},
@@ -235,7 +234,11 @@ jwt_secret = "knowledge-test-jwt-signing-secret-0123456789"
 #[tokio::test]
 async fn knowledge_search_scopes_by_browser_space_and_returns_normalized_paths_and_match_lines() {
     let (base, temp_root, handle) = fixture_server().await;
-    let web_token = admin_web_token::admin_web_token(&reqwest::Client::new(), base.trim_end_matches("/api/admin")).await;
+    let web_token = admin_web_token::admin_web_token(
+        &reqwest::Client::new(),
+        base.trim_end_matches("/api/admin"),
+    )
+    .await;
     let client = reqwest::Client::new();
 
     // 1. Default / wiki space finds Wiki Page and returns space="wiki", path="wiki/...", match_line > 0
@@ -461,7 +464,11 @@ jwt_secret = "knowledge-test-jwt-signing-secret-0123456789"
         axum::serve(listener, router).await.unwrap();
     });
     let base = format!("http://{addr}/api/admin");
-    let web_token = admin_web_token::admin_web_token(&reqwest::Client::new(), base.trim_end_matches("/api/admin")).await;
+    let web_token = admin_web_token::admin_web_token(
+        &reqwest::Client::new(),
+        base.trim_end_matches("/api/admin"),
+    )
+    .await;
     let client = reqwest::Client::new();
 
     // 1. Nonsense query returns 0 items across hybrid, vec, and lex
@@ -551,7 +558,11 @@ jwt_secret = "knowledge-test-jwt-signing-secret-0123456789"
 #[tokio::test]
 async fn knowledge_health_is_stable_while_the_vault_is_unchanged() {
     let (base, temp_root, handle) = fixture_server().await;
-    let web_token = admin_web_token::admin_web_token(&reqwest::Client::new(), base.trim_end_matches("/api/admin")).await;
+    let web_token = admin_web_token::admin_web_token(
+        &reqwest::Client::new(),
+        base.trim_end_matches("/api/admin"),
+    )
+    .await;
     let client = reqwest::Client::new();
     let mut bodies = Vec::new();
     for _ in 0..2 {
@@ -601,7 +612,11 @@ async fn next_sse_event(resp: &mut reqwest::Response, buffer: &mut String, event
 #[tokio::test]
 async fn knowledge_events_pushes_a_change_after_a_page_is_created() {
     let (base, temp_root, handle) = fixture_server().await;
-    let web_token = admin_web_token::admin_web_token(&reqwest::Client::new(), base.trim_end_matches("/api/admin")).await;
+    let web_token = admin_web_token::admin_web_token(
+        &reqwest::Client::new(),
+        base.trim_end_matches("/api/admin"),
+    )
+    .await;
     let client = reqwest::Client::new();
     let mut events = client
         .get(format!("{base}/knowledge/events"))
@@ -660,7 +675,11 @@ async fn knowledge_events_pushes_a_change_after_a_page_is_created() {
 #[tokio::test]
 async fn knowledge_events_pushes_sync_status_changes() {
     let (base, temp_root, handle, service, _gate) = sync_sse_fixture_server().await;
-    let web_token = admin_web_token::admin_web_token(&reqwest::Client::new(), base.trim_end_matches("/api/admin")).await;
+    let web_token = admin_web_token::admin_web_token(
+        &reqwest::Client::new(),
+        base.trim_end_matches("/api/admin"),
+    )
+    .await;
     let client = reqwest::Client::new();
     let mut events = client
         .get(format!("{base}/knowledge/events"))
@@ -684,7 +703,11 @@ async fn knowledge_events_pushes_sync_status_changes() {
 #[tokio::test]
 async fn concurrent_sync_post_returns_conflict() {
     let (base, temp_root, handle, service, gate) = sync_sse_fixture_server().await;
-    let web_token = admin_web_token::admin_web_token(&reqwest::Client::new(), base.trim_end_matches("/api/admin")).await;
+    let web_token = admin_web_token::admin_web_token(
+        &reqwest::Client::new(),
+        base.trim_end_matches("/api/admin"),
+    )
+    .await;
     let _write_guard = gate.write().await;
     let client = reqwest::Client::new();
     let first_client = client.clone();
@@ -726,7 +749,11 @@ async fn concurrent_sync_post_returns_conflict() {
 #[tokio::test]
 async fn sync_route_requires_admin_and_reports_disabled_state_without_secret_paths() {
     let (base, temp_root, handle) = fixture_server().await;
-    let web_token = admin_web_token::admin_web_token(&reqwest::Client::new(), base.trim_end_matches("/api/admin")).await;
+    let web_token = admin_web_token::admin_web_token(
+        &reqwest::Client::new(),
+        base.trim_end_matches("/api/admin"),
+    )
+    .await;
     let client = reqwest::Client::new();
     let unauthorized = client
         .get(format!("{base}/knowledge/sync"))
@@ -768,7 +795,11 @@ async fn sync_route_requires_admin_and_reports_disabled_state_without_secret_pat
 #[tokio::test]
 async fn knowledge_graph_filters_dangling_edges_aggregates_lines_and_bounds_local_neighborhood() {
     let (base, temp_root, handle) = fixture_server().await;
-    let web_token = admin_web_token::admin_web_token(&reqwest::Client::new(), base.trim_end_matches("/api/admin")).await;
+    let web_token = admin_web_token::admin_web_token(
+        &reqwest::Client::new(),
+        base.trim_end_matches("/api/admin"),
+    )
+    .await;
     let client = reqwest::Client::new();
 
     // Create Wiki notes with links to another Wiki note (twice), a distant 2-hop Wiki note, and a Source file.
@@ -859,7 +890,11 @@ async fn knowledge_graph_filters_dangling_edges_aggregates_lines_and_bounds_loca
 #[tokio::test]
 async fn knowledge_graph_query_scope_requires_q_and_returns_evidence_scoped_nodes() {
     let (base, temp_root, handle) = fixture_server().await;
-    let web_token = admin_web_token::admin_web_token(&reqwest::Client::new(), base.trim_end_matches("/api/admin")).await;
+    let web_token = admin_web_token::admin_web_token(
+        &reqwest::Client::new(),
+        base.trim_end_matches("/api/admin"),
+    )
+    .await;
     let client = reqwest::Client::new();
 
     let missing_query = client
@@ -940,7 +975,11 @@ async fn knowledge_graph_query_scope_requires_q_and_returns_evidence_scoped_node
 #[tokio::test]
 async fn knowledge_graph_query_scope_caps_context_and_prioritizes_shared_neighbors() {
     let (base, temp_root, handle) = graph_cap_fixture_server().await;
-    let web_token = admin_web_token::admin_web_token(&reqwest::Client::new(), base.trim_end_matches("/api/admin")).await;
+    let web_token = admin_web_token::admin_web_token(
+        &reqwest::Client::new(),
+        base.trim_end_matches("/api/admin"),
+    )
+    .await;
     let response = reqwest::Client::new()
         .get(format!("{base}/knowledge/graph?scope=query&q=needlepoint"))
         .bearer_auth(&web_token)
@@ -974,7 +1013,11 @@ async fn knowledge_graph_query_scope_caps_context_and_prioritizes_shared_neighbo
 #[tokio::test]
 async fn knowledge_chart_read_serves_synthesized_chart_and_rejects_invalid_paths() {
     let (base, temp_root, handle) = fixture_server().await;
-    let web_token = admin_web_token::admin_web_token(&reqwest::Client::new(), base.trim_end_matches("/api/admin")).await;
+    let web_token = admin_web_token::admin_web_token(
+        &reqwest::Client::new(),
+        base.trim_end_matches("/api/admin"),
+    )
+    .await;
     let vault_dir = temp_root.join("vault");
     crate::services::task_flow::charts::execute_chart_write(
         &vault_dir,
@@ -1026,7 +1069,11 @@ async fn knowledge_chart_read_serves_synthesized_chart_and_rejects_invalid_paths
 #[tokio::test]
 async fn knowledge_raw_create_places_root_and_folder_files_in_their_folder() {
     let (base, temp_root, handle) = fixture_server().await;
-    let web_token = admin_web_token::admin_web_token(&reqwest::Client::new(), base.trim_end_matches("/api/admin")).await;
+    let web_token = admin_web_token::admin_web_token(
+        &reqwest::Client::new(),
+        base.trim_end_matches("/api/admin"),
+    )
+    .await;
     let client = reqwest::Client::new();
     let create = |folder: &'static str, name: &'static str, body: &'static str| {
         client
@@ -1081,7 +1128,11 @@ async fn knowledge_raw_create_places_root_and_folder_files_in_their_folder() {
 #[tokio::test]
 async fn knowledge_raw_batch_accepts_body_above_default_admin_limit() {
     let (base, temp_root, handle) = fixture_server().await;
-    let web_token = admin_web_token::admin_web_token(&reqwest::Client::new(), base.trim_end_matches("/api/admin")).await;
+    let web_token = admin_web_token::admin_web_token(
+        &reqwest::Client::new(),
+        base.trim_end_matches("/api/admin"),
+    )
+    .await;
     let big = "a".repeat(450 * 1024);
     let resp = reqwest::Client::new()
         .post(format!("{base}/knowledge/raw/batch"))
@@ -1103,7 +1154,11 @@ async fn knowledge_raw_batch_accepts_body_above_default_admin_limit() {
 #[tokio::test]
 async fn knowledge_raw_batch_creates_nested_folder_files_and_skips_existing() {
     let (base, temp_root, handle) = fixture_server().await;
-    let web_token = admin_web_token::admin_web_token(&reqwest::Client::new(), base.trim_end_matches("/api/admin")).await;
+    let web_token = admin_web_token::admin_web_token(
+        &reqwest::Client::new(),
+        base.trim_end_matches("/api/admin"),
+    )
+    .await;
     let client = reqwest::Client::new();
     let resp = client
         .post(format!("{base}/knowledge/raw/batch"))

@@ -277,9 +277,7 @@ async fn restart_on_same_database_keeps_tokens_and_new_secret_invalidates_them()
 #[test]
 fn config_without_valid_signing_secret_fails_validation() {
     let api = |secret: &str, ttl: u64| {
-        format!(
-            "[api]\nenabled = true\njwt_secret = \"{secret}\"\ntoken_ttl_secs = {ttl}\n"
-        )
+        format!("[api]\nenabled = true\njwt_secret = \"{secret}\"\ntoken_ttl_secs = {ttl}\n")
     };
     assert!(validated_prod_example(&api(JWT_SECRET, 3600), AUTH_TOKEN).is_ok());
     assert!(validated_prod_example("[api]\nenabled = true\n", AUTH_TOKEN).is_err());
@@ -698,10 +696,12 @@ async fn handler_refuses_disabling_login_while_forced_change_is_set_even_without
     let database = vela_server::database::Database::connect(&database_config(&uri))
         .await
         .unwrap();
-    sqlx::query("UPDATE admin_auth SET password_login_enabled = 0, must_change_password = 1 WHERE id = 1")
-        .execute(database.pool())
-        .await
-        .unwrap();
+    sqlx::query(
+        "UPDATE admin_auth SET password_login_enabled = 0, must_change_password = 1 WHERE id = 1",
+    )
+    .execute(database.pool())
+    .await
+    .unwrap();
     drop(database);
     let base = serve(&uri, JWT_SECRET, 3600).await;
     let client = Client::new();
@@ -718,10 +718,12 @@ async fn change_password_wrong_current_is_throttled_after_five_failures() {
     let token = rotated_token(&client, &base).await;
 
     for _ in 0..5 {
-        let wrong = change_password(&client, &base, &token, "not-the-password", "another-pass-1").await;
+        let wrong =
+            change_password(&client, &base, &token, "not-the-password", "another-pass-1").await;
         assert_eq!(wrong.status(), StatusCode::UNPROCESSABLE_ENTITY);
     }
-    let blocked = change_password(&client, &base, &token, "fresh-admin-pass", "another-pass-1").await;
+    let blocked =
+        change_password(&client, &base, &token, "fresh-admin-pass", "another-pass-1").await;
     assert_eq!(blocked.status(), StatusCode::TOO_MANY_REQUESTS);
     assert_eq!(error_code(blocked).await, "too_many_attempts");
     // Login keeps its own budget.
@@ -1013,7 +1015,10 @@ async fn concurrent_wrong_logins_cannot_exceed_the_failure_budget() {
             other => panic!("unexpected status {other}"),
         }
     }
-    assert_eq!(evaluated, 5, "only the budget of five guesses is ever checked");
+    assert_eq!(
+        evaluated, 5,
+        "only the budget of five guesses is ever checked"
+    );
 }
 
 #[tokio::test]

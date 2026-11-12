@@ -65,7 +65,7 @@ impl LlmProvider for ManagementLlm {
 async fn connect_assistant(base: &str, web_token: &str) -> Socket {
     let ticket: serde_json::Value = Client::new()
         .post(format!("{base}/api/admin/assistant/ws-ticket"))
-        .bearer_auth(&web_token)
+        .bearer_auth(web_token)
         .header("Origin", "http://localhost")
         .send()
         .await

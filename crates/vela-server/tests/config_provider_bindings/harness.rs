@@ -223,11 +223,9 @@ INSERT INTO agent_template_assignments (agent_id,template_id,is_default,created_
 }
 
 pub async fn client(base: &str) -> Client {
-    let token = crate::admin_auth::admin_web_token(
-        &Client::new(),
-        base.trim_end_matches("/api/admin"),
-    )
-    .await;
+    let token =
+        crate::admin_auth::admin_web_token(&Client::new(), base.trim_end_matches("/api/admin"))
+            .await;
     let mut headers = reqwest::header::HeaderMap::new();
     headers.insert(
         reqwest::header::AUTHORIZATION,

@@ -378,7 +378,10 @@ pub(in crate::app::admin) async fn knowledge_raw_read(
         .trim_start_matches('/')
         .replacen("raw/", "sources/", 1);
     // A folder (or the Raw root) is not a note: report it as missing instead of a server error.
-    let rel = normalized.strip_prefix("sources").unwrap_or(&normalized).trim_matches('/');
+    let rel = normalized
+        .strip_prefix("sources")
+        .unwrap_or(&normalized)
+        .trim_matches('/');
     if rel.is_empty() || engine.config().sources_dir().join(rel).is_dir() {
         return error(&req, StatusCode::NOT_FOUND, "not_found");
     }

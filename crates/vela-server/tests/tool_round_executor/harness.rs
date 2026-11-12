@@ -566,7 +566,8 @@ pub struct Voice {
 
 pub async fn start(mut app_config: AppConfig, llm: ScriptedLlm) -> Voice {
     app_config.api.enabled = true;
-    app_config.api.jwt_secret = vela_server::config::SecretString::new("tool-round-signing-secret-0123456789");
+    app_config.api.jwt_secret =
+        vela_server::config::SecretString::new("tool-round-signing-secret-0123456789");
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
     // The advertised URL is what a client reads out of `/voice/ota/`, so it has to name the port

@@ -588,7 +588,9 @@ fn ssh_user_without_secret_is_a_safe_remote() {
     use super::git::is_unsafe_remote;
     assert!(!is_unsafe_remote("ssh://git@github.com/owner/repo.git"));
     assert!(!is_unsafe_remote("git@github.com:owner/repo.git"));
-    assert!(is_unsafe_remote("ssh://git:secret@github.com/owner/repo.git"));
+    assert!(is_unsafe_remote(
+        "ssh://git:secret@github.com/owner/repo.git"
+    ));
     assert!(is_unsafe_remote("https://git@github.com/owner/repo.git"));
     assert!(is_unsafe_remote("https://u:t@host/r.git"));
 }

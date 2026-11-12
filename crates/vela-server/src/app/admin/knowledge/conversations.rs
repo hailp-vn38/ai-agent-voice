@@ -173,10 +173,6 @@ pub(in crate::app::admin) async fn knowledge_conversation(
 }
 
 #[cfg(test)]
-#[path = "../../../../tests/support/admin_auth.rs"]
-mod admin_web_token;
-
-#[cfg(test)]
 mod tests {
     use crate::{
         app::{AppState, router_with_state},
@@ -188,7 +184,7 @@ mod tests {
     use serde_json::{Value, json};
     use std::sync::Arc;
 
-    use super::admin_web_token;
+    use crate::app::admin_web_token;
 
     async fn fixture() -> (
         String,

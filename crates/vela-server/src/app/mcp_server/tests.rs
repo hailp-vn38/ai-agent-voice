@@ -1,6 +1,5 @@
-#[path = "../../../tests/support/admin_auth.rs"]
-mod admin_web_token;
 use super::*;
+use crate::app::admin_web_token;
 use crate::{config::AppConfig, providers::ProviderSet};
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use ring::hmac;
@@ -252,8 +251,7 @@ async fn admin_auth_and_origin_precede_claim_and_reject() {
         .nest("/api/admin", crate::app::admin::router(state.clone()))
         .with_state(state.clone());
     let (base, task) = serve(router).await;
-    let web_token =
-        admin_web_token::admin_web_token(&reqwest::Client::new(), &base).await;
+    let web_token = admin_web_token::admin_web_token(&reqwest::Client::new(), &base).await;
     let http = reqwest::Client::new();
     for action in ["confirm", "reject"] {
         let url = format!("{base}/api/admin/system-mcp/change-requests/{id}/{action}");
@@ -470,8 +468,7 @@ async fn admin_web_can_configure_knowledge_mcp_and_create_revoke_tokens_live() {
     }
 
     let (base, task) = serve(crate::app::router_with_state(state)).await;
-    let web_token =
-        admin_web_token::admin_web_token(&reqwest::Client::new(), &base).await;
+    let web_token = admin_web_token::admin_web_token(&reqwest::Client::new(), &base).await;
     let http = reqwest::Client::new();
     let mcp_url = format!("{base}/mcp/knowledge");
     let admin_url = format!("{base}/api/admin/system-mcp/knowledge");

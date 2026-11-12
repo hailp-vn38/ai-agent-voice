@@ -1,5 +1,4 @@
-#[path = "../../../../tests/support/admin_auth.rs"]
-mod admin_web_token;
+use crate::app::admin_web_token;
 
 use crate::{
     app::{AppState, new_lifecycle, router_with_state},
@@ -76,7 +75,11 @@ jwt_secret = "llm-gateway-test-jwt-signing-secret-0123456789"
 #[tokio::test]
 async fn admin_llm_gateway_routes_and_provider_binding_lifecycle() {
     let (base, _hub, temp_dir, handle) = spawn_gateway_admin_server().await;
-    let web_token = admin_web_token::admin_web_token(&reqwest::Client::new(), base.trim_end_matches("/api/admin")).await;
+    let web_token = admin_web_token::admin_web_token(
+        &reqwest::Client::new(),
+        base.trim_end_matches("/api/admin"),
+    )
+    .await;
     let client = reqwest::Client::new();
 
     // 1. GET /llm-gateway/vendors returns all 5 supported vendors

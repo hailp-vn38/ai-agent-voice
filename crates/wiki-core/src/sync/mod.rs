@@ -116,10 +116,10 @@ impl VaultSync {
             return Ok(sync);
         }
         sync.git(&["--version"], false)?;
-        if let Some(remote) = &sync.config.remote_url {
-            if is_unsafe_remote(remote) {
-                return Err(SyncError::UnsafeRemote(safe_remote(remote)));
-            }
+        if let Some(remote) = &sync.config.remote_url
+            && is_unsafe_remote(remote)
+        {
+            return Err(SyncError::UnsafeRemote(safe_remote(remote)));
         }
         sync.prepare_repository()?;
         let remote = sync.remote_url()?;
@@ -275,15 +275,14 @@ impl VaultSync {
                     );
                     for relative in paths {
                         let full = root.join(&relative);
-                        if let Ok(metadata) = fs::symlink_metadata(&full) {
-                            if metadata.file_type().is_file()
-                                && metadata.len() > self.config.max_file_bytes
-                            {
-                                return Err(SyncError::FileTooLarge {
-                                    path: relative.to_string_lossy().into_owned(),
-                                    bytes: metadata.len(),
-                                });
-                            }
+                        if let Ok(metadata) = fs::symlink_metadata(&full)
+                            && metadata.file_type().is_file()
+                            && metadata.len() > self.config.max_file_bytes
+                        {
+                            return Err(SyncError::FileTooLarge {
+                                path: relative.to_string_lossy().into_owned(),
+                                bytes: metadata.len(),
+                            });
                         }
                     }
                     self.git_at(root, &["add", "-A"], false)?;
@@ -396,7 +395,7 @@ impl VaultSync {
             &self.vault_root().join("wiki"),
             &mut copies,
         );
-        copies.sort_by(|left, right| left.vault_relative().cmp(&right.vault_relative()));
+        copies.sort_by_key(|copy| copy.vault_relative());
         copies.dedup();
         copies
     }

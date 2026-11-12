@@ -1,5 +1,4 @@
-#[path = "../../../../tests/support/admin_auth.rs"]
-mod admin_web_token;
+use crate::app::admin_web_token;
 
 use super::attachments::{
     JobAttachmentMediaKind, decode_attachment_base64, sanitize_job_attachment_name,
@@ -179,7 +178,11 @@ jwt_secret = "jobs-test-jwt-signing-secret-0123456789"
         axum::serve(listener, router).await.unwrap();
     });
     let base = format!("http://{addr}/api/admin");
-    let web_token = admin_web_token::admin_web_token(&reqwest::Client::new(), base.trim_end_matches("/api/admin")).await;
+    let web_token = admin_web_token::admin_web_token(
+        &reqwest::Client::new(),
+        base.trim_end_matches("/api/admin"),
+    )
+    .await;
     let client = reqwest::Client::new();
 
     let created = task_mgr
@@ -414,7 +417,11 @@ async fn recipe_admin_http_lists_validates_and_runs_playlist_recipe() {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let base = format!("http://{}/api/admin", listener.local_addr().unwrap());
     let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
-    let web_token = admin_web_token::admin_web_token(&reqwest::Client::new(), base.trim_end_matches("/api/admin")).await;
+    let web_token = admin_web_token::admin_web_token(
+        &reqwest::Client::new(),
+        base.trim_end_matches("/api/admin"),
+    )
+    .await;
     let client = reqwest::Client::new();
 
     let list = client

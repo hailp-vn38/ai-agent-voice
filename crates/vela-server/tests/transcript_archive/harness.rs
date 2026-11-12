@@ -21,23 +21,19 @@ use url::Url;
 pub use vela_server::{
     app::{AppState, router_with_state},
     config::{
-        AdminApiConfig, AppConfig, AudioConfig, SecretString, AuthConfig, BargeInConfig, DatabaseConfig,
+        AdminApiConfig, AppConfig, AudioConfig, AuthConfig, BargeInConfig, DatabaseConfig,
         DatabaseHistoryConfig, DeploymentConfig, LimitsConfig, LlmConfig, McpConfig,
-        ProviderDefaultsConfig, ProvidersConfig, RuntimeConfig, ServerConfig, SileroOnnxConfig,
-        SpeechOutputConfig, TtsConfig, VadInstanceConfig, VisionConfig, WebsocketConfig,
-        WorkersConfig,
+        ProviderDefaultsConfig, ProvidersConfig, RuntimeConfig, SecretString, ServerConfig,
+        SileroOnnxConfig, SpeechOutputConfig, TtsConfig, VadInstanceConfig, VisionConfig,
+        WebsocketConfig, WorkersConfig,
     },
-    database::{
-        Database,
-        history::{HistoryWriterMetrics, RetentionCleaner, unix_millis_now},
-    },
+    database::{Database, history::HistoryWriterMetrics},
     providers::{
         AsrError, AsrEvent, AsrProvider, AsrResult, AsrSession, LlmError, LlmEvent, LlmProvider,
         ProviderSet, TtsError, TtsProvider, VadError, VadInput, VadProbability, VadProvider,
         VadSession,
         llm::{ChatMessage, LlmEventStream, LlmRequest, ToolCall},
     },
-    tools::builtin::EXIT_TOOL_NAME,
 };
 
 pub const PROMPT_MARKER: &str = "SERVER-DEFAULT-PROMPT";
@@ -281,7 +277,9 @@ pub fn config(url: String, history: DatabaseHistoryConfig) -> AppConfig {
         },
         api: AdminApiConfig {
             enabled: true,
-            jwt_secret: SecretString::new("transcript-harness-signing-secret-0123456789".to_owned()),
+            jwt_secret: SecretString::new(
+                "transcript-harness-signing-secret-0123456789".to_owned(),
+            ),
             ..Default::default()
         },
         shutdown: Default::default(),

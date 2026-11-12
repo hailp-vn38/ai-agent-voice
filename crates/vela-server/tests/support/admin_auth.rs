@@ -9,7 +9,8 @@ pub const HARNESS_ADMIN_PASSWORD: &str = "harness-admin-password";
 
 /// Test-only PBKDF2 hash of the default Admin Password `admin`, in the production stored format.
 /// Used only where a harness cannot run the bootstrap that seeds it.
-pub const DEFAULT_ADMIN_PASSWORD_HASH_FOR_TESTS: &str = "pbkdf2_sha256$600000$AAECAwQFBgcICQoLDA0ODw==$g0LiQ+9SwgYmC2xCxrbp1T5rhqxCi4uOCBbV8XwRX/8=";
+pub const DEFAULT_ADMIN_PASSWORD_HASH_FOR_TESTS: &str =
+    "pbkdf2_sha256$600000$AAECAwQFBgcICQoLDA0ODw==$g0LiQ+9SwgYmC2xCxrbp1T5rhqxCi4uOCBbV8XwRX/8=";
 
 /// Seeds the default Admin Password on a database whose server was built without the bootstrap.
 /// Mirrors the production seed: only an empty hash is replaced.
@@ -41,7 +42,10 @@ pub async fn admin_web_token(client: &Client, base: &str) -> String {
         }
     }
     let token = fresh_admin_web_token(client, base).await;
-    TOKENS.lock().unwrap().insert(base.to_owned(), token.clone());
+    TOKENS
+        .lock()
+        .unwrap()
+        .insert(base.to_owned(), token.clone());
     token
 }
 

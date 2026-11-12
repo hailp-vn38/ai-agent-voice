@@ -5,9 +5,9 @@ pub use std::{
     time::Duration,
 };
 
+pub use crate::support::admin_auth::admin_web_token;
 pub use reqwest::{Client, RequestBuilder, Response, StatusCode};
 pub use serde_json::{Value, json};
-pub use crate::support::admin_auth::admin_web_token;
 pub use vela_server::{app::bootstrap_with_providers, config::AppConfig, providers::ProviderSet};
 
 pub struct Server {

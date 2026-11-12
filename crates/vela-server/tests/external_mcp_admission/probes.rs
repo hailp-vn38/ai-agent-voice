@@ -8,7 +8,8 @@ async fn external_agent_reviews_exact_contract_and_drift_requires_new_review() {
     let server = start_mcp(McpBehaviour::with_tools(vec![tool("Light")])).await;
     let mut configuration = config(database_url());
     configuration.api.enabled = true;
-    configuration.api.jwt_secret = vela_server::config::SecretString::new("external-mcp-probes-signing-secret-0123456789");
+    configuration.api.jwt_secret =
+        vela_server::config::SecretString::new("external-mcp-probes-signing-secret-0123456789");
     let voice = start_with_config(configuration, ConstantSecrets(None)).await;
     let admin = crate::admin_auth::admin_web_token(&reqwest::Client::new(), &voice.base).await;
     let pool = voice.database().await;
@@ -122,7 +123,8 @@ async fn admin_mcp_credential_is_decrypted_for_requests_after_restart_and_rotati
     let server = start_mcp(McpBehaviour::with_tools(vec![tool("Light")])).await;
     let mut configuration = config(database_url());
     configuration.api.enabled = true;
-    configuration.api.jwt_secret = vela_server::config::SecretString::new("external-mcp-probes-signing-secret-0123456789");
+    configuration.api.jwt_secret =
+        vela_server::config::SecretString::new("external-mcp-probes-signing-secret-0123456789");
     let cipher = || vela_server::database::credentials::CredentialCipher::new(1, &[7; 32]).unwrap();
     let voice = start_with_config(configuration.clone(), cipher()).await;
     let admin = crate::admin_auth::admin_web_token(&reqwest::Client::new(), &voice.base).await;
@@ -204,7 +206,6 @@ async fn admin_mcp_credential_is_decrypted_for_requests_after_restart_and_rotati
     ] {
         server.rewrite(|script| script.seen.lock().unwrap().clear());
         let voice = start_with_config(configuration.clone(), invalid_cipher).await;
-        let admin = crate::admin_auth::admin_web_token(&reqwest::Client::new(), &voice.base).await;
         assert!(names(voice.admit().await.external_mcp()).is_empty());
         assert!(
             server.seen().is_empty(),
@@ -220,7 +221,6 @@ async fn admin_mcp_credential_is_decrypted_for_requests_after_restart_and_rotati
     voice.task.abort();
     server.rewrite(|script| script.seen.lock().unwrap().clear());
     let voice = start_with_config(configuration, cipher()).await;
-    let admin = crate::admin_auth::admin_web_token(&reqwest::Client::new(), &voice.base).await;
     assert!(names(voice.admit().await.external_mcp()).is_empty());
     assert!(
         server.seen().is_empty(),
@@ -243,7 +243,8 @@ async fn admin_draft_connection_does_not_list_or_call_tools_and_discovery_is_com
         let server = start_mcp(behaviour).await;
         let mut configuration = config(database_url());
         configuration.api.enabled = true;
-        configuration.api.jwt_secret = vela_server::config::SecretString::new("external-mcp-probes-signing-secret-0123456789");
+        configuration.api.jwt_secret =
+            vela_server::config::SecretString::new("external-mcp-probes-signing-secret-0123456789");
         let voice = start_with_config(configuration, ConstantSecrets(None)).await;
         let admin = crate::admin_auth::admin_web_token(&reqwest::Client::new(), &voice.base).await;
         let client = reqwest::Client::new();
@@ -300,7 +301,8 @@ async fn manual_saved_probes_keep_disabled_config_and_credentials_and_reject_sta
     let server = start_mcp(McpBehaviour::default()).await;
     let mut configuration = config(database_url());
     configuration.api.enabled = true;
-    configuration.api.jwt_secret = vela_server::config::SecretString::new("external-mcp-probes-signing-secret-0123456789");
+    configuration.api.jwt_secret =
+        vela_server::config::SecretString::new("external-mcp-probes-signing-secret-0123456789");
     let cipher = vela_server::database::credentials::CredentialCipher::new(1, &[7; 32]).unwrap();
     let voice = start_with_config(configuration, cipher).await;
     let admin = crate::admin_auth::admin_web_token(&reqwest::Client::new(), &voice.base).await;
@@ -385,7 +387,8 @@ async fn manual_discovery_rejects_an_invalid_later_page_without_partial_catalog(
     .await;
     let mut configuration = config(database_url());
     configuration.api.enabled = true;
-    configuration.api.jwt_secret = vela_server::config::SecretString::new("external-mcp-probes-signing-secret-0123456789");
+    configuration.api.jwt_secret =
+        vela_server::config::SecretString::new("external-mcp-probes-signing-secret-0123456789");
     let voice = start_with_config(configuration, ConstantSecrets(None)).await;
     let admin = crate::admin_auth::admin_web_token(&reqwest::Client::new(), &voice.base).await;
     let response = reqwest::Client::new()
@@ -416,7 +419,8 @@ async fn manual_probe_admission_stays_bounded_after_waiter_cancellation_and_shut
     let server = start_mcp(behaviour).await;
     let mut configuration = config(database_url());
     configuration.api.enabled = true;
-    configuration.api.jwt_secret = vela_server::config::SecretString::new("external-mcp-probes-signing-secret-0123456789");
+    configuration.api.jwt_secret =
+        vela_server::config::SecretString::new("external-mcp-probes-signing-secret-0123456789");
     configuration.api.mcp_tests.max_concurrency = 1;
     let voice = start_with_config(configuration, ConstantSecrets(None)).await;
     let admin = crate::admin_auth::admin_web_token(&reqwest::Client::new(), &voice.base).await;

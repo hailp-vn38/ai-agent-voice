@@ -19,8 +19,6 @@ use vela_server::{
     workers::ProviderRuntimeAdmission,
 };
 
-const TOKEN: &str = "admin-speaker-test-token";
-
 struct TestEmbedding;
 impl SpeakerProvider for TestEmbedding {
     fn dimension(&self) -> usize {

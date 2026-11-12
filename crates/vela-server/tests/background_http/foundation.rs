@@ -35,7 +35,8 @@ prompts_dir = "{}"
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let base = format!("http://{}/api/admin", listener.local_addr().unwrap());
     let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
-    let web_token = admin_web_token(&reqwest::Client::new(), base.trim_end_matches("/api/admin")).await;
+    let web_token =
+        admin_web_token(&reqwest::Client::new(), base.trim_end_matches("/api/admin")).await;
     let client = Client::new();
     assert_eq!(
         client
@@ -180,7 +181,8 @@ vault_dir = "{}"
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let base = format!("http://{}/api/admin", listener.local_addr().unwrap());
     let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
-    let web_token = admin_web_token(&reqwest::Client::new(), base.trim_end_matches("/api/admin")).await;
+    let web_token =
+        admin_web_token(&reqwest::Client::new(), base.trim_end_matches("/api/admin")).await;
     let client = Client::new();
 
     let created = client

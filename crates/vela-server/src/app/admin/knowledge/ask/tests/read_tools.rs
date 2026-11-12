@@ -301,17 +301,21 @@ fn query_tool_result_lists_every_hit_within_the_bound() {
 
 #[tokio::test]
 async fn ask_graph_shows_only_the_latest_tool_call() {
-    let get = |id: &str, file: &str| LlmEvent::ToolCall(ToolCall {
-        id: id.into(),
-        name: "wiki_get".into(),
-        arguments: serde_json::json!({ "file": file }),
-    });
+    let get = |id: &str, file: &str| {
+        LlmEvent::ToolCall(ToolCall {
+            id: id.into(),
+            name: "wiki_get".into(),
+            arguments: serde_json::json!({ "file": file }),
+        })
+    };
     let (base, temp_root, server) = wiki_fixture(
         vec![
             vec![get("read-a", "concepts/related-a.md"), LlmEvent::Finished],
             vec![get("read-b", "concepts/related-b.md"), LlmEvent::Finished],
             vec![
-                LlmEvent::TextDelta("See [[concepts/related-a.md]] and [[concepts/related-b.md]].".into()),
+                LlmEvent::TextDelta(
+                    "See [[concepts/related-a.md]] and [[concepts/related-b.md]].".into(),
+                ),
                 LlmEvent::Finished,
             ],
         ],

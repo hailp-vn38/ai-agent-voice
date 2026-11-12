@@ -177,7 +177,7 @@ pub(super) fn admitted_actor(catalog: &RuntimeCatalog) -> SessionActor {
 /// A worker lease belongs to the runtime that granted it, so a switch that rebases capture
 /// onto another already-loaded VAD must close the old lease there and re-arm, never hand it
 /// to the new runtime or leave an Auto client without capture.
-
+///
 /// The overwhelmingly common switch keeps VAD, ASR and TTS on the same instances. Their leases
 /// and mailboxes must then be left completely alone.
 use crate::tools::external_mcp::{
@@ -313,26 +313,26 @@ pub(super) fn session_with_external_mcp(external_mcp: SessionExternalMcp) -> Ses
     .expect("the admitted prompt is within the bound")
 }
 
-/// A round that starts after the application closed its gate executes nothing at all.
-///
-/// The gate is what shutdown depends on, so this is the property that makes the drain
-/// meaningful: a session that never observed the shutdown signal still cannot put a call on the
-/// network once the application has stopped accepting work.
+// A round that starts after the application closed its gate executes nothing at all.
+//
+// The gate is what shutdown depends on, so this is the property that makes the drain
+// meaningful: a session that never observed the shutdown signal still cannot put a call on the
+// network once the application has stopped accepting work.
+//
+// A round that was already running when the gate closed cannot use the next slot in its own
+// budget to start another call.
+//
+// This is the half the round-start check cannot cover: the call already on the network was
+// permitted, and it still keeps its own paired result.  Only what would have been sent after
+// the gate closed is refused.
 
-/// A round that was already running when the gate closed cannot use the next slot in its own
-/// budget to start another call.
-///
-/// This is the half the round-start check cannot cover: the call already on the network was
-/// permitted, and it still keeps its own paired result.  Only what would have been sent after
-/// the gate closed is refused.
+// A Voice Session runs with exactly the External MCP snapshot admission resolved: the
+// namespaced names it may call, and the original wire name each one is called with.
 
-/// A Voice Session runs with exactly the External MCP snapshot admission resolved: the
-/// namespaced names it may call, and the original wire name each one is called with.
+// Nothing a session holds renders a credential: the handle owns it and prints none of it.
 
-/// Nothing a session holds renders a credential: the handle owns it and prints none of it.
-
-/// The published names are the guide's fixed namespace, and the tool behind one keeps the
-/// original wire name it is actually called with.
+// The published names are the guide's fixed namespace, and the tool behind one keeps the
+// original wire name it is actually called with.
 
 // ---------------------------------------------------------------------------
 // The late-response window
@@ -538,18 +538,18 @@ fn tool_round(actor: &SessionActor) -> Vec<String> {
         .collect()
 }
 
-/// A response that lands after the round that started it is gone becomes nothing at all.
-///
-/// This is the window a socket test cannot order: in production the call's task posts its
-/// completion into the session's bounded mailbox, and an abort arriving before the next drain
-/// takes the round away first.  The test reproduces that end state exactly — the round is gone
-/// before the response is even allowed to exist — so the executor has only one thing it could
-/// possibly do with what arrives, and the assertion is on what it does instead.
-
-/// An interrupted turn drops the call it had in flight rather than waiting for it.
-///
-/// The turn's own cancellation is what the executor observes, so this goes through the same
-/// `cancel_llm` seam a barge-in, a client abort and a shutdown all take.
+// A response that lands after the round that started it is gone becomes nothing at all.
+//
+// This is the window a socket test cannot order: in production the call's task posts its
+// completion into the session's bounded mailbox, and an abort arriving before the next drain
+// takes the round away first.  The test reproduces that end state exactly — the round is gone
+// before the response is even allowed to exist — so the executor has only one thing it could
+// possibly do with what arrives, and the assertion is on what it does instead.
+//
+// An interrupted turn drops the call it had in flight rather than waiting for it.
+//
+// The turn's own cancellation is what the executor observes, so this goes through the same
+// `cancel_llm` seam a barge-in, a client abort and a shutdown all take.
 
 struct SwitchBuilder(RuntimeCatalog);
 struct SwitchResource(RuntimeCatalog);

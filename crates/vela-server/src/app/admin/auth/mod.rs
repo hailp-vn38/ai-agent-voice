@@ -280,7 +280,7 @@ async fn change_password(State(state): State<AppState>, request: Request) -> Res
     };
     let attempt = match begin_attempt(&state.admin_auth.credential_failures, &request) {
         Ok(attempt) => attempt,
-        Err(response) => return response,
+        Err(response) => return *response,
     };
     let stored = row.password_hash.clone();
     let candidate = current_password.clone();
@@ -392,7 +392,7 @@ async fn change_password(State(state): State<AppState>, request: Request) -> Res
 
 /// Reserves a password attempt, or answers 429 with `Retry-After` while the budget is spent. The
 /// caller releases the reservation only when the password turns out to be right.
-fn begin_attempt(limiter: &FailureLimiter, request: &Request) -> Result<Instant, Response> {
+fn begin_attempt(limiter: &FailureLimiter, request: &Request) -> Result<Instant, Box<Response>> {
     let remaining = match limiter.reserve() {
         Ok(reserved) => return Ok(reserved),
         Err(remaining) => remaining,
@@ -410,7 +410,7 @@ fn begin_attempt(limiter: &FailureLimiter, request: &Request) -> Result<Instant,
             .headers_mut()
             .insert(axum::http::header::RETRY_AFTER, value);
     }
-    Err(response)
+    Err(Box::new(response))
 }
 
 fn no_store(mut response: Response) -> Response {
@@ -539,7 +539,7 @@ async fn set_password_login(State(state): State<AppState>, request: Request) -> 
     };
     let attempt = match begin_attempt(&state.admin_auth.credential_failures, &request) {
         Ok(attempt) => attempt,
-        Err(response) => return response,
+        Err(response) => return *response,
     };
     let stored = row.password_hash.clone();
     let candidate = body.current_password;
@@ -645,7 +645,7 @@ async fn login(State(state): State<AppState>, request: Request) -> Response {
     }
     let attempt = match begin_attempt(&state.admin_auth.login_failures, &request) {
         Ok(attempt) => attempt,
-        Err(response) => return response,
+        Err(response) => return *response,
     };
     // The token is minted from the row that held the verified hash, never from the in-memory
     // mirror: a reset written by the recovery command must force the change it asked for.

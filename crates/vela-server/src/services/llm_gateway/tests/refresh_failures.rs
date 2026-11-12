@@ -2,7 +2,10 @@ use super::*;
 
 use crate::services::llm_gateway::vendors::refresh_failure_for_status;
 
-async fn login_expiring_anthropic(hub: &Arc<LlmGatewayHub>, fake: &FakeOAuthVendorDriver) -> String {
+async fn login_expiring_anthropic(
+    hub: &Arc<LlmGatewayHub>,
+    fake: &FakeOAuthVendorDriver,
+) -> String {
     fake.set_next_expires_at(Some(100));
     let challenge = hub
         .start_oauth_login(StartOAuthLoginRequest {

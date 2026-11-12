@@ -178,7 +178,10 @@ pub trait OAuthVendorDriver: Send + Sync {
     /// to refresh with; an upstream that rejected the grant needs a real login.
     fn can_self_heal_reauth(&self, bundle: &OAuthTokenBundle, last_error: Option<&str>) -> bool {
         last_error == Some(GatewayError::OAuthExchangeFailed(String::new()).code())
-            && (bundle.refresh_token.as_deref().is_some_and(|t| !t.is_empty())
+            && (bundle
+                .refresh_token
+                .as_deref()
+                .is_some_and(|t| !t.is_empty())
                 || bundle
                     .upstream_oauth_token
                     .as_deref()

@@ -80,7 +80,8 @@ async fn config_diagnostics_acquire_unbound_cold_deployment_and_reuse_prepare_wi
 #[tokio::test]
 async fn legacy_config_diagnostic_requires_manager_and_never_uses_matching_db_key() {
     let (base, _db, builds, task) = server(false).await;
-    let response = client(&base).await
+    let response = client(&base)
+        .await
         .post(format!("{base}/providers/config:llm:primary/test/llm"))
         .json(&json!({"input":"hello"}))
         .send()

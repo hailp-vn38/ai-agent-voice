@@ -79,7 +79,9 @@ fn config(url: String) -> AppConfig {
         },
         api: AdminApiConfig {
             enabled: true,
-            jwt_secret: vela_server::config::SecretString::new("load-plan-signing-secret-0123456789"),
+            jwt_secret: vela_server::config::SecretString::new(
+                "load-plan-signing-secret-0123456789",
+            ),
             ..Default::default()
         },
         shutdown: Default::default(),

@@ -1,5 +1,4 @@
-#[path = "../../../tests/support/admin_auth.rs"]
-mod admin_web_token;
+use crate::app::admin_web_token;
 
 use super::*;
 use crate::{

@@ -39,7 +39,8 @@ skills_dir = "{}"
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let base = format!("http://{}/api/admin", listener.local_addr().unwrap());
     let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
-    let web_token = admin_web_token(&reqwest::Client::new(), base.trim_end_matches("/api/admin")).await;
+    let web_token =
+        admin_web_token(&reqwest::Client::new(), base.trim_end_matches("/api/admin")).await;
     let client = Client::new();
 
     // 1. Initial settings has 10 built-in agents with `is_builtin: true`
@@ -292,7 +293,8 @@ vault_dir = "{}"
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let base = format!("http://{}/api/admin", listener.local_addr().unwrap());
     let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
-    let web_token = admin_web_token(&reqwest::Client::new(), base.trim_end_matches("/api/admin")).await;
+    let web_token =
+        admin_web_token(&reqwest::Client::new(), base.trim_end_matches("/api/admin")).await;
     let client = Client::new();
 
     // Helper to build a valid canonical 16 kHz mono 16-bit PCM WAV with `sample_count` samples
@@ -531,7 +533,8 @@ vault_dir = "{}"
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let base = format!("http://{}/api/admin", listener.local_addr().unwrap());
     let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
-    let web_token = admin_web_token(&reqwest::Client::new(), base.trim_end_matches("/api/admin")).await;
+    let web_token =
+        admin_web_token(&reqwest::Client::new(), base.trim_end_matches("/api/admin")).await;
     let client = Client::new();
 
     // 1. Unauthenticated request is rejected
@@ -655,7 +658,8 @@ prompts_dir = "{}"
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let base = format!("http://{}/api/admin", listener.local_addr().unwrap());
     let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
-    let web_token = admin_web_token(&reqwest::Client::new(), base.trim_end_matches("/api/admin")).await;
+    let web_token =
+        admin_web_token(&reqwest::Client::new(), base.trim_end_matches("/api/admin")).await;
     let client = Client::new();
 
     let quarantine = format!("{base}/knowledge/quarantined-sources");

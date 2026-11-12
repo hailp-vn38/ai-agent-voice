@@ -631,7 +631,10 @@ pub async fn start_with_stalled_switch(
     let (llm, offered_tools) =
         SwitchScriptLlm::with_stall("default-llm", templates, continuation_stall);
     let (base, url, task) = start_with_llm(
-        with_signing_secret(with_server_default_prompt(config("127.0.0.1:0".parse().unwrap(), database_url()))),
+        with_signing_secret(with_server_default_prompt(config(
+            "127.0.0.1:0".parse().unwrap(),
+            database_url(),
+        ))),
         Arc::new(llm),
         with_template_llm,
     )
@@ -677,8 +680,11 @@ impl ControlledBoundary {
     }
 }
 
-fn with_signing_secret(mut config: vela_server::config::AppConfig) -> vela_server::config::AppConfig {
-    config.api.jwt_secret = vela_server::config::SecretString::new("session-profile-switch-signing-secret-0123456789");
+fn with_signing_secret(
+    mut config: vela_server::config::AppConfig,
+) -> vela_server::config::AppConfig {
+    config.api.jwt_secret =
+        vela_server::config::SecretString::new("session-profile-switch-signing-secret-0123456789");
     config
 }
 
@@ -695,7 +701,10 @@ pub async fn start_controlled_switch(
     let slot: Arc<Mutex<Option<ControlledBoundary>>> = Arc::new(Mutex::new(None));
     let installed = Arc::clone(&slot);
     let (base, url, task) = start_with_llm(
-        with_signing_secret(with_server_default_prompt(config("127.0.0.1:0".parse().unwrap(), database_url()))),
+        with_signing_secret(with_server_default_prompt(config(
+            "127.0.0.1:0".parse().unwrap(),
+            database_url(),
+        ))),
         Arc::new(llm),
         move |state| {
             let (at_boundary, at_boundary_rx) = mpsc::unbounded_channel();
@@ -717,7 +726,8 @@ pub async fn start_controlled_switch(
             let mut state = with_template_llm(state).with_writer_outcome_probe(probe);
             let config = Arc::make_mut(&mut state.config);
             config.api.enabled = true;
-            config.api.jwt_secret = vela_server::config::SecretString::new("session-profile-signing-secret-0123456789");
+            config.api.jwt_secret =
+                vela_server::config::SecretString::new("session-profile-signing-secret-0123456789");
             state
         },
     )

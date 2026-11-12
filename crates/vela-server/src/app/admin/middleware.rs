@@ -109,13 +109,13 @@ pub(super) async fn authenticate(
     };
     let password_change = super::auth::is_password_change_path(request.uri().path())
         && request.method() == http::Method::POST;
-    if let Some(token) = token {
-        if state.admin_auth.accepts(token) {
-            if state.admin_auth.status().must_change_password && !password_change {
-                return error(&request, StatusCode::FORBIDDEN, "password_change_required");
-            }
-            return next.run(request).await;
+    if let Some(token) = token
+        && state.admin_auth.accepts(token)
+    {
+        if state.admin_auth.status().must_change_password && !password_change {
+            return error(&request, StatusCode::FORBIDDEN, "password_change_required");
         }
+        return next.run(request).await;
     }
     // Password Login switched off: the Admin API admits requests without a credential, as the
     // Admin has accepted that anyone who can reach the server has full access.

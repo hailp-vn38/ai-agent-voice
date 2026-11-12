@@ -6,9 +6,9 @@ use reqwest::{Client, StatusCode};
 use std::{fs, sync::Arc, time::Duration};
 use vela_server::{
     app::bootstrap_with_providers_and_secret_resolver,
-    database::secrets::EnvSecretResolver,
     audio::PcmF32Mono,
     config::AppConfig,
+    database::secrets::EnvSecretResolver,
     providers::{
         AsrError, AsrEvent, AsrProvider, AsrResult, AsrSession, LlmError, LlmProvider, ProviderSet,
         TtsError, TtsProvider,

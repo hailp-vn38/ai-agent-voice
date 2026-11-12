@@ -45,8 +45,13 @@ mod state;
 mod transport;
 mod wiki_sync;
 
+#[cfg(test)]
+#[path = "../../tests/support/admin_auth.rs"]
+pub(crate) mod admin_web_token;
+
 pub(crate) use knowledge_write_gate::{KnowledgeWriteGate, gate_knowledge_writes};
 pub use state::{AppState, SessionProfileAdmissionError};
+#[cfg(test)]
 pub(crate) use wiki_sync::WikiSyncService;
 
 /// Recovery command: returns the Admin Password to the public default. See `admin::auth`.

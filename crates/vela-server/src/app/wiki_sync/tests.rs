@@ -78,11 +78,13 @@ async fn sync_times_out_waiting_for_knowledge_writer_and_publishes_timeout_statu
         .unwrap();
     assert!(init.status.success());
     let vault = Arc::new(Vault::open(wiki_core::VaultConfig::new(&root)).unwrap());
-    let mut config = wiki_core::SyncConfig::default();
-    config.remote_url = Some(remote.to_string_lossy().into_owned());
     // Generous enough that the library's own `rm`/git calls never time out under parallel test
     // load; the gate wait below is still the bound under test.
-    config.command_timeout = Duration::from_millis(300);
+    let config = wiki_core::SyncConfig {
+        remote_url: Some(remote.to_string_lossy().into_owned()),
+        command_timeout: Duration::from_millis(300),
+        ..Default::default()
+    };
     let sync = Arc::new(VaultSync::configure(Arc::clone(&vault), config).unwrap());
     let gate = Arc::new(KnowledgeWriteGate::default());
     let service = WikiSyncService::new(
@@ -127,12 +129,14 @@ async fn knowledge_route_write_is_committed_after_debounce() {
     assert!(init.status.success());
 
     let vault = Arc::new(Vault::open(wiki_core::VaultConfig::new(&root)).unwrap());
-    let mut config = wiki_core::SyncConfig::default();
-    config.remote_url = Some(remote.to_string_lossy().into_owned());
-    config.author = Some(wiki_core::GitAuthor {
-        name: "Test Server".into(),
-        email: "test@example.invalid".into(),
-    });
+    let config = wiki_core::SyncConfig {
+        remote_url: Some(remote.to_string_lossy().into_owned()),
+        author: Some(wiki_core::GitAuthor {
+            name: "Test Server".into(),
+            email: "test@example.invalid".into(),
+        }),
+        ..Default::default()
+    };
     let sync = Arc::new(VaultSync::configure(Arc::clone(&vault), config).unwrap());
     let gate = Arc::new(KnowledgeWriteGate::default());
     let stopping = CancellationToken::new();
@@ -216,8 +220,10 @@ async fn reader_vault_reports_read_only_and_does_not_start_scheduler() {
     let _writer = Arc::new(Vault::open(wiki_core::VaultConfig::new(&root)).unwrap());
     let reader = Arc::new(Vault::open(wiki_core::VaultConfig::new(&root)).unwrap());
     assert!(!reader.is_writable());
-    let mut config = wiki_core::SyncConfig::default();
-    config.remote_url = Some(remote.to_string_lossy().into_owned());
+    let config = wiki_core::SyncConfig {
+        remote_url: Some(remote.to_string_lossy().into_owned()),
+        ..Default::default()
+    };
     let sync = Arc::new(VaultSync::configure(Arc::clone(&reader), config).unwrap());
     assert!(matches!(
         sync.status(),

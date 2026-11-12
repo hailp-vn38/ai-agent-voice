@@ -157,7 +157,8 @@ async fn startup_marks_running_wiki_answers_interrupted_before_serving_http() {
 
     let mut config = config_for_database(database);
     config.api.enabled = true;
-    config.api.jwt_secret = vela_server::config::SecretString::new("bootstrap-signing-secret-0123456789");
+    config.api.jwt_secret =
+        vela_server::config::SecretString::new("bootstrap-signing-secret-0123456789");
     let router = bootstrap_with_providers(config, Arc::new(ProviderSet::unavailable()))
         .await
         .unwrap();

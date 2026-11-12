@@ -179,7 +179,8 @@ prompts_dir = "{}"
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let base = format!("http://{}/api/admin", listener.local_addr().unwrap());
     let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
-    let web_token = admin_web_token(&reqwest::Client::new(), base.trim_end_matches("/api/admin")).await;
+    let web_token =
+        admin_web_token(&reqwest::Client::new(), base.trim_end_matches("/api/admin")).await;
     let client = Client::new();
 
     // 1. Create a database LLM provider with full model & generation bounds
@@ -646,7 +647,8 @@ skills_dir = "{}"
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let base = format!("http://{}/api/admin", listener.local_addr().unwrap());
     let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
-    let web_token = admin_web_token(&reqwest::Client::new(), base.trim_end_matches("/api/admin")).await;
+    let web_token =
+        admin_web_token(&reqwest::Client::new(), base.trim_end_matches("/api/admin")).await;
     let client = Client::new();
 
     // 1. GET /background/settings includes built-in skills and dynamic subagent available_skills
@@ -1527,7 +1529,6 @@ prompts_dir = "{}"
     ))
     .unwrap();
     config.orchestrator.skills_dir = None;
-    let mut config = config;
     isolate_runtime_paths(&mut config, &temp_root);
     let router = bootstrap_with_providers(config, Arc::new(ProviderSet::unavailable()))
         .await
@@ -1874,7 +1875,8 @@ prompts_dir = "{}"
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let base = format!("http://{}/api/admin", listener.local_addr().unwrap());
     let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
-    let web_token = admin_web_token(&reqwest::Client::new(), base.trim_end_matches("/api/admin")).await;
+    let web_token =
+        admin_web_token(&reqwest::Client::new(), base.trim_end_matches("/api/admin")).await;
     let client = Client::new();
     let agent = |settings: &Value, id: &str| {
         settings["agents"]
