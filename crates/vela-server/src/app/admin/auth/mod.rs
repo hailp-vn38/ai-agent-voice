@@ -38,7 +38,44 @@ pub(crate) struct AdminAuthState {
     key: Option<hmac::Key>,
     token_ttl_secs: i64,
     status: RwLock<PasswordLoginStatus>,
-    failures: Mutex<VecDeque<Instant>>,
+    /// Failed logins only.
+    login_failures: FailureLimiter,
+    /// Failed current-password checks on the password change and Password Login toggle routes.
+    credential_failures: FailureLimiter,
+}
+
+/// A sliding-window failure budget: `FAILURE_LIMIT` failures per `FAILURE_WINDOW`.
+struct FailureLimiter(Mutex<VecDeque<Instant>>);
+
+impl FailureLimiter {
+    fn new() -> Self {
+        Self(Mutex::new(VecDeque::new()))
+    }
+
+    /// The remaining lockout when the budget is spent, otherwise `None`.
+    fn lockout_remaining(&self) -> Option<Duration> {
+        let mut failures = self.0.lock().unwrap_or_else(PoisonError::into_inner);
+        let now = Instant::now();
+        while failures
+            .front()
+            .is_some_and(|at| now.duration_since(*at) >= FAILURE_WINDOW)
+        {
+            failures.pop_front();
+        }
+        if failures.len() < FAILURE_LIMIT {
+            return None;
+        }
+        failures
+            .front()
+            .map(|at| FAILURE_WINDOW.saturating_sub(now.duration_since(*at)))
+    }
+
+    fn record_failure(&self) {
+        self.0
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push_back(Instant::now());
+    }
 }
 
 impl AdminAuthState {
@@ -52,7 +89,8 @@ impl AdminAuthState {
                 must_change_password: false,
                 revision: 1,
             }),
-            failures: Mutex::new(VecDeque::new()),
+            login_failures: FailureLimiter::new(),
+            credential_failures: FailureLimiter::new(),
         }
     }
 
@@ -72,31 +110,6 @@ impl AdminAuthState {
         };
         token::verify(key, bearer, unix_now())
             .is_some_and(|claims| claims.rev == self.status().revision)
-    }
-
-    /// The remaining lockout when the global failure budget is spent, otherwise `None`.
-    fn lockout_remaining(&self) -> Option<Duration> {
-        let mut failures = self.failures.lock().unwrap_or_else(PoisonError::into_inner);
-        let now = Instant::now();
-        while failures
-            .front()
-            .is_some_and(|at| now.duration_since(*at) >= FAILURE_WINDOW)
-        {
-            failures.pop_front();
-        }
-        if failures.len() < FAILURE_LIMIT {
-            return None;
-        }
-        failures
-            .front()
-            .map(|at| FAILURE_WINDOW.saturating_sub(now.duration_since(*at)))
-    }
-
-    fn record_failure(&self) {
-        self.failures
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .push_back(Instant::now());
     }
 }
 
@@ -230,6 +243,9 @@ async fn change_password(State(state): State<AppState>, request: Request) -> Res
         current_password,
         new_password,
     } = body;
+    if let Some(response) = locked_out(&state.admin_auth.credential_failures, &request) {
+        return response;
+    }
     if new_password == DEFAULT_PASSWORD {
         return error(
             &request,
@@ -269,6 +285,7 @@ async fn change_password(State(state): State<AppState>, request: Request) -> Res
         .await
         .unwrap_or(false);
     if !verified {
+        state.admin_auth.credential_failures.record_failure();
         return error(
             &request,
             StatusCode::UNPROCESSABLE_ENTITY,
@@ -370,9 +387,9 @@ async fn change_password(State(state): State<AppState>, request: Request) -> Res
     response
 }
 
-/// Answers 429 with `Retry-After` while the shared failure budget is spent.
-fn locked_out(state: &AppState, request: &Request) -> Option<Response> {
-    let remaining = state.admin_auth.lockout_remaining()?;
+/// Answers 429 with `Retry-After` while the given failure budget is spent.
+fn locked_out(limiter: &FailureLimiter, request: &Request) -> Option<Response> {
+    let remaining = limiter.lockout_remaining()?;
     let seconds = remaining.as_secs() + u64::from(remaining.subsec_nanos() > 0);
     let mut response = error(request, StatusCode::TOO_MANY_REQUESTS, "too_many_attempts");
     if let Ok(value) = axum::http::HeaderValue::from_str(&seconds.max(1).to_string()) {
@@ -484,15 +501,19 @@ struct SetPasswordLoginRequest {
 
 /// Switches Password Login on or off. The current Admin Password is required in both directions,
 /// and it is also what lets a caller with no credential switch the login back on. Shares the
-/// login failure budget, because while Password Login is off this route is the only password
-/// check left and it needs no credential.
+/// credential failure budget with the password change, never the login one, because while
+/// Password Login is off these routes need no bearer. Turning it off is refused while the
+/// forced-change flag is set.
 async fn set_password_login(State(state): State<AppState>, request: Request) -> Response {
     let (request, body): (Request, SetPasswordLoginRequest) = match json(request).await {
         Ok(parsed) => parsed,
         Err(response) => return response,
     };
-    if let Some(response) = locked_out(&state, &request) {
+    if let Some(response) = locked_out(&state.admin_auth.credential_failures, &request) {
         return response;
+    }
+    if !body.enabled && state.admin_auth.status().must_change_password {
+        return error(&request, StatusCode::FORBIDDEN, "password_change_required");
     }
     let Some(database) = state.database.as_ref() else {
         return error(
@@ -512,7 +533,7 @@ async fn set_password_login(State(state): State<AppState>, request: Request) -> 
         .await
         .unwrap_or(false);
     if !verified {
-        state.admin_auth.record_failure();
+        state.admin_auth.credential_failures.record_failure();
         return error(
             &request,
             StatusCode::UNPROCESSABLE_ENTITY,
@@ -594,7 +615,7 @@ async fn login(State(state): State<AppState>, request: Request) -> Response {
         Ok(parsed) => parsed,
         Err(response) => return response,
     };
-    if let Some(response) = locked_out(&state, &request) {
+    if let Some(response) = locked_out(&state.admin_auth.login_failures, &request) {
         return response;
     }
     let Some(database) = state.database.as_ref() else {
@@ -617,7 +638,7 @@ async fn login(State(state): State<AppState>, request: Request) -> Response {
         .await
         .unwrap_or(false);
     if !verified {
-        state.admin_auth.record_failure();
+        state.admin_auth.login_failures.record_failure();
         tracing::warn!(
             event = "admin_password_login_failed",
             request_id = id(&request),

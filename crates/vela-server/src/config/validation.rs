@@ -263,7 +263,7 @@ fn validate_admin_api(config: &AppConfig) -> Result<(), ConfigError> {
         ));
     }
     if !jwt_secret.is_empty() {
-        if jwt_secret.len() < 32 {
+        if jwt_secret.chars().count() < 32 {
             return Err(ConfigError::Validation(
                 "api.jwt_secret must be at least 32 characters".into(),
             ));

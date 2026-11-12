@@ -284,6 +284,8 @@ fn config_without_valid_signing_secret_fails_validation() {
     assert!(validated_prod_example(&api(JWT_SECRET, 3600), AUTH_TOKEN).is_ok());
     assert!(validated_prod_example("[api]\nenabled = true\n", AUTH_TOKEN).is_err());
     assert!(validated_prod_example(&api("too-short", 3600), AUTH_TOKEN).is_err());
+    // 31 characters but more than 32 bytes: the minimum counts characters.
+    assert!(validated_prod_example(&api(&"é".repeat(31), 3600), AUTH_TOKEN).is_err());
     assert!(validated_prod_example(&api(AUTH_TOKEN, 3600), AUTH_TOKEN).is_err());
     assert!(validated_prod_example(&api(JWT_SECRET, 0), AUTH_TOKEN).is_err());
 }
@@ -668,7 +670,7 @@ async fn duplicate_authorization_headers_are_rejected_in_both_login_states() {
 }
 
 #[tokio::test]
-async fn disabling_password_login_shares_the_login_failure_budget() {
+async fn toggle_failures_have_their_own_budget_and_do_not_lock_login() {
     let base = serve(&database_url(), JWT_SECRET, 3600).await;
     let client = Client::new();
     let token = rotated_token(&client, &base).await;
@@ -681,6 +683,52 @@ async fn disabling_password_login_shares_the_login_failure_budget() {
     let blocked = set_password_login(&client, &base, Some(&token), false, "fresh-admin-pass").await;
     assert_eq!(blocked.status(), StatusCode::TOO_MANY_REQUESTS);
     assert_eq!(error_code(blocked).await, "too_many_attempts");
+    assert_eq!(
+        login(&client, &base, "fresh-admin-pass").await.status(),
+        StatusCode::OK
+    );
+}
+
+#[tokio::test]
+async fn handler_refuses_disabling_login_while_forced_change_is_set_even_without_a_bearer() {
+    let uri = database_url();
+    let _first = serve(&uri, JWT_SECRET, 3600).await;
+    // Login off with the forced-change flag still on: the middleware admits anyone, so only the
+    // handler can refuse the toggle.
+    let database = vela_server::database::Database::connect(&database_config(&uri))
+        .await
+        .unwrap();
+    sqlx::query("UPDATE admin_auth SET password_login_enabled = 0, must_change_password = 1 WHERE id = 1")
+        .execute(database.pool())
+        .await
+        .unwrap();
+    drop(database);
+    let base = serve(&uri, JWT_SECRET, 3600).await;
+    let client = Client::new();
+
+    let response = set_password_login(&client, &base, None, false, "admin").await;
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    assert_eq!(error_code(response).await, "password_change_required");
+}
+
+#[tokio::test]
+async fn change_password_wrong_current_is_throttled_after_five_failures() {
+    let base = serve(&database_url(), JWT_SECRET, 3600).await;
+    let client = Client::new();
+    let token = rotated_token(&client, &base).await;
+
+    for _ in 0..5 {
+        let wrong = change_password(&client, &base, &token, "not-the-password", "another-pass-1").await;
+        assert_eq!(wrong.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    }
+    let blocked = change_password(&client, &base, &token, "fresh-admin-pass", "another-pass-1").await;
+    assert_eq!(blocked.status(), StatusCode::TOO_MANY_REQUESTS);
+    assert_eq!(error_code(blocked).await, "too_many_attempts");
+    // Login keeps its own budget.
+    assert_eq!(
+        login(&client, &base, "fresh-admin-pass").await.status(),
+        StatusCode::OK
+    );
 }
 
 #[tokio::test]
