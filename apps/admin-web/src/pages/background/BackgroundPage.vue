@@ -108,7 +108,7 @@ onBeforeUnmount(() => controller?.abort())
 
 <template>
   <section class="space-y-4">
-    <DetailHeader
+    <DetailHeader theme="jobs"
       :title="t('jobUi.hubTitle')"
       :back-label="t('jobUi.jobs')"
       @back="router.push({ name: 'jobs' })"

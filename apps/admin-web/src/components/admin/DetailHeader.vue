@@ -1,9 +1,11 @@
 <script setup lang="ts">
+import HeroScene, { type HeroTheme } from './HeroScene.vue'
 import { ArrowLeft } from '@lucide/vue'
 
 import { Button } from '@/components/ui/button'
 
 defineProps<{
+  theme?: HeroTheme
   title: string
   backLabel?: string
 }>()
@@ -12,7 +14,7 @@ const emit = defineEmits<{ back: [] }>()
 </script>
 
 <template>
-  <header class="studio-panel min-w-0 px-3 py-3 sm:px-4 sm:py-3.5" data-detail-header>
+  <header class="studio-panel hero-surface min-w-0 px-3 py-3 sm:px-4 sm:py-3.5" data-detail-header>
     <div class="flex min-w-0 flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
       <div class="flex min-w-0 items-center gap-2.5 sm:gap-3">
         <Button
@@ -46,5 +48,6 @@ const emit = defineEmits<{ back: [] }>()
         <slot name="actions" />
       </div>
     </div>
+    <HeroScene v-if="theme" :theme="theme" surface />
   </header>
 </template>

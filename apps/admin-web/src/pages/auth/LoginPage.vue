@@ -1,9 +1,12 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { ArrowRight, CircleAlert, LoaderCircle } from '@lucide/vue'
+import { computed, ref, useId } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
 import { authApi } from '@/api/auth'
 import { formatApiError, isApiError } from '@/api/errors'
+import AuthPageShell from '@/components/auth/AuthPageShell.vue'
+import PasswordField from '@/components/auth/PasswordField.vue'
 import { Button } from '@/components/ui/button'
 import { useI18n } from '@/composables/useI18n'
 import type { MessageKey } from '@/i18n/messages'
@@ -18,6 +21,8 @@ const router = useRouter()
 const password = ref('')
 const pending = ref(false)
 const error = ref<string | null>(null)
+const invalidPassword = ref(false)
+const errorId = useId()
 
 const redirect = computed(() => safeTarget(route.query.redirect))
 
@@ -36,6 +41,7 @@ async function submit() {
   if (!password.value || pending.value) return
   pending.value = true
   error.value = null
+  invalidPassword.value = false
   try {
     const response = await authApi.login(password.value)
     password.value = ''
@@ -46,6 +52,7 @@ async function submit() {
       : { path: redirect.value })
   } catch (cause) {
     error.value = messageFor(cause)
+    invalidPassword.value = isApiError(cause) && cause.code === 'invalid_password'
   } finally {
     pending.value = false
   }
@@ -53,36 +60,22 @@ async function submit() {
 </script>
 
 <template>
-  <main class="grid min-h-screen place-items-center bg-background px-4 text-foreground">
-    <section class="w-full max-w-sm space-y-6 rounded-lg border bg-card p-6 shadow-sm">
-      <header class="space-y-1">
-        <h1 class="text-lg font-semibold">{{ t('auth.loginTitle') }}</h1>
-        <p class="text-sm text-muted-foreground">{{ t('auth.loginDescription') }}</p>
-      </header>
-
-      <div
-        v-if="error"
-        role="alert"
-        class="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700"
-      >
-        {{ error }}
-      </div>
-
-      <form class="space-y-4" @submit.prevent="submit">
-        <label class="block space-y-1">
-          <span class="text-sm font-medium">{{ t('auth.passwordLabel') }}</span>
-          <input
-            v-model="password"
-            type="password"
-            autocomplete="current-password"
-            class="admin-input w-full"
-            :placeholder="t('auth.passwordPlaceholder')"
-          />
-        </label>
-        <Button type="submit" class="w-full" :disabled="!password || pending">
-          {{ pending ? t('auth.signingIn') : t('auth.signIn') }}
-        </Button>
-      </form>
-    </section>
-  </main>
+  <AuthPageShell :title="t('auth.loginTitle')" :description="t('auth.loginDescription')">
+    <div v-if="error" :id="errorId" role="alert" class="auth-error">
+      <CircleAlert :size="16" aria-hidden="true" /><span>{{ error }}</span>
+    </div>
+    <form class="space-y-5" :aria-busy="pending" @submit.prevent="submit">
+      <PasswordField
+        @submit="submit"
+        v-model="password" :label="t('auth.passwordLabel')"
+        :placeholder="t('auth.passwordPlaceholder')" :disabled="pending"
+        :invalid="invalidPassword" :described-by="error ? errorId : undefined"
+      />
+      <Button type="submit" class="auth-submit" :disabled="!password || pending">
+        <LoaderCircle v-if="pending" :size="16" class="animate-spin motion-reduce:animate-none" aria-hidden="true" />
+        {{ pending ? t('auth.signingIn') : t('auth.signIn') }}
+        <ArrowRight v-if="!pending" :size="16" aria-hidden="true" />
+      </Button>
+    </form>
+  </AuthPageShell>
 </template>

@@ -1,8 +1,13 @@
 import { mount } from '@vue/test-utils'
-import { beforeEach, expect, it } from 'vitest'
+import { beforeEach, expect, it, vi } from 'vitest'
 import SidebarContent from './SidebarContent.vue'
 import { navigationGroups } from '@/config/navigation'
 import { setLocale, translate } from '@/composables/useI18n'
+
+vi.mock('vue-router', async importOriginal => ({
+  ...await importOriginal<typeof import('vue-router')>(),
+  useRoute: () => ({ path: '/overview', matched: [] }),
+}))
 
 beforeEach(() => setLocale('en'))
 

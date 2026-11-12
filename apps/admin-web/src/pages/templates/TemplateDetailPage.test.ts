@@ -3,10 +3,10 @@ import { expect, it, vi } from 'vitest'
 
 import { setLocale } from '@/composables/useI18n'
 import type { AgentTemplate, ProviderInstance } from '@/domain/admin'
-import AiPipeline from '@/components/pipeline/AiPipeline.vue'
+import VoicePipelineStudio from '@/components/pipeline/VoicePipelineStudio.vue'
 import ProviderDetailModal from '@/components/admin/ProviderDetailModal.vue'
 import ProviderFormModal from '@/components/admin/ProviderFormModal.vue'
-import TemplatePromptCard from '@/components/templates/TemplatePromptCard.vue'
+import TemplateConfigurationPanel from '@/components/templates/TemplateConfigurationPanel.vue'
 import TemplateDetailPage from './TemplateDetailPage.vue'
 
 const template: AgentTemplate = { id: 'home', name: 'Home', language: 'vi', description: '', prompt: 'Keep it brief.', providerBindings: { llm: 'llm' }, createdAt: '', updatedAt: '' }
@@ -28,7 +28,8 @@ it('keeps inline prompt saving connected from the new workspace', () => {
   setLocale('en')
   const wrapper = shallowMount(TemplateDetailPage)
   try {
-    wrapper.getComponent(TemplatePromptCard).vm.$emit('save', 'New instructions')
+    expect(wrapper.getComponent(TemplateConfigurationPanel).props('context')).toBe('template')
+    wrapper.getComponent(TemplateConfigurationPanel).vm.$emit('savePrompt', 'New instructions')
     expect(store.updateTemplate).toHaveBeenCalledWith('home', { prompt: 'New instructions' })
   } finally { wrapper.unmount() }
 })
@@ -36,7 +37,7 @@ it('keeps inline prompt saving connected from the new workspace', () => {
 it('resolves every template sharing an instance and preserves the edit action', async () => {
   const wrapper = shallowMount(TemplateDetailPage)
   try {
-    wrapper.getComponent(AiPipeline).vm.$emit('openProvider', provider)
+    wrapper.getComponent(VoicePipelineStudio).vm.$emit('openProvider', provider)
     await wrapper.vm.$nextTick()
     const detail = wrapper.getComponent(ProviderDetailModal)
     expect(detail.props('modelValue')).toBe(true)

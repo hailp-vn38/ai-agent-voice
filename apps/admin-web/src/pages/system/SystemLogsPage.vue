@@ -268,7 +268,7 @@ onBeforeUnmount(() => {
       </RouterLink>
     </div>
 
-    <PageHeader
+    <PageHeader theme="gateway"
       :eyebrow="t('system.logs.eyebrow')"
       :title="t('system.logs.title')"
       :description="t('system.logs.description')"

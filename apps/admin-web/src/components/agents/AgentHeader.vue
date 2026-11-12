@@ -26,9 +26,6 @@ const { t } = useI18n()
 <template>
   <DetailHero tone="agents" :eyebrow="t('directoryUi.agentIdentity')" :title="agent.name" :description="agent.description || t('agentHeader.type')" :back-label="t('nav.agents')" data-agent-header @back="emit('back')">
     <template #icon><AgentVoiceIcon class="size-9" /></template>
-    <template #meta>
-      <span class="hero-code"><code class="px-0.5 py-1">@{{ agent.id }}</code></span>
-    </template>
     <template #actions>
       <div data-agent-actions class="contents">
         <button type="button" class="hero-primary" data-agent-add-device @click="emit('addDevice')">

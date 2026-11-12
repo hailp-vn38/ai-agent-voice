@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { AudioLines, Bot, History, Keyboard, LoaderCircle, Mic, Send, Square, Volume2, VolumeX, X } from '@lucide/vue'
+import { History, Keyboard, LoaderCircle, Mic, Send, Square, Volume2, VolumeX, X } from '@lucide/vue'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import VelaAssistantMark from '@/components/icons/VelaAssistantMark.vue'
 import { Button } from '@/components/ui/button'
 import { useI18n } from '@/composables/useI18n'
 import { toolStatusLabel } from '@/lib/assistant/toolLabels'
@@ -120,14 +121,14 @@ onBeforeUnmount(() => {
     <div v-if="auth.hasAdminAccess" class="text-foreground">
       <button
         ref="launcher" type="button"
-        class="assistant-launcher fixed z-30 grid size-14 place-items-center rounded-full bg-primary text-primary-foreground shadow-lg focus-visible:outline-2 focus-visible:outline-offset-4"
+        class="assistant-launcher fixed z-30 grid size-14 place-items-center focus-visible:outline-2 focus-visible:outline-offset-4"
         :class="{ 'assistant-launcher-active': active, 'assistant-launcher-listening': assistant.micEnabled }"
         :aria-label="assistant.visible ? t('assistant.collapse') : t('assistant.open')"
         :aria-expanded="assistant.visible" aria-controls="studio-assistant"
         @click="assistant.visible ? collapse() : assistant.open()"
       >
-        <AudioLines v-if="active" class="size-6" aria-hidden="true" />
-        <Bot v-else class="size-6" aria-hidden="true" />
+        <VelaAssistantMark class="assistant-launcher-mark" :active="active" />
+        <span class="assistant-launcher-label" aria-hidden="true">{{ assistant.visible ? t('assistant.collapse') : t('assistant.open') }}</span>
         <span class="assistant-launcher-dot" :class="'is-' + connectionTone" aria-hidden="true" />
       </button>
       <Transition name="assistant-panel">
@@ -137,7 +138,7 @@ onBeforeUnmount(() => {
           role="dialog" :aria-label="t('assistant.title')"
         >
           <header class="flex h-14 shrink-0 items-center gap-2 border-b px-3">
-            <span class="grid size-9 shrink-0 place-items-center rounded-xl bg-primary/10 text-primary"><Bot class="size-5" aria-hidden="true" /></span>
+            <span class="assistant-avatar grid size-9 shrink-0 place-items-center rounded-xl"><VelaAssistantMark class="size-6" /></span>
             <div class="min-w-0 flex-1">
               <strong class="block truncate text-sm">{{ t('assistant.title') }}</strong>
               <span class="flex items-center gap-1.5 text-[11px] text-muted-foreground">
@@ -237,7 +238,13 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
-.assistant-launcher { right: 20px; bottom: calc(20px + env(safe-area-inset-bottom)); }
+.assistant-launcher { right: 20px; bottom: calc(20px + env(safe-area-inset-bottom)); isolation: isolate; border: 1px solid rgb(255 255 255 / .28); border-radius: 20px; color: #f4f8ff; background: radial-gradient(ellipse at 90% 100%, rgb(72 208 220 / .4), transparent 70%), linear-gradient(140deg, #8b6ae8, #6056cc 48%, #3c81ac); box-shadow: inset 0 1px 1px rgb(255 255 255 / .23), 0 8px 22px -6px rgb(66 52 134 / .5), 0 2px 4px rgb(0 0 0 / .12); outline-color: var(--ring); cursor: pointer; transition: transform .2s, box-shadow .2s; }
+.assistant-launcher:hover { transform: translateY(-2px); box-shadow: inset 0 1px 1px rgb(255 255 255 / .3), 0 12px 28px -6px rgb(66 52 134 / .55); }
+.assistant-launcher:active { transform: translateY(0) scale(.96); }
+.assistant-launcher-mark { width: 34px; height: 34px; }
+.assistant-launcher-label { position: absolute; right: calc(100% + 12px); padding: 7px 11px; border: 1px solid var(--border); border-radius: 9px; background: var(--popover); color: var(--popover-foreground); font-size: 11px; white-space: nowrap; box-shadow: 0 4px 16px rgb(0 0 0 / .08); pointer-events: none; opacity: 0; transform: translateX(4px); transition: opacity .2s, transform .2s; }
+.assistant-launcher:hover .assistant-launcher-label, .assistant-launcher:focus-visible .assistant-launcher-label { opacity: 1; transform: translateX(0); }
+.assistant-avatar { color: var(--studio-violet); border: 1px solid color-mix(in oklab, var(--studio-violet) 18%, transparent); background: linear-gradient(140deg, color-mix(in oklab, var(--studio-violet) 12%, var(--card)), color-mix(in oklab, var(--studio-cyan) 8%, var(--card))); }
 .assistant-panel-enter-active { transition: opacity 280ms ease-out, transform 280ms cubic-bezier(.22, 1, .36, 1); }
 .assistant-panel-leave-active { transition: opacity 220ms ease-in, transform 220ms ease-in; pointer-events: none; }
 .assistant-panel-enter-from, .assistant-panel-leave-to { opacity: 0; transform: scale(0); }
@@ -262,7 +269,7 @@ onBeforeUnmount(() => {
   .assistant-panel { right: 12px; bottom: calc(78px + env(safe-area-inset-bottom)); height: min(490px, calc(100dvh - 98px)); transform-origin: calc(100% - 28px) calc(100% + 38px); }
 }
 @media (prefers-reduced-motion: reduce) {
-  .assistant-panel-enter-active, .assistant-panel-leave-active { transition: none; }
+  .assistant-launcher, .assistant-launcher-label, .assistant-panel-enter-active, .assistant-panel-leave-active { transition: none; }
   .assistant-wave-bar { animation: none !important; transition: none !important; }
 }
 </style>

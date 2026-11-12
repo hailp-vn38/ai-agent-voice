@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ArrowLeft } from '@lucide/vue'
+import HeroScene from './HeroScene.vue'
 
 defineProps<{
   tone: 'agents' | 'devices' | 'speakers' | 'templates' | 'providers' | 'mcp' | 'artifacts' | 'gateway'
@@ -10,6 +11,7 @@ defineProps<{
 }>()
 
 const emit = defineEmits<{ back: [] }>()
+
 </script>
 
 <template>
@@ -30,6 +32,7 @@ const emit = defineEmits<{ back: [] }>()
       </div>
       <div v-if="$slots.actions" class="detail-hero-actions" data-detail-actions><slot name="actions" /></div>
     </div>
+    <HeroScene :theme="tone" />
     <div v-if="$slots.facts" class="detail-hero-facts"><slot name="facts" /></div>
   </header>
 </template>
@@ -37,7 +40,7 @@ const emit = defineEmits<{ back: [] }>()
 <style scoped>
 .detail-hero {
   --hero-a: #4a2fc4; --hero-b: #6944e9; --hero-c: #0798b9;
-  position: relative; min-width: 0; padding: 20px 28px 24px; border-radius: 24px; color: #fff;
+  position: relative; isolation: isolate; min-width: 0; overflow: hidden; padding: 14px 22px 18px; border-radius: 22px; color: #fff;
   background:
     radial-gradient(90% 120% at 100% 0%, rgb(255 255 255 / 0.2), transparent 55%),
     linear-gradient(120deg, var(--hero-a) 0%, var(--hero-b) 42%, var(--hero-c) 100%);
@@ -55,10 +58,11 @@ const emit = defineEmits<{ back: [] }>()
   mask-image: linear-gradient(270deg, black 0%, transparent 48%);
 }
 
-.detail-hero-motif { position: absolute; inset: 0; border-radius: inherit; pointer-events: none; }
+.detail-hero-motif { position: absolute; inset: 0; border-radius: inherit; opacity: 0.4; pointer-events: none; }
 [data-tone="agents"] .detail-hero-motif {
-  background-image: repeating-radial-gradient(circle at 88% 10%, transparent 0 46px, rgb(255 255 255 / 0.1) 46px 47px);
-  mask-image: radial-gradient(circle at 88% 10%, black 0%, transparent 62%);
+  background-image: radial-gradient(rgb(230 250 255 / 0.3) 0.8px, transparent 1px);
+  background-size: 28px 28px;
+  mask-image: linear-gradient(90deg, transparent 25%, black);
 }
 [data-tone="devices"] .detail-hero-motif {
   background-image: radial-gradient(rgb(255 255 255 / 0.28) 1.4px, transparent 1.6px); background-size: 22px 22px;
@@ -84,7 +88,7 @@ const emit = defineEmits<{ back: [] }>()
 .detail-hero-description { max-width: 640px; margin-top: 6px; color: rgb(255 255 255 / 0.82); font-size: 14.5px; line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; }
 .detail-hero-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 12px; }
 .detail-hero-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; flex-shrink: 0; }
-.detail-hero-facts { position: relative; display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; margin-top: 22px; }
+.detail-hero-facts { position: relative; display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; margin-top: 12px; }
 
 @media (max-width: 900px) {
   .detail-hero-row { flex-direction: column; gap: 16px; }
@@ -95,4 +99,6 @@ const emit = defineEmits<{ back: [] }>()
   .detail-hero-avatar { width: 48px; height: 48px; border-radius: 15px; font-size: 21px; }
   .detail-hero-facts { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
 }
+
+.detail-hero-back, .detail-hero-row, .detail-hero-facts { z-index: 2; }
 </style>

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ArrowLeft, FileText } from '@lucide/vue'
+import { ArrowLeft, FileText, Plus } from '@lucide/vue'
 import { computed, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
@@ -14,9 +14,9 @@ import AgentDeviceList from '@/components/agents/AgentDeviceList.vue'
 import ClaimDeviceEnrollmentModal from '@/components/agents/ClaimDeviceEnrollmentModal.vue'
 import AgentHeader from '@/components/agents/AgentHeader.vue'
 import AgentTemplateSwitcher from '@/components/agents/AgentTemplateSwitcher.vue'
-import AiPipeline from '@/components/pipeline/AiPipeline.vue'
+import VoicePipelineStudio from '@/components/pipeline/VoicePipelineStudio.vue'
+import AgentTabIntro from '@/components/agents/AgentTabIntro.vue'
 import StudioTabs from '@/components/studio/StudioTabs.vue'
-import VoicePipelineStrip from '@/components/studio/VoicePipelineStrip.vue'
 import AgentFormModal from '@/components/admin/AgentFormModal.vue'
 import ConfirmDialog from '@/components/admin/ConfirmDialog.vue'
 import DeviceFormModal from '@/components/admin/DeviceFormModal.vue'
@@ -383,36 +383,29 @@ async function confirmDeleteDevice() {
         @set-default="setDefaultTemplate"
       />
 
-      <section class="studio-panel space-y-3 p-4 sm:p-5" aria-label="Voice AI pipeline summary">
-        <h2 class="text-sm font-semibold">{{ t('studio.pipeline.title') }}</h2>
-        <VoicePipelineStrip :template="selectedTemplate" :providers="store.providers" />
-      </section>
+      <VoicePipelineStudio
+        :template="selectedTemplate"
+        :providers="store.providers"
+        :shared-templates="sharedTemplates"
+        @open-provider="openProvider"
+        @edit-provider="editProvider"
+        @unlink="unlinkTemplateProvider"
+        @select="linkTemplateProvider"
+      />
 
-      <div class="grid items-start gap-4 lg:grid-cols-[minmax(0,1.35fr)_minmax(320px,0.65fr)]">
-        <AiPipeline
-          :template="selectedTemplate"
-          :providers="store.providers"
-          :shared-templates="sharedTemplates"
-          @open-provider="openProvider"
-          @edit-provider="editProvider"
-          @unlink="unlinkTemplateProvider"
-          @select="linkTemplateProvider"
-        />
-
-        <TemplateConfigurationPanel
-          :template="selectedTemplate"
-          :provider-count="store.templateProviderCount(selectedTemplate)"
-          :agent-count="selectedTemplateAgentCount"
-          :device-count="store.devicesUsingTemplate(selectedTemplate.id).length"
-          @view-template="viewSelectedTemplate"
-          @edit-template="openEditTemplate"
-          @link-to-agent="linkTemplateOpen = true"
-          @copy-template="copyOpen = true"
-          @unlink-from-agent="requestUnlinkSelectedTemplateFromAgent"
-          @delete-template="requestDeleteTemplate"
-          @save-prompt="savePrompt"
-        />
-      </div>
+      <TemplateConfigurationPanel
+        :template="selectedTemplate"
+        :provider-count="store.templateProviderCount(selectedTemplate)"
+        :agent-count="selectedTemplateAgentCount"
+        :device-count="store.devicesUsingTemplate(selectedTemplate.id).length"
+        @view-template="viewSelectedTemplate"
+        @edit-template="openEditTemplate"
+        @link-to-agent="linkTemplateOpen = true"
+        @copy-template="copyOpen = true"
+        @unlink-from-agent="requestUnlinkSelectedTemplateFromAgent"
+        @delete-template="requestDeleteTemplate"
+        @save-prompt="savePrompt"
+      />
 
       <div
         v-if="selectedTemplateAgentCount > 1"
@@ -456,28 +449,34 @@ async function confirmDeleteDevice() {
 
     </div>
 
-    <div v-if="activeTab === 'tools'" id="studio-panel-tools" role="tabpanel" aria-labelledby="studio-tab-tools" class="space-y-5">
-      <section class="studio-panel p-5">
+    <div v-if="activeTab === 'tools'" id="studio-panel-tools" role="tabpanel" aria-labelledby="studio-tab-tools" class="agent-tab-body" data-tab="tools">
+      <AgentTabIntro tone="tools" />
+      <div class="tools-layout">
         <AgentMcpBindings :agent-id="agentId" @changed="toolReviewKey += 1" />
-      </section>
-      <section class="studio-panel p-5">
-        <AgentToolAllowlist :key="toolReviewKey" :agent-id="agentId" />
-      </section>
-      <AgentReminderPolicy :agent-id="agentId" />
+        <AgentReminderPolicy :agent-id="agentId" />
+      </div>
+      <AgentToolAllowlist :key="toolReviewKey" :agent-id="agentId" />
     </div>
-    <div v-if="activeTab === 'speakers'" id="studio-panel-speakers" role="tabpanel" aria-labelledby="studio-tab-speakers" class="studio-panel p-5">
+    <div v-if="activeTab === 'speakers'" id="studio-panel-speakers" role="tabpanel" aria-labelledby="studio-tab-speakers" class="agent-tab-body" data-tab="speakers">
+      <AgentTabIntro tone="speakers" />
       <AgentSpeakerPolicy :agent-id="agentId" />
     </div>
-    <div v-if="activeTab === 'reminders'" id="studio-panel-reminders" role="tabpanel" aria-labelledby="studio-tab-reminders">
+    <div v-if="activeTab === 'reminders'" id="studio-panel-reminders" role="tabpanel" aria-labelledby="studio-tab-reminders" class="agent-tab-body" data-tab="reminders">
+      <AgentTabIntro tone="reminders" />
       <AgentReminders :agent-id="agentId" />
     </div>
-    <div v-if="activeTab === 'devices'" id="studio-panel-devices" role="tabpanel" aria-labelledby="studio-tab-devices">
-      <AgentDeviceList
-        :devices="devices"
-        :effective-template-by-id="store.getEffectiveDeviceTemplateById"
-        @edit="openEditDevice"
-        @delete="deleteDeviceTarget = $event"
-      />
+    <div v-if="activeTab === 'devices'" id="studio-panel-devices" role="tabpanel" aria-labelledby="studio-tab-devices" class="agent-tab-body" data-tab="devices">
+      <AgentTabIntro tone="devices"><template #actions><Button size="sm" @click="openAddDevice"><Plus :size="14" aria-hidden="true" />{{ t('agentDevices.add') }}</Button></template></AgentTabIntro>
+      <div class="device-directory">
+        <div class="body-section-head mb-4"><div class="body-heading-copy"><h2>{{ t('agentDevices.heading') }}</h2><span class="binding-status">{{ devices.length }}</span></div></div>
+        <AgentDeviceList
+          :devices="devices"
+          :effective-template-by-id="store.getEffectiveDeviceTemplateById"
+          @edit="openEditDevice"
+          @delete="deleteDeviceTarget = $event"
+        />
+        <p class="device-note">{{ t('devices.note') }}</p>
+      </div>
     </div>
 
     <AgentFormModal v-model="agentModalOpen" :agent="agent" @save="store.updateAgent(agent.id, $event)" />
@@ -627,28 +626,29 @@ async function confirmDeleteDevice() {
           <div class="h-8 w-28 rounded-lg bg-muted/40" />
         </div>
       </div>
-      <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-        <div v-for="slot in 3" :key="slot" class="h-20 rounded-xl bg-muted/40" />
+    </div>
+
+    <div class="studio-panel card-shimmer space-y-5 p-4 sm:p-6" aria-hidden="true">
+      <div class="h-3 w-36 rounded bg-muted/50" />
+      <div class="h-7 w-44 rounded bg-muted/60" />
+      <div class="h-4 w-80 max-w-full rounded bg-muted/40" />
+      <div class="grid gap-5 sm:grid-cols-2 xl:grid-cols-4">
+        <div v-for="step in 4" :key="step" class="space-y-4 rounded-2xl border border-border/60 p-4">
+          <div class="h-3 w-16 rounded bg-muted/50" />
+          <div class="h-24 rounded-xl bg-muted/30" />
+          <div class="h-4 w-32 rounded bg-muted/50" />
+          <div class="h-20 rounded-xl bg-muted/40" />
+        </div>
       </div>
     </div>
 
-    <div class="studio-panel card-shimmer space-y-3 p-4 sm:p-5" aria-hidden="true">
-      <div class="h-4 w-36 rounded bg-muted/60" />
-      <div class="grid gap-2 sm:grid-cols-4">
-        <div v-for="step in 4" :key="step" class="h-14 rounded-xl bg-muted/40" />
+    <div class="studio-panel card-shimmer space-y-4 p-4 sm:p-6" aria-hidden="true">
+      <div class="h-5 w-44 rounded bg-muted/60" />
+      <div class="grid gap-4 md:grid-cols-[1.5fr_1fr]">
+        <div class="h-44 rounded-2xl bg-muted/30" />
+        <div class="space-y-4"><div class="h-20 rounded-xl bg-muted/40" /><div class="h-20 rounded-xl bg-muted/40" /></div>
       </div>
-    </div>
-
-    <div class="grid items-start gap-4 lg:grid-cols-[minmax(0,1.35fr)_minmax(320px,0.65fr)]" aria-hidden="true">
-      <div class="studio-panel card-shimmer space-y-3 p-4 sm:p-5">
-        <div class="h-5 w-44 rounded bg-muted/60" />
-        <div v-for="node in 4" :key="node" class="h-24 rounded-xl bg-muted/40" />
-      </div>
-      <div class="studio-panel card-shimmer space-y-4 p-4 sm:p-5">
-        <div class="h-5 w-40 rounded bg-muted/60" />
-        <div class="h-20 rounded-xl bg-muted/40" />
-        <div class="h-40 rounded-xl bg-muted/40" />
-      </div>
+      <div class="h-20 rounded-xl bg-muted/30" />
     </div>
   </div>
 
@@ -661,3 +661,5 @@ async function confirmDeleteDevice() {
     </Button>
   </section>
 </template>
+
+<style src="./agent-tab-body.css"></style>

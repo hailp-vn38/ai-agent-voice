@@ -244,7 +244,7 @@ onBeforeUnmount(() => controller?.abort())
 
 <template>
   <section class="space-y-4">
-    <DetailHeader
+    <DetailHeader theme="jobs"
       :title="
         isCreateMode
           ? t('jobUi.skillCreateTitle')

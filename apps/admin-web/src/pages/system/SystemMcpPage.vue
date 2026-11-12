@@ -288,7 +288,7 @@ onBeforeUnmount(() => {
 
 <template>
   <section class="space-y-4">
-    <PageHeader
+    <PageHeader theme="mcp"
       :eyebrow="isVi ? 'HẠ TẦNG HỆ THỐNG' : 'SYSTEM INFRASTRUCTURE'"
       :title="isVi ? 'System & Knowledge MCP Server' : 'System & Knowledge MCP Server'"
       :description="

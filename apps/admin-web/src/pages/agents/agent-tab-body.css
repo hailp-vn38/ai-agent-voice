@@ -1,0 +1,105 @@
+.agent-tab-body { --tab-accent: var(--studio-violet); display: flex; flex-direction: column; gap: 18px; }
+.agent-tab-body[data-tab="speakers"] { --tab-accent: #bf7de5; }
+.agent-tab-body[data-tab="devices"] { --tab-accent: var(--studio-cyan); }
+.agent-tab-body[data-tab="reminders"] { --tab-accent: #d5a452; }
+.agent-tab-body .agent-tab-intro { display: flex; position: relative; isolation: isolate; align-items: center; gap: 16px; padding: 6px 2px 4px; }
+.agent-tab-body .tab-intro-icon { display: grid; place-items: center; width: 48px; height: 48px; flex-shrink: 0; border-radius: 16px; border: 1px solid color-mix(in oklab, var(--tab-accent) 22%, var(--border)); color: var(--tab-accent); background: color-mix(in oklab, var(--tab-accent) 7%, var(--card)); }
+.agent-tab-body .tab-intro-copy { position: relative; z-index: 1; min-width: 0; }
+.agent-tab-body .tab-intro-copy > p { font: 9px ui-monospace, monospace; letter-spacing: .14em; color: var(--tab-accent); }
+.agent-tab-body .tab-intro-copy > h2 { margin-top: 5px; font-size: 22px; line-height: 1.25; font-weight: 600; letter-spacing: -.03em; }
+.agent-tab-body .tab-intro-copy > span { display: block; margin-top: 5px; max-width: 680px; font-size: 12px; line-height: 1.7; color: var(--muted-foreground); }
+.agent-tab-body .tab-intro-actions { position: relative; z-index: 1; margin-left: auto; flex-shrink: 0; }
+.agent-tab-body .tab-intro-art { position: absolute; right: 10px; width: 200px; height: 80px; z-index: 0; color: var(--tab-accent); opacity: .09; pointer-events: none; }
+.agent-tab-body .tab-intro-signal { stroke-dasharray: 7 93; animation: tab-intro-flow 10s linear infinite; }
+.agent-tab-body .body-card { min-width: 0; padding: 22px; border: 1px solid var(--border); border-radius: 20px; background: radial-gradient(ellipse at 100% 0, color-mix(in oklab, var(--tab-accent) 4%, transparent), transparent 60%), var(--card); }
+.agent-tab-body .body-stack { display: flex; flex-direction: column; gap: 16px; }
+.agent-tab-body .body-stack > * { margin-top: 0; margin-bottom: 0; }
+.agent-tab-body .body-section-head { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.agent-tab-body .body-heading-copy { display: flex; align-items: flex-start; gap: 11px; min-width: 0; }
+.agent-tab-body .body-section-icon { display: grid; place-items: center; width: 34px; height: 34px; flex-shrink: 0; color: var(--tab-accent); background: color-mix(in oklab, var(--tab-accent) 8%, transparent); border-radius: 11px; }
+.agent-tab-body .body-section-head h2, .agent-tab-body .body-card > h2 { font-size: 15px; font-weight: 600; letter-spacing: -.02em; }
+.agent-tab-body .body-section-head p { max-width: 660px; margin-top: 4px; font-size: 12px; line-height: 1.65; color: var(--muted-foreground); }
+.agent-tab-body .body-caption { font-size: 11px; line-height: 1.7; color: var(--muted-foreground); }
+.agent-tab-body .body-empty { display: flex; align-items: center; justify-content: center; flex-direction: column; gap: 8px; padding: 30px 18px; border: 1px dashed var(--border); border-radius: 14px; background: color-mix(in oklab, var(--background) 70%, transparent); color: var(--muted-foreground); font-size: 12px; text-align: center; }
+.agent-tab-body .body-empty > svg { margin-bottom: 4px; color: var(--tab-accent); opacity: .6; }
+.agent-tab-body .body-empty > p:first-of-type { color: var(--foreground); font-size: 13px; font-weight: 550; }
+.agent-tab-body .body-alert { padding: 12px 14px; border: 1px solid color-mix(in oklab, var(--danger) 35%, var(--border)); border-radius: 12px; background: color-mix(in oklab, var(--danger) 5%, var(--background)); color: var(--danger); font-size: 12px; }
+.agent-tab-body .tools-layout { display: grid; grid-template-columns: minmax(0, 1.8fr) minmax(260px, 1fr); gap: 18px; align-items: start; }
+.agent-tab-body .binding-composer { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; padding: 10px; border: 1px solid var(--border); border-radius: 13px; background: var(--background); }
+.agent-tab-body .binding-list { display: flex; flex-direction: column; gap: 9px; }
+.agent-tab-body .binding-item { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; padding: 14px; border: 1px solid var(--border); border-radius: 14px; background: var(--background); }
+.agent-tab-body .binding-item > .binding-icon { display: grid; place-items: center; width: 40px; height: 40px; border: 1px solid color-mix(in oklab, var(--tab-accent) 20%, var(--border)); border-radius: 12px; color: var(--tab-accent); background: color-mix(in oklab, var(--tab-accent) 6%, transparent); }
+.agent-tab-body .binding-status { display: inline-flex; align-items: center; gap: 5px; padding: 4px 8px; border: 1px solid var(--border); border-radius: 99px; font-size: 10px; }
+.agent-tab-body .binding-status::before { content: ''; width: 4px; height: 4px; background: currentColor; border-radius: 50%; }
+.agent-tab-body .tool-review-card { min-width: 0; padding: 17px; border: 1px solid var(--border); border-radius: 15px; background: var(--background); transition: border-color .2s, box-shadow .2s; }
+.agent-tab-body .tool-review-card:hover { border-color: color-mix(in oklab, var(--tab-accent) 35%, var(--border)); box-shadow: 0 6px 24px -20px var(--tab-accent); }
+.agent-tab-body .tool-review-state { display: inline-flex; align-items: center; flex-shrink: 0; gap: 5px; padding: 4px 7px; border-radius: 8px; background: var(--muted); font-size: 10px; }
+.agent-tab-body .tool-schema { padding: 10px 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--card); }
+.agent-tab-body .tool-review-actions { margin-top: 15px; padding-top: 12px; border-top: 1px solid var(--border); }
+.agent-tab-body .reminder-policy > p { color: var(--muted-foreground); font-size: 12px; line-height: 1.8; }
+.agent-tab-body .policy-toggle { display: flex; align-items: center; gap: 10px; margin-top: 4px; padding: 13px; border: 1px solid var(--border); border-radius: 12px; background: var(--background); font-size: 12px; cursor: pointer; }
+.agent-tab-body .policy-toggle input { position: relative; appearance: none; flex-shrink: 0; width: 34px; height: 20px; border: 1px solid var(--border); border-radius: 99px; background: var(--muted); cursor: pointer; transition: background .2s; }
+.agent-tab-body .policy-toggle input::before { content: ''; position: absolute; left: 3px; top: 3px; width: 12px; height: 12px; border-radius: 50%; background: var(--muted-foreground); transition: transform .2s; }
+.agent-tab-body .policy-toggle input:checked { background: var(--tab-accent); border-color: var(--tab-accent); }
+.agent-tab-body .policy-toggle input:checked::before { transform: translateX(14px); background: #fff; }
+.agent-tab-body .policy-toggle input:disabled { opacity: .45; cursor: wait; }
+.agent-tab-body .policy-toggle input:focus-visible { outline: 2px solid var(--ring); outline-offset: 3px; }
+.agent-tab-body .speaker-layout { display: grid; grid-template-columns: minmax(220px, .8fr) minmax(0, 1.6fr); gap: 22px; align-items: start; }
+.agent-tab-body .speaker-controls { padding: 18px; border: 1px solid color-mix(in oklab, var(--tab-accent) 15%, var(--border)); border-radius: 16px; background: radial-gradient(ellipse at 50% 15%, color-mix(in oklab, var(--tab-accent) 7%, transparent), transparent 65%), var(--background); }
+.agent-tab-body .speaker-controls > p:first-of-type { font: 10px ui-monospace, monospace; letter-spacing: .12em; color: var(--tab-accent); }
+.agent-tab-body .voice-signature { height: 72px; display: flex; align-items: center; justify-content: center; gap: 3px; margin: 10px 0 18px; overflow: hidden; }
+.agent-tab-body .voice-signature i { width: 3px; border-radius: 2px; background: var(--tab-accent); opacity: .5; animation: tab-voice 3s ease-in-out var(--delay) infinite; }
+.agent-tab-body .speaker-controls[data-mode="off"] .voice-signature i { animation: none; opacity: .18; }
+.agent-tab-body .speaker-roster-heading { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; font-size: 13px; font-weight: 550; }
+.agent-tab-body .speaker-roster-heading span { padding: 2px 6px; border: 1px solid var(--border); border-radius: 6px; color: var(--tab-accent); font: 10px ui-monospace, monospace; }
+.agent-tab-body .speaker-roster { display: flex; flex-direction: column; gap: 10px; }
+.agent-tab-body .speaker-item { display: flex; align-items: center; flex-wrap: wrap; gap: 11px; padding: 14px; border: 1px solid var(--border); border-radius: 14px; background: var(--background); }
+.agent-tab-body .speaker-avatar { display: grid; place-items: center; width: 38px; height: 38px; flex-shrink: 0; border-radius: 12px; color: var(--tab-accent); background: color-mix(in oklab, var(--tab-accent) 10%, transparent); font-size: 16px; font-weight: 600; }
+.agent-tab-body .speaker-identity { min-width: 0; flex: 1; }
+.agent-tab-body .speaker-identity p { overflow-wrap: anywhere; }
+.agent-tab-body .device-directory { padding: 18px; border: 1px solid var(--border); border-radius: 20px; background: var(--card); }
+.agent-tab-body .device-card { border-radius: 16px; background: radial-gradient(ellipse at 100% 0, color-mix(in oklab, var(--tab-accent) 5%, transparent), transparent 60%), var(--background); }
+.agent-tab-body .device-route { padding: 12px; border: 1px solid var(--border); border-radius: 11px; background: var(--card); }
+.agent-tab-body .device-route dd { flex-wrap: wrap; }
+.agent-tab-body .device-note { margin-top: 15px; color: var(--muted-foreground); font-size: 11px; line-height: 1.7; }
+.agent-tab-body .reminder-kpis { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
+.agent-tab-body .reminder-kpi { --kpi-color: var(--tab-accent); padding: 15px; border: 1px solid color-mix(in oklab, var(--kpi-color) 15%, var(--border)); border-radius: 15px; background: radial-gradient(ellipse at 100% 0, color-mix(in oklab, var(--kpi-color) 6%, transparent), transparent 75%), var(--background); }
+.agent-tab-body .reminder-kpi[data-kpi="completed"] { --kpi-color: var(--success); }
+.agent-tab-body .reminder-kpi[data-kpi="cancelled"] { --kpi-color: var(--muted-foreground); }
+.agent-tab-body .reminder-kpi[data-kpi="expired"] { --kpi-color: var(--danger); }
+.agent-tab-body .reminder-kpi dt { display: flex; align-items: center; gap: 7px; color: var(--muted-foreground); font-size: 11px; }
+.agent-tab-body .reminder-kpi dt svg { color: var(--kpi-color); }
+.agent-tab-body .reminder-kpi dd { margin-top: 9px; font-size: 27px; line-height: 1.2; font-weight: 550; font-variant-numeric: tabular-nums; letter-spacing: -.04em; }
+.agent-tab-body .reminder-filters { display: grid; grid-template-columns: 1fr 1fr 1.2fr 1.2fr auto; align-items: end; gap: 10px; padding: 14px; border: 1px solid var(--border); border-radius: 14px; background: var(--background); }
+.agent-tab-body .reminder-filters label, .agent-tab-body .reminder-manage-picker { min-width: 0; color: var(--muted-foreground); font-size: 11px; }
+.agent-tab-body .reminder-filters :is(input, select), .agent-tab-body .reminder-manage-picker select { margin-top: 6px; width: 100%; color: var(--foreground); }
+.agent-tab-body .reminder-pagination { display: flex; align-items: center; flex-wrap: wrap; gap: 9px; color: var(--muted-foreground); font-size: 11px; }
+.agent-tab-body .reminder-pagination > span { min-width: 25px; text-align: center; font-variant-numeric: tabular-nums; }
+.agent-tab-body .reminder-list { display: flex; flex-direction: column; gap: 10px; }
+.agent-tab-body .reminder-item { display: flex; align-items: flex-start; flex-wrap: wrap; gap: 12px; padding: 16px; border: 1px solid var(--border); border-radius: 15px; background: var(--background); }
+.agent-tab-body .reminder-item > svg { margin-top: 2px; flex-shrink: 0; color: var(--tab-accent); }
+.agent-tab-body .reminder-item-main { flex: 1; min-width: min(100%, 200px); }
+.agent-tab-body .reminder-item-main > p:first-child { font-size: 13px; font-weight: 550; line-height: 1.7; overflow-wrap: anywhere; }
+.agent-tab-body .reminder-item-meta { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin-top: 8px; font-size: 10px; color: var(--muted-foreground); }
+.agent-tab-body .reminder-item-meta a { color: var(--tab-accent); font-family: ui-monospace, monospace; overflow-wrap: anywhere; }
+.agent-tab-body .reminder-state { padding: 3px 7px; border: 1px solid var(--border); border-radius: 6px; font-size: 10px; text-transform: uppercase; letter-spacing: .04em; }
+.agent-tab-body .reminder-state[data-state="completed"] { color: var(--success); }
+.agent-tab-body .reminder-state[data-state="expired"] { color: var(--danger); }
+.agent-tab-body .reminder-manage { padding-top: 16px; border-top: 1px solid var(--border); }
+.agent-tab-body .reminder-manage-picker { display: block; max-width: 420px; }
+.agent-tab-body .reminder-device-editor { margin-top: 18px; }
+@keyframes tab-intro-flow { to { stroke-dashoffset: -100; } }
+@keyframes tab-voice { 0%, 100% { transform: scaleY(.4); opacity: .25; } 50% { transform: scaleY(.9); opacity: .6; } }
+@media (max-width: 1050px) { .agent-tab-body .tools-layout { grid-template-columns: minmax(0, 1fr); } .agent-tab-body .reminder-filters { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 760px) { .agent-tab-body .speaker-layout { grid-template-columns: minmax(0, 1fr); } .agent-tab-body .reminder-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 560px) {
+  .agent-tab-body .body-card, .agent-tab-body .device-directory { padding: 16px; border-radius: 16px; }
+  .agent-tab-body .agent-tab-intro { flex-wrap: wrap; gap: 10px; }
+  .agent-tab-body .tab-intro-copy { flex: 1; min-width: 200px; }
+  .agent-tab-body .tab-intro-copy > h2 { font-size: 20px; }
+  .agent-tab-body .tab-intro-actions { width: 100%; margin-left: 0; }
+  .agent-tab-body .tab-intro-art { display: none; }
+  .agent-tab-body .reminder-filters { grid-template-columns: minmax(0, 1fr); }
+  .agent-tab-body .reminder-kpi { padding: 12px; }
+}
+@media (prefers-reduced-motion: reduce) { .agent-tab-body *, .agent-tab-body *::before, .agent-tab-body *::after { animation: none !important; transition: none !important; } }

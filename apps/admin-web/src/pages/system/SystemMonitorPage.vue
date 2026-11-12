@@ -167,7 +167,7 @@ onBeforeUnmount(() => {
 
 <template>
   <section class="space-y-4" data-testid="system-monitor-page">
-    <DetailHeader
+    <DetailHeader theme="system"
       :title="t('system.hub.monitorTitle')"
       :back-label="t('system.hub.backOverview')"
       @back="router.push({ name: 'system' })"

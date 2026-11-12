@@ -32,6 +32,22 @@ afterEach(() => {
 })
 
 describe('compact Studio Assistant', () => {
+  it('collapses from the launcher while preserving the conversation and its connection', async () => {
+    assistant.state = 'speaking'
+    assistant.messages.push({ id: 1, role: 'assistant', text: 'Keep this response', status: 'pending' })
+    const disconnect = vi.spyOn(assistant, 'disconnect')
+    await nextTick()
+    const launcher = widget.get('button[aria-controls="studio-assistant"]')
+    expect(launcher.attributes('aria-expanded')).toBe('true')
+    await launcher.trigger('click')
+    expect(assistant.visible).toBe(false)
+    await nextTick()
+    expect(widget.get('button[aria-controls="studio-assistant"]').attributes('aria-expanded')).toBe('false')
+    expect(assistant.messages[0]?.text).toBe('Keep this response')
+    expect(assistant.state).toBe('speaking')
+    expect(disconnect).not.toHaveBeenCalled()
+  })
+
   it.each(['listening', 'processing', 'speaking', 'aborting'] as const)('closes a %s session without confirmation', async state => {
     assistant.state = state
     assistant.messages.push({ id: 1, role: 'assistant', text: 'current response', status: 'pending' })

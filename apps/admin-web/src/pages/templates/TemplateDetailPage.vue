@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ArrowLeft, BookOpen, Globe2, Layers3, Link2, MonitorSmartphone, Pencil, TriangleAlert, Users, Workflow } from '@lucide/vue'
+import { ArrowLeft, Globe2, Layers3, Link2, MonitorSmartphone, Pencil, TriangleAlert, Users, Workflow } from '@lucide/vue'
 import { computed, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
@@ -7,12 +7,12 @@ import ConfirmDialog from '@/components/admin/ConfirmDialog.vue'
 import DetailHero from '@/components/admin/DetailHero.vue'
 import ProviderDetailModal from '@/components/admin/ProviderDetailModal.vue'
 import ProviderFormModal from '@/components/admin/ProviderFormModal.vue'
-import AiPipeline from '@/components/pipeline/AiPipeline.vue'
+import VoicePipelineStudio from '@/components/pipeline/VoicePipelineStudio.vue'
 import CopyTemplateDialog from '@/components/templates/CopyTemplateDialog.vue'
 import LinkTemplateAgentDialog from '@/components/templates/LinkTemplateAgentDialog.vue'
 import TemplateActionsMenu from '@/components/templates/TemplateActionsMenu.vue'
 import TemplateAgentUsageList from '@/components/templates/TemplateAgentUsageList.vue'
-import TemplatePromptCard from '@/components/templates/TemplatePromptCard.vue'
+import TemplateConfigurationPanel from '@/components/templates/TemplateConfigurationPanel.vue'
 import TemplateFormDialog from '@/components/templates/TemplateFormDialog.vue'
 import { Button } from '@/components/ui/button'
 import { useI18n } from '@/composables/useI18n'
@@ -22,7 +22,7 @@ import { useAdminStore, type TemplateSetupInput } from '@/stores/admin'
 const store = useAdminStore()
 const route = useRoute()
 const router = useRouter()
-const { t, formatRelative } = useI18n()
+const { t } = useI18n()
 
 const templateId = computed(() => String(route.params.templateId ?? ''))
 const template = computed(() => store.getTemplate(templateId.value))
@@ -183,19 +183,23 @@ function isDefaultForAgent(agentId: string) {
       </template>
     </DetailHero>
     <p v-if="agentCount > 1" class="workspace-shared"><TriangleAlert :size="15" aria-hidden="true" />{{ t('templates.sharedNotice', { name: template.name, count: agentCount }) }}</p>
-    <div class="template-workspace-layout">
-      <AiPipeline class="workspace-pipeline" :template="template" :providers="store.providers" :shared-templates="sharedTemplates" @open-provider="openProvider" @edit-provider="editProvider" @unlink="unlinkProvider" @select="linkProvider" />
-      <section class="workspace-prompt-panel">
-        <p class="paper-eyebrow"><BookOpen :size="13" aria-hidden="true" />{{ t('templatesBoard.instructions') }}</p>
-        <TemplatePromptCard :prompt="template.prompt" @save="savePrompt" />
-        <dl class="workspace-document-meta">
-          <div><dt>{{ t('templateConfig.updated') }}</dt><dd>{{ formatRelative(template.updatedAt) }}</dd></div>
-          <div><dt>{{ t('templateForm.reviewLanguage') }}</dt><dd>{{ template.language || '—' }}</dd></div>
-          <div><dt>{{ t('templateConfig.templateId') }}</dt><dd><code>{{ template.id }}</code></dd></div>
-        </dl>
-      </section>
-    </div>
-    <TemplateAgentUsageList class="workspace-agent-usage" :agents="agents" :device-count-by-agent="deviceCountByAgent" :is-default="isDefaultForAgent" @view-agent="viewAgent" @unlink="requestUnlinkTemplate" />
+    <VoicePipelineStudio
+      :template="template" :providers="store.providers" :shared-templates="sharedTemplates"
+      @open-provider="openProvider" @edit-provider="editProvider" @unlink="unlinkProvider" @select="linkProvider"
+    />
+    <TemplateConfigurationPanel
+      context="template"
+      :template="template"
+      :provider-count="store.templateProviderCount(template)"
+      :agent-count="agentCount"
+      :device-count="store.devicesUsingTemplate(template.id).length"
+      @edit-template="editOpen = true"
+      @link-to-agent="linkOpen = true"
+      @copy-template="copyOpen = true"
+      @delete-template="requestDeleteTemplate"
+      @save-prompt="savePrompt"
+    />
+    <TemplateAgentUsageList :agents="agents" :device-count-by-agent="deviceCountByAgent" :is-default="isDefaultForAgent" @view-agent="viewAgent" @unlink="requestUnlinkTemplate" @link-to-agent="linkOpen = true" />
 
     <TemplateFormDialog
       v-model="editOpen"

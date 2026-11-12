@@ -400,10 +400,10 @@ const quickActions: { to: string; label: MessageKey; hint: MessageKey; icon: Com
 <template>
   <section class="space-y-6">
     <!-- Hero -->
-    <header class="overview-hero relative overflow-hidden rounded-3xl p-6 pb-20 text-white shadow-lg sm:p-8 sm:pb-20" aria-labelledby="overview-title">
+    <header class="overview-hero" aria-labelledby="overview-title">
       <div class="overview-hero-grid pointer-events-none absolute inset-0" aria-hidden="true" />
       <div
-        class="pointer-events-none absolute inset-x-0 bottom-0 flex h-16 items-end gap-[3px] px-6 opacity-35 sm:px-8"
+        class="overview-wave-field"
         :class="activeSessions ? 'overview-wave-live' : ''"
         aria-hidden="true"
       >
@@ -415,52 +415,53 @@ const quickActions: { to: string; label: MessageKey; hint: MessageKey; icon: Com
         />
       </div>
 
-      <div class="relative flex flex-col gap-6 lg:flex-row lg:items-start lg:justify-between">
-        <div class="max-w-2xl">
-          <p class="text-xs font-semibold uppercase tracking-[0.2em] text-white/70">{{ t('overview.eyebrow') }}</p>
-          <h1 id="overview-title" class="mt-2 text-3xl font-semibold tracking-tight sm:text-4xl">
+      <div class="overview-hero-row">
+        <div class="overview-hero-copy">
+          <div class="overview-eyebrow-row">
+            <p class="text-xs font-semibold uppercase tracking-[0.2em] text-white/70">{{ t('overview.eyebrow') }}</p>
+            <div class="overview-health" role="status">
+              <span class="relative flex size-1.5">
+                <span v-if="systemState !== 'checking'" class="absolute inline-flex size-full animate-ping rounded-full opacity-75 motion-reduce:animate-none" :class="stateStyle.dot" />
+                <span class="relative inline-flex size-1.5 rounded-full" :class="stateStyle.dot" />
+              </span>
+              {{ t(stateStyle.key) }}
+            </div>
+          </div>
+          <h1 id="overview-title">
             {{ greeting }} <span aria-hidden="true">👋</span>
           </h1>
-          <p class="mt-2 text-sm text-white/80 sm:text-base">{{ t('overview.description') }}</p>
-
-          <div class="mt-5 inline-flex items-center gap-2.5 rounded-full bg-white/15 px-3.5 py-1.5 text-sm font-medium backdrop-blur" role="status">
-            <span class="relative flex size-2.5">
-              <span v-if="systemState !== 'checking'" class="absolute inline-flex size-full animate-ping rounded-full opacity-75" :class="stateStyle.dot" />
-              <span class="relative inline-flex size-2.5 rounded-full" :class="stateStyle.dot" />
-            </span>
-            {{ t(stateStyle.key) }}
-          </div>
+          <p class="overview-hero-intro">{{ t('overview.description') }}</p>
         </div>
 
-        <div class="flex flex-col items-start gap-4 lg:items-end">
+        <div class="overview-hero-actions">
           <button
             type="button"
-            class="inline-flex items-center gap-2 rounded-full border border-white/30 bg-white/10 px-4 py-2 text-sm font-medium backdrop-blur transition hover:bg-white/20 disabled:opacity-60"
+            class="inline-flex h-9 items-center gap-2 rounded-full border border-white/30 bg-white/10 px-3.5 text-sm font-medium backdrop-blur transition hover:bg-white/20 disabled:opacity-60"
             :disabled="refreshing || !auth.hasAdminAccess"
             @click="refresh()"
           >
             <RefreshCw class="size-4" :class="refreshing ? 'animate-spin' : ''" aria-hidden="true" />
             {{ t('common.refresh') }}
           </button>
-          <dl class="grid grid-cols-3 gap-2 text-left sm:gap-3">
-            <div class="rounded-2xl bg-white/12 px-4 py-3 backdrop-blur">
-              <dt class="text-[11px] uppercase tracking-wider text-white/70">{{ t('overview.liveSessions') }}</dt>
-              <dd class="mt-1 whitespace-nowrap text-lg font-semibold tabular-nums sm:text-2xl">{{ activeSessions ?? dash }}</dd>
-            </div>
-            <div class="rounded-2xl bg-white/12 px-4 py-3 backdrop-blur">
-              <dt class="text-[11px] uppercase tracking-wider text-white/70">{{ t('overview.uptime') }}</dt>
-              <dd class="mt-1 whitespace-nowrap text-lg font-semibold tabular-nums sm:text-2xl">{{ server.status ? formatUptime(server.status.uptime_seconds) : dash }}</dd>
-            </div>
-            <div class="rounded-2xl bg-white/12 px-4 py-3 backdrop-blur">
-              <dt class="text-[11px] uppercase tracking-wider text-white/70">{{ t('overview.version') }}</dt>
-              <dd class="mt-1 truncate text-lg font-semibold tabular-nums sm:text-2xl">{{ server.status?.version ?? dash }}</dd>
-            </div>
-          </dl>
-          <p class="text-xs text-white/70">
+          <p class="overview-last-checked">
             {{ t('overview.lastChecked', { time: lastChecked }) }} · {{ t('overview.autoRefresh', { seconds: STATUS_INTERVAL_MS / 1000 }) }}
           </p>
         </div>
       </div>
+      <dl class="overview-hero-stats">
+        <div>
+          <dt>{{ t('overview.liveSessions') }}</dt>
+          <dd>{{ activeSessions ?? dash }}</dd>
+        </div>
+        <div>
+          <dt>{{ t('overview.uptime') }}</dt>
+          <dd>{{ server.status ? formatUptime(server.status.uptime_seconds) : dash }}</dd>
+        </div>
+        <div>
+          <dt>{{ t('overview.version') }}</dt>
+          <dd>{{ server.status?.version ?? dash }}</dd>
+        </div>
+      </dl>
     </header>
 
     <!-- Stat cards -->
@@ -734,9 +735,38 @@ const quickActions: { to: string; label: MessageKey; hint: MessageKey; icon: Com
 @reference "../style.css";
 
 .overview-hero {
+  position: relative; isolation: isolate; overflow: hidden; padding: 18px 22px; border-radius: 22px; color: #fff;
+  box-shadow: 0 10px 30px -12px rgb(79 83 224 / 0.6);
   background:
     radial-gradient(120% 140% at 0% 0%, rgb(255 255 255 / 0.18), transparent 55%),
     linear-gradient(125deg, #6944e9 0%, #4f53e0 45%, #0798b9 100%);
+}
+
+.overview-hero-row { position: relative; z-index: 2; display: flex; align-items: flex-start; justify-content: space-between; gap: 24px; }
+.overview-hero-copy { min-width: 0; max-width: 640px; }
+.overview-eyebrow-row { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 12px; }
+.overview-health { display: inline-flex; align-items: center; gap: 6px; padding: 2px 8px; border: 1px solid rgb(255 255 255 / 0.1); border-radius: 99px; background: rgb(255 255 255 / 0.1); color: rgb(255 255 255 / 0.85); font-size: 10px; line-height: 1.5; }
+.overview-hero h1 { margin-top: 6px; font-size: clamp(26px, 2.4vw, 32px); line-height: 1.15; font-weight: 600; letter-spacing: -0.025em; }
+.overview-hero-intro { margin-top: 6px; font-size: 14px; line-height: 1.5; color: rgb(255 255 255 / 0.82); }
+.overview-hero-actions { display: flex; flex-direction: column; align-items: flex-end; gap: 8px; flex-shrink: 0; }
+.overview-last-checked { max-width: 320px; font-size: 10px; line-height: 1.6; color: rgb(255 255 255 / 0.65); text-align: right; }
+.overview-hero-stats { position: relative; z-index: 2; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin-top: 16px; }
+.overview-hero-stats > div { min-width: 0; padding: 10px 14px; border: 1px solid rgb(255 255 255 / 0.08); border-radius: 14px; background: rgb(255 255 255 / 0.1); backdrop-filter: blur(8px); }
+.overview-hero-stats dt { font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: rgb(255 255 255 / 0.72); }
+.overview-hero-stats dd { margin-top: 3px; font-size: 24px; line-height: 1.2; font-weight: 600; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.overview-wave-field { position: absolute; z-index: 1; inset: 0 0 0 auto; display: flex; align-items: center; gap: 4px; width: min(70%, 820px); opacity: .2; pointer-events: none; mask-image: linear-gradient(90deg, transparent, #000 70%); }
+@media (max-width: 900px) {
+  .overview-hero-row { flex-direction: column; gap: 16px; }
+  .overview-hero-actions { flex-direction: row; align-items: center; flex-wrap: wrap; gap: 8px 14px; }
+  .overview-last-checked { text-align: left; }
+}
+@media (max-width: 560px) {
+  .overview-hero { padding: 16px; border-radius: 18px; }
+  .overview-hero-stats { grid-template-columns: minmax(0, 1fr); gap: 8px; }
+  .overview-hero-stats > div { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 12px; }
+  .overview-hero-stats dt { font-size: 10px; letter-spacing: .04em; }
+  .overview-hero-stats dd { margin-top: 0; font-size: 22px; }
+  .overview-wave-field { width: 100%; opacity: .12; }
 }
 
 .overview-hero-grid {
@@ -748,7 +778,7 @@ const quickActions: { to: string; label: MessageKey; hint: MessageKey; icon: Com
 }
 
 .overview-wave-bar {
-  transform-origin: bottom;
+  transform-origin: center;
   transform: scaleY(0.25);
   animation: overview-wave 2.8s ease-in-out infinite;
 }

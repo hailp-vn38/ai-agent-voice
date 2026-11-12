@@ -1,10 +1,13 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { ArrowRight, CircleAlert, LoaderCircle } from '@lucide/vue'
+import { computed, ref, useId } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
 import { authApi } from '@/api/auth'
 import { formatApiError, isApiError } from '@/api/errors'
 import { signOut } from '@/api/session'
+import AuthPageShell from '@/components/auth/AuthPageShell.vue'
+import PasswordField from '@/components/auth/PasswordField.vue'
 import { Button } from '@/components/ui/button'
 import { useI18n } from '@/composables/useI18n'
 import type { MessageKey } from '@/i18n/messages'
@@ -20,6 +23,8 @@ const currentPassword = ref('')
 const newPassword = ref('')
 const pending = ref(false)
 const error = ref<string | null>(null)
+const errorCode = ref<string | null>(null)
+const errorId = useId()
 
 const redirect = computed(() => safeTarget(route.query.redirect))
 
@@ -40,6 +45,7 @@ async function submit() {
   if (!currentPassword.value || !newPassword.value || pending.value) return
   pending.value = true
   error.value = null
+  errorCode.value = null
   try {
     const response = await authApi.changePassword(currentPassword.value, newPassword.value)
     currentPassword.value = ''
@@ -49,6 +55,7 @@ async function submit() {
     await router.replace({ path: redirect.value })
   } catch (cause) {
     error.value = messageFor(cause)
+    errorCode.value = isApiError(cause) ? cause.code : null
   } finally {
     pending.value = false
   }
@@ -56,37 +63,30 @@ async function submit() {
 </script>
 
 <template>
-  <main class="grid min-h-screen place-items-center bg-background px-4 text-foreground">
-    <section class="w-full max-w-sm space-y-6 rounded-lg border bg-card p-6 shadow-sm">
-      <header class="space-y-1">
-        <h1 class="text-lg font-semibold">{{ t('auth.changePasswordTitle') }}</h1>
-        <p class="text-sm text-muted-foreground">{{ t('auth.changePasswordDescription') }}</p>
-      </header>
-
-      <div
-        v-if="error"
-        role="alert"
-        class="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700"
-      >
-        {{ error }}
-      </div>
-
-      <form class="space-y-4" @submit.prevent="submit">
-        <label class="block space-y-1">
-          <span class="text-sm font-medium">{{ t('auth.currentPasswordLabel') }}</span>
-          <input v-model="currentPassword" type="password" autocomplete="current-password" class="admin-input w-full" />
-        </label>
-        <label class="block space-y-1">
-          <span class="text-sm font-medium">{{ t('auth.newPasswordLabel') }}</span>
-          <input v-model="newPassword" type="password" autocomplete="new-password" class="admin-input w-full" />
-          <span class="block text-xs text-muted-foreground">{{ t('auth.newPasswordHint') }}</span>
-        </label>
-        <Button type="submit" class="w-full" :disabled="!currentPassword || !newPassword || pending">
-          {{ pending ? t('auth.savingPassword') : t('auth.savePassword') }}
-        </Button>
-      </form>
-
-      <Button variant="ghost" size="sm" class="w-full" @click="signOut()">{{ t('auth.logout') }}</Button>
-    </section>
-  </main>
+  <AuthPageShell :title="t('auth.changePasswordTitle')" :description="t('auth.changePasswordDescription')">
+    <div v-if="error" :id="errorId" role="alert" class="auth-error">
+      <CircleAlert :size="16" aria-hidden="true" /><span>{{ error }}</span>
+    </div>
+    <form class="space-y-5" :aria-busy="pending" @submit.prevent="submit">
+      <PasswordField
+        @submit="submit"
+        v-model="currentPassword" name="current-password" :label="t('auth.currentPasswordLabel')"
+        :disabled="pending" :invalid="errorCode === 'invalid_current_password'"
+        :described-by="error ? errorId : undefined"
+      />
+      <PasswordField
+        @submit="submit"
+        v-model="newPassword" name="new-password" autocomplete="new-password" :label="t('auth.newPasswordLabel')"
+        :hint="t('auth.newPasswordHint')" :disabled="pending"
+        :invalid="!!errorCode && errorCode.startsWith('password_')"
+        :described-by="error ? errorId : undefined"
+      />
+      <Button type="submit" class="auth-submit" :disabled="!currentPassword || !newPassword || pending">
+        <LoaderCircle v-if="pending" :size="16" class="animate-spin motion-reduce:animate-none" aria-hidden="true" />
+        {{ pending ? t('auth.savingPassword') : t('auth.savePassword') }}
+        <ArrowRight v-if="!pending" :size="16" aria-hidden="true" />
+      </Button>
+    </form>
+    <Button variant="ghost" size="sm" class="mt-3 w-full text-xs text-muted-foreground" :disabled="pending" @click="signOut()">{{ t('auth.logout') }}</Button>
+  </AuthPageShell>
 </template>

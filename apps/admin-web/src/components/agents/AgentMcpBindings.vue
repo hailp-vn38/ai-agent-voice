@@ -80,11 +80,13 @@ watch(() => props.agentId, () => { void load() }, { immediate: true })
 </script>
 
 <template>
-  <section class="space-y-4" aria-labelledby="agent-mcp-heading">
-    <div class="flex flex-wrap items-start justify-between gap-3">
-      <div>
+  <section class="body-card body-stack" aria-labelledby="agent-mcp-heading">
+    <div class="body-section-head">
+      <div class="body-heading-copy">
+        <span class="body-section-icon" aria-hidden="true"><Link2 :size="17" /></span><div>
         <h2 id="agent-mcp-heading" class="text-lg font-semibold">{{ t('mcp.bindingsTitle') }}</h2>
         <p class="mt-1 text-sm text-muted-foreground">{{ t('mcp.bindingsHint') }}</p>
+        </div>
       </div>
       <Button size="sm" variant="outline" :disabled="loading || busy" @click="load">
         <RefreshCw class="size-4" aria-hidden="true" />{{ t('common.refresh') }}
@@ -94,7 +96,7 @@ watch(() => props.agentId, () => { void load() }, { immediate: true })
     <p v-if="error" role="alert" class="rounded-lg border border-danger/40 p-3 text-sm text-danger">{{ error }}</p>
     <p v-if="message" role="status" class="text-sm text-muted-foreground">{{ message }}</p>
 
-    <div class="flex flex-wrap gap-2 rounded-xl border border-border/70 bg-surface p-3">
+    <div class="binding-composer">
       <label class="min-w-48 flex-1 space-y-1">
         <span class="sr-only">{{ t('mcp.selectServer') }}</span>
         <select v-model="selectedKey" class="admin-input" :disabled="busy || loading || !unlinked.length">
@@ -120,9 +122,9 @@ watch(() => props.agentId, () => { void load() }, { immediate: true })
       </div>
     </div>
 
-    <div v-else-if="bindings.length" class="divide-y divide-border/70 overflow-hidden rounded-xl border border-border/70">
-      <div v-for="binding in bindings" :key="binding.server_key" class="flex flex-wrap items-center gap-3 p-4">
-        <span class="flex size-10 shrink-0 items-center justify-center rounded-xl bg-studio-violet/10 text-studio-violet">
+    <div v-else-if="bindings.length" class="binding-list">
+      <div v-for="binding in bindings" :key="binding.server_key" class="binding-item">
+        <span class="binding-icon">
           <Link2 class="size-5" aria-hidden="true" />
         </span>
         <div class="min-w-40 flex-1">
@@ -132,7 +134,7 @@ watch(() => props.agentId, () => { void load() }, { immediate: true })
             {{ serverByKey.get(binding.server_key)?.enabled === false ? t('mcp.serverDisabled') : t('mcp.bindingPolicy') }}
           </p>
         </div>
-        <span class="text-xs" :class="binding.enabled ? 'text-success' : 'text-muted-foreground'">
+        <span class="binding-status" :class="binding.enabled ? 'text-success' : 'text-muted-foreground'">
           {{ binding.enabled ? t('mcp.enabled') : t('mcp.disabled') }}
         </span>
         <Button size="sm" variant="outline" :disabled="busy || loading" @click="changeBinding(binding.server_key, !binding.enabled)">
@@ -143,7 +145,7 @@ watch(() => props.agentId, () => { void load() }, { immediate: true })
         </Button>
       </div>
     </div>
-    <p v-else-if="!loading" class="rounded-lg border border-dashed border-border/70 p-5 text-sm text-muted-foreground">
+    <p v-else-if="!loading" class="body-empty">
       {{ t('mcp.noBindings') }}
     </p>
 

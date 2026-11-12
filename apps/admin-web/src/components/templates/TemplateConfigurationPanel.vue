@@ -8,12 +8,13 @@ import { Badge } from '@/components/ui/badge'
 import { useI18n } from '@/composables/useI18n'
 import type { AgentTemplate } from '@/domain/admin'
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   template: AgentTemplate
   providerCount: number
   agentCount: number
   deviceCount: number
-}>()
+  context?: 'agent' | 'template'
+}>(), { context: 'agent' })
 
 const emit = defineEmits<{
   viewTemplate: []
@@ -34,10 +35,10 @@ const relativeUpdatedAt = computed(() => formatRelative(props.template.updatedAt
 
 <template>
   <section
-    class="rounded-xl border border-border/70 bg-card p-4 sm:p-5"
+    class="template-config-panel"
     aria-labelledby="template-config-heading"
   >
-    <header class="flex items-start justify-between gap-3">
+    <header class="config-heading flex items-start justify-between gap-3">
       <div class="min-w-0">
         <h2 id="template-config-heading" class="text-base font-semibold tracking-tight">
           {{ t('templateConfig.heading') }}
@@ -46,7 +47,7 @@ const relativeUpdatedAt = computed(() => formatRelative(props.template.updatedAt
       </div>
 
       <ActionMenu :label="t('templatesActions.label', { name: template.name })" panel-width="15rem">
-        <MenuItem @select="emit('viewTemplate')">
+        <MenuItem v-if="context === 'agent'" @select="emit('viewTemplate')">
           <Eye class="size-4 shrink-0" aria-hidden="true" />
           {{ t('templateConfig.viewTemplate') }}
         </MenuItem>
@@ -62,7 +63,7 @@ const relativeUpdatedAt = computed(() => formatRelative(props.template.updatedAt
           <Copy class="size-4 shrink-0" aria-hidden="true" />
           {{ t('templateConfig.copyTemplate') }}
         </MenuItem>
-        <MenuItem variant="danger" @select="emit('unlinkFromAgent')">
+        <MenuItem v-if="context === 'agent'" variant="danger" @select="emit('unlinkFromAgent')">
           <Link2Off class="size-4 shrink-0" aria-hidden="true" />
           {{ t('templateConfig.unlinkFromAgent') }}
         </MenuItem>
@@ -74,7 +75,7 @@ const relativeUpdatedAt = computed(() => formatRelative(props.template.updatedAt
       </ActionMenu>
     </header>
 
-    <div class="mt-5 rounded-lg border border-border/70 bg-surface px-3.5 py-3">
+    <div class="config-identity rounded-xl border border-border/70 bg-surface px-4 py-3">
       <div class="flex flex-wrap items-center gap-2">
         <p class="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
           {{ t('templateConfig.template') }}
@@ -87,18 +88,18 @@ const relativeUpdatedAt = computed(() => formatRelative(props.template.updatedAt
       </p>
     </div>
 
-    <div class="mt-4 rounded-lg border border-border/70 bg-surface px-3.5 py-3">
+    <div class="config-language rounded-xl border border-border/70 bg-surface px-4 py-3">
       <p class="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
         {{ t('templateConfig.language') }}
       </p>
       <p class="mt-1.5 break-words text-sm font-semibold">{{ template.language || '—' }}</p>
     </div>
 
-    <div class="mt-6">
+    <div class="config-prompt">
       <TemplatePromptCard :prompt="template.prompt" @save="emit('savePrompt', $event)" />
     </div>
 
-    <div class="mt-6">
+    <div class="config-usage">
       <h3 class="text-sm font-semibold">{{ t('templateConfig.usage') }}</h3>
       <dl class="mt-3 divide-y divide-border/60 rounded-lg border border-border/70 bg-surface px-3.5">
         <div class="flex items-center justify-between gap-3 py-2.5">
@@ -127,3 +128,24 @@ const relativeUpdatedAt = computed(() => formatRelative(props.template.updatedAt
     </div>
   </section>
 </template>
+
+<style scoped>
+.template-config-panel { display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(260px, 1fr); grid-template-areas: 'heading heading' 'prompt identity' 'prompt language' 'usage usage'; gap: 14px 22px; padding: 24px; border: 1px solid var(--border); border-radius: 22px; background: var(--card); }
+.config-heading { grid-area: heading; padding-bottom: 6px; }
+.config-identity { grid-area: identity; background: color-mix(in oklab, var(--studio-violet) 4%, var(--background)); }
+.config-language { grid-area: language; }
+.config-prompt { grid-area: prompt; min-width: 0; padding: 20px; border: 1px solid var(--border); border-radius: 16px; background: radial-gradient(ellipse at 0 0, color-mix(in oklab, var(--studio-violet) 4%, transparent), transparent 70%), var(--background); }
+.config-prompt :deep(.max-h-60) { max-height: 340px; border-color: transparent; background: transparent; padding: 12px 0; font-size: 14px; line-height: 1.9; }
+.config-usage { grid-area: usage; min-width: 0; }
+.config-usage dl { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); margin-top: 10px; padding: 0; border-radius: 12px; }
+.config-usage dl > div { display: block; min-width: 0; padding: 12px 16px; border-top: 0; }
+.config-usage dl > div + div { border-left: 1px solid var(--border); }
+.config-usage dd { margin-top: 6px; }
+@media (max-width: 760px) {
+  .template-config-panel { grid-template-columns: minmax(0, 1fr); grid-template-areas: 'heading' 'identity' 'language' 'prompt' 'usage'; padding: 16px; gap: 14px; border-radius: 18px; }
+  .config-prompt { padding: 16px; }
+  .config-usage dl { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .config-usage dl > div { padding: 10px; }
+  .config-usage dl > div + div { border-left: 0; }
+}
+</style>

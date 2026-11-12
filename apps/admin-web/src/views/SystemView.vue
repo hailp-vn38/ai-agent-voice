@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import HeroScene from '@/components/admin/HeroScene.vue'
 import {
   Activity,
   ArrowRight,
@@ -248,7 +249,7 @@ onBeforeUnmount(() => {
 
 <template>
   <section class="system-deck" data-testid="system-hub">
-    <header class="deck-header">
+    <header class="deck-header hero-surface">
       <div>
         <p class="deck-eyebrow">{{ t('system.deck.eyebrow') }}</p>
         <h1>{{ t('system.deck.title') }}</h1>
@@ -264,6 +265,7 @@ onBeforeUnmount(() => {
         <RefreshCcw :class="['size-3.5', loading && 'animate-spin motion-reduce:animate-none']" aria-hidden="true" />
         {{ t('system.refresh') }}
       </button>
+      <HeroScene theme="system" surface />
     </header>
 
     <section class="control-room" :data-state="systemState" data-testid="system-status-strip" :aria-label="t('system.deck.status')">

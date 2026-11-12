@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { AudioWaveform, LogOut, PanelLeftClose, PanelLeftOpen } from '@lucide/vue'
+import { useRoute } from 'vue-router'
 
 import { signOut } from '@/api/session'
 import LanguageSwitcher from '@/components/LanguageSwitcher.vue'
@@ -16,6 +17,13 @@ withDefaults(defineProps<{ collapsible?: boolean; collapsed?: boolean }>(), {
 })
 defineEmits<{ navigate: []; toggle: [] }>()
 const { t } = useI18n()
+const route = useRoute()
+
+/** Detail pages are flat route records; keep their navigation section selected. */
+function isSectionActive(to: string) {
+  const canonicalPath = route.matched.at(-1)?.aliasOf?.path ?? route.path
+  return canonicalPath === to || canonicalPath.startsWith(`${to}/`)
+}
 </script>
 
 <template>
@@ -51,10 +59,15 @@ const { t } = useI18n()
         </h2>
         <RouterLink v-for="item in group.items" :key="item.to" :to="item.to"
           class="flex h-10 items-center rounded-lg border border-transparent text-sm text-sidebar-foreground/75 transition-[background-color,color,padding] duration-200 hover:bg-sidebar-accent/65 hover:text-sidebar-accent-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
-          :class="collapsed ? 'justify-center px-0' : 'gap-3 px-3'"
+          :class="[
+            collapsed ? 'justify-center px-0' : 'gap-3 px-3',
+            isSectionActive(item.to) ? '!border-studio-violet/35 !bg-studio-violet/15 !font-semibold !text-studio-violet' : '',
+          ]"
           :aria-label="t(item.label)"
+          :aria-current="isSectionActive(item.to) ? 'page' : undefined"
           :title="collapsed ? t(item.label) : undefined"
-          active-class="!border-studio-violet/35 !bg-studio-violet/15 !font-semibold !text-studio-violet"
+          active-class=""
+          exact-active-class=""
           @click="$emit('navigate')">
           <component :is="item.icon" class="size-[18px] shrink-0" aria-hidden="true" />
           <span v-if="!collapsed" class="min-w-0 truncate">{{ t(item.label) }}</span>

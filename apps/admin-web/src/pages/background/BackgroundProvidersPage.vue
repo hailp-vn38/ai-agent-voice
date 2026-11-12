@@ -138,7 +138,7 @@ onBeforeUnmount(() => controller?.abort())
 
 <template>
   <section class="space-y-4">
-    <DetailHeader
+    <DetailHeader theme="providers"
       :title="t('jobUi.providersPageTitle')"
       :back-label="t('jobUi.allSettingsBack')"
       @back="router.push({ name: 'jobs-settings' })"

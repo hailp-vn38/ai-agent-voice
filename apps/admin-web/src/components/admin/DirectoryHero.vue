@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import type { Component } from 'vue'
+import HeroScene from './HeroScene.vue'
 
 defineProps<{
   tone: 'agents' | 'devices' | 'speakers' | 'templates' | 'providers' | 'mcp' | 'artifacts' | 'gateway'
@@ -13,6 +14,7 @@ const emit = defineEmits<{ select: [key: string] }>()
 
 /** Decorative waveform for the speakers hero. */
 const waveform = [22, 38, 60, 44, 78, 96, 64, 40, 70, 88, 52, 30, 58, 82, 100, 72, 46, 34, 62, 90, 68, 42, 26, 50, 76, 56, 36, 24]
+
 </script>
 
 <template>
@@ -30,6 +32,7 @@ const waveform = [22, 38, 60, 44, 78, 96, 64, 40, 70, 88, 52, 30, 58, 82, 100, 7
       </div>
       <div class="hero-actions"><slot name="actions" /></div>
     </div>
+    <HeroScene :theme="tone" />
     <dl class="hero-stats" :data-count="stats.length">
       <div
         v-for="stat in stats"
@@ -52,7 +55,7 @@ const waveform = [22, 38, 60, 44, 78, 96, 64, 40, 70, 88, 52, 30, 58, 82, 100, 7
 <style scoped>
 .directory-hero {
   --hero-a: #4a2fc4; --hero-b: #6944e9; --hero-c: #0798b9;
-  position: relative; overflow: hidden; padding: 28px; border-radius: 24px; color: #fff;
+  position: relative; isolation: isolate; overflow: hidden; padding: 18px 22px; border-radius: 22px; color: #fff;
   background:
     radial-gradient(90% 120% at 100% 0%, rgb(255 255 255 / 0.2), transparent 55%),
     linear-gradient(120deg, var(--hero-a) 0%, var(--hero-b) 42%, var(--hero-c) 100%);
@@ -66,11 +69,12 @@ const waveform = [22, 38, 60, 44, 78, 96, 64, 40, 70, 88, 52, 30, 58, 82, 100, 7
 .directory-hero[data-tone="artifacts"] { --hero-a: #33309f; --hero-b: #5a5fe6; --hero-c: #9a5fe0; }
 .directory-hero[data-tone="gateway"] { --hero-a: #1f2a8f; --hero-b: #3d52e0; --hero-c: #0aa2c0; }
 
-.hero-motif { position: absolute; inset: 0; pointer-events: none; }
+.hero-motif { position: absolute; inset: 0; opacity: 0.4; pointer-events: none; }
 /* Agents: orbits around an orchestrator. */
 [data-tone="agents"] .hero-motif {
-  background-image: repeating-radial-gradient(circle at 88% 10%, transparent 0 46px, rgb(255 255 255 / 0.1) 46px 47px);
-  mask-image: radial-gradient(circle at 88% 10%, black 0%, transparent 62%);
+  background-image: radial-gradient(rgb(230 250 255 / 0.3) 0.8px, transparent 1px);
+  background-size: 28px 28px;
+  mask-image: linear-gradient(90deg, transparent 25%, black);
 }
 /* Devices: a field of connection points. */
 [data-tone="devices"] .hero-motif {
@@ -123,18 +127,18 @@ const waveform = [22, 38, 60, 44, 78, 96, 64, 40, 70, 88, 52, 30, 58, 82, 100, 7
 }
 @keyframes hero-wave { 0%, 100% { transform: scaleY(0.55); } 50% { transform: scaleY(1); } }
 
-.hero-row { position: relative; display: flex; align-items: flex-start; justify-content: space-between; gap: 24px; }
+.hero-row { position: relative; z-index: 2; display: flex; align-items: flex-start; justify-content: space-between; gap: 24px; }
 .hero-copy { min-width: 0; max-width: 640px; }
 .hero-eyebrow { font-size: 12px; font-weight: 600; letter-spacing: 0.2em; text-transform: uppercase; color: rgb(255 255 255 / 0.72); }
-.directory-hero h1 { margin-top: 8px; font-size: clamp(28px, 3vw, 36px); line-height: 1.15; font-weight: 600; letter-spacing: -0.02em; }
-.hero-intro { margin-top: 8px; font-size: 15px; line-height: 1.6; color: rgb(255 255 255 / 0.82); }
+.directory-hero h1 { margin-top: 6px; font-size: clamp(26px, 2.4vw, 32px); line-height: 1.15; font-weight: 600; letter-spacing: -0.025em; }
+.hero-intro { margin-top: 6px; font-size: 14px; line-height: 1.5; color: rgb(255 255 255 / 0.82); }
 .hero-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; flex-shrink: 0; }
 
-.hero-stats { position: relative; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin-top: 24px; }
+.hero-stats { position: relative; z-index: 2; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin-top: 16px; }
 .hero-stats[data-count="4"] { grid-template-columns: repeat(4, minmax(0, 1fr)); }
-.hero-stats > div { padding: 12px 16px; border-radius: 16px; background: rgb(255 255 255 / 0.12); backdrop-filter: blur(8px); }
+.hero-stats > div { padding: 10px 14px; border: 1px solid rgb(255 255 255 / 0.08); border-radius: 14px; background: rgb(255 255 255 / 0.1); backdrop-filter: blur(8px); }
 .hero-stats dt { display: flex; align-items: center; gap: 6px; font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; color: rgb(255 255 255 / 0.72); }
-.hero-stats dd { margin-top: 4px; font-size: 26px; line-height: 1.2; font-weight: 600; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.hero-stats dd { margin-top: 3px; font-size: 24px; line-height: 1.2; font-weight: 600; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
 .hero-stats small { display: block; margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; color: rgb(255 255 255 / 0.7); }
 .hero-stats > [role="button"] { cursor: pointer; transition: background-color 160ms, transform 160ms; }
 .hero-stats > [role="button"]:hover { background: rgb(255 255 255 / 0.2); transform: translateY(-2px); }
@@ -146,7 +150,7 @@ const waveform = [22, 38, 60, 44, 78, 96, 64, 40, 70, 88, 52, 30, 58, 82, 100, 7
   .hero-stats[data-count="4"] { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 @media (max-width: 560px) {
-  .directory-hero { padding: 20px; border-radius: 20px; }
+  .directory-hero { padding: 16px; border-radius: 18px; }
   .hero-stats { gap: 8px; }
   .hero-stats > div { padding: 10px 12px; }
   .hero-stats:not([data-count="4"]) { grid-template-columns: minmax(0, 1fr); }
@@ -157,4 +161,6 @@ const waveform = [22, 38, 60, 44, 78, 96, 64, 40, 70, 88, 52, 30, 58, 82, 100, 7
   [data-tone="speakers"] .hero-motif { opacity: 0.5; }
 }
 @media (prefers-reduced-motion: reduce) { [data-tone="speakers"] .hero-motif i { animation: none; } }
+
+[data-tone="speakers"] .hero-motif { display: none; }
 </style>

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
+import { AudioLines, UserRound } from '@lucide/vue'
 import { agentsApi } from '@/api/agents'
 import { formatApiError, isApiError } from '@/api/errors'
 import { speakersApi } from '@/api/speakers'
@@ -24,6 +25,7 @@ const error = ref('')
 const dialogOpen = ref(false)
 const draftSpeakerKey = ref('')
 const modes: AgentSpeakerPolicyMode[] = ['off', 'observe']
+const voiceBars = Array.from({ length: 32 }, (_, i) => 10 + (Math.sin(i * 0.65) * 0.5 + 0.5) * 45)
 const selectedSpeaker = computed(() => speakers.value.find((item) => item.key === draftSpeakerKey.value))
 const availableSpeakers = computed(() =>
   speakers.value.filter((item) => !bindings.value.some((binding) => binding.speaker_key === item.key)),
@@ -83,13 +85,14 @@ watch(() => props.agentId, load, { immediate: true })
 </script>
 
 <template>
-  <section class="space-y-4" aria-labelledby="agent-speaker-policy-title">
-    <header class="flex items-start justify-between gap-4">
-      <div>
+  <section class="body-card body-stack" aria-labelledby="agent-speaker-policy-title">
+    <header class="body-section-head">
+      <div class="body-heading-copy"><span class="body-section-icon" aria-hidden="true"><AudioLines :size="17" /></span><div>
         <h2 id="agent-speaker-policy-title" class="text-lg font-semibold">
           {{ t('agentSpeakerPolicy.title') }}
         </h2>
         <p class="text-sm text-muted-foreground">Nhận dạng người nói để cá nhân hóa hội thoại; không dùng để xác thực.</p>
+        </div>
       </div>
       <Button size="sm" variant="outline" :disabled="loading || busy"
         data-testid="add-grant" @click="dialogOpen = true">
@@ -113,12 +116,14 @@ watch(() => props.agentId, load, { immediate: true })
         <div class="h-6 w-20 rounded-full bg-muted/40" />
       </div>
     </div>
-    <div v-if="policy" class="space-y-2 rounded-md border border-border p-3">
+    <div class="speaker-layout">
+    <div v-if="policy" class="speaker-controls space-y-3" :data-mode="policy.mode">
       <p class="text-sm font-medium">Speaker Recognition</p>
+      <div class="voice-signature" aria-hidden="true"><i v-for="(height, i) in voiceBars" :key="i" :style="{ height: `${height}px`, '--delay': `${i * -0.1}s` }" /></div>
       <div class="flex flex-wrap items-center gap-2">
         <Button v-for="mode in modes" :key="mode" size="sm"
           :variant="policy.mode === mode ? 'default' : 'outline'"
-          :disabled="busy" :data-testid="`speaker-policy-mode-${mode}`"
+          :disabled="busy" :aria-pressed="policy.mode === mode" :data-testid="`speaker-policy-mode-${mode}`"
           @click="setMode(mode)">
           {{ mode === 'observe' ? 'Bật nhận dạng' : 'Tắt' }}
         </Button>
@@ -129,15 +134,16 @@ watch(() => props.agentId, load, { immediate: true })
       <p class="text-xs text-muted-foreground">Các thay đổi áp dụng khi thiết bị kết nối lại.</p>
     </div>
     <div class="space-y-2">
-      <h3 class="text-sm font-medium">Người nói thuộc Agent</h3>
-      <p v-if="!bindings.length && !loading" class="text-sm text-muted-foreground" data-testid="speaker-grants-empty">
-        Chưa liên kết người nói.
-      </p>
-      <ul class="space-y-2">
+      <h3 class="speaker-roster-heading">Người nói thuộc Agent<span v-if="!loading">{{ bindings.length }}</span></h3>
+      <div v-if="!bindings.length && !loading" class="body-empty" data-testid="speaker-grants-empty">
+        <UserRound :size="30" aria-hidden="true" /><p>Chưa liên kết người nói.</p>
+      </div>
+      <ul class="speaker-roster">
         <li v-for="binding in bindings" :key="binding.speaker_key"
-          class="flex items-center justify-between gap-2 rounded-md border border-border p-3"
+          class="speaker-item"
           :data-testid="`speaker-binding-${binding.speaker_key}`">
-          <div>
+          <span class="speaker-avatar" aria-hidden="true">{{ displayName(binding.speaker_key).slice(0, 1).toUpperCase() }}</span>
+          <div class="speaker-identity">
             <p class="text-sm font-medium">{{ displayName(binding.speaker_key) }}</p>
             <p class="font-mono text-xs text-muted-foreground">{{ binding.speaker_key }}</p>
           </div>
@@ -150,6 +156,7 @@ watch(() => props.agentId, load, { immediate: true })
           </div>
         </li>
       </ul>
+    </div>
     </div>
     <BaseModal v-model="dialogOpen" title="Thêm người nói vào Agent">
       <div class="space-y-4">

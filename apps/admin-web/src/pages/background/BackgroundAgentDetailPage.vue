@@ -458,7 +458,7 @@ onBeforeUnmount(() => controller?.abort())
 
 <template>
   <section class="space-y-4">
-    <DetailHeader
+    <DetailHeader theme="jobs"
       :title="agentSpec ? agentSpec.id : agentId || t('jobUi.agentModalTitle')"
       :back-label="t('jobUi.agentsPageTitle')"
       @back="router.push({ name: 'jobs-settings-agents' })"

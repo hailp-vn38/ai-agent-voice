@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import HeroScene from '@/components/admin/HeroScene.vue'
 import { ArrowLeft, ChevronRight } from '@lucide/vue'
 import { useRouter } from 'vue-router'
 
@@ -10,7 +11,7 @@ const { t } = useI18n()
 </script>
 
 <template>
-  <header class="sys-page-header" data-detail-header>
+  <header class="sys-page-header hero-surface" data-detail-header>
     <nav class="sys-breadcrumb" :aria-label="t('system.detail.back')">
       <button type="button" data-detail-back @click="router.push({ name: 'system' })">
         <ArrowLeft class="size-3.5" aria-hidden="true" />{{ t('system.detail.back') }}
@@ -26,6 +27,7 @@ const { t } = useI18n()
       </div>
       <div v-if="$slots.actions" class="sys-header-actions"><slot name="actions" /></div>
     </div>
+    <HeroScene theme="system" surface />
   </header>
 </template>
 

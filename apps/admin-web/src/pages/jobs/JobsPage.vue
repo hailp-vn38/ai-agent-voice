@@ -12,6 +12,7 @@ import { formatApiError, isApiError } from '@/api/errors'
 import type { AdminJob, JobAttachmentUpload, JobStatus, RecipeOption, TaskRecipeSummary } from '@/api/types/agent-jobs'
 import BaseModal from '@/components/admin/BaseModal.vue'
 import ConfirmDialog from '@/components/admin/ConfirmDialog.vue'
+import HeroScene from '@/components/admin/HeroScene.vue'
 import RecipeParamsForm from '@/components/jobs/RecipeParamsForm.vue'
 import { recipeFieldForValidationPath, recipeParamDefaults, validateRecipeParams } from '@/domain/jobs/recipe-form'
 import { Button } from '@/components/ui/button'
@@ -427,14 +428,13 @@ onBeforeUnmount(() => {
 <template>
   <section class="space-y-5">
     <!-- Hero: title, actions and the live pulse of this page -->
-    <header class="jobs-hero relative overflow-hidden rounded-3xl p-6 text-white shadow-lg sm:p-8" aria-labelledby="jobs-title">
-      <div class="jobs-hero-orbits pointer-events-none absolute inset-0" aria-hidden="true" />
-      <div class="relative flex flex-col gap-6 lg:flex-row lg:items-start lg:justify-between">
+    <header class="jobs-hero relative isolate overflow-hidden rounded-3xl p-4 text-white shadow-lg sm:p-5" aria-labelledby="jobs-title">
+      <div class="relative z-10 flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
         <div class="min-w-0 max-w-2xl">
           <p class="text-xs font-semibold uppercase tracking-[0.2em] text-white/70">{{ t('jobUi.heroEyebrow') }}</p>
-          <h1 id="jobs-title" class="mt-2 text-3xl font-semibold tracking-tight sm:text-4xl">{{ t('jobUi.jobs') }}</h1>
-          <p class="mt-2 text-sm text-white/80 sm:text-base">{{ t('jobUi.jobsDescription') }}</p>
-          <div class="mt-5 inline-flex items-center gap-2.5 rounded-full bg-white/15 px-3.5 py-1.5 text-sm font-medium backdrop-blur" role="status">
+          <h1 id="jobs-title" class="mt-1.5 text-3xl font-semibold tracking-tight">{{ t('jobUi.jobs') }}</h1>
+          <p class="mt-1.5 text-sm text-white/80">{{ t('jobUi.jobsDescription') }}</p>
+          <div class="mt-2.5 inline-flex items-center gap-2 rounded-full bg-white/12 px-3 py-1 text-xs font-medium backdrop-blur" role="status">
             <span class="relative flex size-2.5">
               <span v-if="activeCount" class="absolute inline-flex size-full animate-ping rounded-full bg-emerald-300 opacity-75" />
               <span class="relative inline-flex size-2.5 rounded-full" :class="activeCount ? 'bg-emerald-300' : 'bg-white/50'" />
@@ -454,7 +454,8 @@ onBeforeUnmount(() => {
         </div>
       </div>
 
-      <dl class="relative mt-6 grid grid-cols-2 gap-2 sm:gap-3 xl:grid-cols-4">
+      <HeroScene theme="jobs" />
+      <dl class="relative z-10 mt-4 grid grid-cols-2 gap-2 sm:gap-3 xl:grid-cols-4">
         <div class="jobs-hero-stat">
           <dt><ClipboardList class="size-3.5" aria-hidden="true" />{{ t('jobUi.totalFiltered') }}</dt>
           <dd>{{ total }}</dd>
@@ -876,12 +877,6 @@ onBeforeUnmount(() => {
     linear-gradient(120deg, #4a2fc4 0%, #6944e9 40%, #0798b9 100%);
 }
 
-/* Concentric "orbits" — the orchestrator and its sub-agents. */
-.jobs-hero-orbits {
-  background-image: repeating-radial-gradient(circle at 88% 10%, transparent 0 46px, rgb(255 255 255 / 0.09) 46px 47px);
-  mask-image: radial-gradient(circle at 88% 10%, black 0%, transparent 62%);
-}
-
 .jobs-hero-primary {
   @apply inline-flex h-9 items-center gap-2 rounded-full bg-white px-4 text-sm font-semibold text-[#4a2fc4] shadow-sm transition hover:-translate-y-0.5 hover:shadow-md;
 }
@@ -891,7 +886,7 @@ onBeforeUnmount(() => {
 }
 
 .jobs-hero-stat {
-  @apply rounded-2xl bg-white/12 px-4 py-3 backdrop-blur;
+  @apply rounded-xl border border-white/8 bg-white/10 px-3 py-2.5 backdrop-blur;
 }
 
 .jobs-hero-stat dt {

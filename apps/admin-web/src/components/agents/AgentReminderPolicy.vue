@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, watch } from 'vue'
+import { BellRing } from '@lucide/vue'
 import { remindersApi, type ReminderPolicy } from '@/api/reminders'
 import { formatApiError } from '@/api/errors'
 import { useI18n } from '@/composables/useI18n'
@@ -43,15 +44,15 @@ async function change(event: Event) {
 </script>
 
 <template>
-  <section class="space-y-3 rounded-xl border p-5">
-    <h2 class="text-lg font-semibold">{{ t('reminders.permission') }}</h2>
+  <section class="body-card body-stack reminder-policy">
+    <div class="body-section-head"><div class="body-heading-copy"><span class="body-section-icon" aria-hidden="true"><BellRing :size="17" /></span><h2>{{ t('reminders.permission') }}</h2></div></div>
     <p>{{ t('reminders.permissionHelp') }}</p>
     <p v-if="error" role="alert">{{ error }}</p>
     <div v-if="!policy && !error" role="status" aria-busy="true" class="card-shimmer rounded-lg border border-border/60 p-3">
       <span class="sr-only">{{ t('common.loading') }}</span>
       <div class="h-4 w-48 rounded bg-muted/50" aria-hidden="true" />
     </div>
-    <label>
+    <label class="policy-toggle">
       <input type="checkbox" :checked="policy?.reminders_enabled ?? false" :disabled="!policy || busy" @change="change" />
       {{ t('reminders.allow') }}
     </label>

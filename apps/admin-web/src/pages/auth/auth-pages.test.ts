@@ -14,6 +14,7 @@ import ChangePasswordPage from './ChangePasswordPage.vue'
 import LoginPage from './LoginPage.vue'
 
 const stub = { template: '<div />' }
+const mountedPages: ReturnType<typeof mount>[] = []
 
 async function mountAt(page: 'login' | 'change', path: string) {
   const pinia = createPinia()
@@ -29,6 +30,7 @@ async function mountAt(page: 'login' | 'change', path: string) {
   })
   await router.push(path)
   const wrapper = mount(page === 'login' ? LoginPage : ChangePasswordPage, { global: { plugins: [pinia, router] }, attachTo: document.body })
+  mountedPages.push(wrapper)
   await flushPromises()
   return { wrapper, router }
 }
@@ -44,10 +46,74 @@ describe('admin sign-in pages', () => {
   })
 
   afterEach(() => {
+    mountedPages.splice(0).forEach(wrapper => wrapper.unmount())
     document.body.innerHTML = ''
   })
 
   describe('LoginPage', () => {
+    it.each([false, true])('signs in with Enter when password visibility is %s', async visible => {
+      authApi.login.mockResolvedValue({ token: 'enter-token', token_type: 'Bearer', expires_at: 1, must_change_password: false })
+      const { wrapper, router } = await mountAt('login', '/login?redirect=%2Fjobs')
+      await wrapper.get('input').setValue('real-password')
+      if (visible) await wrapper.get('button[aria-label="Show password"]').trigger('click')
+      await wrapper.get('input').trigger('keydown', { key: 'Enter' })
+      await flushPromises()
+      expect(authApi.login).toHaveBeenCalledExactlyOnceWith('real-password')
+      expect(router.currentRoute.value.path).toBe('/jobs')
+    })
+
+    it('does not submit on Enter while the input method is composing text', async () => {
+      const { wrapper } = await mountAt('login', '/login')
+      await wrapper.get('input').setValue('password')
+      await wrapper.get('input').trigger('keydown', { key: 'Enter', isComposing: true })
+      expect(authApi.login).not.toHaveBeenCalled()
+    })
+
+    it('reveals and hides the entered password without submitting it', async () => {
+      const { wrapper } = await mountAt('login', '/login')
+      const input = wrapper.get('input[autocomplete="current-password"]')
+      await input.setValue('private-password')
+      await wrapper.get('button[aria-label="Show password"]').trigger('click')
+      expect(input.attributes('type')).toBe('text')
+      expect((input.element as HTMLInputElement).value).toBe('private-password')
+      await wrapper.get('button[aria-label="Hide password"]').trigger('click')
+      expect(input.attributes('type')).toBe('password')
+      expect(authApi.login).not.toHaveBeenCalled()
+    })
+
+    it('announces Caps Lock while typing and clears it on blur', async () => {
+      const { wrapper } = await mountAt('login', '/login')
+      const input = wrapper.get('input')
+      const event = new KeyboardEvent('keydown', { key: 'A', bubbles: true })
+      Object.defineProperty(event, 'getModifierState', { value: (key: string) => key === 'CapsLock' })
+      input.element.dispatchEvent(event)
+      await flushPromises()
+      const status = wrapper.get('[role="status"]')
+      expect(status.text()).toBe('Caps Lock is on.')
+      expect(input.attributes('aria-describedby')).toContain(status.attributes('id'))
+      await input.trigger('blur')
+      expect(wrapper.find('[role="status"]').exists()).toBe(false)
+    })
+
+    it('locks inputs during sign-in, prevents duplicate requests and recovers after failure', async () => {
+      let rejectLogin!: (reason: unknown) => void
+      authApi.login.mockImplementation(() => new Promise((_resolve, reject) => { rejectLogin = reject }))
+      const { wrapper } = await mountAt('login', '/login')
+      await wrapper.get('input').setValue('wrong-password')
+      await wrapper.get('form').trigger('submit')
+      expect(wrapper.get('form').attributes('aria-busy')).toBe('true')
+      expect(wrapper.get('input').attributes('disabled')).toBeDefined()
+      expect(wrapper.get('button[aria-label="Show password"]').attributes('disabled')).toBeDefined()
+      await wrapper.get('form').trigger('submit')
+      expect(authApi.login).toHaveBeenCalledOnce()
+      rejectLogin(apiError('invalid_password', 401))
+      await flushPromises()
+      expect(wrapper.get('form').attributes('aria-busy')).toBe('false')
+      expect(wrapper.get('input').attributes('disabled')).toBeUndefined()
+      expect(wrapper.get('input').attributes('aria-invalid')).toBe('true')
+      expect(wrapper.get('input').attributes('aria-describedby')).toBe(wrapper.get('[role="alert"]').attributes('id'))
+    })
+
     it('shows a dedicated message for a wrong password and keeps the Admin on the page', async () => {
       authApi.login.mockRejectedValue(apiError('invalid_password', 401))
       const { wrapper, router } = await mountAt('login', '/login')
@@ -99,6 +165,24 @@ describe('admin sign-in pages', () => {
   })
 
   describe('ChangePasswordPage', () => {
+    it('reveals each password independently and associates validation with the affected field', async () => {
+      authApi.changePassword.mockRejectedValue(apiError('invalid_current_password', 422))
+      const { wrapper } = await mountAt('change', '/change-password')
+      const current = wrapper.get('input[autocomplete="current-password"]')
+      const next = wrapper.get('input[autocomplete="new-password"]')
+      await current.setValue('old-password')
+      await next.setValue('new-password-1')
+      await wrapper.findAll('button[aria-label="Show password"]')[1].trigger('click')
+      expect(next.attributes('type')).toBe('text')
+      expect(current.attributes('type')).toBe('password')
+      await wrapper.get('form').trigger('submit')
+      await flushPromises()
+      expect(authApi.changePassword).toHaveBeenCalledWith('old-password', 'new-password-1')
+      expect(current.attributes('aria-invalid')).toBe('true')
+      expect(next.attributes('aria-invalid')).toBeUndefined()
+      expect(next.attributes('aria-describedby')?.split(' ')).toHaveLength(2)
+    })
+
     it.each([
       ['password_too_short', 'at least 8 characters'],
       ['password_is_default', 'cannot be the default password'],

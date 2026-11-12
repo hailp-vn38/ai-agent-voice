@@ -18,4 +18,6 @@ app
   .provide(KNOWLEDGE_CHART_FETCHER_KEY, fileName => knowledgeBackend.admin.chart(fileName))
   .use(createPinia())
   .use(router)
-  .mount('#app')
+
+// Resolve the initial auth redirect before mounting the shell and its API consumers.
+void router.isReady().then(() => app.mount('#app'))
