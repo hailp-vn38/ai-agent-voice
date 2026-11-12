@@ -351,6 +351,9 @@ pub async fn startup_with_lifecycle_and_secret_resolver(
     prepare_memory(&mut state);
     prepare_background(&mut state).await?;
     prepare_enrollment(&mut state).await?;
+    admin::auth::prepare(&state)
+        .await
+        .map_err(|_| DatabaseError::Unavailable)?;
     state
         .system_metrics
         .clone()
@@ -528,6 +531,9 @@ async fn managed_startup(
     prepare_memory(&mut state);
     prepare_background(&mut state).await?;
     prepare_enrollment(&mut state).await?;
+    admin::auth::prepare(&state)
+        .await
+        .map_err(|_| DatabaseError::Unavailable)?;
     state
         .system_metrics
         .clone()

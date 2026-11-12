@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { setLocale } from '@/composables/useI18n'
 import { ApiError } from '@/api/errors'
+import { setSessionHandler, type SessionEvent } from '@/api/session'
 import { useAuthStore } from '@/stores/auth'
 
 const authApi = vi.hoisted(() => ({
@@ -121,6 +122,39 @@ describe('SystemSecurityPage', () => {
 
     expect(authApi.setPasswordLogin).toHaveBeenCalledWith(true, 'current-password')
     expect(auth.loginStatus?.passwordLoginEnabled).toBe(true)
+  })
+
+  it('asks a browser without a token to sign in once Password Login is back on', async () => {
+    const events: SessionEvent[] = []
+    setSessionHandler(event => events.push(event))
+    authApi.setPasswordLogin.mockResolvedValue({ password_login_enabled: true, must_change_password: false })
+    const { wrapper } = await mountPage(false)
+
+    await wrapper.get('[data-testid="password-login-switch"]').trigger('click')
+    await flushPromises()
+    dialogPasswordInput().value = 'current-password'
+    dialogPasswordInput().dispatchEvent(new Event('input'))
+    await flushPromises()
+    document.body.querySelector<HTMLButtonElement>('[data-testid="password-login-confirm"]')?.click()
+    await flushPromises()
+    setSessionHandler(() => {})
+
+    expect(events).toEqual([{ kind: 'signed_out_by_user' }])
+  })
+
+  it('shows the too-many-attempts message when the toggle is throttled', async () => {
+    authApi.setPasswordLogin.mockRejectedValue(apiError('too_many_attempts', 429))
+    await mountPage()
+
+    await document.body.querySelector<HTMLButtonElement>('[data-testid="password-login-switch"]')?.click()
+    await flushPromises()
+    dialogPasswordInput().value = 'current-password'
+    dialogPasswordInput().dispatchEvent(new Event('input'))
+    await flushPromises()
+    document.body.querySelector<HTMLButtonElement>('[data-testid="password-login-confirm"]')?.click()
+    await flushPromises()
+
+    expect(dialog()?.textContent).toContain('Too many failed attempts')
   })
 
   it('keeps this browser signed in with the new token after changing the password', async () => {

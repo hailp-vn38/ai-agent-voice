@@ -23,6 +23,7 @@ const KNOWN_ERRORS: Record<string, MessageKey> = {
   password_too_long: 'auth.errorPasswordTooLong',
   password_unchanged: 'auth.errorPasswordUnchanged',
   invalid_current_password: 'auth.errorInvalidCurrentPassword',
+  too_many_attempts: 'auth.errorTooManyAttempts',
 }
 
 function messageFor(cause: unknown): string {
@@ -58,6 +59,8 @@ async function confirmToggle() {
     })
     togglePassword.value = ''
     toggleOpen.value = false
+    // Password Login is back on: a browser that holds no token has to sign in from here on.
+    if (response.password_login_enabled && !auth.adminWebToken) signOut()
   } catch (cause) {
     toggleError.value = messageFor(cause)
   } finally {

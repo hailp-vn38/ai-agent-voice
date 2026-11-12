@@ -21,7 +21,7 @@ const isPublicRoute = computed(() => route.meta.public === true)
 // Data loads only once the router has decided where the Admin goes, and never while a password change is pending.
 function canLoadData(): boolean {
   if (auth.mustChangePassword) return false
-  return Boolean(auth.adminWebToken) || auth.loginStatus?.passwordLoginEnabled === false
+  return auth.hasAdminAccess
 }
 
 onMounted(async () => {
@@ -45,7 +45,7 @@ watch(isPublicRoute, (isPublic, wasPublic) => {
     >
       <span>{{ error }}</span>
       <span class="flex gap-2">
-        <Button v-if="auth.adminWebToken" size="sm" variant="outline" :disabled="loading" @click="admin.refreshAll()">
+        <Button v-if="auth.hasAdminAccess" size="sm" variant="outline" :disabled="loading" @click="admin.refreshAll()">
           {{ t('common.retry') }}
         </Button>
         <Button size="sm" variant="ghost" @click="admin.clearError()">

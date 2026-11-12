@@ -19,6 +19,8 @@ Quyết định: bỏ `admin_token`. Admin đăng nhập bằng **Admin Password
 - **`admin_token` bị bỏ, không có đường chuyển tiếp lúc chạy.** Config còn khoá `admin_token` làm khởi động thất bại với thông báo chỉ sang `jwt_secret`. Bearer tĩnh không còn được chấp nhận.
 - **Password Login tắt được.** Khi tắt, Admin API cho qua mọi request không cần credential, ở mọi kiểu bind. Tắt và bật đều đòi Admin Password hiện tại; không tắt được khi còn phải đổi mật khẩu.
 - **Limiter chống dò trong tiến trình cho riêng route đăng nhập**: 5 lần sai trong 60 giây, tính chung toàn server, giữ trong bộ nhớ.
+- **Ngân sách thứ hai cho việc kiểm mật khẩu hiện tại** ở route đổi mật khẩu và route đặt Password Login, cùng giới hạn 5 lần sai trong 60 giây nhưng tách khỏi ngân sách đăng nhập. Khi Password Login tắt, hai route này không đòi token nên nếu không giới hạn sẽ thành chỗ dò mật khẩu; tách riêng để dò ở đây không khoá được route đăng nhập.
+- **Mỗi lần thử giữ trước một chỗ trong ngân sách** trước khi kiểm mật khẩu và chỉ trả lại khi mật khẩu đúng, nên các request gửi song song không vượt được giới hạn.
 - **Audit theo ADR 0058.** Đổi mật khẩu, đăng xuất mọi nơi, đặt Password Login và reset ghi Admin Audit Event trong cùng transaction. Đăng nhập sai chỉ ra telemetry.
 - **Backup không mang trạng thái đăng nhập.** Database Backup Bundle không chứa nó; import từ bundle hay snapshot đều không áp nó vào server đích. Database Snapshot có chứa hash vì là bản sao nguyên file.
 - **Khôi phục bằng lệnh con của binary server** đưa Admin Password về mặc định, bật Password Login, bật cờ phải đổi mật khẩu và tăng revision.

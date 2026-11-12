@@ -117,7 +117,7 @@ onBeforeUnmount(() => {
 
 <template>
   <Teleport to="body">
-    <div v-if="auth.adminWebToken" class="text-foreground">
+    <div v-if="auth.hasAdminAccess" class="text-foreground">
       <button
         ref="launcher" type="button"
         class="assistant-launcher fixed z-30 grid size-14 place-items-center rounded-full bg-primary text-primary-foreground shadow-lg focus-visible:outline-2 focus-visible:outline-offset-4"

@@ -17,6 +17,9 @@ export function setSessionHandler(next: SessionHandler) {
 export function applySessionFailure(error: ApiError): boolean {
   if (error.status === 401 || error.code === 'unauthorized') {
     writeAdminWebToken(null)
+    // A 401 proves the cached status is stale when it said Password Login was off; drop it so the
+    // router reads it again before deciding where the Admin goes.
+    loginStatusState.value = null
     handler({ kind: 'signed_out' })
     return true
   }

@@ -992,3 +992,80 @@ async fn backup_import_keeps_target_password_login_and_token() {
         );
     }
 }
+
+#[tokio::test]
+async fn concurrent_wrong_logins_cannot_exceed_the_failure_budget() {
+    let base = serve(&database_url(), JWT_SECRET, 3600).await;
+    let client = Client::new();
+
+    let attempts: Vec<_> = (0..12)
+        .map(|_| {
+            let client = client.clone();
+            let base = base.clone();
+            tokio::spawn(async move { login(&client, &base, "not-the-password").await.status() })
+        })
+        .collect();
+    let mut evaluated = 0;
+    for attempt in attempts {
+        match attempt.await.unwrap() {
+            StatusCode::UNAUTHORIZED => evaluated += 1,
+            StatusCode::TOO_MANY_REQUESTS => {}
+            other => panic!("unexpected status {other}"),
+        }
+    }
+    assert_eq!(evaluated, 5, "only the budget of five guesses is ever checked");
+}
+
+#[tokio::test]
+async fn reset_without_restart_still_forces_the_password_change() {
+    let uri = database_url();
+    let base = serve(&uri, JWT_SECRET, 3600).await;
+    let client = Client::new();
+    let _ = rotated_token(&client, &base).await;
+
+    vela_server::app::reset_admin_password(&database_config(&uri))
+        .await
+        .unwrap();
+
+    let response = login(&client, &base, "admin").await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let body: Value = response.json().await.unwrap();
+    assert_eq!(body["must_change_password"], json!(true));
+    let token = body["token"].as_str().unwrap();
+    assert_eq!(
+        system_status(&client, &base, token).await,
+        StatusCode::FORBIDDEN,
+        "the default password never yields an unrestricted token"
+    );
+}
+
+#[tokio::test]
+async fn failed_logins_write_no_audit_event() {
+    let base = serve(&database_url(), JWT_SECRET, 3600).await;
+    let client = Client::new();
+    let token = rotated_token(&client, &base).await;
+    for _ in 0..2 {
+        assert_eq!(
+            login(&client, &base, "not-the-password").await.status(),
+            StatusCode::UNAUTHORIZED
+        );
+    }
+
+    let page: Value = client
+        .get(format!("{base}/system/audit-logs"))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let rows: Vec<&Value> = page["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|row| row["resource_type"] == json!("admin_auth"))
+        .collect();
+    assert_eq!(rows.len(), 1, "only the password change is audited");
+    assert_eq!(rows[0]["action"], json!("password_change"));
+}

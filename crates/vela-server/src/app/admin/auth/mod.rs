@@ -52,8 +52,9 @@ impl FailureLimiter {
         Self(Mutex::new(VecDeque::new()))
     }
 
-    /// The remaining lockout when the budget is spent, otherwise `None`.
-    fn lockout_remaining(&self) -> Option<Duration> {
+    /// Reserves one slot of the budget before the password is checked, so attempts that run
+    /// concurrently cannot exceed it. A spent budget returns the remaining lockout instead.
+    fn reserve(&self) -> Result<Instant, Duration> {
         let mut failures = self.0.lock().unwrap_or_else(PoisonError::into_inner);
         let now = Instant::now();
         while failures
@@ -62,19 +63,20 @@ impl FailureLimiter {
         {
             failures.pop_front();
         }
-        if failures.len() < FAILURE_LIMIT {
-            return None;
+        if failures.len() >= FAILURE_LIMIT {
+            let oldest = failures.front().copied().unwrap_or(now);
+            return Err(FAILURE_WINDOW.saturating_sub(now.duration_since(oldest)));
         }
-        failures
-            .front()
-            .map(|at| FAILURE_WINDOW.saturating_sub(now.duration_since(*at)))
+        failures.push_back(now);
+        Ok(now)
     }
 
-    fn record_failure(&self) {
-        self.0
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .push_back(Instant::now());
+    /// Returns the slot of an attempt whose password was right. Earlier failures stay counted.
+    fn release(&self, reserved: Instant) {
+        let mut failures = self.0.lock().unwrap_or_else(PoisonError::into_inner);
+        if let Some(index) = failures.iter().position(|at| *at == reserved) {
+            failures.remove(index);
+        }
     }
 }
 
@@ -243,9 +245,6 @@ async fn change_password(State(state): State<AppState>, request: Request) -> Res
         current_password,
         new_password,
     } = body;
-    if let Some(response) = locked_out(&state.admin_auth.credential_failures, &request) {
-        return response;
-    }
     if new_password == DEFAULT_PASSWORD {
         return error(
             &request,
@@ -279,19 +278,23 @@ async fn change_password(State(state): State<AppState>, request: Request) -> Res
         Ok(row) => row,
         Err(cause) => return sql_error(&request, &cause),
     };
+    let attempt = match begin_attempt(&state.admin_auth.credential_failures, &request) {
+        Ok(attempt) => attempt,
+        Err(response) => return response,
+    };
     let stored = row.password_hash.clone();
     let candidate = current_password.clone();
     let verified = tokio::task::spawn_blocking(move || password::verify(&stored, &candidate))
         .await
         .unwrap_or(false);
     if !verified {
-        state.admin_auth.credential_failures.record_failure();
         return error(
             &request,
             StatusCode::UNPROCESSABLE_ENTITY,
             "invalid_current_password",
         );
     }
+    state.admin_auth.credential_failures.release(attempt);
     if new_password == current_password {
         return error(
             &request,
@@ -387,17 +390,27 @@ async fn change_password(State(state): State<AppState>, request: Request) -> Res
     response
 }
 
-/// Answers 429 with `Retry-After` while the given failure budget is spent.
-fn locked_out(limiter: &FailureLimiter, request: &Request) -> Option<Response> {
-    let remaining = limiter.lockout_remaining()?;
-    let seconds = remaining.as_secs() + u64::from(remaining.subsec_nanos() > 0);
+/// Reserves a password attempt, or answers 429 with `Retry-After` while the budget is spent. The
+/// caller releases the reservation only when the password turns out to be right.
+fn begin_attempt(limiter: &FailureLimiter, request: &Request) -> Result<Instant, Response> {
+    let remaining = match limiter.reserve() {
+        Ok(reserved) => return Ok(reserved),
+        Err(remaining) => remaining,
+    };
+    let seconds = (remaining.as_secs() + u64::from(remaining.subsec_nanos() > 0)).max(1);
+    tracing::warn!(
+        event = "admin_password_attempts_limited",
+        request_id = id(request),
+        retry_after_secs = seconds,
+        "admin password attempt refused by the failure limiter"
+    );
     let mut response = error(request, StatusCode::TOO_MANY_REQUESTS, "too_many_attempts");
-    if let Ok(value) = axum::http::HeaderValue::from_str(&seconds.max(1).to_string()) {
+    if let Ok(value) = axum::http::HeaderValue::from_str(&seconds.to_string()) {
         response
             .headers_mut()
             .insert(axum::http::header::RETRY_AFTER, value);
     }
-    Some(response)
+    Err(response)
 }
 
 fn no_store(mut response: Response) -> Response {
@@ -509,9 +522,6 @@ async fn set_password_login(State(state): State<AppState>, request: Request) -> 
         Ok(parsed) => parsed,
         Err(response) => return response,
     };
-    if let Some(response) = locked_out(&state.admin_auth.credential_failures, &request) {
-        return response;
-    }
     if !body.enabled && state.admin_auth.status().must_change_password {
         return error(&request, StatusCode::FORBIDDEN, "password_change_required");
     }
@@ -527,19 +537,23 @@ async fn set_password_login(State(state): State<AppState>, request: Request) -> 
         Ok(row) => row,
         Err(cause) => return sql_error(&request, &cause),
     };
+    let attempt = match begin_attempt(&state.admin_auth.credential_failures, &request) {
+        Ok(attempt) => attempt,
+        Err(response) => return response,
+    };
     let stored = row.password_hash.clone();
     let candidate = body.current_password;
     let verified = tokio::task::spawn_blocking(move || password::verify(&stored, &candidate))
         .await
         .unwrap_or(false);
     if !verified {
-        state.admin_auth.credential_failures.record_failure();
         return error(
             &request,
             StatusCode::UNPROCESSABLE_ENTITY,
             "invalid_current_password",
         );
     }
+    state.admin_auth.credential_failures.release(attempt);
     let mut tx = match pool.begin().await {
         Ok(tx) => tx,
         Err(cause) => return sql_error(&request, &cause),
@@ -615,9 +629,6 @@ async fn login(State(state): State<AppState>, request: Request) -> Response {
         Ok(parsed) => parsed,
         Err(response) => return response,
     };
-    if let Some(response) = locked_out(&state.admin_auth.login_failures, &request) {
-        return response;
-    }
     let Some(database) = state.database.as_ref() else {
         return error(
             &request,
@@ -632,13 +643,23 @@ async fn login(State(state): State<AppState>, request: Request) -> Response {
     if row.password_login_enabled == 0 {
         return error(&request, StatusCode::CONFLICT, "password_login_disabled");
     }
+    let attempt = match begin_attempt(&state.admin_auth.login_failures, &request) {
+        Ok(attempt) => attempt,
+        Err(response) => return response,
+    };
+    // The token is minted from the row that held the verified hash, never from the in-memory
+    // mirror: a reset written by the recovery command must force the change it asked for.
+    let status = PasswordLoginStatus {
+        password_login_enabled: true,
+        must_change_password: row.must_change_password != 0,
+        revision: row.revision,
+    };
     let stored = row.password_hash;
     let candidate = body.password;
     let verified = tokio::task::spawn_blocking(move || password::verify(&stored, &candidate))
         .await
         .unwrap_or(false);
     if !verified {
-        state.admin_auth.login_failures.record_failure();
         tracing::warn!(
             event = "admin_password_login_failed",
             request_id = id(&request),
@@ -653,7 +674,11 @@ async fn login(State(state): State<AppState>, request: Request) -> Response {
             "admin_signing_unavailable",
         );
     };
-    let status = state.admin_auth.status();
+    state.admin_auth.login_failures.release(attempt);
+    // SQLite moved ahead of this process (recovery command): adopt it so the token is accepted.
+    if status.revision > state.admin_auth.status().revision {
+        state.admin_auth.publish(status);
+    }
     let issued_at = unix_now();
     let expires_at = issued_at.saturating_add(state.admin_auth.token_ttl_secs);
     let token = token::sign(

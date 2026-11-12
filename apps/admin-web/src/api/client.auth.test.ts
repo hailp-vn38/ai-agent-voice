@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { request } from './client'
 import { setSessionHandler, type SessionEvent } from './session'
 import { ApiError } from './errors'
+import { loginStatusState } from '@/stores/admin-session'
 
 const STORAGE_KEY = 'voice-agent-admin-token'
 
@@ -40,6 +41,17 @@ describe('HTTP client admin session handling', () => {
 
     expect(localStorage.getItem(STORAGE_KEY)).toBeNull()
     expect(events).toEqual([{ kind: 'signed_out' }])
+  })
+
+  it('drops the cached login status on 401 so the router reads it again', async () => {
+    loginStatusState.value = { passwordLoginEnabled: false, mustChangePassword: false }
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ error: { code: 'unauthorized', request_id: 'req-4' } }), { status: 401 }),
+    ))
+
+    await expect(request('/api/admin/devices')).rejects.toBeInstanceOf(ApiError)
+
+    expect(loginStatusState.value).toBeNull()
   })
 
   it('signals password change on 403 password_change_required and keeps the token', async () => {

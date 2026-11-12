@@ -9,6 +9,8 @@ export const useAuthStore = defineStore('auth', () => {
   const adminWebToken = adminWebTokenState
   const loginStatus = loginStatusState
   const mustChangePassword = computed(() => loginStatus.value?.mustChangePassword === true)
+  /** The Admin API answers this browser: it holds a token, or Password Login is off. */
+  const hasAdminAccess = computed(() => Boolean(adminWebToken.value) || loginStatus.value?.passwordLoginEnabled === false)
 
   function setAdminWebToken(token: string | null) {
     writeAdminWebToken(token)
@@ -18,5 +20,5 @@ export const useAuthStore = defineStore('auth', () => {
     loginStatus.value = status
   }
 
-  return { adminWebToken, loginStatus, mustChangePassword, setAdminWebToken, setLoginStatus }
+  return { adminWebToken, loginStatus, mustChangePassword, hasAdminAccess, setAdminWebToken, setLoginStatus }
 })

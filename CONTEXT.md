@@ -36,6 +36,10 @@ _Avoid_: admin_token, session token
 Chuỗi khoá bí mật trong config dùng để ký và kiểm Admin Web Token; không lưu trong SQLite và không phải credential gửi lên API.
 _Avoid_: admin password, JWT key
 
+**Password Login**:
+Công tắc cấp deployment quyết định Admin API có đòi Admin Web Token hay không; khi tắt, mọi request tới được server đều được chấp nhận.
+_Avoid_: auth mode, anonymous mode
+
 ## Source code structure conventions
 
 - When a source file becomes long or takes on multiple responsibilities, split it into modules with clear responsibilities; keep public paths stable through the parent module and re-exports where needed.
