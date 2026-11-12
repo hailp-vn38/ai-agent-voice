@@ -899,10 +899,8 @@ impl AppState {
             llm_gateway_hub,
             llm_gateway_refresh_started: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             notification_hub,
-            device_push: crate::services::device_push::DevicePush::from_config(
-                &config.device_push,
-            )
-            .map(Arc::new),
+            device_push: crate::services::device_push::DevicePush::from_config(&config.device_push)
+                .map(Arc::new),
             system_mcp: None,
             knowledge_mcp: Arc::new(std::sync::OnceLock::new()),
             system_metrics: Arc::new(crate::services::system_metrics::SystemMetrics::new()),
