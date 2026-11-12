@@ -17,6 +17,7 @@ describe('NotificationSettingsCard.vue', () => {
 
   afterEach(() => {
     vi.unstubAllGlobals()
+    vi.restoreAllMocks()
   })
 
   it('loads demo channel settings and preserves saved Telegram token when input is left blank', async () => {
@@ -93,4 +94,28 @@ describe('NotificationSettingsCard.vue', () => {
     )
     wrapper.unmount()
   })
+
+  it('shows delivery errors instead of leaving a rejected test request unhandled', async () => {
+    vi.spyOn(notificationsApi, 'testChannel').mockRejectedValueOnce(new Error('Delivery unavailable'))
+    const wrapper = mount(NotificationSettingsCard)
+    await flushPromises()
+    await wrapper.get('[data-testid="telegram-test-btn"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.get('[data-testid="telegram-test-result"]').text()).toContain('Delivery unavailable')
+    expect(wrapper.get('[data-testid="telegram-test-btn"]').attributes('disabled')).toBeUndefined()
+    wrapper.unmount()
+  })
+
+  it('does not allow defaults to overwrite settings after a failed initial load', async () => {
+    vi.spyOn(notificationsApi, 'settings').mockRejectedValueOnce(new Error('Settings unavailable'))
+    const updateSpy = vi.spyOn(notificationsApi, 'updateSettings')
+    const wrapper = mount(NotificationSettingsCard)
+    await flushPromises()
+    expect(wrapper.get('[role="alert"]').text()).toContain('Settings unavailable')
+    expect(wrapper.get('[data-testid="notification-settings-save"]').attributes('disabled')).toBeDefined()
+    await wrapper.get('[data-testid="notification-settings-save"]').trigger('click')
+    expect(updateSpy).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
+
 })

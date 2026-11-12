@@ -1,35 +1,38 @@
 <script setup lang="ts">
 import {
+  Activity,
   ArrowRight,
+  ArrowUpRight,
   Bell,
   Bot,
   ChevronRight,
+  CircleDot,
   Cpu,
   Database,
   KeyRound,
+  Radio,
+  Server,
   RefreshCcw,
   ShieldCheck,
   Terminal,
   Workflow,
 } from '@lucide/vue'
 import { storeToRefs } from 'pinia'
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
-import { RouterLink, useRouter } from 'vue-router'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
+import { RouterLink } from 'vue-router'
 
 import { assistantApi, type AssistantSettings } from '@/api/assistant'
 import { isApiError } from '@/api/errors'
 import { systemApi } from '@/api/system'
 import type { SystemResources } from '@/api/types/system'
-import PageHeader from '@/components/admin/PageHeader.vue'
 import ResourceStatCard from '@/components/system/ResourceStatCard.vue'
-import { Badge } from '@/components/ui/badge'
-import { Button } from '@/components/ui/button'
 import { useI18n } from '@/composables/useI18n'
+import type { MessageKey } from '@/i18n/messages'
 import { useServerStore } from '@/stores/server'
+import { beginSystemLayout } from '@/router/system-scroll'
 
-const router = useRouter()
 const server = useServerStore()
-const { health, status, lastError } = storeToRefs(server)
+const { health, readiness, status, lastError } = storeToRefs(server)
 const { t, formatDateTime } = useI18n()
 
 const resources = ref<SystemResources | null>(null)
@@ -38,6 +41,7 @@ const loading = ref(true)
 const error = ref('')
 const now = ref(Date.now())
 const controller = new AbortController()
+const finishInitialLayout = beginSystemLayout()
 let inFlight = false
 let resourcesTimer: number | undefined
 let statusTimer: number | undefined
@@ -57,26 +61,91 @@ const resourceState = computed(
         ? t('common.loading')
         : ''),
 )
-const healthLabel = computed(() =>
-  health.value === 'online'
-    ? t('status.device.online')
-    : health.value === 'offline'
-      ? t('status.device.offline')
-      : health.value === 'checking'
-        ? t('system.checking')
-        : t('common.unknown'),
-)
 const sampledAtLabel = computed(() => {
   const sampled = resources.value && Date.parse(resources.value.sampled_at)
   return sampled && Number.isFinite(sampled) ? formatDateTime(new Date(sampled)) : '—'
 })
 
-const assistantStatLabel = computed(() => {
-  if (!assistantSummary.value) return 'Studio Assistant'
-  const stateLabel = assistantSummary.value.enabled ? 'Enabled' : 'Disabled'
-  const agentKey = assistantSummary.value.agent_key || '—'
-  return `${stateLabel} · ${agentKey}`
+type SystemState = 'ready' | 'attention' | 'offline' | 'checking'
+const systemState = computed<SystemState>(() => {
+  if (health.value === 'offline') return 'offline'
+  if (health.value !== 'online' || readiness.value === 'checking') return 'checking'
+  const snapshot = status.value
+  if (readiness.value !== 'online' || !snapshot || lastError.value) return 'attention'
+  const { providers, database } = snapshot
+  if (snapshot.status !== 'ready' || (providers.failed ?? 0) > 0 || (providers.stale ?? 0) > 0)
+    return 'attention'
+  if (providers.configured == null || providers.loaded == null || providers.failed == null || providers.stale == null)
+    return 'attention'
+  if (providers.loaded < providers.configured) return 'attention'
+  if (database.enabled && database.status !== 'ready') return 'attention'
+  return 'ready'
 })
+const stateCopy: Record<SystemState, { title: MessageKey; description: MessageKey }> = {
+  ready: { title: 'system.deck.ready', description: 'system.deck.readyDesc' },
+  attention: { title: 'system.deck.attention', description: 'system.deck.attentionDesc' },
+  offline: { title: 'system.deck.offline', description: 'system.deck.offlineDesc' },
+  checking: { title: 'system.deck.checking', description: 'system.deck.checkingDesc' },
+}
+function probeLabel(probe: string) {
+  return probe === 'online' ? t('status.device.online')
+    : probe === 'offline' ? t('status.device.offline') : t('system.checking')
+}
+const uptime = computed(() => {
+  const seconds = status.value?.uptime_seconds
+  if (seconds == null || !Number.isFinite(seconds) || seconds < 0) return '—'
+  const units: [number, MessageKey][] = [
+    [86400, 'system.deck.day'], [3600, 'system.deck.hour'],
+    [60, 'system.deck.minute'], [1, 'system.deck.second'],
+  ]
+  let remaining = Math.floor(seconds)
+  const parts: string[] = []
+  for (const [size, key] of units) {
+    const value = Math.floor(remaining / size)
+    remaining %= size
+    if (value > 0 || (size === 1 && parts.length === 0)) parts.push(`${value}${t(key)}`)
+    if (parts.length === 2) break
+  }
+  return parts.join(' ')
+})
+const assistantStatLabel = computed(() => {
+  if (!assistantSummary.value) return t('common.unknown')
+  const stateLabel = t(assistantSummary.value.enabled ? 'system.deck.enabled' : 'system.deck.disabled')
+  return `${stateLabel} · ${assistantSummary.value.agent_key || '—'}`
+})
+const databaseLabel = computed(() => !status.value ? '—' : !status.value.database.enabled
+  ? t('system.deck.disabled') : status.value.database.status === 'ready'
+    ? t('system.deck.dbReady') : status.value.database.status)
+const databaseReady = computed(() => status.value?.database.enabled &&
+  status.value.database.status === 'ready')
+
+const moduleGroups = computed(() => [
+  {
+    number: '02', title: 'system.deck.intelligence' as const, description: 'system.deck.intelligenceDesc' as const,
+    modules: [
+      { id: 'assistant', testId: 'system-open-assistant', icon: Bot, title: 'system.deck.assistant' as const,
+        description: 'system.hub.assistantDesc' as const, detail: assistantStatLabel.value },
+      { id: 'mcp', testId: 'system-open-mcp-settings', icon: KeyRound, title: 'system.deck.mcp' as const,
+        description: 'system.hub.mcpDesc' as const, detail: '/mcp/knowledge' },
+      { id: 'runtime', testId: 'system-open-runtime', icon: Cpu, title: 'system.hub.runtimeTitle' as const,
+        description: 'system.hub.runtimeDesc' as const,
+        detail: `${t('system.estimatedReservation')}: ${bytes(status.value?.provider_runtime?.accounting.reserved_bytes)}` },
+    ],
+  },
+  {
+    number: '03', title: 'system.deck.operations' as const, description: 'system.deck.operationsDesc' as const,
+    modules: [
+      { id: 'transport', testId: 'system-open-transport', icon: Workflow, title: 'system.deck.transport' as const,
+        description: 'system.hub.transportDesc' as const, detail: `Rust / Axum · PID ${current.value?.process.pid ?? '—'}` },
+      { id: 'security', testId: 'system-open-security', icon: ShieldCheck, title: 'system.hub.securityTitle' as const,
+        description: 'system.hub.securityDesc' as const, detail: '' },
+      { id: 'backup', testId: 'system-open-backup', icon: Database, title: 'system.hub.backupTitle' as const,
+        description: 'system.hub.backupDesc' as const, detail: 'JSON / SQLite' },
+      { id: 'notifications', testId: 'system-open-notification-settings', icon: Bell, title: 'system.deck.notifications' as const,
+        description: 'system.hub.notificationsDesc' as const, detail: 'Web · Telegram · Zalo' },
+    ],
+  },
+])
 
 function bytes(value: number | null | undefined) {
   if (value == null || !Number.isFinite(value) || value < 0) return '—'
@@ -138,15 +207,15 @@ async function refreshResources() {
 async function loadAssistantSummary() {
   try {
     if (!assistantApi.settings) return
-    assistantSummary.value = await assistantApi.settings()
+    const summary = await assistantApi.settings(controller.signal)
+    if (!controller.signal.aborted) assistantSummary.value = summary
   } catch {
     // Non-blocking summary on System Hub
   }
 }
 
 function refresh() {
-  void server.refresh(controller.signal)
-  void refreshResources()
+  return Promise.all([server.refresh(controller.signal), refreshResources()])
 }
 function visible() {
   if (!document.hidden) {
@@ -155,8 +224,10 @@ function visible() {
   }
 }
 onMounted(() => {
-  refresh()
-  void loadAssistantSummary()
+  void Promise.allSettled([refresh(), loadAssistantSummary()]).then(async () => {
+    await nextTick()
+    finishInitialLayout()
+  })
   resourcesTimer = window.setInterval(() => {
     now.value = Date.now()
     void refreshResources()
@@ -167,6 +238,7 @@ onMounted(() => {
   document.addEventListener('visibilitychange', visible)
 })
 onBeforeUnmount(() => {
+  finishInitialLayout()
   controller.abort()
   window.clearInterval(resourcesTimer)
   window.clearInterval(statusTimer)
@@ -175,544 +247,177 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <section class="space-y-4">
-    <!-- Hero Header -->
-    <PageHeader
-      :eyebrow="t('system.hub.eyebrow')"
-      :title="t('system.hub.title')"
-      :description="t('system.hub.subtitle')"
-    >
-      <template #actions>
-        <Button
-          variant="outline"
-          size="sm"
-          :disabled="loading || health === 'checking'"
-          @click="refresh"
-        >
-          <RefreshCcw :class="['size-4', loading && 'animate-spin']" aria-hidden="true" />
-          {{ t('system.refresh') }}
-        </Button>
-        <RouterLink
-          to="/system/logs"
-          class="inline-flex h-8 items-center justify-center gap-1.5 whitespace-nowrap rounded-lg border border-input bg-background px-3 text-xs font-medium text-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
-        >
-          <span>{{ t('system.hub.openDetail') }}</span>
-          <ArrowRight class="size-3.5" aria-hidden="true" />
-        </RouterLink>
-      </template>
-    </PageHeader>
+  <section class="system-deck" data-testid="system-hub">
+    <header class="deck-header">
+      <div>
+        <p class="deck-eyebrow">{{ t('system.deck.eyebrow') }}</p>
+        <h1>{{ t('system.deck.title') }}</h1>
+        <p class="deck-subtitle">{{ t('system.deck.subtitle') }}</p>
+      </div>
+      <button
+        type="button"
+        class="deck-refresh"
+        :disabled="loading || health === 'checking' || readiness === 'checking'"
+        data-testid="system-refresh"
+        @click="refresh"
+      >
+        <RefreshCcw :class="['size-3.5', loading && 'animate-spin motion-reduce:animate-none']" aria-hidden="true" />
+        {{ t('system.refresh') }}
+      </button>
+    </header>
 
-    <!-- Status Strip -->
-    <section
-      class="studio-panel flex flex-wrap items-center justify-between gap-3.5 p-4"
-      data-testid="system-status-strip"
-    >
-      <div class="flex items-center gap-3">
-        <span
-          class="grid size-9 shrink-0 place-items-center rounded-xl"
-          :class="
-            health === 'online'
-              ? 'bg-success/12 text-success'
-              : health === 'offline'
-                ? 'bg-danger/12 text-danger'
-                : 'bg-warning/15 text-warning-foreground dark:text-warning'
-          "
-        >
-          <ShieldCheck class="size-5" aria-hidden="true" />
-        </span>
-        <div>
-          <strong class="block text-sm font-semibold">
-            {{ health === 'online' ? t('system.hub.operational') : healthLabel }}
-          </strong>
-          <div class="text-xs text-muted-foreground">
-            {{ t('system.version') }} {{ status?.version ?? '—' }} · {{ t('system.uptime') }}
-            {{ status ? `${status.uptime_seconds}s` : '—' }}
+    <section class="control-room" :data-state="systemState" data-testid="system-status-strip" :aria-label="t('system.deck.status')">
+      <div class="room-heading">
+        <span class="room-caption"><span class="signal-mark" aria-hidden="true" />{{ t('system.deck.controlRoom') }}</span>
+        <span class="room-version">VELA / {{ status?.version ?? '—' }}</span>
+      </div>
+      <div class="room-main">
+        <div class="room-copy">
+          <span class="state-label"><span class="state-dot" />{{ t(`system.deck.label.${systemState}`) }}</span>
+          <h2>{{ t(stateCopy[systemState].title) }}</h2>
+          <p>{{ t(stateCopy[systemState].description) }}</p>
+          <div class="probe-list">
+            <div :data-probe="health">
+              <Activity aria-hidden="true" /><span>{{ t('system.deck.health') }}</span>
+              <strong>{{ probeLabel(health) }}</strong>
+            </div>
+            <div :data-probe="readiness">
+              <CircleDot aria-hidden="true" /><span>{{ t('system.deck.readiness') }}</span>
+              <strong>{{ probeLabel(readiness) }}</strong>
+            </div>
+            <div :data-probe="!status ? 'idle' : databaseReady ? 'online' : status.database.enabled ? 'offline' : 'idle'">
+              <Database aria-hidden="true" /><span>{{ t('system.database') }}</span>
+              <strong>{{ databaseLabel }}</strong>
+            </div>
+          </div>
+        </div>
+        <div class="core-instrument" aria-hidden="true">
+          <span class="instrument-coordinate coordinate-top">SYS / 01</span>
+          <span class="instrument-coordinate coordinate-bottom">RUST · AXUM</span>
+          <svg viewBox="0 0 360 280" fill="none">
+            <path d="M180 12V268M22 140H338" class="instrument-grid" />
+            <circle cx="180" cy="140" r="117" class="instrument-grid" />
+            <circle cx="180" cy="140" r="99" class="instrument-ticks" />
+            <circle cx="180" cy="140" r="81" class="instrument-grid" />
+            <circle cx="180" cy="140" r="117" class="instrument-arc" stroke-dasharray="145 590" transform="rotate(-90 180 140)" />
+            <circle cx="180" cy="140" r="81" class="instrument-inner-arc" stroke-dasharray="115 394" transform="rotate(90 180 140)" />
+            <circle cx="180" cy="23" r="4" class="instrument-node" />
+            <circle cx="297" cy="140" r="4" class="instrument-node" />
+            <path d="M16 16H30M23 9V23M330 264H344M337 257V271" class="instrument-grid" />
+          </svg>
+          <div class="core-center">
+            <Server class="size-7" />
+            <strong>{{ t('system.deck.core') }}</strong>
+            <span>{{ probeLabel(health) }}</span>
           </div>
         </div>
       </div>
+      <div class="room-stats">
+        <div><span>{{ t('system.deck.uptime') }}</span><strong data-testid="system-uptime">{{ uptime }}</strong></div>
+        <div>
+          <span>{{ t('system.deck.providers') }}</span>
+          <div class="provider-reading">
+            <strong>{{ status?.providers.loaded ?? '—' }}<small> / {{ status?.providers.configured ?? '—' }}</small></strong>
+            <RouterLink v-if="(status?.providers.failed ?? 0) > 0 || (status?.providers.stale ?? 0) > 0" to="/system/runtime" class="provider-alert">
+              <template v-if="(status?.providers.failed ?? 0) > 0">{{ t('system.deck.failed', { count: status!.providers.failed! }) }}</template>
+              <template v-else>{{ t('system.deck.staleProviders', { count: status!.providers.stale! }) }}</template>
+              <ArrowUpRight class="size-3" aria-hidden="true" />
+            </RouterLink>
+          </div>
+        </div>
+        <div><span>{{ t('system.deck.sessions') }}</span><strong>{{ status?.sessions.active ?? '—' }}<Radio class="session-radio" aria-hidden="true" /></strong></div>
+      </div>
+    </section>
+    <p v-if="lastError" role="status" class="deck-error">{{ t('system.statusUnavailable') }}</p>
 
-      <div class="flex flex-wrap items-center gap-2 text-xs">
-        <Badge
-          :variant="
-            health === 'online' ? 'success' : health === 'offline' ? 'danger' : 'secondary'
-          "
-        >
-          {{ healthLabel }}
-        </Badge>
-        <Badge variant="success">
-          {{ t('system.database') }} · {{ status?.database.status ?? '—' }}
-        </Badge>
-        <Badge variant="default">
-          Provider · {{ status?.providers.loaded ?? '—' }} loaded
-        </Badge>
-        <Badge variant="outline">
-          {{ t('system.lastUpdated') }} · {{ sampledAtLabel }}
-        </Badge>
-        <RouterLink
-          to="/system/logs"
-          class="inline-flex h-7 items-center justify-center gap-1 rounded-md border border-input bg-background px-2.5 text-xs font-medium text-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
-        >
-          {{ t('system.hub.viewLogs') }}
+    <section class="resource-section" aria-labelledby="resource-heading">
+      <header class="section-heading">
+        <div class="section-heading-copy">
+          <span class="section-index">01</span>
+          <div><h2 id="resource-heading">{{ t('system.deck.telemetry') }}</h2><p>{{ t('system.deck.telemetryDesc') }}</p></div>
+        </div>
+        <RouterLink to="/system/monitor" data-testid="system-open-monitor" class="text-link">
+          {{ t('system.hub.openDetail') }}<ArrowUpRight class="size-4" aria-hidden="true" />
         </RouterLink>
+      </header>
+      <div class="resource-grid">
+        <RouterLink to="/system/monitor" class="resource-link">
+          <ResourceStatCard
+            class="resource-stat"
+            :title="t('system.deck.cpu')" :value="percent(current?.system.cpu_percent)"
+            :detail="`${t('system.logicalCores')}: ${current?.system.logical_cores ?? '—'}`"
+            :percentage="current?.system.cpu_percent"
+            :state="resourceState || (current?.system.cpu_percent == null ? t('system.unavailable') : '')"
+          />
+        </RouterLink>
+        <RouterLink to="/system/monitor" class="resource-link">
+          <ResourceStatCard
+            class="resource-stat"
+            :title="t('system.deck.memory')" :value="percent(memoryPercentage)"
+            :detail="`${bytes(current?.system.memory_used_bytes)} / ${bytes(current?.system.memory_total_bytes)}`"
+            :percentage="memoryPercentage"
+            :state="resourceState || (memoryPercentage == null ? t('system.unavailable') : '')"
+          />
+        </RouterLink>
+        <RouterLink to="/system/monitor" class="resource-link">
+          <ResourceStatCard
+            class="resource-stat"
+            :title="t('system.deck.process')" :value="bytes(current?.process.rss_bytes)"
+            :detail="`${t('system.processCpu')}: ${percent(current?.process.cpu_percent)}`"
+            :state="resourceState || (current?.process.rss_bytes == null ? t('system.unavailable') : '')"
+          />
+        </RouterLink>
+        <RouterLink to="/system/monitor" class="resource-link">
+          <ResourceStatCard
+            class="resource-stat"
+            :title="t('system.deck.storage')" :value="percent(diskPercentage)"
+            :detail="`${bytes(diskUsed)} / ${bytes(current?.storage.total_bytes)}`"
+            :percentage="diskPercentage"
+            :state="resourceState || (diskPercentage == null ? t('system.unavailable') : '')"
+          />
+        </RouterLink>
+      </div>
+      <div class="telemetry-footer" :data-live="!!current">
+        <span><span class="telemetry-dot" aria-hidden="true" />{{ t(current ? 'system.deck.live' : 'system.deck.waiting') }}</span>
+        <span>{{ t('system.deck.interval') }}<span class="footer-separator" aria-hidden="true">/</span>{{ t('system.deck.sampled', { time: sampledAtLabel }) }}</span>
       </div>
     </section>
 
-    <p v-if="lastError" role="status" class="text-sm text-destructive">
-      {{ t('system.statusUnavailable') }}
-    </p>
-
-    <!-- Section 1: Server Health Snapshot -->
-    <div class="space-y-3 pt-1">
-      <div class="flex flex-wrap items-center justify-between gap-2">
-        <div>
-          <h2 class="text-base font-semibold tracking-tight">{{ t('system.hub.healthTitle') }}</h2>
-          <small class="text-xs text-muted-foreground">
-            {{ t('system.hub.healthSubtitle') }}
-          </small>
+    <div class="module-groups">
+      <section v-for="group in moduleGroups" :key="group.number" class="module-group" :aria-labelledby="`module-heading-${group.number}`">
+        <header class="section-heading-copy">
+          <span class="section-index">{{ group.number }}</span>
+          <div><h2 :id="`module-heading-${group.number}`">{{ t(group.title) }}</h2><p>{{ t(group.description) }}</p></div>
+        </header>
+        <div class="module-list">
+          <RouterLink
+            v-for="(module, index) in group.modules" :key="module.id"
+            :to="`/system/${module.id}`" :data-system-card="module.id" :data-testid="module.testId"
+            class="module-link"
+          >
+            <span class="module-icon"><component :is="module.icon" class="size-5" aria-hidden="true" /></span>
+            <div class="module-copy">
+              <h3>{{ t(module.title) }}</h3>
+              <p>{{ t(module.description) }}</p>
+              <span v-if="module.detail" class="module-detail">{{ module.detail }}</span>
+            </div>
+            <span class="module-number" aria-hidden="true">0{{ index + 1 }}</span>
+            <ChevronRight class="module-arrow size-4" aria-hidden="true" />
+          </RouterLink>
         </div>
-        <RouterLink
-          to="/system/monitor"
-          data-testid="system-open-monitor"
-          class="inline-flex h-8 items-center justify-center gap-1.5 rounded-lg border border-input bg-background px-3 text-xs font-medium text-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
-        >
-          <span>{{ t('system.hub.openDetail') }}</span>
-          <ArrowRight class="size-3.5" aria-hidden="true" />
-        </RouterLink>
-      </div>
-
-      <div class="grid grid-cols-1 gap-3.5 sm:grid-cols-2 xl:grid-cols-4">
-        <ResourceStatCard
-          role="button"
-          tabindex="0"
-          class="cursor-pointer transition-all hover:-translate-y-0.5 hover:border-studio-violet/45 hover:shadow-md"
-          :title="t('system.cpu')"
-          :value="percent(current?.system.cpu_percent)"
-          :detail="`${t('system.logicalCores')}: ${current?.system.logical_cores ?? '—'}`"
-          :percentage="current?.system.cpu_percent"
-          :state="
-            resourceState || (current?.system.cpu_percent == null ? t('system.unavailable') : '')
-          "
-          @click="router.push({ name: 'system-monitor' })"
-          @keydown.enter.prevent="router.push({ name: 'system-monitor' })"
-          @keydown.space.prevent="router.push({ name: 'system-monitor' })"
-        />
-        <ResourceStatCard
-          role="button"
-          tabindex="0"
-          class="cursor-pointer transition-all hover:-translate-y-0.5 hover:border-studio-violet/45 hover:shadow-md"
-          :title="t('system.ram')"
-          :value="`${bytes(current?.system.memory_used_bytes)} / ${bytes(current?.system.memory_total_bytes)}`"
-          :percentage="memoryPercentage"
-          :state="resourceState || (memoryPercentage == null ? t('system.unavailable') : '')"
-          @click="router.push({ name: 'system-monitor' })"
-          @keydown.enter.prevent="router.push({ name: 'system-monitor' })"
-          @keydown.space.prevent="router.push({ name: 'system-monitor' })"
-        />
-        <ResourceStatCard
-          role="button"
-          tabindex="0"
-          class="cursor-pointer transition-all hover:-translate-y-0.5 hover:border-studio-violet/45 hover:shadow-md"
-          :title="t('system.process')"
-          :value="`RSS ${bytes(current?.process.rss_bytes)}`"
-          :detail="`${t('system.processCpu')}: ${percent(current?.process.cpu_percent)}`"
-          :state="
-            resourceState || (current?.process.rss_bytes == null ? t('system.unavailable') : '')
-          "
-          @click="router.push({ name: 'system-monitor' })"
-          @keydown.enter.prevent="router.push({ name: 'system-monitor' })"
-          @keydown.space.prevent="router.push({ name: 'system-monitor' })"
-        />
-        <ResourceStatCard
-          role="button"
-          tabindex="0"
-          class="cursor-pointer transition-all hover:-translate-y-0.5 hover:border-studio-violet/45 hover:shadow-md"
-          :title="t('system.rootFilesystem')"
-          :value="percent(diskPercentage)"
-          :detail="`${bytes(diskUsed)} / ${bytes(current?.storage.total_bytes)}`"
-          :percentage="diskPercentage"
-          :state="resourceState || (diskPercentage == null ? t('system.unavailable') : '')"
-          @click="router.push({ name: 'system-monitor' })"
-          @keydown.enter.prevent="router.push({ name: 'system-monitor' })"
-          @keydown.space.prevent="router.push({ name: 'system-monitor' })"
-        />
-      </div>
-    </div>
-
-    <!-- Section 2: System Configuration Modules (6 Feature Cards) -->
-    <div class="space-y-3 pt-1">
-      <div>
-        <h2 class="text-base font-semibold tracking-tight">{{ t('system.hub.configTitle') }}</h2>
-        <small class="text-xs text-muted-foreground">
-          {{ t('system.hub.configSubtitle') }}
-        </small>
-      </div>
-
-      <div class="grid gap-3.5 md:grid-cols-2 xl:grid-cols-3">
-        <!-- 1. Assistant Device -->
-        <article
-          role="button"
-          tabindex="0"
-          data-system-card="assistant"
-          class="group studio-panel flex cursor-pointer flex-col justify-between overflow-hidden transition-all hover:-translate-y-0.5 hover:border-studio-violet/45 hover:shadow-md"
-          @click="router.push({ name: 'system-assistant' })"
-          @keydown.enter.prevent="router.push({ name: 'system-assistant' })"
-          @keydown.space.prevent="router.push({ name: 'system-assistant' })"
-        >
-          <div class="flex items-start gap-3 p-4">
-            <span
-              class="grid size-9 shrink-0 place-items-center rounded-xl bg-studio-violet/12 text-studio-violet"
-            >
-              <Bot class="size-5" aria-hidden="true" />
-            </span>
-            <div class="min-w-0 flex-1">
-              <div class="flex items-center justify-between gap-2">
-                <h3 class="text-sm font-semibold">{{ t('system.hub.assistantTitle') }}</h3>
-                <ArrowRight
-                  class="size-3.5 text-muted-foreground transition-transform group-hover:translate-x-0.5 group-hover:text-studio-violet"
-                  aria-hidden="true"
-                />
-              </div>
-              <p class="mt-1 text-xs leading-relaxed text-muted-foreground">
-                {{ t('system.hub.assistantDesc') }}
-              </p>
-            </div>
-          </div>
-          <div
-            class="flex items-center justify-between gap-2 border-t border-border/60 bg-surface/60 px-4 py-2.5 text-xs"
-          >
-            <span class="truncate text-muted-foreground">{{ assistantStatLabel }}</span>
-            <RouterLink
-              to="/system/assistant"
-              data-testid="system-open-assistant"
-              class="inline-flex shrink-0 items-center gap-1 rounded-md px-2 py-1 font-medium text-muted-foreground transition-colors group-hover:text-studio-violet hover:bg-accent hover:text-foreground"
-              @click.stop
-            >
-              <span>{{ t('system.hub.configureView') }}</span>
-              <ChevronRight class="size-3.5" aria-hidden="true" />
-            </RouterLink>
-          </div>
-        </article>
-
-        <!-- 2. System / Knowledge MCP -->
-        <article
-          role="button"
-          tabindex="0"
-          data-system-card="mcp"
-          class="group studio-panel flex cursor-pointer flex-col justify-between overflow-hidden transition-all hover:-translate-y-0.5 hover:border-studio-violet/45 hover:shadow-md"
-          @click="router.push({ name: 'system-mcp' })"
-          @keydown.enter.prevent="router.push({ name: 'system-mcp' })"
-          @keydown.space.prevent="router.push({ name: 'system-mcp' })"
-        >
-          <div class="flex items-start gap-3 p-4">
-            <span
-              class="grid size-9 shrink-0 place-items-center rounded-xl bg-studio-cyan/12 text-studio-cyan"
-            >
-              <KeyRound class="size-5" aria-hidden="true" />
-            </span>
-            <div class="min-w-0 flex-1">
-              <div class="flex items-center justify-between gap-2">
-                <h3 class="text-sm font-semibold">{{ t('system.hub.mcpTitle') }}</h3>
-                <ArrowRight
-                  class="size-3.5 text-muted-foreground transition-transform group-hover:translate-x-0.5 group-hover:text-studio-violet"
-                  aria-hidden="true"
-                />
-              </div>
-              <p class="mt-1 text-xs leading-relaxed text-muted-foreground">
-                {{ t('system.hub.mcpDesc') }}
-              </p>
-            </div>
-          </div>
-          <div
-            class="flex items-center justify-between gap-2 border-t border-border/60 bg-surface/60 px-4 py-2.5 text-xs"
-          >
-            <span class="truncate text-muted-foreground">{{ t('system.hub.mcpStat') }}</span>
-            <RouterLink
-              to="/system/mcp"
-              data-testid="system-open-mcp-settings"
-              class="inline-flex shrink-0 items-center gap-1 rounded-md px-2 py-1 font-medium text-muted-foreground transition-colors group-hover:text-studio-violet hover:bg-accent hover:text-foreground"
-              @click.stop
-            >
-              <span>{{ t('system.hub.configureView') }}</span>
-              <ChevronRight class="size-3.5" aria-hidden="true" />
-            </RouterLink>
-          </div>
-        </article>
-
-        <!-- 3. Notifications -->
-        <article
-          role="button"
-          tabindex="0"
-          data-system-card="notifications"
-          class="group studio-panel flex cursor-pointer flex-col justify-between overflow-hidden transition-all hover:-translate-y-0.5 hover:border-studio-violet/45 hover:shadow-md"
-          @click="router.push({ name: 'system-notifications' })"
-          @keydown.enter.prevent="router.push({ name: 'system-notifications' })"
-          @keydown.space.prevent="router.push({ name: 'system-notifications' })"
-        >
-          <div class="flex items-start gap-3 p-4">
-            <span
-              class="grid size-9 shrink-0 place-items-center rounded-xl bg-success/12 text-success"
-            >
-              <Bell class="size-5" aria-hidden="true" />
-            </span>
-            <div class="min-w-0 flex-1">
-              <div class="flex items-center justify-between gap-2">
-                <h3 class="text-sm font-semibold">{{ t('system.hub.notificationsTitle') }}</h3>
-                <ArrowRight
-                  class="size-3.5 text-muted-foreground transition-transform group-hover:translate-x-0.5 group-hover:text-studio-violet"
-                  aria-hidden="true"
-                />
-              </div>
-              <p class="mt-1 text-xs leading-relaxed text-muted-foreground">
-                {{ t('system.hub.notificationsDesc') }}
-              </p>
-            </div>
-          </div>
-          <div
-            class="flex items-center justify-between gap-2 border-t border-border/60 bg-surface/60 px-4 py-2.5 text-xs"
-          >
-            <span class="truncate text-muted-foreground">
-              {{ t('system.hub.notificationsStat') }}
-            </span>
-            <RouterLink
-              to="/system/notifications"
-              data-testid="system-open-notification-settings"
-              class="inline-flex shrink-0 items-center gap-1 rounded-md px-2 py-1 font-medium text-muted-foreground transition-colors group-hover:text-studio-violet hover:bg-accent hover:text-foreground"
-              @click.stop
-            >
-              <span>{{ t('system.hub.configureView') }}</span>
-              <ChevronRight class="size-3.5" aria-hidden="true" />
-            </RouterLink>
-          </div>
-        </article>
-
-        <!-- 4. Backup & Restore -->
-        <article
-          role="button"
-          tabindex="0"
-          data-system-card="backup"
-          class="group studio-panel flex cursor-pointer flex-col justify-between overflow-hidden transition-all hover:-translate-y-0.5 hover:border-studio-violet/45 hover:shadow-md"
-          @click="router.push({ name: 'system-backup' })"
-          @keydown.enter.prevent="router.push({ name: 'system-backup' })"
-          @keydown.space.prevent="router.push({ name: 'system-backup' })"
-        >
-          <div class="flex items-start gap-3 p-4">
-            <span
-              class="grid size-9 shrink-0 place-items-center rounded-xl bg-warning/15 text-warning-foreground dark:text-warning"
-            >
-              <Database class="size-5" aria-hidden="true" />
-            </span>
-            <div class="min-w-0 flex-1">
-              <div class="flex items-center justify-between gap-2">
-                <h3 class="text-sm font-semibold">{{ t('system.hub.backupTitle') }}</h3>
-                <ArrowRight
-                  class="size-3.5 text-muted-foreground transition-transform group-hover:translate-x-0.5 group-hover:text-studio-violet"
-                  aria-hidden="true"
-                />
-              </div>
-              <p class="mt-1 text-xs leading-relaxed text-muted-foreground">
-                {{ t('system.hub.backupDesc') }}
-              </p>
-            </div>
-          </div>
-          <div
-            class="flex items-center justify-between gap-2 border-t border-border/60 bg-surface/60 px-4 py-2.5 text-xs"
-          >
-            <span class="truncate text-muted-foreground">{{ t('system.hub.backupStat') }}</span>
-            <RouterLink
-              to="/system/backup"
-              data-testid="system-open-backup"
-              class="inline-flex shrink-0 items-center gap-1 rounded-md px-2 py-1 font-medium text-muted-foreground transition-colors group-hover:text-studio-violet hover:bg-accent hover:text-foreground"
-              @click.stop
-            >
-              <span>{{ t('system.hub.configureView') }}</span>
-              <ChevronRight class="size-3.5" aria-hidden="true" />
-            </RouterLink>
-          </div>
-        </article>
-
-        <!-- 5. AI Runtime -->
-        <article
-          role="button"
-          tabindex="0"
-          data-system-card="runtime"
-          class="group studio-panel flex cursor-pointer flex-col justify-between overflow-hidden transition-all hover:-translate-y-0.5 hover:border-studio-violet/45 hover:shadow-md"
-          @click="router.push({ name: 'system-runtime' })"
-          @keydown.enter.prevent="router.push({ name: 'system-runtime' })"
-          @keydown.space.prevent="router.push({ name: 'system-runtime' })"
-        >
-          <div class="flex items-start gap-3 p-4">
-            <span
-              class="grid size-9 shrink-0 place-items-center rounded-xl bg-studio-violet/12 text-studio-violet"
-            >
-              <Cpu class="size-5" aria-hidden="true" />
-            </span>
-            <div class="min-w-0 flex-1">
-              <div class="flex items-center justify-between gap-2">
-                <h3 class="text-sm font-semibold">{{ t('system.hub.runtimeTitle') }}</h3>
-                <ArrowRight
-                  class="size-3.5 text-muted-foreground transition-transform group-hover:translate-x-0.5 group-hover:text-studio-violet"
-                  aria-hidden="true"
-                />
-              </div>
-              <p class="mt-1 text-xs leading-relaxed text-muted-foreground">
-                {{ t('system.hub.runtimeDesc') }}
-              </p>
-            </div>
-          </div>
-          <div
-            class="flex items-center justify-between gap-2 border-t border-border/60 bg-surface/60 px-4 py-2.5 text-xs"
-          >
-            <span class="truncate text-muted-foreground">
-              {{ status?.providers.loaded ?? '—' }} loaded · {{ t('system.estimatedReservation') }}:
-              {{ bytes(status?.provider_runtime?.accounting.reserved_bytes) }}
-            </span>
-            <RouterLink
-              to="/system/runtime"
-              data-testid="system-open-runtime"
-              class="inline-flex shrink-0 items-center gap-1 rounded-md px-2 py-1 font-medium text-muted-foreground transition-colors group-hover:text-studio-violet hover:bg-accent hover:text-foreground"
-              @click.stop
-            >
-              <span>{{ t('system.hub.configureView') }}</span>
-              <ChevronRight class="size-3.5" aria-hidden="true" />
-            </RouterLink>
-          </div>
-        </article>
-
-        <!-- 6. Server & Transport -->
-        <article
-          role="button"
-          tabindex="0"
-          data-system-card="transport"
-          class="group studio-panel flex cursor-pointer flex-col justify-between overflow-hidden transition-all hover:-translate-y-0.5 hover:border-studio-violet/45 hover:shadow-md"
-          @click="router.push({ name: 'system-transport' })"
-          @keydown.enter.prevent="router.push({ name: 'system-transport' })"
-          @keydown.space.prevent="router.push({ name: 'system-transport' })"
-        >
-          <div class="flex items-start gap-3 p-4">
-            <span
-              class="grid size-9 shrink-0 place-items-center rounded-xl bg-studio-violet/12 text-studio-violet"
-            >
-              <Workflow class="size-5" aria-hidden="true" />
-            </span>
-            <div class="min-w-0 flex-1">
-              <div class="flex items-center justify-between gap-2">
-                <h3 class="text-sm font-semibold">{{ t('system.hub.transportTitle') }}</h3>
-                <ArrowRight
-                  class="size-3.5 text-muted-foreground transition-transform group-hover:translate-x-0.5 group-hover:text-studio-violet"
-                  aria-hidden="true"
-                />
-              </div>
-              <p class="mt-1 text-xs leading-relaxed text-muted-foreground">
-                {{ t('system.hub.transportDesc') }}
-              </p>
-            </div>
-          </div>
-          <div
-            class="flex items-center justify-between gap-2 border-t border-border/60 bg-surface/60 px-4 py-2.5 text-xs"
-          >
-            <span class="truncate text-muted-foreground">
-              Rust / Axum · PID {{ current?.process.pid ?? '—' }}
-            </span>
-            <RouterLink
-              to="/system/transport"
-              data-testid="system-open-transport"
-              class="inline-flex shrink-0 items-center gap-1 rounded-md px-2 py-1 font-medium text-muted-foreground transition-colors group-hover:text-studio-violet hover:bg-accent hover:text-foreground"
-              @click.stop
-            >
-              <span>{{ t('system.hub.configureView') }}</span>
-              <ChevronRight class="size-3.5" aria-hidden="true" />
-            </RouterLink>
-          </div>
-        </article>
-
-        <!-- 7. Security -->
-        <article
-          role="button"
-          tabindex="0"
-          data-system-card="security"
-          class="group studio-panel flex cursor-pointer flex-col justify-between overflow-hidden transition-all hover:-translate-y-0.5 hover:border-studio-violet/45 hover:shadow-md"
-          @click="router.push({ name: 'system-security' })"
-          @keydown.enter.prevent="router.push({ name: 'system-security' })"
-          @keydown.space.prevent="router.push({ name: 'system-security' })"
-        >
-          <div class="flex items-start gap-3 p-4">
-            <span
-              class="grid size-9 shrink-0 place-items-center rounded-xl bg-studio-violet/12 text-studio-violet"
-            >
-              <ShieldCheck class="size-5" aria-hidden="true" />
-            </span>
-            <div class="min-w-0 flex-1">
-              <div class="flex items-center justify-between gap-2">
-                <h3 class="text-sm font-semibold">{{ t('system.hub.securityTitle') }}</h3>
-                <ArrowRight
-                  class="size-3.5 text-muted-foreground transition-transform group-hover:translate-x-0.5 group-hover:text-studio-violet"
-                  aria-hidden="true"
-                />
-              </div>
-              <p class="mt-1 text-xs leading-relaxed text-muted-foreground">
-                {{ t('system.hub.securityDesc') }}
-              </p>
-            </div>
-          </div>
-        </article>
-      </div>
-    </div>
-
-    <!-- Section 3: Diagnostics & Audit -->
-    <div class="space-y-3 pt-1">
-      <div class="flex flex-wrap items-center justify-between gap-2">
-        <div>
-          <h2 class="text-base font-semibold tracking-tight">
-            {{ t('system.hub.diagnosticsTitle') }}
-          </h2>
-          <small class="text-xs text-muted-foreground">
-            {{ t('system.hub.diagnosticsSubtitle') }}
-          </small>
-        </div>
-        <RouterLink
-          to="/system/logs"
-          data-testid="system-open-logs"
-          class="inline-flex h-8 items-center justify-center gap-1.5 rounded-lg border border-input bg-background px-3 text-xs font-medium text-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
-        >
-          <span>{{ t('system.hub.openDetail') }}</span>
-          <ArrowRight class="size-3.5" aria-hidden="true" />
-        </RouterLink>
-      </div>
-
-      <section
-        role="button"
-        tabindex="0"
-        data-system-card="logs"
-        class="group studio-panel flex cursor-pointer flex-wrap items-center justify-between gap-3.5 p-4 transition-all hover:-translate-y-0.5 hover:border-studio-violet/45 hover:shadow-md"
-        @click="router.push({ name: 'system-logs' })"
-        @keydown.enter.prevent="router.push({ name: 'system-logs' })"
-        @keydown.space.prevent="router.push({ name: 'system-logs' })"
-      >
-        <div class="flex items-center gap-3">
-          <span
-            class="grid size-9 shrink-0 place-items-center rounded-xl bg-success/12 text-success"
-          >
-            <Terminal class="size-5" aria-hidden="true" />
-          </span>
-          <div>
-            <strong class="block text-sm font-semibold">
-              {{ t('system.hub.logsBannerTitle') }}
-            </strong>
-            <p class="text-xs text-muted-foreground">
-              {{ t('system.hub.logsBannerDesc') }}
-            </p>
-          </div>
-        </div>
-
-        <RouterLink
-          to="/system/logs"
-          class="inline-flex h-8 items-center justify-center gap-1.5 rounded-lg border border-input bg-background px-3 text-xs font-medium text-foreground transition-colors group-hover:border-studio-violet/40 hover:bg-accent hover:text-accent-foreground"
-          @click.stop
-        >
-          <span>{{ t('system.logs.openConsole') }}</span>
-          <ArrowRight class="size-3.5" aria-hidden="true" />
-        </RouterLink>
       </section>
     </div>
+
+    <RouterLink to="/system/logs" class="diagnostics-link" data-system-card="logs" data-testid="system-open-logs">
+      <div class="diagnostics-icon" aria-hidden="true"><Terminal class="size-6" /></div>
+      <div class="diagnostics-copy">
+        <span class="deck-eyebrow">04 / {{ t('system.hub.diagnosticsTitle') }}</span>
+        <h2>{{ t('system.deck.diagnostics') }}</h2>
+        <p>{{ t('system.deck.diagnosticsDesc') }}</p>
+      </div>
+      <span class="diagnostics-action">{{ t('system.deck.openConsole') }}<ArrowRight class="size-4" aria-hidden="true" /></span>
+    </RouterLink>
   </section>
 </template>
+
+<style scoped src="./system-hub.css"></style>

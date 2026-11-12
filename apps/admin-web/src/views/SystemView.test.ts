@@ -1,5 +1,5 @@
 import { createPinia, setActivePinia } from 'pinia'
-import { flushPromises, mount } from '@vue/test-utils'
+import { enableAutoUnmount, flushPromises, mount } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { systemApi } from '@/api/system'
 import { assistantApi } from '@/api/assistant'
@@ -66,6 +66,8 @@ function snapshot(): SystemResources {
   }
 }
 
+enableAutoUnmount(afterEach)
+
 function page() {
   return mount(SystemView, { global: { plugins: [createPinia()], stubs: { RouterLink: true } } })
 }
@@ -104,12 +106,14 @@ afterEach(() => {
   vi.clearAllMocks()
 })
 
-describe('System Hub (Variant A) & Sub-pages', () => {
+describe('System control room & sub-pages', () => {
   it('renders four resource cards, status strip, and feature module links on SystemView', async () => {
     const wrapper = page()
     await flushPromises()
     const cards = wrapper.findAllComponents(ResourceStatCard)
     expect(cards).toHaveLength(4)
+    expect(wrapper.get('[data-testid="system-status-strip"]').attributes('data-state')).toBe('attention')
+    expect(wrapper.text()).toContain('1 failed')
     expect(cards[0]!.text()).toContain('34.5%')
     expect(cards[1]!.text()).toContain('10.0 GiB / 16.0 GiB')
     expect(cards[2]!.text()).toContain('242.8%')
@@ -126,36 +130,39 @@ describe('System Hub (Variant A) & Sub-pages', () => {
     expect(wrapper.find('[data-testid="system-open-transport"]').exists()).toBe(true)
     expect(wrapper.find('[data-testid="system-open-logs"]').exists()).toBe(true)
 
-    // Clicking directly on cards navigates to their detail pages without needing the button
-    await cards[0]!.trigger('click')
-    expect(navigateMock).toHaveBeenCalledWith({ name: 'system-monitor' })
-
-    await wrapper.get('[data-system-card="assistant"]').trigger('click')
-    expect(navigateMock).toHaveBeenCalledWith({ name: 'system-assistant' })
-
-    await wrapper.get('[data-system-card="mcp"]').trigger('click')
-    expect(navigateMock).toHaveBeenCalledWith({ name: 'system-mcp' })
-
-    await wrapper.get('[data-system-card="notifications"]').trigger('click')
-    expect(navigateMock).toHaveBeenCalledWith({ name: 'system-notifications' })
-
-    await wrapper.get('[data-system-card="backup"]').trigger('click')
-    expect(navigateMock).toHaveBeenCalledWith({ name: 'system-backup' })
-
-    await wrapper.get('[data-system-card="runtime"]').trigger('click')
-    expect(navigateMock).toHaveBeenCalledWith({ name: 'system-runtime' })
-
-    await wrapper.get('[data-system-card="transport"]').trigger('click')
-    expect(navigateMock).toHaveBeenCalledWith({ name: 'system-transport' })
-
-    await wrapper.get('[data-system-card="security"]').trigger('click')
-    expect(navigateMock).toHaveBeenCalledWith({ name: 'system-security' })
-
-    await wrapper.get('[data-system-card="logs"]').trigger('click')
-    expect(navigateMock).toHaveBeenCalledWith({ name: 'system-logs' })
+    // Native links provide keyboard navigation and allow opening a detail in a new tab.
+    expect(wrapper.get('.resource-link').attributes('href')).toBe('/system/monitor')
+    for (const id of ['assistant', 'mcp', 'notifications', 'backup', 'runtime', 'transport', 'security', 'logs']) {
+      expect(wrapper.get(`[data-system-card="${id}"]`).attributes('href')).toBe(`/system/${id}`)
+    }
 
     wrapper.unmount()
   })
+
+  it.each(['ready', 'readiness', 'database', 'stale', 'missing', 'partial', 'offline'] as const)(
+    'reports aggregate status honestly for %s', async scenario => {
+      const healthy = {
+        status: 'ready', version: '0.1.0', uptime_seconds: 90061,
+        database: { enabled: true, status: 'ready' },
+        providers: { configured: 3, loaded: 3, failed: 0, stale: 0 },
+        sessions: { active: 0 },
+      }
+      if (scenario === 'readiness') vi.mocked(systemApi.ready).mockResolvedValue('not ready')
+      if (scenario === 'database') healthy.database.status = 'unavailable'
+      if (scenario === 'stale') healthy.providers.stale = 1
+      if (scenario === 'partial') healthy.providers.loaded = 2
+      if (scenario === 'offline') vi.mocked(systemApi.health).mockRejectedValue(new Error('offline'))
+      if (scenario === 'missing') vi.mocked(systemApi.status).mockRejectedValue(new Error('unavailable'))
+      else vi.mocked(systemApi.status).mockResolvedValue(healthy)
+      const wrapper = page()
+      await flushPromises()
+      expect(wrapper.get('[data-testid="system-status-strip"]').attributes('data-state')).toBe(
+        scenario === 'ready' ? 'ready' : scenario === 'offline' ? 'offline' : 'attention',
+      )
+      expect(wrapper.get('[data-testid="system-uptime"]').text()).toBe(scenario === 'missing' ? '—' : '1d 1h')
+      wrapper.unmount()
+    },
+  )
 
   it('pauses hidden polling, resumes immediately, refreshes status every 30 seconds and aborts on unmount', async () => {
     const wrapper = page()
@@ -264,6 +271,7 @@ describe('System Hub (Variant A) & Sub-pages', () => {
     await vi.advanceTimersByTimeAsync(20_000)
     expect(cards[2]!.text()).toContain('Stale')
     expect(cards[2]!.text()).not.toContain('242.8%')
+    expect(wrapper.get('.telemetry-footer').attributes('data-live')).toBe('false')
     wrapper.unmount()
   })
 

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Bot, Copy, Wifi } from '@lucide/vue'
+import { ArrowUpRight, Bot, Copy, Radio, Save, ShieldCheck } from '@lucide/vue'
 import { computed, onMounted, ref, watch } from 'vue'
 import { RouterLink } from 'vue-router'
 
@@ -7,7 +7,6 @@ import { assistantApi, type AssistantSettings } from '@/api/assistant'
 import { isApiError } from '@/api/errors'
 import type { MemoryMode } from '@/api/types/devices'
 import ConfirmDialog from '@/components/admin/ConfirmDialog.vue'
-import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { useI18n } from '@/composables/useI18n'
 import { useAdminStore } from '@/stores/admin'
@@ -46,6 +45,7 @@ watch(agent, () => {
 
 async function load() {
   loading.value = true
+  error.value = ''
   try {
     saved.value = await assistantApi.settings()
     agent.value = saved.value.agent_key ?? ''
@@ -62,6 +62,7 @@ async function load() {
 onMounted(load)
 
 async function save() {
+  if (saving.value || loading.value || !agent.value) return
   saving.value = true
   error.value = ''
   confirmDisable.value = false
@@ -97,191 +98,89 @@ function submit() {
   else void save()
 }
 
-defineExpose({ reload: load })
+const busy = computed(() => loading.value || saving.value)
+defineExpose({ reload: load, busy })
 </script>
 
 <template>
-  <div class="grid items-start gap-4 lg:grid-cols-[minmax(0,1.5fr)_minmax(260px,0.75fr)]">
-    <!-- Left Column: Assistant Device Configuration -->
-    <section class="studio-panel p-4">
-      <div class="mb-4 flex flex-wrap items-center justify-between gap-3">
-        <div class="flex items-center gap-2.5">
-          <span
-            class="grid size-9 shrink-0 place-items-center rounded-xl bg-studio-violet/12 text-studio-violet"
-          >
-            <Bot class="size-4.5" aria-hidden="true" />
-          </span>
-          <div>
-            <h2 class="text-sm font-semibold">{{ t('assistant.title') }}</h2>
-            <p class="text-xs text-muted-foreground">{{ t('assistant.settingsDescription') }}</p>
-          </div>
-        </div>
-        <Badge :variant="enabled ? 'success' : 'outline'">
-          {{ enabled ? 'Enabled' : 'Disabled' }}
-        </Badge>
-      </div>
-
-      <p v-if="loading" role="status" class="py-4 text-xs text-muted-foreground">
-        {{ t('common.loading') }}
-      </p>
-
-      <form v-else class="space-y-4" @submit.prevent="submit">
-        <p v-if="error" role="alert" class="text-xs text-destructive">
-          {{ t('assistant.error') }}: {{ error }}
-        </p>
-
-        <label
-          class="flex cursor-pointer items-center justify-between gap-3 rounded-xl border border-border/70 bg-surface/60 px-3.5 py-2.5"
-        >
-          <div>
-            <span class="block text-xs font-semibold">{{ t('assistant.enabled') }}</span>
-            <span class="block text-[11px] text-muted-foreground">
-              {{ t('assistant.disableDescription') }}
-            </span>
-          </div>
-          <input
-            v-model="enabled"
-            type="checkbox"
-            class="size-4 accent-primary"
-            :disabled="saving"
-          />
+  <div class="assistant-workspace">
+    <section class="sys-panel assistant-configuration">
+      <header class="sys-panel-header">
+        <span class="sys-section-number">01</span>
+        <div><h2>{{ t('system.detail.binding') }}</h2><p>{{ t('system.detail.bindingDescription') }}</p></div>
+      </header>
+      <p v-if="loading" role="status" class="sys-loading">{{ t('common.loading') }}</p>
+      <form v-else class="assistant-form" @submit.prevent="submit">
+        <p v-if="error" role="alert" class="sys-alert">{{ t('assistant.error') }}: {{ error }}</p>
+        <label class="assistant-enable">
+          <div><span>{{ t('system.detail.assistantEnabled') }}</span><p>{{ t('system.detail.enableDescription') }}</p></div>
+          <input v-model="enabled" type="checkbox" class="sys-toggle-input" :disabled="saving" />
         </label>
-
-        <div class="grid gap-3.5 sm:grid-cols-2">
-          <label class="block space-y-1.5 text-xs">
-            <span class="font-semibold">{{ t('assistant.agent') }}</span>
-            <select
-              v-model="agent"
-              class="admin-input h-9 w-full text-xs"
-              :disabled="saving"
-              required
-            >
+        <div class="sys-form-grid">
+          <label class="sys-field"><span>{{ t('assistant.agent') }}</span>
+            <select v-model="agent" class="admin-input" :disabled="saving" required>
               <option value="" disabled>{{ t('assistant.selectAgent') }}</option>
-              <option v-for="item in admin.agents" :key="item.id" :value="item.id">
-                {{ item.name }}
-              </option>
+              <option v-for="item in admin.agents" :key="item.id" :value="item.id">{{ item.name }}</option>
             </select>
           </label>
-
-          <label class="block space-y-1.5 text-xs">
-            <span class="font-semibold">{{ t('assistant.template') }}</span>
-            <select
-              v-model="template"
-              class="admin-input h-9 w-full text-xs"
-              :disabled="saving || !agent"
-            >
+          <label class="sys-field"><span>{{ t('assistant.template') }}</span>
+            <select v-model="template" class="admin-input" :disabled="saving || !agent">
               <option value="">{{ t('assistant.agentDefault') }}</option>
-              <option v-for="item in templates" :key="item.id" :value="item.id">
-                {{ item.name }}
-              </option>
+              <option v-for="item in templates" :key="item.id" :value="item.id">{{ item.name }}</option>
             </select>
           </label>
         </div>
-
-        <label class="block space-y-1.5 text-xs">
-          <span class="font-semibold">{{ t('memoryV3.mode') }}</span>
-          <select v-model="memoryMode" data-assistant-memory-mode class="admin-input h-9 w-full text-xs" :disabled="saving">
+        <section v-if="effectiveTemplate" class="assistant-pipeline">
+          <div class="sys-small-heading"><h3>{{ t('system.detail.pipeline') }}</h3><p>{{ t('system.detail.pipelineDescription') }}</p></div>
+          <div class="pipeline-nodes">
+            <div v-for="kind in (['vad', 'asr', 'llm', 'tts'] as const)" :key="kind" class="pipeline-node">
+              <span>{{ kind.toUpperCase() }}</span>
+              <RouterLink v-if="effectiveTemplate.providerBindings[kind]" :to="`/providers/${effectiveTemplate.providerBindings[kind]}`">
+                {{ admin.getProvider(effectiveTemplate.providerBindings[kind])?.name ?? effectiveTemplate.providerBindings[kind] }}<ArrowUpRight class="size-3" aria-hidden="true" />
+              </RouterLink>
+              <span v-else class="pipeline-unknown">{{ t('common.unknown') }}</span>
+            </div>
+          </div>
+        </section>
+        <label class="sys-field assistant-memory"><span>{{ t('system.detail.memory') }}</span>
+          <select v-model="memoryMode" data-assistant-memory-mode class="admin-input" :disabled="saving">
             <option value="off">{{ t('memoryV3.mode.off') }}</option>
             <option value="read">{{ t('memoryV3.mode.read') }}</option>
             <option value="read_write">{{ t('memoryV3.mode.read_write') }}</option>
           </select>
-          <span class="block text-[11px] text-muted-foreground">{{ t('memoryV3.modeHint') }} {{ t('memoryV3.privateNotice') }}</span>
+          <small>{{ t('memoryV3.modeHint') }} {{ t('memoryV3.privateNotice') }}</small>
         </label>
-
-        <div v-if="effectiveTemplate" class="flex flex-wrap gap-2.5 text-xs">
-          <template v-for="kind in (['vad', 'asr', 'llm', 'tts'] as const)" :key="kind">
-            <RouterLink
-              v-if="effectiveTemplate.providerBindings[kind]"
-              class="underline hover:text-studio-violet"
-              :to="`/providers/${effectiveTemplate.providerBindings[kind]}`"
-            >
-              {{ kind.toUpperCase() }}:
-              {{
-                admin.getProvider(effectiveTemplate.providerBindings[kind])?.name ??
-                effectiveTemplate.providerBindings[kind]
-              }}
-            </RouterLink>
-            <span v-else class="text-muted-foreground">
-              {{ kind.toUpperCase() }}: {{ t('common.unknown') }}
-            </span>
-          </template>
-        </div>
-
-        <div class="flex flex-wrap justify-end gap-2 border-t border-border/60 pt-3">
-          <Button type="button" variant="ghost" size="sm" :disabled="saving" @click="load">
-            {{ t('common.retry') }}
-          </Button>
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            :disabled="dirty || !saved?.enabled || saving"
-            @click="assistant.open()"
-          >
-            {{ t('assistant.open') }}
-          </Button>
-          <Button type="submit" size="sm" :disabled="saving || !agent || !dirty">
-            {{ t('common.save') }}
-          </Button>
-        </div>
+        <footer class="assistant-form-footer">
+          <span class="assistant-save-state" :data-dirty="dirty"><span />{{ t(dirty ? 'system.detail.pendingChanges' : 'system.detail.saved') }}</span>
+          <div class="sys-actions">
+            <Button type="button" variant="ghost" size="sm" :disabled="saving" @click="load">{{ t(dirty ? 'system.detail.discardChanges' : 'system.refresh') }}</Button>
+            <Button type="submit" class="sys-primary" :disabled="saving || !agent || !dirty"><Save class="size-3.5" aria-hidden="true" />{{ t('common.save') }}</Button>
+          </div>
+        </footer>
       </form>
     </section>
 
-    <!-- Right Column: Managed Device Inspector -->
-    <aside class="studio-panel p-4">
-      <div class="mb-3 flex items-center gap-2.5">
-        <span
-          class="grid size-8 shrink-0 place-items-center rounded-lg bg-studio-cyan/12 text-studio-cyan"
-        >
-          <Wifi class="size-4" aria-hidden="true" />
-        </span>
-        <div>
-          <h3 class="text-xs font-semibold">{{ t('system.hub.managedDeviceTitle') }}</h3>
-          <p class="text-[11px] text-muted-foreground">{{ t('system.hub.managedDeviceSub') }}</p>
-        </div>
+    <aside class="assistant-identity">
+      <div class="identity-card" :data-connected="!!saved?.enabled && (saved?.active_connections ?? 0) > 0">
+        <div class="identity-caption"><span>{{ t('system.detail.identity') }}</span><Radio class="size-4" aria-hidden="true" /></div>
+        <div class="identity-avatar" aria-hidden="true"><span /><span /><Bot class="size-12" /></div>
+        <h2>{{ saved?.device_id ?? '—' }}</h2>
+        <p class="identity-connection" data-testid="assistant-connection-state"><span />{{ !saved ? t('common.unknown') : !saved.enabled ? t('system.deck.disabled') : t(saved.active_connections > 0 ? 'system.detail.connected' : 'system.detail.disconnected') }}</p>
+        <dl class="identity-facts">
+          <div><dt>{{ t('system.detail.connections') }}</dt><dd>{{ saved?.active_connections ?? '—' }}</dd></div>
+          <div><dt>{{ t('system.detail.assignedAgent') }}</dt><dd>{{ saved?.agent_key ?? '—' }}</dd></div>
+          <div><dt>{{ t('system.hub.assignedTemplate') }}</dt><dd>{{ saved ? saved.template_key || t('assistant.agentDefault') : '—' }}</dd></div>
+        </dl>
+        <button v-if="saved?.device_id" type="button" class="identity-copy" @click="copyDevice"><Copy class="size-3.5" aria-hidden="true" />{{ t('deviceCard.copyId') }}</button>
       </div>
-
-      <div class="divide-y divide-border/60 text-xs">
-        <div class="flex items-center justify-between gap-2 py-2.5">
-          <span class="text-muted-foreground">{{ t('assistant.managedDevice') }}</span>
-          <code class="font-mono font-semibold">{{ saved?.device_id ?? '—' }}</code>
-        </div>
-        <div class="flex items-center justify-between gap-2 py-2.5">
-          <span class="text-muted-foreground">{{ t('assistant.connections') }}</span>
-          <strong class="font-mono">{{ saved?.active_connections ?? 0 }}</strong>
-        </div>
-        <div class="flex items-center justify-between gap-2 py-2.5">
-          <span class="text-muted-foreground">{{ t('system.hub.connectionState') }}</span>
-          <strong>{{ saved?.enabled ? 'Connected' : 'Disabled' }}</strong>
-        </div>
-        <div class="flex items-center justify-between gap-2 py-2.5">
-          <span class="text-muted-foreground">{{ t('system.hub.assignedAgent') }}</span>
-          <strong class="font-mono">{{ agent || saved?.agent_key || '—' }}</strong>
-        </div>
-        <div class="flex items-center justify-between gap-2 py-2.5">
-          <span class="text-muted-foreground">{{ t('system.hub.assignedTemplate') }}</span>
-          <strong class="font-mono">{{ template || saved?.template_key || t('assistant.agentDefault') }}</strong>
-        </div>
+      <div class="assistant-launch">
+        <ShieldCheck class="size-4" aria-hidden="true" />
+        <p>{{ t('system.detail.savedBinding') }}</p>
+        <Button type="button" variant="outline" class="w-full" :disabled="dirty || !saved?.enabled || busy" @click="assistant.open()">
+          {{ t('system.detail.tryAssistant') }}<ArrowUpRight class="size-3.5" aria-hidden="true" />
+        </Button>
       </div>
-
-      <Button
-        v-if="saved?.device_id"
-        type="button"
-        variant="outline"
-        size="sm"
-        class="mt-3 w-full text-xs"
-        @click="copyDevice"
-      >
-        <Copy class="size-3.5" aria-hidden="true" />
-        {{ t('deviceCard.copyId') }}
-      </Button>
     </aside>
   </div>
-
-  <ConfirmDialog
-    v-model="confirmDisable"
-    :title="t('assistant.disableTitle')"
-    :description="t('assistant.disableDescription')"
-    @confirm="save"
-  />
+  <ConfirmDialog v-model="confirmDisable" :title="t('assistant.disableTitle')" :description="t('assistant.disableDescription')" @confirm="save" />
 </template>

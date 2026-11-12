@@ -7,6 +7,7 @@ import type { MessageKey } from '@/i18n/messages'
 import { useAuthStore, type LoginStatus } from '@/stores/auth'
 
 import { authRedirect } from './auth-guard'
+import { waitForSystemLayout } from './system-scroll'
 
 const routes: RouteRecordRaw[] = [
   {
@@ -314,10 +315,21 @@ const routes: RouteRecordRaw[] = [
   { path: '/:pathMatch(.*)*', redirect: '/overview' },
 ]
 
+// Keep the Systems hub context when its detail pages link back via a new navigation.
+let systemScrollPosition = { left: 0, top: 0 }
+
 export const router = createRouter({
   history: createWebHistory(),
   routes,
-  scrollBehavior: () => ({ top: 0 }),
+  async scrollBehavior(to, _from, savedPosition) {
+    const position = savedPosition ?? (to.name === 'system' ? systemScrollPosition : { left: 0, top: 0 })
+    if (to.name === 'system') {
+      await waitForSystemLayout()
+      // A slow snapshot must not scroll a page the operator has already left.
+      if (router.currentRoute.value.fullPath !== to.fullPath) return false
+    }
+    return position
+  },
 })
 
 // Startup reads the login state before any data loads. A failed read is not cached, so the next
@@ -334,6 +346,12 @@ async function currentLoginStatus(): Promise<LoginStatus> {
     return { passwordLoginEnabled: true, mustChangePassword: false }
   }
 }
+
+router.beforeEach((to, from) => {
+  if (from.name === 'system' && to.name !== 'system') {
+    systemScrollPosition = { left: window.scrollX, top: window.scrollY }
+  }
+})
 
 router.beforeEach(async to => {
   const status = await currentLoginStatus()

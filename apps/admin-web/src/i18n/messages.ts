@@ -3,6 +3,8 @@
  * compile error rather than a blank string at runtime.
  */
 import { knowledgeMessages } from '@vela/knowledge-ui'
+import { systemHubMessages } from './system-hub'
+import { systemPageMessages } from './system-pages'
 
 export interface PluralMessage {
   one: string
@@ -13,6 +15,8 @@ export type MessageValue = string | PluralMessage
 
 export const en = {
   ...knowledgeMessages.en,
+  ...systemHubMessages.en,
+  ...systemPageMessages.en,
 
 
 
@@ -844,6 +848,30 @@ export const en = {
   'jobUi.doneJobs': "Completed on this page",
   'jobUi.failedJobs': "Failed on this page",
   'jobUi.newJob': "New Job",
+  'jobUi.heroEyebrow': "Background orchestration",
+  'jobUi.liveActive': { one: "{count} job active right now", other: "{count} jobs active right now" },
+  'jobUi.liveIdle': "All quiet — nothing is running",
+  'jobUi.lastUpdated': "Updated {time}",
+  'jobUi.successRate': "success",
+  'jobUi.statusMix': "Status mix on this page",
+  'jobUi.clearFilters': "Clear filters",
+  'jobUi.noMatches': "No jobs match these filters.",
+  'jobUi.emptyHint': "Hand a goal to the background agents, or start from a recipe.",
+  'jobUi.retryBadge': "Retry",
+  'jobUi.artifactCount': { one: "{count} artifact", other: "{count} artifacts" },
+  'jobUi.selectedCount': "{count} selected",
+  'jobUi.pageLabel': "Page {page}",
+  'jobUi.pageRange': "{from}–{to} of {total}",
+  'jobUi.startFrom': "Start from",
+  'jobUi.recipesGroup': "Recipes",
+  'jobUi.stepCount': { one: "{count} step", other: "{count} steps" },
+  'jobUi.parameters': "Parameters",
+  'jobUi.goalHint': "Describe the outcome you want — the orchestrator plans the steps and delegates to sub-agents.",
+  'jobUi.submitShortcut': "to create",
+  'jobUi.tryExample': "Try:",
+  'jobUi.example1': "Research today's top AI news and write a short briefing",
+  'jobUi.example2': "Summarize the attached meeting recording into action items",
+  'jobUi.example3': "Compare three note-taking apps and recommend one",
   'jobUi.goal': "Goal",
   'jobUi.status': "Status",
   'jobUi.requester': "Requester",
@@ -2406,6 +2434,8 @@ export type MessageKey = keyof typeof en
 
 export const vi: Record<MessageKey, MessageValue> = {
   ...knowledgeMessages.vi,
+  ...systemHubMessages.vi,
+  ...systemPageMessages.vi,
 
 
 
@@ -3237,6 +3267,30 @@ export const vi: Record<MessageKey, MessageValue> = {
   'jobUi.doneJobs': "Hoàn thành trên trang",
   'jobUi.failedJobs': "Thất bại trên trang",
   'jobUi.newJob': "Tạo Job",
+  'jobUi.heroEyebrow': "Điều phối tác vụ nền",
+  'jobUi.liveActive': "{count} tác vụ đang hoạt động",
+  'jobUi.liveIdle': "Yên tĩnh — không có tác vụ nào đang chạy",
+  'jobUi.lastUpdated': "Cập nhật lúc {time}",
+  'jobUi.successRate': "thành công",
+  'jobUi.statusMix': "Phân bố trạng thái trên trang này",
+  'jobUi.clearFilters': "Xóa bộ lọc",
+  'jobUi.noMatches': "Không có tác vụ nào khớp bộ lọc.",
+  'jobUi.emptyHint': "Giao một mục tiêu cho các agent nền, hoặc bắt đầu từ một recipe.",
+  'jobUi.retryBadge': "Chạy lại",
+  'jobUi.artifactCount': "{count} tệp kết quả",
+  'jobUi.selectedCount': "Đã chọn {count}",
+  'jobUi.pageLabel': "Trang {page}",
+  'jobUi.pageRange': "{from}–{to} trên {total}",
+  'jobUi.startFrom': "Bắt đầu từ",
+  'jobUi.recipesGroup': "Recipe",
+  'jobUi.stepCount': "{count} bước",
+  'jobUi.parameters': "Tham số",
+  'jobUi.goalHint': "Mô tả kết quả bạn muốn — orchestrator sẽ lập kế hoạch và giao việc cho các sub-agent.",
+  'jobUi.submitShortcut': "để tạo",
+  'jobUi.tryExample': "Thử:",
+  'jobUi.example1': "Tìm tin AI nổi bật hôm nay và viết bản tóm tắt ngắn",
+  'jobUi.example2': "Tóm tắt bản ghi cuộc họp đính kèm thành danh sách việc cần làm",
+  'jobUi.example3': "So sánh ba ứng dụng ghi chú và đề xuất một lựa chọn",
   'jobUi.goal': "Yêu cầu",
   'jobUi.status': "Trạng thái",
   'jobUi.requester': "Nguồn tạo",

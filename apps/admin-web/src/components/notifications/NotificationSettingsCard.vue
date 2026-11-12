@@ -1,24 +1,24 @@
 <script setup lang="ts">
-import { Bell, CheckCircle2, MessageSquare, Send, XCircle } from '@lucide/vue'
+import { Bell, Inbox, MessageSquare, RefreshCcw, Save, Send } from '@lucide/vue'
 import { onMounted, ref } from 'vue'
 
 import { isNotificationsDemoMode, notificationsApi } from '@/api/notifications'
 import {
-  ALL_NOTIFICATION_TOPICS,
   type ExternalChannelKind,
   type NotificationSettings,
   type NotificationSettingsUpdate,
   type NotificationTopic,
   type TestChannelOutput,
 } from '@/api/types/notifications'
-import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { useI18n } from '@/composables/useI18n'
-import type { MessageKey } from '@/i18n/messages'
+
+import NotificationChannelPanel from './NotificationChannelPanel.vue'
 
 const { t } = useI18n()
 
 const loading = ref(true)
+const loaded = ref(false)
 const saving = ref(false)
 const demoMode = ref(false)
 const revision = ref(1)
@@ -53,6 +53,7 @@ const zaloTesting = ref(false)
 const zaloTestResult = ref<TestChannelOutput | null>(null)
 
 function applyLoadedSettings(data: NotificationSettings): void {
+  loaded.value = true
   revision.value = data.revision
   demoMode.value = isNotificationsDemoMode()
 
@@ -90,10 +91,6 @@ async function load(): Promise<void> {
   }
 }
 
-function toggleTopic(list: NotificationTopic[], topic: NotificationTopic): NotificationTopic[] {
-  return list.includes(topic) ? list.filter(item => item !== topic) : [...list, topic]
-}
-
 function resolveBotTokenPatch(inputVal: string, clearFlag: boolean): string | null | undefined {
   if (clearFlag) return null
   const trimmed = inputVal.trim()
@@ -102,6 +99,7 @@ function resolveBotTokenPatch(inputVal: string, clearFlag: boolean): string | nu
 }
 
 async function saveSettings(): Promise<void> {
+  if (saving.value || loading.value || !loaded.value) return
   saving.value = true
   savedBanner.value = ''
   errorBanner.value = ''
@@ -138,6 +136,7 @@ async function saveSettings(): Promise<void> {
 
 async function runChannelTest(channel: ExternalChannelKind): Promise<void> {
   if (channel === 'telegram') {
+    if (tgTesting.value) return
     tgTesting.value = true
     tgTestResult.value = null
     try {
@@ -147,12 +146,15 @@ async function runChannelTest(channel: ExternalChannelKind): Promise<void> {
         thread_id: Number.isFinite(parsedThread) ? parsedThread : null,
         bot_token: tgTokenInput.value.trim() || undefined,
       })
+    } catch (error) {
+      tgTestResult.value = { ok: false, channel, external_message_id: null, delivered_at_ms: Date.now(), error: error instanceof Error ? error.message : String(error) }
     } finally {
       tgTesting.value = false
     }
     return
   }
 
+  if (zaloTesting.value) return
   zaloTesting.value = true
   zaloTestResult.value = null
   try {
@@ -160,13 +162,11 @@ async function runChannelTest(channel: ExternalChannelKind): Promise<void> {
       recipient_id: zaloRecipientId.value.trim() || undefined,
       bot_token: zaloTokenInput.value.trim() || undefined,
     })
+  } catch (error) {
+    zaloTestResult.value = { ok: false, channel, external_message_id: null, delivered_at_ms: Date.now(), error: error instanceof Error ? error.message : String(error) }
   } finally {
     zaloTesting.value = false
   }
-}
-
-function topicLabel(topic: NotificationTopic): string {
-  return t(`notifications.topic.${topic}` as MessageKey)
 }
 
 onMounted(() => {
@@ -175,421 +175,54 @@ onMounted(() => {
 </script>
 
 <template>
-  <section class="studio-panel space-y-5 p-5" data-testid="notification-settings-card">
-    <div class="flex flex-wrap items-start justify-between gap-4">
-      <div class="flex items-start gap-3">
-        <div class="grid size-10 shrink-0 place-items-center rounded-xl bg-studio-violet/10 text-studio-violet">
-          <Bell class="size-5" />
+  <section class="notification-workspace" data-testid="notification-settings-card" :aria-busy="loading">
+    <p v-if="demoMode" data-testid="notification-settings-demo-banner" class="notification-demo">{{ t('notifications.settings.demoHint') }}</p>
+    <p v-if="savedBanner" role="status" data-testid="notification-settings-saved" class="sys-success">{{ savedBanner }}</p>
+    <div v-if="errorBanner" role="alert" class="sys-alert notification-load-error"><span>{{ errorBanner }}</span>
+      <button v-if="!loaded" type="button" class="sys-button" :disabled="loading" @click="load">{{ t('common.retry') }}</button>
+    </div>
+    <p v-if="loading" role="status" class="sys-loading">{{ t('common.loading') }}</p>
+
+    <div v-else-if="loaded" class="notification-content">
+      <section class="notification-overview" :aria-label="t('system.detail.channelDraft')">
+        <div class="notification-overview-origin"><Bell class="size-6" aria-hidden="true" /><span class="sys-kicker">VELA / SIGNALS</span></div>
+        <div class="notification-overview-channels">
+          <div><Inbox class="size-4" aria-hidden="true" /><span>Web UI</span><small>{{ t('system.detail.webAlwaysOn') }}</small></div>
+          <div :data-enabled="tgEnabled"><Send class="size-4" aria-hidden="true" /><span>Telegram</span><small>{{ t(tgEnabled ? 'system.deck.enabled' : 'system.deck.disabled') }}</small></div>
+          <div :data-enabled="zaloEnabled"><MessageSquare class="size-4" aria-hidden="true" /><span>Zalo</span><small>{{ t(zaloEnabled ? 'system.deck.enabled' : 'system.deck.disabled') }}</small></div>
         </div>
-        <div>
-          <div class="flex flex-wrap items-center gap-2">
-            <h2 class="font-semibold text-foreground">
-              {{ t('notifications.settings.title') }}
-            </h2>
-            <Badge v-if="demoMode" variant="secondary">
-              {{ t('notifications.demoBadge') }}
-            </Badge>
-          </div>
-          <p class="mt-1 text-sm text-muted-foreground">
-            {{ t('notifications.settings.description') }}
-          </p>
-        </div>
-      </div>
+      </section>
 
-      <Button
-        type="button"
-        size="sm"
-        data-testid="notification-settings-save"
-        :disabled="saving || loading"
-        @click="saveSettings"
-      >
-        {{ saving ? t('notifications.settings.saving') : t('notifications.settings.save') }}
-      </Button>
-    </div>
-
-    <!-- Demo Mode Notice -->
-    <div
-      v-if="demoMode"
-      data-testid="notification-settings-demo-banner"
-      class="rounded-xl border border-warning/30 bg-warning/5 px-3.5 py-2.5 text-xs text-warning-foreground"
-    >
-      {{ t('notifications.settings.demoHint') }}
-    </div>
-
-    <!-- Save / Error Banners -->
-    <div
-      v-if="savedBanner"
-      data-testid="notification-settings-saved"
-      class="rounded-xl border border-success/30 bg-success/5 px-3.5 py-2.5 text-xs font-medium text-success-foreground"
-    >
-      {{ savedBanner }}
-    </div>
-    <div
-      v-if="errorBanner"
-      class="rounded-xl border border-danger/30 bg-danger/5 px-3.5 py-2.5 text-xs font-medium text-danger-foreground"
-    >
-      {{ errorBanner }}
-    </div>
-
-    <div class="grid gap-4 lg:grid-cols-3">
-      <!-- 1. Web UI Default Channel -->
-      <div class="flex flex-col justify-between rounded-xl border bg-background p-4 space-y-4">
-        <div class="space-y-3">
-          <div class="flex items-center justify-between gap-2">
-            <div class="flex items-center gap-2">
-              <Bell class="size-4 text-studio-violet" />
-              <h3 class="text-sm font-semibold text-foreground">
-                {{ t('notifications.settings.webUiTitle') }}
-              </h3>
-            </div>
-            <Badge variant="outline">
-              {{ t('notifications.settings.webUiBadge') }}
-            </Badge>
-          </div>
-
-          <label class="flex cursor-pointer items-center justify-between gap-3 rounded-lg border bg-card px-3 py-2.5 text-xs">
-            <span class="font-medium text-foreground">{{ t('notifications.settings.toastEnabled') }}</span>
-            <input
-              v-model="toastEnabled"
-              data-testid="webui-toast-toggle"
-              type="checkbox"
-              class="size-4 accent-primary"
-            />
+      <section class="sys-panel notification-web">
+        <header class="sys-panel-header"><span class="sys-section-number">01</span><div><h2>{{ t('system.detail.preferences') }}</h2><p>{{ t('system.detail.preferencesDescription') }}</p></div><Inbox class="sys-heading-icon size-5" aria-hidden="true" /></header>
+        <fieldset class="notification-web-fields" :disabled="saving"><legend class="sr-only">{{ t('notifications.settings.webUiTitle') }}</legend>
+          <label class="notification-toast"><div><span>{{ t('notifications.settings.toastEnabled') }}</span><p>{{ t('system.detail.webDescription') }}</p></div>
+            <input v-model="toastEnabled" data-testid="webui-toast-toggle" type="checkbox" class="sys-toggle-input" />
           </label>
+          <label class="sys-field"><span>{{ t('notifications.settings.retentionDays') }}</span><input v-model.number="retentionDays" data-testid="webui-retention-days" type="number" min="1" max="365" class="admin-input" /></label>
+        </fieldset>
+      </section>
 
-          <label class="block space-y-1 text-xs">
-            <span class="font-medium text-muted-foreground">
-              {{ t('notifications.settings.retentionDays') }}
-            </span>
-            <input
-              v-model.number="retentionDays"
-              data-testid="webui-retention-days"
-              type="text"
-              inputmode="numeric"
-              class="admin-input h-9 text-xs"
-            />
-          </label>
-        </div>
-      </div>
-
-      <!-- 2. Telegram Bot Channel -->
-      <div class="flex flex-col justify-between rounded-xl border bg-background p-4 space-y-4">
-        <div class="space-y-3">
-          <div class="flex items-center justify-between gap-2">
-            <div class="flex items-center gap-2">
-              <Send class="size-4 text-studio-cyan" />
-              <h3 class="text-sm font-semibold text-foreground">
-                {{ t('notifications.settings.telegramTitle') }}
-              </h3>
-            </div>
-            <label class="inline-flex cursor-pointer items-center gap-2 text-xs font-medium">
-              <span class="text-muted-foreground">{{ t('notifications.settings.channelEnabled') }}</span>
-              <input
-                v-model="tgEnabled"
-                data-testid="telegram-enabled-toggle"
-                type="checkbox"
-                class="size-4 accent-primary"
-              />
-            </label>
-          </div>
-
-          <!-- Bot Token with Patch<SecretValue> semantics -->
-          <div class="space-y-1 text-xs">
-            <div class="flex items-center justify-between gap-2">
-              <span class="font-medium text-muted-foreground">
-                {{ t('notifications.settings.botToken') }}
-              </span>
-              <button
-                v-if="tgHasSavedToken && !tgClearToken"
-                type="button"
-                data-testid="telegram-clear-token"
-                class="text-[11px] font-medium text-danger-foreground hover:underline"
-                @click="tgClearToken = true; tgTokenInput = ''"
-              >
-                {{ t('notifications.settings.clearToken') }}
-              </button>
-              <button
-                v-else-if="tgClearToken"
-                type="button"
-                data-testid="telegram-undo-clear-token"
-                class="text-[11px] font-medium text-primary hover:underline"
-                @click="tgClearToken = false"
-              >
-                {{ t('notifications.settings.undoClearToken') }}
-              </button>
-            </div>
-
-            <input
-              v-model="tgTokenInput"
-              data-testid="telegram-bot-token"
-              type="password"
-              autocomplete="off"
-              :placeholder="
-                tgHasSavedToken && !tgClearToken
-                  ? t('notifications.settings.botTokenKeepPlaceholder', {
-                      hint: tgTokenHint ?? '••••',
-                    })
-                  : t('notifications.settings.botTokenNewPlaceholder')
-              "
-              class="admin-input h-9 text-xs"
-              @input="tgTokenInput && (tgClearToken = false)"
-            />
-            <p
-              v-if="tgClearToken"
-              data-testid="telegram-clear-notice"
-              class="text-[11px] text-warning-foreground"
-            >
-              {{ t('notifications.settings.tokenWillClear') }}
-            </p>
-          </div>
-
-          <div class="grid grid-cols-2 gap-2">
-            <label class="block space-y-1 text-xs">
-              <span class="font-medium text-muted-foreground">
-                {{ t('notifications.settings.telegramTargetId') }}
-              </span>
-              <input
-                v-model="tgChatId"
-                data-testid="telegram-chat-id"
-                type="text"
-                placeholder="-100123456789"
-                class="admin-input h-9 text-xs"
-              />
-            </label>
-
-            <label class="block space-y-1 text-xs">
-              <span class="font-medium text-muted-foreground">
-                {{ t('notifications.settings.telegramThreadId') }}
-              </span>
-              <input
-                v-model="tgThreadId"
-                data-testid="telegram-thread-id"
-                type="text"
-                placeholder="42"
-                class="admin-input h-9 text-xs"
-              />
-            </label>
-          </div>
-
-          <!-- Subscribed Topics -->
-          <div class="space-y-1.5">
-            <p class="text-xs font-medium text-muted-foreground">
-              {{ t('notifications.settings.subscribedTopics') }}
-            </p>
-            <div class="grid grid-cols-2 gap-1.5">
-              <label
-                v-for="topic in ALL_NOTIFICATION_TOPICS"
-                :key="`tg-${topic}`"
-                class="flex cursor-pointer items-center gap-2 rounded-lg border bg-card px-2.5 py-1.5 text-[11px] text-foreground"
-              >
-                <input
-                  :data-testid="`telegram-topic-${topic}`"
-                  type="checkbox"
-                  :checked="tgTopics.includes(topic)"
-                  class="size-3.5 accent-primary"
-                  @change="tgTopics = toggleTopic(tgTopics, topic)"
-                />
-                <span class="truncate">{{ topicLabel(topic) }}</span>
-              </label>
-            </div>
-          </div>
-        </div>
-
-        <!-- Test Telegram Channel -->
-        <div class="space-y-2 border-t pt-3">
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            data-testid="telegram-test-btn"
-            class="w-full"
-            :disabled="tgTesting"
-            @click="runChannelTest('telegram')"
-          >
-            <Send class="size-3.5" />
-            <span>
-              {{
-                tgTesting
-                  ? t('notifications.settings.testingChannel')
-                  : t('notifications.settings.testChannel')
-              }}
-            </span>
-          </Button>
-
-          <div
-            v-if="tgTestResult"
-            data-testid="telegram-test-result"
-            class="flex items-start gap-1.5 rounded-lg border p-2 text-xs"
-            :class="
-              tgTestResult.ok
-                ? 'border-success/30 bg-success/5 text-success-foreground'
-                : 'border-danger/30 bg-danger/5 text-danger-foreground'
-            "
-          >
-            <CheckCircle2 v-if="tgTestResult.ok" class="mt-0.5 size-3.5 shrink-0" />
-            <XCircle v-else class="mt-0.5 size-3.5 shrink-0" />
-            <span>
-              {{
-                tgTestResult.ok
-                  ? `OK (${tgTestResult.external_message_id})`
-                  : tgTestResult.error
-              }}
-            </span>
-          </div>
-        </div>
-      </div>
-
-      <!-- 3. Zalo Bot Channel -->
-      <div class="flex flex-col justify-between rounded-xl border bg-background p-4 space-y-4">
-        <div class="space-y-3">
-          <div class="flex items-center justify-between gap-2">
-            <div class="flex items-center gap-2">
-              <MessageSquare class="size-4 text-studio-violet" />
-              <h3 class="text-sm font-semibold text-foreground">
-                {{ t('notifications.settings.zaloTitle') }}
-              </h3>
-            </div>
-            <label class="inline-flex cursor-pointer items-center gap-2 text-xs font-medium">
-              <span class="text-muted-foreground">{{ t('notifications.settings.channelEnabled') }}</span>
-              <input
-                v-model="zaloEnabled"
-                data-testid="zalo-enabled-toggle"
-                type="checkbox"
-                class="size-4 accent-primary"
-              />
-            </label>
-          </div>
-
-          <!-- Bot Token with Patch<SecretValue> semantics -->
-          <div class="space-y-1 text-xs">
-            <div class="flex items-center justify-between gap-2">
-              <span class="font-medium text-muted-foreground">
-                {{ t('notifications.settings.botToken') }}
-              </span>
-              <button
-                v-if="zaloHasSavedToken && !zaloClearToken"
-                type="button"
-                data-testid="zalo-clear-token"
-                class="text-[11px] font-medium text-danger-foreground hover:underline"
-                @click="zaloClearToken = true; zaloTokenInput = ''"
-              >
-                {{ t('notifications.settings.clearToken') }}
-              </button>
-              <button
-                v-else-if="zaloClearToken"
-                type="button"
-                data-testid="zalo-undo-clear-token"
-                class="text-[11px] font-medium text-primary hover:underline"
-                @click="zaloClearToken = false"
-              >
-                {{ t('notifications.settings.undoClearToken') }}
-              </button>
-            </div>
-
-            <input
-              v-model="zaloTokenInput"
-              data-testid="zalo-bot-token"
-              type="password"
-              autocomplete="off"
-              :placeholder="
-                zaloHasSavedToken && !zaloClearToken
-                  ? t('notifications.settings.botTokenKeepPlaceholder', {
-                      hint: zaloTokenHint ?? '••••',
-                    })
-                  : t('notifications.settings.botTokenNewPlaceholder')
-              "
-              class="admin-input h-9 text-xs"
-              @input="zaloTokenInput && (zaloClearToken = false)"
-            />
-            <p
-              v-if="zaloClearToken"
-              data-testid="zalo-clear-notice"
-              class="text-[11px] text-warning-foreground"
-            >
-              {{ t('notifications.settings.tokenWillClear') }}
-            </p>
-          </div>
-
-          <label class="block space-y-1 text-xs">
-            <span class="font-medium text-muted-foreground">
-              {{ t('notifications.settings.zaloTargetId') }}
-            </span>
-            <input
-              v-model="zaloRecipientId"
-              data-testid="zalo-recipient-id"
-              type="text"
-              placeholder="zalo-user-or-group"
-              class="admin-input h-9 text-xs"
-            />
-          </label>
-
-          <!-- Subscribed Topics -->
-          <div class="space-y-1.5">
-            <p class="text-xs font-medium text-muted-foreground">
-              {{ t('notifications.settings.subscribedTopics') }}
-            </p>
-            <div class="grid grid-cols-2 gap-1.5">
-              <label
-                v-for="topic in ALL_NOTIFICATION_TOPICS"
-                :key="`zalo-${topic}`"
-                class="flex cursor-pointer items-center gap-2 rounded-lg border bg-card px-2.5 py-1.5 text-[11px] text-foreground"
-              >
-                <input
-                  :data-testid="`zalo-topic-${topic}`"
-                  type="checkbox"
-                  :checked="zaloTopics.includes(topic)"
-                  class="size-3.5 accent-primary"
-                  @change="zaloTopics = toggleTopic(zaloTopics, topic)"
-                />
-                <span class="truncate">{{ topicLabel(topic) }}</span>
-              </label>
-            </div>
-          </div>
-        </div>
-
-        <!-- Test Zalo Channel -->
-        <div class="space-y-2 border-t pt-3">
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            data-testid="zalo-test-btn"
-            class="w-full"
-            :disabled="zaloTesting"
-            @click="runChannelTest('zalo')"
-          >
-            <MessageSquare class="size-3.5" />
-            <span>
-              {{
-                zaloTesting
-                  ? t('notifications.settings.testingChannel')
-                  : t('notifications.settings.testChannel')
-              }}
-            </span>
-          </Button>
-
-          <div
-            v-if="zaloTestResult"
-            data-testid="zalo-test-result"
-            class="flex items-start gap-1.5 rounded-lg border p-2 text-xs"
-            :class="
-              zaloTestResult.ok
-                ? 'border-success/30 bg-success/5 text-success-foreground'
-                : 'border-danger/30 bg-danger/5 text-danger-foreground'
-            "
-          >
-            <CheckCircle2 v-if="zaloTestResult.ok" class="mt-0.5 size-3.5 shrink-0" />
-            <XCircle v-else class="mt-0.5 size-3.5 shrink-0" />
-            <span>
-              {{
-                zaloTestResult.ok
-                  ? `OK (${zaloTestResult.external_message_id})`
-                  : zaloTestResult.error
-              }}
-            </span>
-          </div>
-        </div>
+      <header class="notification-section-heading"><span class="sys-section-number">02</span><div><h2>{{ t('system.detail.externalChannels') }}</h2><p>{{ t('system.detail.externalDescription') }}</p></div></header>
+      <div class="notification-external-grid">
+        <NotificationChannelPanel kind="telegram" v-model:enabled="tgEnabled" v-model:token="tgTokenInput" v-model:clear-token="tgClearToken"
+          v-model:target="tgChatId" v-model:thread="tgThreadId" v-model:topics="tgTopics"
+          :has-saved-token="tgHasSavedToken" :token-hint="tgTokenHint" :testing="tgTesting" :test-result="tgTestResult" :disabled="saving" @test="runChannelTest('telegram')" />
+        <NotificationChannelPanel kind="zalo" v-model:enabled="zaloEnabled" v-model:token="zaloTokenInput" v-model:clear-token="zaloClearToken"
+          v-model:target="zaloRecipientId" v-model:topics="zaloTopics"
+          :has-saved-token="zaloHasSavedToken" :token-hint="zaloTokenHint" :testing="zaloTesting" :test-result="zaloTestResult" :disabled="saving" @test="runChannelTest('zalo')" />
       </div>
     </div>
+    <footer class="notification-savebar">
+      <span>{{ loaded ? t('system.detail.configurationRevision', { revision }) : t('common.loading') }}</span>
+      <div class="sys-actions">
+        <button type="button" class="sys-button" :disabled="saving || loading" @click="load"><RefreshCcw class="size-3.5" aria-hidden="true" />{{ t('system.detail.reloadSettings') }}</button>
+        <Button type="button" data-testid="notification-settings-save" class="sys-primary" :disabled="saving || loading || !loaded || tgTesting || zaloTesting" @click="saveSettings">
+          <Save class="size-3.5" aria-hidden="true" />{{ t(saving ? 'notifications.settings.saving' : 'notifications.settings.save') }}
+        </Button>
+      </div>
+    </footer>
   </section>
 </template>
+
+<style src="./notification-settings.css"></style>

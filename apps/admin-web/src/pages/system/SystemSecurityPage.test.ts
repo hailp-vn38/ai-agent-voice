@@ -169,6 +169,7 @@ describe('SystemSecurityPage', () => {
 
     expect(authApi.changePassword).toHaveBeenCalledWith('current-password', 'brand-new-password')
     expect(localStorage.getItem('voice-agent-admin-token')).toBe('rotated-token')
+    expect(wrapper.get('[role="status"]').text()).toContain('Password updated')
   })
 
   it('keeps this browser signed in with a fresh token after signing out everywhere', async () => {
@@ -180,5 +181,6 @@ describe('SystemSecurityPage', () => {
 
     expect(authApi.logoutEverywhere).toHaveBeenCalledTimes(1)
     expect(localStorage.getItem('voice-agent-admin-token')).toBe('fresh-token')
+    expect(wrapper.get('[role="status"]').text()).toContain('Other browser tokens revoked')
   })
 })

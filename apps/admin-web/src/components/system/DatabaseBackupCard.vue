@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { CheckCircle2, Database, Download, ShieldAlert, Upload } from '@lucide/vue'
+import { ArrowRight, CheckCircle2, Download, File, FolderOpen, ShieldAlert, ShieldCheck, Upload } from '@lucide/vue'
 import { computed, ref, watch } from 'vue'
 
 import { isApiError } from '@/api/errors'
@@ -14,11 +14,10 @@ import type {
 import ConfirmDialog from '@/components/admin/ConfirmDialog.vue'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { useI18n } from '@/composables/useI18n'
 import { useAdminStore } from '@/stores/admin'
 
-const { locale } = useI18n()
+const { locale, t } = useI18n()
 const admin = useAdminStore()
 
 const isVi = computed(() => locale.value === 'vi')
@@ -123,200 +122,88 @@ async function executeImport() {
 </script>
 
 <template>
-  <Card data-testid="database-backup-card">
-    <CardHeader class="flex flex-row flex-wrap items-center justify-between gap-3">
-      <div class="flex items-center gap-3">
-        <div class="grid size-10 shrink-0 place-items-center rounded-xl bg-sky-500/10 text-sky-600 dark:text-sky-400">
-          <Database class="size-5" />
-        </div>
-        <div class="space-y-0.5">
-          <p class="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
-            DATABASE BACKUP &amp; RESTORE
-          </p>
-          <CardTitle>
-            {{ isVi ? 'Sao lưu & Khôi phục Database Trực tuyến' : 'Online Database Backup & Restore' }}
-          </CardTitle>
-          <CardDescription>
-            {{
-              isVi
-                ? 'Xuất gói cấu hình (.json) hoặc ảnh chụp SQLite (.db) nhất quán và khôi phục trực tuyến qua giao dịch không cần khởi động lại máy chủ.'
-                : 'Export a portable JSON Backup Bundle (.json) or consistent SQLite Snapshot (.db) and restore online transactionally without restarting the server.'
-            }}
-          </CardDescription>
-        </div>
+  <div class="backup-workspace" data-testid="database-backup-card">
+    <section class="sys-panel backup-export">
+      <header class="sys-panel-header"><span class="sys-section-number">01</span>
+        <div><h2>{{ t('system.detail.export') }}</h2><p>{{ t('system.detail.exportDescription') }}</p></div>
+      </header>
+      <div class="backup-art" aria-hidden="true">
+        <span class="backup-art-coordinate">VELA / ARCHIVE</span>
+        <div class="backup-paper-back" /><div class="backup-paper"><File class="size-7" /><span>{{ exportFormat === 'json' ? '.json' : '.db' }}</span><i /><i /><i /></div>
+        <span class="backup-art-index">01 — {{ exportFormat.toUpperCase() }}</span>
       </div>
-    </CardHeader>
-
-    <CardContent class="grid gap-6 lg:grid-cols-2">
-      <!-- Block 1: Export -->
-      <div class="space-y-4 rounded-xl border border-border/70 bg-muted/20 p-4">
-        <div class="space-y-1">
-          <h3 class="text-sm font-semibold">
-            {{ isVi ? '1. Xuất dữ liệu (Export Backup)' : '1. Export Backup' }}
-          </h3>
-          <p class="text-xs text-muted-foreground">
-            {{
-              isVi
-                ? 'Bí mật đã mã hóa AES-256-GCM được giữ nguyên dạng niêm phong, không bao giờ xuất ra plaintext.'
-                : 'AES-256-GCM credentials remain sealed and are never exported in plaintext.'
-            }}
-          </p>
+      <div class="backup-export-body">
+        <div class="backup-format-description"><span class="sys-kicker">{{ t(exportFormat === 'json' ? 'system.detail.portable' : 'system.detail.snapshot') }}</span>
+          <p>{{ t(exportFormat === 'json' ? 'system.detail.jsonDescription' : 'system.detail.sqliteDescription') }}</p>
         </div>
-
-        <div class="grid gap-3 sm:grid-cols-2">
-          <label class="space-y-1 text-xs font-medium">
-            <span>{{ isVi ? 'Định dạng file' : 'Backup Format' }}</span>
-            <select
-              v-model="exportFormat"
-              data-testid="backup-export-format"
-              class="admin-input w-full text-sm"
-              :disabled="exporting"
-            >
-              <option value="json">JSON Bundle (.json)</option>
-              <option value="sqlite">SQLite Snapshot (.db)</option>
+        <div class="sys-form-grid">
+          <label class="sys-field"><span>{{ t('system.detail.format') }}</span>
+            <select v-model="exportFormat" data-testid="backup-export-format" class="admin-input" :disabled="exporting">
+              <option value="json">JSON (.json)</option><option value="sqlite">SQLite (.db)</option>
             </select>
           </label>
-
-          <label class="space-y-1 text-xs font-medium">
-            <span>{{ isVi ? 'Phạm vi dữ liệu' : 'Backup Scope' }}</span>
-            <select
-              v-model="exportScope"
-              data-testid="backup-export-scope"
-              class="admin-input w-full text-sm"
-              :disabled="exporting"
-            >
-              <option value="full">
-                {{ isVi ? 'Toàn bộ (Cấu hình + Lịch sử + Nhắc hẹn)' : 'Full (Config + History + Reminders)' }}
-              </option>
-              <option value="config_only">
-                {{ isVi ? 'Chỉ cấu hình cốt lõi (Config-Only)' : 'Config-Only' }}
-              </option>
+          <label class="sys-field"><span>{{ t('system.detail.scope') }}</span>
+            <select v-model="exportScope" data-testid="backup-export-scope" class="admin-input" :disabled="exporting">
+              <option value="full">{{ isVi ? 'Toàn bộ dữ liệu' : 'Full workspace' }}</option>
+              <option value="config_only">{{ isVi ? 'Chỉ cấu hình' : 'Configuration only' }}</option>
             </select>
           </label>
         </div>
-
-        <p v-if="exportError" role="alert" class="text-xs text-destructive">
-          {{ exportError }}
-        </p>
-
-        <Button
-          type="button"
-          data-testid="backup-export-button"
-          :disabled="exporting"
-          @click="handleExport"
-        >
-          <Download class="size-4" />
-          <span>
-            {{
-              exporting
-                ? isVi
-                  ? 'Đang tạo bản sao lưu...'
-                  : 'Exporting...'
-                : isVi
-                  ? 'Tải xuống bản sao lưu'
-                  : 'Download Backup'
-            }}
-          </span>
+        <p v-if="exportError" role="alert" class="sys-alert">{{ exportError }}</p>
+        <Button type="button" data-testid="backup-export-button" class="sys-primary w-full" :disabled="exporting" @click="handleExport">
+          <Download class="size-4" aria-hidden="true" />{{ exporting ? (isVi ? 'Đang tạo bản sao lưu…' : 'Creating backup…') : (isVi ? 'Tải xuống bản sao lưu' : 'Download backup') }}
         </Button>
+        <p class="backup-sealed"><ShieldCheck class="size-3.5" aria-hidden="true" />{{ t('system.detail.sealed') }}</p>
       </div>
+    </section>
 
-      <!-- Block 2: Inspect & Import -->
-      <div class="space-y-4 rounded-xl border border-border/70 bg-muted/20 p-4">
-        <div class="space-y-1">
-          <h3 class="text-sm font-semibold">
-            {{ isVi ? '2. Nhập / Khôi phục dữ liệu (Inspect & Import)' : '2. Inspect & Restore Backup' }}
-          </h3>
-          <p class="text-xs text-muted-foreground">
-            {{
-              isVi
-                ? 'Tự động kiểm tra trước (Dry-run Backup Inspection) khi chọn tệp .json hoặc .db.'
-                : 'Automatically runs a read-only Backup Inspection when a .json or .db file is selected.'
-            }}
-          </p>
-        </div>
-
-        <div class="space-y-3">
-          <label class="block space-y-1 text-xs font-medium">
-            <span>{{ isVi ? 'Tệp sao lưu (.json hoặc .db)' : 'Backup File (.json or .db)' }}</span>
-            <input
-              type="file"
-              accept=".json,.db,.sqlite,application/json,application/vnd.sqlite3"
-              data-testid="backup-file-input"
-              class="admin-input block w-full text-xs file:mr-3 file:rounded-md file:border-0 file:bg-primary/10 file:px-2.5 file:py-1 file:text-xs file:font-semibold file:text-primary"
-              :disabled="inspecting || importing"
-              @change="onFileChange"
-            />
+    <section class="sys-panel backup-restore">
+      <header class="sys-panel-header"><span class="sys-section-number">02</span>
+        <div><h2>{{ t('system.detail.restore') }}</h2><p>{{ t('system.detail.restoreDescription') }}</p></div>
+      </header>
+      <ol class="restore-steps" :aria-label="t('system.detail.restore')">
+        <li :aria-current="!selectedFile ? 'step' : undefined" :data-complete="!!selectedFile"><span>1</span>{{ t('system.detail.choose') }}<ArrowRight class="size-3" aria-hidden="true" /></li>
+        <li :aria-current="selectedFile && !importReport ? 'step' : undefined" :data-complete="!!inspectionReport"><span>2</span>{{ t('system.detail.inspect') }}<ArrowRight class="size-3" aria-hidden="true" /></li>
+        <li :aria-current="importReport ? 'step' : undefined" :data-complete="!!importReport"><span>3</span>{{ t('system.detail.apply') }}</li>
+      </ol>
+      <div class="backup-restore-body">
+        <label class="backup-file-picker" :data-selected="!!selectedFile">
+          <FolderOpen class="size-6" aria-hidden="true" />
+          <strong>{{ selectedFile?.name ?? t('system.detail.chooseFile') }}</strong>
+          <span>{{ selectedFile ? t('system.detail.replaceFile') : t('system.detail.fileHint') }}</span>
+          <input type="file" accept=".json,.db,.sqlite,application/json,application/vnd.sqlite3" data-testid="backup-file-input"
+            :aria-label="t('system.detail.chooseFile')" :disabled="inspecting || importing" @change="onFileChange" />
+        </label>
+        <div class="sys-form-grid">
+          <label class="sys-field"><span>{{ isVi ? 'Chế độ phục hồi' : 'Restore mode' }}</span>
+            <select v-model="importMode" data-testid="backup-mode-select" class="admin-input" :disabled="inspecting || importing">
+              <option value="merge">{{ isVi ? 'Gộp & cập nhật (Merge)' : 'Merge & update' }}</option>
+              <option value="replace">{{ isVi ? 'Thay thế (Replace)' : 'Replace from backup' }}</option>
+            </select>
           </label>
-
-          <div class="grid gap-3 sm:grid-cols-2">
-            <label class="space-y-1 text-xs font-medium">
-              <span>{{ isVi ? 'Chế độ nhập' : 'Import Mode' }}</span>
-              <select
-                v-model="importMode"
-                data-testid="backup-mode-select"
-                class="admin-input w-full text-sm"
-                :disabled="inspecting || importing"
-              >
-                <option value="merge">
-                  {{ isVi ? 'Merge (Gộp & cập nhật theo khóa)' : 'Merge (Upsert by key)' }}
-                </option>
-                <option value="replace">
-                  {{ isVi ? 'Replace (Đồng bộ theo bản sao lưu)' : 'Replace (Sync to backup)' }}
-                </option>
-              </select>
-            </label>
-
-            <label class="space-y-1 text-xs font-medium">
-              <span>{{ isVi ? 'Phạm vi áp dụng' : 'Import Scope' }}</span>
-              <select
-                v-model="importScope"
-                data-testid="backup-import-scope-select"
-                class="admin-input w-full text-sm"
-                :disabled="inspecting || importing"
-              >
-                <option value="full">{{ isVi ? 'Toàn bộ (Full)' : 'Full' }}</option>
-                <option value="config_only">{{ isVi ? 'Chỉ cấu hình (Config-Only)' : 'Config-Only' }}</option>
-              </select>
-            </label>
-          </div>
-
-          <label class="flex items-center gap-2 text-xs">
-            <input
-              v-model="clearUnreadableCredentials"
-              type="checkbox"
-              data-testid="backup-clear-credentials-checkbox"
-              :disabled="inspecting || importing"
-            />
-            <span>
-              {{
-                isVi
-                  ? 'Tự động xóa bí mật không giải mã được (khi nhập từ máy chủ khác khóa mã hóa)'
-                  : 'Automatically scrub unreadable credentials (when importing across different master keys)'
-              }}
-            </span>
+          <label class="sys-field"><span>{{ isVi ? 'Phạm vi áp dụng' : 'Restore scope' }}</span>
+            <select v-model="importScope" data-testid="backup-import-scope-select" class="admin-input" :disabled="inspecting || importing">
+              <option value="full">{{ isVi ? 'Toàn bộ dữ liệu' : 'Full workspace' }}</option>
+              <option value="config_only">{{ isVi ? 'Chỉ cấu hình' : 'Configuration only' }}</option>
+            </select>
           </label>
         </div>
-
-        <!-- Shimmer loading state during Backup Inspection -->
-        <div
-          v-if="inspecting"
-          role="status"
-          aria-busy="true"
-          data-testid="backup-inspect-shimmer"
-          class="card-shimmer space-y-2 rounded-lg border border-border/60 p-3 text-xs text-muted-foreground"
-        >
-          {{ isVi ? 'Đang phân tích gói sao lưu (Backup Inspection)...' : 'Inspecting backup file...' }}
+        <label class="backup-scrub-option">
+          <input v-model="clearUnreadableCredentials" type="checkbox" data-testid="backup-clear-credentials-checkbox" :disabled="inspecting || importing" />
+          <span>{{ isVi ? 'Xóa thông tin bí mật không giải mã được khi bản sao lưu dùng khóa mã hóa khác.' : 'Clear unreadable credentials when the backup uses a different encryption key.' }}</span>
+        </label>
+        <div v-if="inspecting" role="status" aria-busy="true" data-testid="backup-inspect-shimmer" class="card-shimmer sys-loading">
+          {{ isVi ? 'Đang kiểm tra bản sao lưu…' : 'Inspecting backup…' }}
         </div>
-
-        <p v-if="importError" role="alert" data-testid="backup-import-error" class="text-xs text-destructive">
-          {{ importError }}
-        </p>
-
+        <p v-if="importError" role="alert" data-testid="backup-import-error" class="sys-alert">{{ importError }}</p>
+        <div v-if="!selectedFile" class="backup-empty-preview"><File class="size-5" aria-hidden="true" />
+          <h3>{{ t('system.detail.awaitingFile') }}</h3><p>{{ t('system.detail.awaitingFileDescription') }}</p>
+        </div>
         <!-- Inspection summary -->
         <div
           v-if="inspectionReport && !inspecting"
           data-testid="backup-inspection-summary"
-          class="space-y-3 rounded-lg border border-border/80 bg-background/80 p-3 text-xs"
+          class="backup-preview space-y-3 rounded-lg border border-border/80 bg-background/80 p-4 text-xs"
         >
           <div class="flex flex-wrap items-center justify-between gap-2">
             <div class="flex flex-wrap items-center gap-2">
@@ -325,19 +212,19 @@ async function executeImport() {
               <span class="text-muted-foreground">v{{ inspectionReport.server_version }}</span>
             </div>
             <div class="flex flex-wrap gap-2 font-medium">
-              <span class="text-emerald-600 dark:text-emerald-400">
+              <span class="text-success-foreground">
                 +{{ inspectionReport.totals.to_create }} {{ isVi ? 'mới' : 'create' }}
               </span>
-              <span class="text-sky-600 dark:text-sky-400">
+              <span class="text-studio-cyan">
                 ~{{ inspectionReport.totals.to_update }} {{ isVi ? 'cập nhật' : 'update' }}
               </span>
-              <span v-if="inspectionReport.totals.to_delete > 0" class="text-destructive">
+              <span v-if="inspectionReport.totals.to_delete > 0" class="text-danger-foreground">
                 -{{ inspectionReport.totals.to_delete }} {{ isVi ? 'xóa' : 'delete' }}
               </span>
             </div>
           </div>
 
-          <div class="max-h-44 overflow-y-auto rounded border border-border/60">
+          <div class="max-h-60 overflow-auto rounded border border-border/60">
             <table class="w-full text-left text-[11px]">
               <thead class="bg-muted/50 text-muted-foreground">
                 <tr>
@@ -363,7 +250,7 @@ async function executeImport() {
           <div
             v-if="inspectionReport.warnings.length > 0"
             data-testid="backup-inspection-warnings"
-            class="flex items-start gap-2 rounded-md bg-amber-500/10 p-2 text-amber-700 dark:text-amber-300"
+            class="flex items-start gap-2 rounded-md bg-warning/10 p-2 text-warning-foreground"
           >
             <ShieldAlert class="mt-0.5 size-4 shrink-0" />
             <ul class="list-disc space-y-1 pl-4">
@@ -374,6 +261,7 @@ async function executeImport() {
           <Button
             type="button"
             data-testid="backup-import-button"
+            class="sys-primary"
             :disabled="importing || (!clearUnreadableCredentials && inspectionReport.credentials.unreadable > 0)"
             @click="requestConfirmImport"
           >
@@ -397,7 +285,7 @@ async function executeImport() {
           v-if="importReport"
           role="status"
           data-testid="backup-import-success"
-          class="flex items-center gap-2 rounded-md bg-emerald-500/10 p-2.5 text-xs text-emerald-700 dark:text-emerald-300"
+          class="flex items-center gap-2 rounded-md bg-success/10 p-2.5 text-xs text-success-foreground"
         >
           <CheckCircle2 class="size-4 shrink-0" />
           <span>
@@ -409,8 +297,8 @@ async function executeImport() {
           </span>
         </div>
       </div>
-    </CardContent>
-  </Card>
+    </section>
+  </div>
 
   <ConfirmDialog
     v-model="confirmOpen"

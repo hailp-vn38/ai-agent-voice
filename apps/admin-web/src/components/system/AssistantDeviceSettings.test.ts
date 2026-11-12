@@ -37,6 +37,7 @@ describe('AssistantDeviceSettings', () => {
     vi.mocked(assistantApi.save).mockResolvedValue({ ...configured, memory_mode: 'read_write', revision: 8 })
     const wrapper = mountSettings()
     await flushPromises()
+    expect(wrapper.get('[data-testid="assistant-connection-state"]').text()).toBe('No active connection')
     const select = wrapper.get('[data-assistant-memory-mode]')
     expect((select.element as HTMLSelectElement).value).toBe('read')
 
