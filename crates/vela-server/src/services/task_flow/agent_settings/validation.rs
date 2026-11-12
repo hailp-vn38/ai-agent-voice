@@ -18,9 +18,10 @@ use super::persistence::{
 use super::provider_catalog::{
     ResolvedLlmProvider, agent_supports_provider, resolve_llm_provider_catalog,
 };
-use super::resolution::build_agent_definitions;
+use super::resolution::build_agent_definitions_with_skills;
 use super::specs::{custom_subagent_flow_policy, find_agent_spec, valid_custom_subagent_id};
 
+#[cfg(test)]
 pub fn validate_agent_overrides(
     orchestrator_provider: &str,
     worker_provider: &str,
@@ -311,7 +312,7 @@ pub async fn create_custom_subagent(
     };
 
     let catalog = resolve_llm_provider_catalog(state).await;
-    let skill_ids = super::super::skills::catalog_ids(state);
+    let skill_ids = super::super::skills::catalog_ids(state).await;
 
     let persisted = {
         let mut control = state
@@ -417,7 +418,15 @@ async fn reconfigure_orchestrator_with_settings(
     let Some(orch) = state.orchestrator.as_ref() else {
         return Ok(());
     };
-    let (providers, defs) = build_agent_definitions(&state.config.orchestrator, settings, &catalog);
+    let skills =
+        super::super::skills::catalog_snapshot(state.config.orchestrator.skills_dir.as_deref())
+            .await;
+    let (providers, defs) = build_agent_definitions_with_skills(
+        &state.config.orchestrator,
+        settings,
+        &catalog,
+        &skills,
+    );
     orch.reconfigure(providers, defs)
         .await
         .map_err(|e| e.to_string())

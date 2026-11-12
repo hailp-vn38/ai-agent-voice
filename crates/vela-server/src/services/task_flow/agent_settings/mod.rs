@@ -30,17 +30,21 @@ pub use provider_catalog::{
     MuseCatalogOptions, ResolvedLlmProvider, default_orchestrator_provider, find_provider_by_tag,
     resolve_llm_provider_catalog,
 };
+#[cfg(test)]
 pub use resolution::{build_agent_definitions, project_agents_json};
+pub use resolution::{build_agent_definitions_with_skills, project_agents_json_with_skills};
 pub use specs::{
     AGENT_SPECS, AgentSpec, CUSTOM_DAILY_SUBAGENT_TOOLS, CUSTOM_WIKI_SUBAGENT_TOOLS,
     DEFAULT_USER_ROOT_AGENT_ID, WIKI_AUTOFLOW_ROOT_AGENT_ID, custom_subagent_flow_policy,
     find_agent_spec, find_tool_owner_spec, is_user_routable_root_agent,
     normalize_user_target_agent, required_job_skills, valid_custom_subagent_id,
 };
+#[cfg(test)]
+pub use validation::validate_agent_overrides;
 pub use validation::{
     CreateCustomSubagentInput, SubagentMutationError, create_custom_subagent,
-    delete_custom_subagent, sync_orchestrator_from_state, validate_agent_overrides,
-    validate_agent_overrides_with_skills, validate_settings_change,
+    delete_custom_subagent, sync_orchestrator_from_state, validate_agent_overrides_with_skills,
+    validate_settings_change,
 };
 
 pub const DEFAULT_ORCHESTRATOR_PROVIDER_REF: &str = "orchestrator:default";

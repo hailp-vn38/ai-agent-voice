@@ -990,12 +990,14 @@ fn custom_subagents_enforce_flow_tool_boundaries_and_sync_active_subagents_promp
         },
     );
 
+    let known_skills = std::collections::BTreeSet::from(["wiki-query".to_owned()]);
     assert!(
-        validate_agent_overrides(
+        validate_agent_overrides_with_skills(
             &settings.orchestrator_llm_provider,
             &settings.worker_llm_provider,
             &settings.agents,
             &catalog,
+            &known_skills,
         )
         .is_ok()
     );
@@ -1007,11 +1009,12 @@ fn custom_subagents_enforce_flow_tool_boundaries_and_sync_active_subagents_promp
         .unwrap()
         .allowed_tools = Some(vec!["yt_fetch_transcript".to_owned()]);
     assert_eq!(
-        validate_agent_overrides(
+        validate_agent_overrides_with_skills(
             &settings.orchestrator_llm_provider,
             &settings.worker_llm_provider,
             &bad_agents,
             &catalog,
+            &known_skills,
         ),
         Err("invalid_arguments")
     );

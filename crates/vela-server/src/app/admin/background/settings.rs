@@ -2,8 +2,9 @@ use super::*;
 use crate::services::task_flow::{
     AgentConfigOverride, CreateCustomSubagentInput, DEFAULT_ORCHESTRATOR_PROVIDER_REF,
     PersistedBackgroundSettings, SubagentMutationError, create_custom_subagent,
-    delete_custom_subagent, find_agent_spec, project_agents_json, resolve_llm_provider_catalog,
-    save_persisted_settings, skills, sync_orchestrator_from_state, validate_settings_change,
+    delete_custom_subagent, find_agent_spec, project_agents_json_with_skills,
+    resolve_llm_provider_catalog, save_persisted_settings, skills, sync_orchestrator_from_state,
+    validate_settings_change,
 };
 use serde::Deserialize;
 use std::collections::BTreeMap;
@@ -38,8 +39,13 @@ async fn build_settings_json(
             .iter()
             .any(|p| p.provider_ref == *pref && p.supports_tag("chat"))
     });
-    let agents = project_agents_json(&state.config.orchestrator, settings, &catalog);
-    let skills_list = skills::list(state).unwrap_or_default();
+    let skills = crate::services::task_flow::skills::catalog_snapshot(
+        state.config.orchestrator.skills_dir.as_deref(),
+    )
+    .await;
+    let agents =
+        project_agents_json_with_skills(&state.config.orchestrator, settings, &catalog, &skills);
+    let skills_list = skills::list(state).await.unwrap_or_default();
     let available_agents = state
         .task_manager
         .as_ref()
@@ -134,7 +140,7 @@ pub(in crate::app::admin) async fn save_settings(
             (!value.is_empty()).then(|| value.to_owned())
         })
         .unwrap_or_else(|| current.wiki_chat_llm_provider.clone());
-    let skill_ids = skills::catalog_ids(&state);
+    let skill_ids = skills::catalog_ids(&state).await;
     let mut pruned_current_agents = current.agents.clone();
     for ovr in pruned_current_agents.values_mut() {
         if let Some(ref mut allowed) = ovr.allowed_skills {

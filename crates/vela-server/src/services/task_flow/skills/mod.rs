@@ -275,37 +275,23 @@ struct ScannedCatalog {
     skipped: Vec<(String, String)>,
 }
 
-fn scan_catalog(skills_dir: Option<&Path>) -> ScannedCatalog {
-    let Some(root) = skills_dir else {
-        return ScannedCatalog {
-            valid: BTreeMap::new(),
-            skipped: Vec::new(),
-        };
+/// Async catalog scan for handlers already running on the Tokio runtime.
+async fn scan_catalog_async(skills_dir: Option<&Path>) -> ScannedCatalog {
+    let empty = || ScannedCatalog {
+        valid: BTreeMap::new(),
+        skipped: Vec::new(),
     };
-    let root = root.to_path_buf();
-    let scan_root = root.clone();
-    let scanned = std::thread::spawn(move || {
-        tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .ok()?
-            .block_on(scan_skill_catalog(&scan_root, SKILL_MAX_BYTES))
-            .ok()
-    })
-    .join()
-    .ok()
-    .flatten();
-    let Some(scanned) = scanned else {
-        return ScannedCatalog {
-            valid: BTreeMap::new(),
-            skipped: Vec::new(),
-        };
+    let Some(root) = skills_dir else {
+        return empty();
+    };
+    let Ok(scanned) = scan_skill_catalog(root, SKILL_MAX_BYTES).await else {
+        return empty();
     };
     let valid = scanned
         .skills
         .into_iter()
         .filter_map(|summary| {
-            read_one_skill_from_dir(&root, &summary.id)
+            read_one_skill_from_dir(root, &summary.id)
                 .ok()
                 .map(|indexed| (summary.id, indexed))
         })
@@ -314,6 +300,32 @@ fn scan_catalog(skills_dir: Option<&Path>) -> ScannedCatalog {
         valid,
         skipped: scanned.skipped,
     }
+}
+
+/// Sync catalog scan for projections and validation that are not async. Runs the async scan on a
+/// short-lived thread with its own runtime so the caller's runtime thread is never nested.
+fn scan_catalog(skills_dir: Option<&Path>) -> ScannedCatalog {
+    let Some(root) = skills_dir else {
+        return ScannedCatalog {
+            valid: BTreeMap::new(),
+            skipped: Vec::new(),
+        };
+    };
+    let root = root.to_path_buf();
+    std::thread::spawn(move || {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .map(|runtime| runtime.block_on(scan_catalog_async(Some(&root))))
+            .ok()
+    })
+    .join()
+    .ok()
+    .flatten()
+    .unwrap_or_else(|| ScannedCatalog {
+        valid: BTreeMap::new(),
+        skipped: Vec::new(),
+    })
 }
 
 fn scan_catalog_from_dir(skills_dir: Option<&Path>) -> BTreeMap<String, IndexedDiskSkill> {
@@ -374,15 +386,44 @@ pub fn catalog_ids_from_dir(skills_dir: Option<&Path>) -> BTreeSet<String> {
 }
 
 /// Returns the sorted set of valid skill IDs currently available in the server's `skills_dir`.
-pub fn catalog_ids(state: &AppState) -> BTreeSet<String> {
-    catalog_ids_from_dir(state.config.orchestrator.skills_dir.as_deref())
+pub async fn catalog_ids(state: &AppState) -> BTreeSet<String> {
+    scan_catalog_async(state.config.orchestrator.skills_dir.as_deref())
+        .await
+        .valid
+        .into_keys()
+        .collect()
 }
 
-pub fn catalog_tool_requirements(skills_dir: Option<&Path>) -> BTreeMap<String, Vec<String>> {
-    scan_catalog_from_dir(skills_dir)
-        .into_iter()
-        .map(|(id, indexed)| (id, indexed.doc.requires_tools))
-        .collect()
+/// One library scan of the Skill Catalog: the valid IDs and each skill's declared tool needs.
+/// Agent resolution takes this by reference so async callers scan once, off the sync path.
+#[derive(Clone, Debug, Default)]
+pub struct SkillCatalogSnapshot {
+    pub ids: BTreeSet<String>,
+    pub tool_requirements: BTreeMap<String, Vec<String>>,
+}
+
+impl SkillCatalogSnapshot {
+    fn from_scan(catalog: &ScannedCatalog) -> Self {
+        Self {
+            ids: catalog.valid.keys().cloned().collect(),
+            tool_requirements: catalog
+                .valid
+                .iter()
+                .map(|(id, indexed)| (id.clone(), indexed.doc.requires_tools.clone()))
+                .collect(),
+        }
+    }
+}
+
+/// Async snapshot for handlers and startup code already running on the Tokio runtime.
+pub async fn catalog_snapshot(skills_dir: Option<&Path>) -> SkillCatalogSnapshot {
+    SkillCatalogSnapshot::from_scan(&scan_catalog_async(skills_dir).await)
+}
+
+/// Sync snapshot for unit tests that call the synchronous agent-definition helpers.
+#[cfg(test)]
+pub fn catalog_snapshot_blocking(skills_dir: Option<&Path>) -> SkillCatalogSnapshot {
+    SkillCatalogSnapshot::from_scan(&scan_catalog(skills_dir))
 }
 
 fn build_detail(
@@ -443,9 +484,9 @@ fn current_settings(state: &AppState) -> PersistedBackgroundSettings {
         .clone()
 }
 
-pub fn list(state: &AppState) -> Result<Vec<JobSkillSummary>, SkillCatalogError> {
+pub async fn list(state: &AppState) -> Result<Vec<JobSkillSummary>, SkillCatalogError> {
     let settings = current_settings(state);
-    let catalog = scan_catalog(state.config.orchestrator.skills_dir.as_deref());
+    let catalog = scan_catalog_async(state.config.orchestrator.skills_dir.as_deref()).await;
     let mut items: Vec<_> = catalog
         .valid
         .into_values()
@@ -479,17 +520,22 @@ pub fn list(state: &AppState) -> Result<Vec<JobSkillSummary>, SkillCatalogError>
     Ok(items)
 }
 
-pub fn get(state: &AppState, id: &str) -> Result<JobSkillDetail, SkillCatalogError> {
+pub async fn get(state: &AppState, id: &str) -> Result<JobSkillDetail, SkillCatalogError> {
     if !valid_skill_id(id) {
         return Err(SkillCatalogError::InvalidId);
     }
     let Some(skills_dir) = state.config.orchestrator.skills_dir.as_deref() else {
         return Err(SkillCatalogError::NotFound);
     };
-    if !catalog_ids_from_dir(Some(skills_dir)).contains(id) {
+    let catalog = scan_catalog_async(Some(skills_dir)).await;
+    let Some(indexed) = catalog
+        .valid
+        .into_values()
+        .find(|indexed| indexed.doc.id == id)
+    else {
         let (dir, bytes) = raw_skill_file(skills_dir, id)?;
         let text = String::from_utf8_lossy(&bytes).into_owned();
-        let reason = scan_catalog(Some(skills_dir))
+        let reason = catalog
             .skipped
             .into_iter()
             .find(|(skipped_id, _)| skipped_id == id)
@@ -517,8 +563,7 @@ pub fn get(state: &AppState, id: &str) -> Result<JobSkillDetail, SkillCatalogErr
             related_files: list_related_sync(&dir),
             default: None,
         });
-    }
-    let indexed = read_one_skill_from_dir(skills_dir, id)?;
+    };
     let settings = current_settings(state);
     Ok(build_detail(indexed, &settings, true))
 }
@@ -552,6 +597,8 @@ fn write_skill_file_with_cleanup(
     after_write: impl FnOnce() -> Result<(), SkillCatalogError>,
 ) -> Result<(), SkillCatalogError> {
     let existed_before_write = skill_dir.exists();
+    let skill_file = skill_dir.join(SKILL_FILE);
+    let previous_bytes = std::fs::read(&skill_file).ok();
     let result = (|| {
         std::fs::create_dir_all(skill_dir).map_err(|_| SkillCatalogError::Io)?;
         let skill_file = skill_dir.join(SKILL_FILE);
@@ -565,8 +612,17 @@ fn write_skill_file_with_cleanup(
         std::fs::rename(&tmp_file, &skill_file).map_err(|_| SkillCatalogError::Io)?;
         after_write()
     })();
-    if result.is_err() && !existed_before_write {
-        let _ = std::fs::remove_dir_all(skill_dir);
+    if result.is_err() {
+        if !existed_before_write {
+            let _ = std::fs::remove_dir_all(skill_dir);
+        } else {
+            // A failed follow-up step (e.g. the Skill Base Version manifest) must not leave the new
+            // content behind while the API reports an error: put the previous file back.
+            let _ = match previous_bytes {
+                Some(bytes) => std::fs::write(&skill_file, bytes),
+                None => std::fs::remove_file(&skill_file),
+            };
+        }
     }
     result
 }
@@ -601,7 +657,7 @@ pub async fn save(
     ensure_builtin_skills(skills_dir).map_err(|_| SkillCatalogError::Io)?;
 
     // Ensure no other skill in the catalog declares the same frontmatter `name`
-    let existing_catalog = scan_catalog_from_dir(Some(skills_dir));
+    let existing_catalog = scan_catalog_async(Some(skills_dir)).await.valid;
     if existing_catalog
         .iter()
         .any(|(other_id, entry)| other_id != id && entry.doc.name == verified.name)
@@ -668,7 +724,8 @@ pub async fn delete(
     let _write_guard = state.skill_write_lock.lock().await;
     ensure_builtin_skills(skills_dir).map_err(|_| SkillCatalogError::Io)?;
     if !valid_skill_id(id)
-        && !scan_catalog(Some(skills_dir))
+        && !scan_catalog_async(Some(skills_dir))
+            .await
             .skipped
             .iter()
             .any(|(skipped_id, _)| skipped_id == id)
@@ -809,5 +866,22 @@ mod tests {
 
         assert_eq!(result, Err(SkillCatalogError::Io));
         assert!(!skill_dir.exists());
+    }
+
+    #[test]
+    fn catalog_failed_existing_skill_write_restores_previous_content() {
+        let root = TempRoot::new();
+        let skill_dir = root.0.join("existing-skill");
+        std::fs::create_dir_all(&skill_dir).unwrap();
+        std::fs::write(skill_dir.join(SKILL_FILE), "previous content").unwrap();
+
+        let result =
+            write_skill_file_with_cleanup(&skill_dir, "new content", || Err(SkillCatalogError::Io));
+
+        assert_eq!(result, Err(SkillCatalogError::Io));
+        assert_eq!(
+            std::fs::read_to_string(skill_dir.join(SKILL_FILE)).unwrap(),
+            "previous content"
+        );
     }
 }

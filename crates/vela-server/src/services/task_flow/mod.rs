@@ -31,20 +31,24 @@ mod tests_providers;
 mod tests_recipe_start;
 
 pub(crate) use agent_settings::install_server_media_runtime;
+#[cfg(test)]
+pub(crate) use agent_settings::validate_agent_overrides;
 pub use agent_settings::{
     AGENT_SPECS, AgentConfigOverride, AgentSpec, CUSTOM_DAILY_SUBAGENT_TOOLS,
     CUSTOM_WIKI_SUBAGENT_TOOLS, CatalogAsrTranscriberBackend, CatalogImageGeneratorBackend,
     CatalogMediaBackend, CatalogTtsSynthesizerBackend, CatalogVideoGeneratorBackend,
     CreateCustomSubagentInput, DEFAULT_ORCHESTRATOR_PROVIDER_REF, DEFAULT_USER_ROOT_AGENT_ID,
     PersistedBackgroundSettings, ResolvedLlmProvider, SubagentMutationError,
-    WIKI_AUTOFLOW_ROOT_AGENT_ID, build_agent_definitions, create_custom_subagent,
+    WIKI_AUTOFLOW_ROOT_AGENT_ID, build_agent_definitions_with_skills, create_custom_subagent,
     custom_subagent_flow_policy, default_orchestrator_provider, delete_custom_subagent,
     find_agent_spec, find_tool_owner_spec, is_user_routable_root_agent, load_persisted_settings,
-    normalize_user_target_agent, project_agents_json, required_job_skills,
+    normalize_user_target_agent, project_agents_json_with_skills, required_job_skills,
     resolve_llm_provider_catalog, save_persisted_settings, sync_orchestrator_from_state,
-    valid_custom_subagent_id, validate_agent_overrides, validate_agent_overrides_with_skills,
-    validate_settings_change, write_agent_prompts, write_agent_prompts_with_skills_dir,
+    valid_custom_subagent_id, validate_agent_overrides_with_skills, validate_settings_change,
+    write_agent_prompts, write_agent_prompts_with_skills_dir,
 };
+#[cfg(test)]
+pub(crate) use agent_settings::{build_agent_definitions, project_agents_json};
 pub use charts::{ChartDocument, ChartError, chart_host_tools, read_chart_json_for_admin};
 pub use memory_tools::TaskMemoryAccess;
 pub use projections::{
@@ -381,7 +385,9 @@ async fn init_orchestrator_and_task_manager(
         &persisted,
         cfg.skills_dir.as_deref(),
     );
-    let (providers, mut agents) = build_agent_definitions(cfg, &persisted, catalog);
+    let skills = skills::catalog_snapshot(cfg.skills_dir.as_deref()).await;
+    let (providers, mut agents) =
+        build_agent_definitions_with_skills(cfg, &persisted, catalog, &skills);
     let recipe_start_manager = Arc::new(OnceLock::new());
     agents.extend(recipe_agents::playlist_recipe_agents(
         &cfg.prompts_dir,

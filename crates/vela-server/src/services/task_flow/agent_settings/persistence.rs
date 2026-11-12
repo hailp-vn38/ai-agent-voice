@@ -39,6 +39,8 @@ fn is_old_cloud_worker_default_prompt(prompt: &str) -> bool {
 
 /// SHA-256 of the `wiki_ingestor` and `wiki_curator` defaults before Required Job Skills were
 /// preloaded. Admin Web may have persisted these exact defaults as overrides on older servers.
+/// Verified against the `WIKI_INGESTOR_PROMPT` / `WIKI_CURATOR_PROMPT` literals in llm-wiki-rs
+/// `src/prompts/subagents.rs` at commit f9f05179 on `main` (trimmed SHA-256).
 const OLD_WIKI_SUBAGENT_DEFAULT_PROMPTS: &[(&str, &str)] = &[
     (
         "wiki_ingestor",
@@ -492,10 +494,12 @@ fn with_required_job_skills(
 fn strip_required_job_skills_block(prompt: &str) -> String {
     let mut cleaned = prompt.to_owned();
     while let Some(start) = cleaned.find(REQUIRED_JOB_SKILLS_OPEN) {
-        let end = cleaned[start..]
-            .find(REQUIRED_JOB_SKILLS_CLOSE)
-            .map(|relative| start + relative + REQUIRED_JOB_SKILLS_CLOSE.len())
-            .unwrap_or(cleaned.len());
+        // An unclosed opening tag is Admin text, not a server block: leave it and everything after
+        // it untouched rather than deleting the rest of the prompt.
+        let Some(relative_end) = cleaned[start..].find(REQUIRED_JOB_SKILLS_CLOSE) else {
+            break;
+        };
+        let end = start + relative_end + REQUIRED_JOB_SKILLS_CLOSE.len();
         cleaned.replace_range(start..end, "");
     }
     cleaned
@@ -545,4 +549,21 @@ fn read_valid_skill_body(skills_root: &Path, skill_id: &str) -> Option<String> {
     SkillDocument::parse(skill_id, &raw, REQUIRED_SKILL_MAX_BYTES)
         .ok()
         .map(|doc| doc.body)
+}
+
+#[cfg(test)]
+mod required_block_tests {
+    use super::strip_required_job_skills_block;
+
+    #[test]
+    fn unclosed_required_tag_keeps_the_rest_of_the_admin_prompt() {
+        let prompt = "Admin text <required_job_skills> still here\nMore instructions.";
+        assert_eq!(strip_required_job_skills_block(prompt), prompt);
+    }
+
+    #[test]
+    fn closed_required_block_is_removed_and_surrounding_text_kept() {
+        let prompt = "Before\n<required_job_skills>\nold\n</required_job_skills>\nAfter";
+        assert_eq!(strip_required_job_skills_block(prompt), "Before\n\nAfter");
+    }
 }

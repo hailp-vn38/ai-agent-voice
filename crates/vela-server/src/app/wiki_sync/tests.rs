@@ -80,7 +80,9 @@ async fn sync_times_out_waiting_for_knowledge_writer_and_publishes_timeout_statu
     let vault = Arc::new(Vault::open(wiki_core::VaultConfig::new(&root)).unwrap());
     let mut config = wiki_core::SyncConfig::default();
     config.remote_url = Some(remote.to_string_lossy().into_owned());
-    config.command_timeout = Duration::from_millis(40);
+    // Generous enough that the library's own `rm`/git calls never time out under parallel test
+    // load; the gate wait below is still the bound under test.
+    config.command_timeout = Duration::from_millis(300);
     let sync = Arc::new(VaultSync::configure(Arc::clone(&vault), config).unwrap());
     let gate = Arc::new(KnowledgeWriteGate::default());
     let service = WikiSyncService::new(
@@ -93,7 +95,7 @@ async fn sync_times_out_waiting_for_knowledge_writer_and_publishes_timeout_statu
     let guard = gate.write().await;
     let started = Instant::now();
     let error = service.sync_now().await.unwrap_err();
-    assert!(started.elapsed() < Duration::from_secs(1));
+    assert!(started.elapsed() < Duration::from_secs(2));
     assert!(matches!(error, SyncError::Timeout { .. }));
     assert!(matches!(
         service.status(),

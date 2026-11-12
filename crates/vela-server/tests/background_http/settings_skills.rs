@@ -1,5 +1,14 @@
 use super::harness::*;
 
+/// Points every runtime path of `config` under `root`, so parallel tests never share the default
+/// `data/...` directories (task store ownership and wiki vault would otherwise collide).
+fn isolate_runtime_paths(config: &mut AppConfig, root: &std::path::Path) {
+    config.orchestrator.tasks_store_dir = root.join("tasks-store");
+    config.orchestrator.reports_dir = root.join("reports");
+    config.orchestrator.work_dir = root.join("work");
+    config.wiki.vault_dir = root.join("wiki-vault");
+}
+
 #[tokio::test]
 async fn startup_upgrades_known_legacy_built_in_skill_and_preserves_admin_content() {
     let temp_root = std::env::temp_dir().join(format!(
@@ -161,6 +170,8 @@ prompts_dir = "{}"
         temp_root.join("prompts").display(),
     ))
     .unwrap();
+    let mut config = config;
+    isolate_runtime_paths(&mut config, &temp_root);
     let router = bootstrap_with_providers(config, Arc::new(ProviderSet::unavailable()))
         .await
         .unwrap();
@@ -509,6 +520,8 @@ prompts_dir = "{}"
         temp_root.join("prompts").display(),
     ))
     .unwrap();
+    let mut config = config;
+    isolate_runtime_paths(&mut config, &temp_root);
     let router = bootstrap_with_providers(config, Arc::new(ProviderSet::unavailable()))
         .await
         .unwrap();
@@ -623,6 +636,8 @@ skills_dir = "{}"
         temp_root.join("skills").display(),
     ))
     .unwrap();
+    let mut config = config;
+    isolate_runtime_paths(&mut config, &temp_root);
     let router = bootstrap_with_providers(config, Arc::new(ProviderSet::unavailable()))
         .await
         .unwrap();
@@ -1189,6 +1204,8 @@ url = "sqlite://{}"
 [api]
 enabled = true
 admin_token = "background-test-token"
+[wiki]
+vault_dir = "{}"
 [orchestrator]
 enabled = true
 store_dir = "{}"
@@ -1196,11 +1213,14 @@ prompts_dir = "{}"
 skills_dir = "{}"
 "#,
         temp_root.join("vela.db").display(),
+        temp_root.join("wiki-vault").display(),
         store_dir.display(),
         temp_root.join("prompts").display(),
         skills_dir.display(),
     ))
     .unwrap();
+    let mut config = config;
+    isolate_runtime_paths(&mut config, &temp_root);
     let router = bootstrap_with_providers(config, Arc::new(ProviderSet::unavailable()))
         .await
         .expect("malformed custom and built-in skills must not prevent startup");
@@ -1502,6 +1522,8 @@ prompts_dir = "{}"
     ))
     .unwrap();
     config.orchestrator.skills_dir = None;
+    let mut config = config;
+    isolate_runtime_paths(&mut config, &temp_root);
     let router = bootstrap_with_providers(config, Arc::new(ProviderSet::unavailable()))
         .await
         .unwrap();
@@ -1563,6 +1585,8 @@ skills_dir = "{}"
         temp_root.join("skills").display(),
     ))
     .unwrap();
+    let mut config = config;
+    isolate_runtime_paths(&mut config, &temp_root);
     let router = bootstrap_with_providers(config, Arc::new(ProviderSet::unavailable()))
         .await
         .unwrap();
@@ -1837,6 +1861,8 @@ prompts_dir = "{}"
         temp_root.join("prompts").display(),
     ))
     .unwrap();
+    let mut config = config;
+    isolate_runtime_paths(&mut config, &temp_root);
     let router = bootstrap_with_providers(config, Arc::new(ProviderSet::unavailable()))
         .await
         .unwrap();
@@ -1967,6 +1993,8 @@ skills_dir = "{}"
         skills_dir.display(),
     ))
     .unwrap();
+    let mut config = config;
+    isolate_runtime_paths(&mut config, &temp_root);
     let router = bootstrap_with_providers(config, Arc::new(ProviderSet::unavailable()))
         .await
         .unwrap();
@@ -2061,6 +2089,7 @@ skills_dir = "{}"
         .json(&json!({
             "name": defaults["name"],
             "description": defaults["description"],
+            "requires_tools": defaults["requires_tools"],
             "body": defaults["body"]
         }))
         .send()

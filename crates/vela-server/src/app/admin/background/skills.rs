@@ -56,7 +56,7 @@ pub(in crate::app::admin) async fn get_skill(
     Path(id): Path<String>,
     request: Request,
 ) -> Response {
-    match skills::get(&state, &id) {
+    match skills::get(&state, &id).await {
         Ok(detail) => {
             let etag = format!("\"{}\"", detail.summary.etag);
             (StatusCode::OK, [(header::ETAG, etag)], Json(detail)).into_response()

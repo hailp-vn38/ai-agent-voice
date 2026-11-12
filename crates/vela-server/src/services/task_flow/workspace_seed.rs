@@ -105,7 +105,9 @@ fn builtin_skill_hash(id: &str, content: &str) -> Option<String> {
 }
 
 fn is_known_legacy_builtin_hash(id: &str, hash: &str) -> bool {
-    // Frozen normalized hashes from Git history through this release; keep this list unchanged.
+    // Frozen normalized hashes of every Built-in Job Skill version committed to `main` before the
+    // Skill Base Version manifest existed. Each entry was checked against `git log main` by
+    // rendering the historical SKILL.md with `builtin_skill_hash`.
     let legacy_hashes: &[&str] = match id {
         "batch-source-collection" => {
             &["a5aa74c5bff6fd0e484009f3e11f75a06725759a61ca94a96f1825cf4867cb46"]
@@ -130,7 +132,6 @@ fn is_known_legacy_builtin_hash(id: &str, hash: &str) -> bool {
         "wiki-ingest" => &[
             "dcd55eb320ec2ffc6b92c86fe11f9b2248d67b32e86020d7a9e41059eb002896",
             "266b4f2a6588ce386bbcdbcde0fc2625934c2871a676014ede1b2363a86be833",
-            "e208b2b331075af65fa7018cdc178c16304266a3fc2400adaf4120fdf284e683",
             "e086e87dfdac8a624e39f6a5121f2c9f79f2ecad48ab6fe8b461f5d48344712d",
         ],
         "wiki-lint" => &[

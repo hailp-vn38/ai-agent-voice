@@ -6,6 +6,9 @@ use orchestrator_agent_rs::{AgentDefinition, AgentMode, LlmProviderConfig, Reaso
 use serde_json::{Value, json};
 
 use crate::config::OrchestratorSectionConfig;
+use crate::services::task_flow::skills::SkillCatalogSnapshot;
+#[cfg(test)]
+use crate::services::task_flow::skills::catalog_snapshot_blocking;
 use crate::services::task_flow::workspace_seed::daily_root_prompt_with_routing_guidance;
 
 use super::media_backend::resolve_media_tool_provider;
@@ -48,9 +51,9 @@ fn resolve_effective_agents(
     cfg: &OrchestratorSectionConfig,
     settings: &PersistedBackgroundSettings,
     catalog: &[ResolvedLlmProvider],
+    skills: &SkillCatalogSnapshot,
 ) -> Vec<ResolvedAgentSettings> {
-    let skill_ids =
-        crate::services::task_flow::skills::catalog_ids_from_dir(cfg.skills_dir.as_deref());
+    let skill_ids = &skills.ids;
     let fallback = find_provider_by_tag(catalog, "chat")
         .cloned()
         .unwrap_or_else(|| default_orchestrator_provider(cfg));
@@ -110,7 +113,7 @@ fn resolve_effective_agents(
                     .filter(|s| skill_ids.contains(**s))
                     .map(|s| (*s).to_owned())
                     .collect();
-                for s in &skill_ids {
+                for s in skill_ids {
                     if !avail.iter().any(|existing| existing == s) {
                         avail.push(s.clone());
                     }
@@ -350,10 +353,22 @@ fn ensure_muse_output_readable(tools: &mut Vec<String>) {
     }
 }
 
+/// Synchronous wrapper for tests; runtime callers pass a snapshot from [`catalog_snapshot`].
+#[cfg(test)]
 pub fn build_agent_definitions(
     cfg: &OrchestratorSectionConfig,
     settings: &PersistedBackgroundSettings,
     catalog: &[ResolvedLlmProvider],
+) -> (Vec<LlmProviderConfig>, Vec<AgentDefinition>) {
+    let skills = catalog_snapshot_blocking(cfg.skills_dir.as_deref());
+    build_agent_definitions_with_skills(cfg, settings, catalog, &skills)
+}
+
+pub fn build_agent_definitions_with_skills(
+    cfg: &OrchestratorSectionConfig,
+    settings: &PersistedBackgroundSettings,
+    catalog: &[ResolvedLlmProvider],
+    skills: &SkillCatalogSnapshot,
 ) -> (Vec<LlmProviderConfig>, Vec<AgentDefinition>) {
     let providers: Vec<LlmProviderConfig> = catalog
         .iter()
@@ -365,7 +380,7 @@ pub fn build_agent_definitions(
         .map(ResolvedLlmProvider::to_orchestrator_provider)
         .collect();
 
-    let defs = resolve_effective_agents(cfg, settings, catalog)
+    let defs = resolve_effective_agents(cfg, settings, catalog, skills)
         .into_iter()
         .map(|eff| {
             let resolved = &eff.execution_provider;
@@ -439,17 +454,28 @@ pub fn build_agent_definitions(
     (providers, defs)
 }
 
+/// Synchronous wrapper for tests; runtime callers pass a snapshot from [`catalog_snapshot`].
+#[cfg(test)]
 pub fn project_agents_json(
     cfg: &OrchestratorSectionConfig,
     settings: &PersistedBackgroundSettings,
     catalog: &[ResolvedLlmProvider],
 ) -> Vec<Value> {
+    let skills = catalog_snapshot_blocking(cfg.skills_dir.as_deref());
+    project_agents_json_with_skills(cfg, settings, catalog, &skills)
+}
+
+pub fn project_agents_json_with_skills(
+    cfg: &OrchestratorSectionConfig,
+    settings: &PersistedBackgroundSettings,
+    catalog: &[ResolvedLlmProvider],
+    skills: &SkillCatalogSnapshot,
+) -> Vec<Value> {
     // Refs to providers no longer in the catalog resolve to a fallback at runtime, so they are
     // not shown as the agent's selection.
     let in_catalog = |pref: &str| catalog.iter().any(|p| p.provider_ref == pref);
-    let skill_tool_requirements =
-        super::super::skills::catalog_tool_requirements(cfg.skills_dir.as_deref());
-    resolve_effective_agents(cfg, settings, catalog)
+    let skill_tool_requirements = &skills.tool_requirements;
+    resolve_effective_agents(cfg, settings, catalog, skills)
         .into_iter()
         .map(|eff| {
             let tool_requirement_gaps: Vec<Value> = eff

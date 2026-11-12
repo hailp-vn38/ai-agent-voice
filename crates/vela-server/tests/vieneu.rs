@@ -11,6 +11,26 @@ use vela_server::{
     },
 };
 
+/// Mirrors the `[providers.tts.instances.vieneu_default]` block documented in `config.example.toml`.
+const DOCUMENTED_VIENEU_DEFAULT_CONFIG: &str = r#"
+[server]
+bind = "127.0.0.1:0"
+public_ws_url = "ws://127.0.0.1:0/voice/v1/"
+[provider_defaults]
+vad = "test"
+asr = "test"
+llm = "test"
+tts = "vieneu_default"
+[database]
+url = "sqlite://:memory:"
+[providers.tts.instances.vieneu_default]
+adapter = "vieneu"
+voice = "hai_dang"
+language = "vi-VN"
+speed_percent = 100
+preload = false
+"#;
+
 #[test]
 fn native_selection_is_typed_registered_and_credential_free() {
     let instance: TtsInstanceConfig = toml::from_str(
@@ -62,14 +82,15 @@ preload = true
         factory.model_identity(&nano_instance).unwrap(),
         Some("vieneu_v3_nano_fp32")
     );
-    let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
-    let app_config = AppConfig::load(root.join("config.toml")).unwrap();
+    // Use the documented `vieneu_default` shape rather than the git-ignored local `config.toml`,
+    // so the test passes on any checkout.
+    let app_config: AppConfig = toml::from_str(DOCUMENTED_VIENEU_DEFAULT_CONFIG).unwrap();
     let configured = app_config
         .providers
         .tts
         .instances
         .get("vieneu_default")
-        .expect("vieneu_default instance should exist in config.toml");
+        .expect("vieneu_default instance should parse");
     assert_eq!(configured.adapter(), "vieneu");
     assert!(!configured.preload());
     for invalid in [
