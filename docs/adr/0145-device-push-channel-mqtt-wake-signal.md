@@ -1,6 +1,6 @@
 # ADR 0145 — Device Push Channel qua MQTT chỉ mang Wake Signal
 
-Status: Proposed, 2026-11-13 — `design-only`; chưa có mã server, hạ tầng hay firmware.
+Status: Accepted, 2026-11-13 — đã triển khai: mã server, hạ tầng và firmware đã merge; nghiệm thu trên phần cứng còn chờ ticket 08.
 Amends: [ADR 0089](0089-reminder-snapshot-sync-and-device-wake.md).
 Extends: [ADR 0088](0088-shared-session-direct-speech.md), [ADR 0090](0090-reminder-playback-ack-and-bounded-attempts.md), [ADR 0073](0073-required-database-and-device-admission.md).
 

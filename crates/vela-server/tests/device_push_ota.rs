@@ -167,6 +167,16 @@ async fn registered_device_receives_push_block_when_enabled() {
 }
 
 #[tokio::test]
+async fn device_named_like_the_service_account_gets_no_push_block() {
+    let (base, db, task) = start(push_config(), false).await;
+    insert_device(&db, "vela-server", true).await;
+    let (status, body) = ota(&base, "vela-server").await;
+    assert_eq!(status, 200);
+    assert!(body.get("push").is_none());
+    task.abort();
+}
+
+#[tokio::test]
 async fn no_push_block_when_feature_disabled() {
     let (base, db, task) = start(Default::default(), false).await;
     insert_device(&db, "device-1", true).await;
@@ -210,4 +220,14 @@ async fn awkward_device_ids_still_yield_valid_topic_and_client_id() {
             .all(|b| b.is_ascii_alphanumeric() || b == b'-')
     );
     task.abort();
+}
+
+#[tokio::test]
+async fn startup_fails_when_push_enabled_but_broker_url_is_unusable() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let mut app_config = config(listener.local_addr().unwrap(), database_url());
+    app_config.device_push = push_config();
+    app_config.device_push.broker_url = "not-a-broker-url".into();
+    let result = bootstrap_with_providers(app_config, Arc::new(ProviderSet::unavailable())).await;
+    assert!(result.is_err());
 }

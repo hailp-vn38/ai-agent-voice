@@ -174,11 +174,12 @@ async fn check_acl(base: &str, username: &str, topic: &str, acc: u8) -> u16 {
 }
 
 fn service_password() -> String {
-    let tag = ring::hmac::sign(
-        &ring::hmac::Key::new(ring::hmac::HMAC_SHA256, b"push-secret-0123456789"),
-        b"v1-service:vela-server",
+    let root = ring::hmac::Key::new(ring::hmac::HMAC_SHA256, b"push-secret-0123456789");
+    let service_key = ring::hmac::Key::new(
+        ring::hmac::HMAC_SHA256,
+        ring::hmac::sign(&root, b"vela-device-push/service-key").as_ref(),
     );
-    hex(tag.as_ref())
+    hex(ring::hmac::sign(&service_key, b"v1:vela-server").as_ref())
 }
 
 #[tokio::test]

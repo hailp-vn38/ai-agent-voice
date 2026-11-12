@@ -107,6 +107,7 @@ pub async fn bootstrap_with_providers_and_secret_resolver(
     prepare_memory(&mut state);
     prepare_background(&mut state).await?;
     prepare_enrollment(&mut state).await?;
+    prepare_device_push(&mut state)?;
     admin::auth::prepare(&state)
         .await
         .map_err(|_| DatabaseError::Unavailable)?;
@@ -157,24 +158,7 @@ pub fn router_with_state(mut state: AppState) -> Router {
         .swap(true, std::sync::atomic::Ordering::AcqRel)
         && let Some(database) = state.database.clone()
     {
-        let wake: Option<std::sync::Arc<dyn crate::services::device_push_wake::WakePublisher>> =
-            state.device_push.as_ref().and_then(|device_push| {
-                use crate::services::{device_push::DevicePush, device_push_mqtt as mqtt};
-                let push = &state.config.device_push;
-                match mqtt::MqttPublisher::start(
-                    &push.broker_url,
-                    DevicePush::service_username(),
-                    &device_push.service_password(),
-                    push.keepalive_seconds,
-                    state.lifecycle.stopping().clone(),
-                ) {
-                    Ok(publisher) => Some(std::sync::Arc::new(publisher) as _),
-                    Err(err) => {
-                        tracing::error!(error = %err, "device push publisher disabled");
-                        None
-                    }
-                }
-            });
+        let wake = state.wake_publisher.clone();
         crate::services::reminder_scheduler::start_with_wake(
             crate::database::notifications::DeviceNotifications::new((*database).clone()),
             state.active_device_sessions.clone(),
@@ -387,6 +371,7 @@ pub async fn startup_with_lifecycle_and_secret_resolver(
     prepare_memory(&mut state);
     prepare_background(&mut state).await?;
     prepare_enrollment(&mut state).await?;
+    prepare_device_push(&mut state)?;
     admin::auth::prepare(&state)
         .await
         .map_err(|_| DatabaseError::Unavailable)?;
@@ -567,6 +552,7 @@ async fn managed_startup(
     prepare_memory(&mut state);
     prepare_background(&mut state).await?;
     prepare_enrollment(&mut state).await?;
+    prepare_device_push(&mut state)?;
     admin::auth::prepare(&state)
         .await
         .map_err(|_| DatabaseError::Unavailable)?;
@@ -701,6 +687,24 @@ async fn prepare_enrollment(state: &mut AppState) -> Result<(), BootstrapError> 
     )
     .await
     .map_err(|_| BootstrapError::Enrollment)?;
+    Ok(())
+}
+
+/// With `[device_push]` enabled the Wake Signal publisher is mandatory: refuse to start rather
+/// than run with the channel silently off.
+fn prepare_device_push(state: &mut AppState) -> Result<(), BootstrapError> {
+    let Some(push) = state.device_push.as_ref() else {
+        return Ok(());
+    };
+    let config = &state.config.device_push;
+    let publisher = push
+        .start_wake_publisher(
+            &config.broker_url,
+            config.keepalive_seconds,
+            state.lifecycle.stopping().clone(),
+        )
+        .map_err(|err| BootstrapError::DevicePush(err.to_string()))?;
+    state.wake_publisher = Some(Arc::new(publisher));
     Ok(())
 }
 
@@ -844,4 +848,6 @@ pub enum BootstrapError {
     Provider,
     #[error("enrollment_prompt_startup_failed: prepare 24kHz mono PCM16 WAV assets")]
     Enrollment,
+    #[error("device_push_startup_failed: {0}")]
+    DevicePush(String),
 }

@@ -27,15 +27,24 @@ pub struct DevicePush {
     endpoint: String,
     keepalive: u32,
     key: hmac::Key,
+    service_key: hmac::Key,
 }
 
 impl DevicePush {
     /// `None` when the feature is disabled; callers then behave as if the module did not exist.
     pub fn from_config(config: &DevicePushConfig) -> Option<Self> {
-        config.enabled.then(|| Self {
-            endpoint: config.endpoint.clone(),
-            keepalive: config.keepalive_seconds,
-            key: hmac::Key::new(hmac::HMAC_SHA256, config.secret.expose().as_bytes()),
+        config.enabled.then(|| {
+            let key = hmac::Key::new(hmac::HMAC_SHA256, config.secret.expose().as_bytes());
+            let service_key = hmac::Key::new(
+                hmac::HMAC_SHA256,
+                hmac::sign(&key, SERVICE_KEY_LABEL.as_bytes()).as_ref(),
+            );
+            Self {
+                endpoint: config.endpoint.clone(),
+                keepalive: config.keepalive_seconds,
+                key,
+                service_key,
+            }
         })
     }
 
@@ -76,7 +85,10 @@ fn hex(bytes: &[u8]) -> String {
 // Broker authorization decisions (ticket 02), kept additive below the credential helpers.
 
 const SERVICE_USERNAME: &str = "vela-server";
-const SERVICE_PASSWORD_PREFIX: &str = "v1-service";
+/// Domain-separation label for the service account's derived key. The service password is
+/// HMAC(HMAC(secret, label), "v1:vela-server"), so it can never collide with a Device password,
+/// which is HMAC(secret, "v1:<device id>").
+const SERVICE_KEY_LABEL: &str = "vela-device-push/service-key";
 
 /// What the broker is asking to do with a topic (mosquitto ACL `acc` values).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -104,13 +116,31 @@ impl DevicePush {
         username == SERVICE_USERNAME
     }
 
+    /// Starts the server's own broker client (the Wake Signal publisher) with the service
+    /// account. Fails when `broker_url` is unusable so startup can refuse to run half-enabled.
+    pub fn start_wake_publisher(
+        &self,
+        broker_url: &str,
+        keepalive_seconds: u32,
+        stopping: tokio_util::sync::CancellationToken,
+    ) -> Result<super::device_push_mqtt::MqttPublisher, super::device_push_wake::WakePublishError>
+    {
+        super::device_push_mqtt::MqttPublisher::start(
+            broker_url,
+            SERVICE_USERNAME,
+            &self.service_password(),
+            keepalive_seconds,
+            stopping,
+        )
+    }
+
     pub fn service_username() -> &'static str {
         SERVICE_USERNAME
     }
 
     pub fn service_password(&self) -> String {
-        let message = format!("{SERVICE_PASSWORD_PREFIX}:{SERVICE_USERNAME}");
-        hex(hmac::sign(&self.key, message.as_bytes()).as_ref())
+        let message = format!("{PASSWORD_VERSION}:{SERVICE_USERNAME}");
+        hex(hmac::sign(&self.service_key, message.as_bytes()).as_ref())
     }
 
     /// Constant-time check of a Device password. Admission is checked separately by the caller.

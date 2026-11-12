@@ -30,7 +30,7 @@ check() { # check <description> <expected 0|1 = condition result>
 }
 client() { docker exec "$broker" "$@"; }
 
-service_password=$(mac v1-service:vela-server)
+service_password=$(python3 -c 'import hashlib,hmac,sys; k=hmac.new(sys.argv[1].encode(), b"vela-device-push/service-key", hashlib.sha256).digest(); print(hmac.new(k, b"v1:vela-server", hashlib.sha256).hexdigest())' "$secret")
 password_a=$(mac v1:device-a)
 topic_a=$(topic device-a)
 topic_b=$(topic device-b)

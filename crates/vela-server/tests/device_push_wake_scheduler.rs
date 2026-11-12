@@ -215,6 +215,58 @@ async fn retry_checkpoint_signals_again_and_publish_failure_does_not_stop_schedu
     f.stopping.cancel();
 }
 
+#[derive(Clone, Default)]
+struct LogCapture(Arc<std::sync::Mutex<Vec<u8>>>);
+
+impl std::io::Write for LogCapture {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.0.lock().unwrap().extend_from_slice(buf);
+        Ok(buf.len())
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for LogCapture {
+    type Writer = LogCapture;
+    fn make_writer(&'a self) -> Self::Writer {
+        self.clone()
+    }
+}
+
+#[tokio::test]
+async fn retry_mark_after_successful_signal_logs_device_did_not_connect() {
+    let capture = LogCapture::default();
+    let _guard = tracing::subscriber::set_default(
+        tracing_subscriber::fmt()
+            .with_writer(capture.clone())
+            .with_ansi(false)
+            .finish(),
+    );
+    let f = fixture(true).await;
+    let id = create(&f, "r1", 1).await;
+    f.clock.store(T0 + 2_000, Ordering::SeqCst);
+    f.sessions.scheduler_wakeup().notify_one();
+    settle().await;
+    assert_eq!(f.recorder.published().len(), 1);
+    let logs = |c: &LogCapture| String::from_utf8_lossy(&c.0.lock().unwrap()).into_owned();
+    assert!(!logs(&capture).contains("device did not connect"));
+
+    sqlx::query("UPDATE device_reminders SET next_attempt_at_ms = ? WHERE id = ?")
+        .bind(T0 + 60_000)
+        .bind(&id)
+        .execute(f.repo.database().pool())
+        .await
+        .unwrap();
+    f.clock.store(T0 + 61_000, Ordering::SeqCst);
+    f.sessions.scheduler_wakeup().notify_one();
+    settle().await;
+    assert_eq!(f.recorder.published().len(), 2);
+    assert!(logs(&capture).contains("wake signal sent but device did not connect"));
+    f.stopping.cancel();
+}
+
 #[tokio::test]
 async fn device_connecting_after_wake_signal_completes_the_reminder() {
     let f = fixture(true).await;

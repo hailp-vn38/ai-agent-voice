@@ -268,6 +268,13 @@ async fn signal_unconnected_devices(
         if signalled.get(&candidate.reminder_id) == Some(&candidate.trigger_at_ms) {
             continue;
         }
+        if signalled.contains_key(&candidate.reminder_id) {
+            tracing::warn!(
+                reminder_id = %candidate.reminder_id,
+                device_id = %candidate.device_id,
+                "wake signal sent but device did not connect; retry mark reached"
+            );
+        }
         let topic = DevicePush::signal_topic(&candidate.device_id);
         let payload = WakeSignal::new(&candidate.reminder_id, candidate.expires_at_ms).to_payload();
         match publisher.publish(&topic, payload).await {

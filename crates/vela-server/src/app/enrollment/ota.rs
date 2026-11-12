@@ -1,6 +1,7 @@
 use crate::app::AppState;
 use crate::{
     database::{DeviceRegistration, EnrollmentClaim, EnrollmentCreateError, EnrollmentRequest},
+    services::device_push::DevicePush,
     protocol::{Firmware, OtaActivation, OtaResponse, OtaWebsocket, ServerTime},
 };
 use axum::{
@@ -188,6 +189,7 @@ fn ota_response(
         }),
         activation,
         push: push_device_id
+            .filter(|id| !DevicePush::is_service_username(id))
             .zip(state.device_push.as_ref())
             .map(|(device_id, push)| push.credentials(device_id)),
     })

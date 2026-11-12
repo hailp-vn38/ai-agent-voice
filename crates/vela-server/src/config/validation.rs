@@ -112,11 +112,6 @@ impl AppConfig {
         {
             self.device_push.secret = crate::config::SecretString::new(secret);
         }
-        if let Ok(secret) = std::env::var("VOICE_DEVICE_PUSH_SECRET")
-            && !secret.is_empty()
-        {
-            self.device_push.secret = crate::config::SecretString::new(secret);
-        }
         if let Ok(db_url) = std::env::var("VOICE_DATABASE_URL")
             && !db_url.trim().is_empty()
         {

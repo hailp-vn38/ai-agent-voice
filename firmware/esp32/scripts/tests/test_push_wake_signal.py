@@ -29,16 +29,20 @@ class WakeSignalDecisionTest(unittest.TestCase):
         self.run_driver(
             """
             using namespace wake_signal;
-            Fields ok{1, "wake", 2000};
-            assert(Evaluate(ok, 1000, false) == Verdict::kAccept);
-            assert(Evaluate(Fields{2, "wake", 2000}, 1000, false) == Verdict::kWrongVersion);
-            assert(Evaluate(Fields{std::nullopt, "wake", 2000}, 1000, false) == Verdict::kWrongVersion);
-            assert(Evaluate(Fields{1, "ping", 2000}, 1000, false) == Verdict::kWrongType);
-            assert(Evaluate(Fields{1, std::nullopt, 2000}, 1000, false) == Verdict::kWrongType);
-            assert(Evaluate(Fields{1, "wake", 1000}, 1000, false) == Verdict::kExpired);
-            assert(Evaluate(Fields{1, "wake", 999}, 1000, false) == Verdict::kExpired);
-            assert(Evaluate(Fields{1, "wake", std::nullopt}, 1000, false) == Verdict::kExpired);
-            assert(Evaluate(ok, 1000, true) == Verdict::kBusy);
+            const int64_t now = 1800000000000LL;
+            Fields ok{1, "wake", now + 1000};
+            assert(Evaluate(ok, now, false) == Verdict::kAccept);
+            assert(Evaluate(Fields{2, "wake", now + 1000}, now, false) == Verdict::kWrongVersion);
+            assert(Evaluate(Fields{std::nullopt, "wake", now + 1000}, now, false) == Verdict::kWrongVersion);
+            assert(Evaluate(Fields{1, "ping", now + 1000}, now, false) == Verdict::kWrongType);
+            assert(Evaluate(Fields{1, std::nullopt, now + 1000}, now, false) == Verdict::kWrongType);
+            assert(Evaluate(Fields{1, "wake", now}, now, false) == Verdict::kExpired);
+            assert(Evaluate(Fields{1, "wake", now - 1}, now, false) == Verdict::kExpired);
+            assert(Evaluate(Fields{1, "wake", std::nullopt}, now, false) == Verdict::kExpired);
+            assert(Evaluate(ok, now, true) == Verdict::kBusy);
+            // Unset device clock: the signal is ignored, not treated as fresh.
+            assert(Evaluate(Fields{1, "wake", now + 1000}, 1000, false) == Verdict::kClockUnset);
+            assert(Evaluate(Fields{1, "wake", now + 1000}, 0, false) == Verdict::kClockUnset);
             """
         )
 

@@ -18,11 +18,15 @@ struct Fields {
     std::optional<int64_t> expires_at_ms;
 };
 
-enum class Verdict { kAccept, kWrongVersion, kWrongType, kExpired, kBusy };
+// Device clock before the OTA response sets it (1970-ish) is "unknown": expiry cannot be judged.
+constexpr int64_t kMinPlausibleMs = 1700000000000LL;
+
+enum class Verdict { kAccept, kWrongVersion, kWrongType, kClockUnset, kExpired, kBusy };
 
 inline Verdict Evaluate(const Fields& f, int64_t now_ms, bool session_active) {
     if (!f.v || *f.v != kSupportedVersion) return Verdict::kWrongVersion;
     if (!f.type || *f.type != kWakeType) return Verdict::kWrongType;
+    if (now_ms < kMinPlausibleMs) return Verdict::kClockUnset;
     if (!f.expires_at_ms || *f.expires_at_ms <= now_ms) return Verdict::kExpired;
     if (session_active) return Verdict::kBusy;
     return Verdict::kAccept;

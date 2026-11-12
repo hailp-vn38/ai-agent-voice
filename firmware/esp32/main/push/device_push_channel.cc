@@ -26,8 +26,6 @@ constexpr EventBits_t kDisconnectedBit = 1 << 1;
 constexpr int kBackoffInitialMs = 5000;
 constexpr int kBackoffMaxMs = 300000;
 constexpr int kDefaultKeepaliveS = 240;
-// Device clock before the OTA response sets it (1970-ish): treat as "unknown".
-constexpr int64_t kMinPlausibleMs = 1700000000000LL;
 
 int64_t NowMs() {
     struct timeval tv;
@@ -155,11 +153,8 @@ void DevicePushChannel::TaskMain(void* arg) {
                 std::string id = cJSON_IsString(idj) ? idj->valuestring : "";
                 cJSON_Delete(root);
 
-                int64_t now = NowMs();
-                if (now < kMinPlausibleMs && f.expires_at_ms) {
-                    // Clock not set yet: cannot judge expiry; let the server-side session decide.
-                    now = *f.expires_at_ms - 1;
-                }
+                const int64_t now = NowMs();
+                // An unset clock yields kClockUnset: the signal is ignored, never guessed fresh.
                 auto verdict = wake_signal::Evaluate(f, now, r->session_active());
                 if (verdict != wake_signal::Verdict::kAccept) {
                     ESP_LOGI(TAG, "Ignoring wake signal (verdict %d)", static_cast<int>(verdict));

@@ -18,6 +18,13 @@ def mac(message):
     return hmac.new(SECRET, message.encode(), hashlib.sha256).hexdigest()
 
 
+SERVICE_KEY = hmac.new(SECRET, b"vela-device-push/service-key", hashlib.sha256).digest()
+
+
+def service_mac(message):
+    return hmac.new(SERVICE_KEY, message.encode(), hashlib.sha256).hexdigest()
+
+
 def topic_for(device_id):
     return f"vela/v1/devices/{hashlib.sha256(device_id.encode()).hexdigest()[:32]}/signal"
 
@@ -26,7 +33,7 @@ def allowed(path, body):
     username = body.get("username", "")
     if path == "/mqtt/auth/user":
         password = body.get("password", "")
-        expected = mac(f"v1-service:{SERVICE}") if username == SERVICE else mac(f"v1:{username}")
+        expected = service_mac(f"v1:{SERVICE}") if username == SERVICE else mac(f"v1:{username}")
         return hmac.compare_digest(expected, password)
     if path == "/mqtt/auth/acl":
         topic, acc = body.get("topic", ""), body.get("acc")
