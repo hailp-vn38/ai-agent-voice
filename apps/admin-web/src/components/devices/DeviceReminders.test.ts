@@ -69,3 +69,12 @@ it('uses the Agent-scoped create endpoint and retains target binding',async()=>{
  expect(api.create.mock.calls.at(-1)?.[0]).toBe('physical')
  expect(api.create.mock.calls.at(-1)?.[3]).toBe('current')
 })
+it('labels wake_on_due and tolerates unknown sync statuses', async () => {
+ api.list.mockResolvedValue({items:[{id:'w1',device_id:'physical',message:'Wake',due_at_ms:1893542400000,timezone:'UTC',status:'pending',row_revision:1,schedule_revision:1,sync_status:'wake_on_due'},{id:'w2',device_id:'physical',message:'Odd',due_at_ms:1893542400000,timezone:'UTC',status:'pending',row_revision:1,schedule_revision:1,sync_status:'future_value'}],has_more:false,schedule_summary:{reminder_capable:null}})
+ const wrapper=mount(DeviceReminders,{props:{deviceId:'physical'}})
+ await flushPromises()
+ const rows=wrapper.findAll('li')
+ expect(rows[0]?.text()).toContain('woken when due')
+ expect(rows[1]?.text()).toContain('awaiting device sync')
+ expect(rows[1]?.text()).not.toContain('future_value')
+})

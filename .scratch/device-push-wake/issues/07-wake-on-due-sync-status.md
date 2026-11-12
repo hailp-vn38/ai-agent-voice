@@ -16,3 +16,5 @@ Spec: [device-push-wake](../spec.md) · [ADR 0145](../../../docs/adr/0145-device
 - [ ] Test theo mẫu test Reminder của Admin API hiện có.
 
 ## Comments
+
+Resolved: sync_status reports wake_on_due for waiting reminders when [device_push] is enabled (create, device list, agent list); admin-web shows a Vietnamese label and falls back to the generic label for unknown values. No API doc enumerates sync values, so none changed.

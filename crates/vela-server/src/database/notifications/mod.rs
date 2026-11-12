@@ -114,6 +114,7 @@ pub struct DeviceNotifications {
     database: Database,
     agent_scope: Option<String>,
     clock: Arc<dyn Fn() -> i64 + Send + Sync>,
+    wake_on_due: bool,
 }
 impl DeviceNotifications {
     pub fn new(database: Database) -> Self {
@@ -124,7 +125,13 @@ impl DeviceNotifications {
             database,
             clock,
             agent_scope: None,
+            wake_on_due: false,
         }
+    }
+    /// Report waiting reminders as `wake_on_due` (Device Push Channel enabled).
+    pub fn with_wake_on_due(mut self, enabled: bool) -> Self {
+        self.wake_on_due = enabled;
+        self
     }
     pub fn scoped_to_agent(mut self, key: &str) -> Self {
         self.agent_scope = Some(key.into());
@@ -240,7 +247,7 @@ impl DeviceNotifications {
             }
             let mut reminder: Reminder = serde_json::from_str(&response)
                 .map_err(|_| NotificationError::Invalid("stored_response_invalid"))?;
-            reminder.sync_status = sync_status(&mut tx, device_row_id, &reminder).await?;
+            reminder.sync_status = sync_status(&mut tx, device_row_id, &reminder, self.wake_on_due).await?;
             tx.commit().await?;
             return Ok((reminder, device_row_id));
         }
@@ -269,7 +276,7 @@ impl DeviceNotifications {
             attempts_used: 0,
             created_at_ms: now,
             updated_at_ms: now,
-            sync_status: "pending".into(),
+            sync_status: if self.wake_on_due { "wake_on_due" } else { "pending" }.into(),
         };
         sqlx::query("INSERT INTO device_reminders(id,device_row_id,message,due_at_ms,timezone,schedule_revision,source,created_at_ms,updated_at_ms) VALUES (?,?,?,?,?,?,?,?,?)").bind(&reminder.id).bind(device_row_id).bind(&reminder.message).bind(due_at_ms).bind(&reminder.timezone).bind(revision).bind(ctx.source.as_str()).bind(now).bind(now).execute(&mut *tx).await?;
         let response = serde_json::to_string(&reminder)
@@ -313,7 +320,7 @@ impl DeviceNotifications {
             .ok_or(NotificationError::NotFound)?;
         let mut items:Vec<Reminder>=sqlx::query_as("SELECT r.id,d.device_id,r.message,r.due_at_ms,r.timezone,r.status,r.row_revision,r.schedule_revision,r.attempts_used,r.created_at_ms,r.updated_at_ms FROM device_reminders r JOIN devices d ON d.id=r.device_row_id WHERE r.device_row_id=? AND (? IS NULL OR r.status=?) ORDER BY r.due_at_ms,r.id LIMIT ? OFFSET ?").bind(row).bind(status).bind(status).bind(page_size).bind(i64::from(page-1)*i64::from(page_size)).fetch_all(&mut *tx).await?;
         for item in &mut items {
-            item.sync_status = sync_status(&mut tx, row, item).await?;
+            item.sync_status = sync_status(&mut tx, row, item, self.wake_on_due).await?;
         }
         let (revision,acked,at,wake)=sqlx::query_as::<_,(i64,i64,Option<i64>,Option<i64>)>("SELECT schedule_revision,last_acked_revision,last_acked_at_ms,last_reported_wake_at_ms FROM device_reminder_sync WHERE device_row_id=?").bind(row).fetch_optional(&mut *tx).await?.unwrap_or((0,0,None,None));
         let total: i64 = sqlx::query_scalar("SELECT count(*) FROM device_reminders WHERE device_row_id=? AND (? IS NULL OR status=?)").bind(row).bind(status).bind(status).fetch_one(&mut *tx).await?;
@@ -398,6 +405,7 @@ pub(super) async fn sync_status(
     tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
     device: i64,
     item: &Reminder,
+    wake_on_due: bool,
 ) -> Result<String, sqlx::Error> {
     let cached = sqlx::query_scalar::<_, i64>("SELECT snapshot_revision FROM device_reminder_cached_items WHERE device_row_id=? AND reminder_id=?")
         .bind(device).bind(&item.id).fetch_optional(&mut **tx).await?;
@@ -408,6 +416,8 @@ pub(super) async fn sync_status(
                 .bind(device).bind(item.due_at_ms).bind(item.due_at_ms).bind(&item.id).fetch_one(&mut **tx).await?;
             if position >= SNAPSHOT_LIMIT {
                 "out_of_window".into()
+            } else if wake_on_due {
+                "wake_on_due".into()
             } else {
                 "pending".into()
             }
