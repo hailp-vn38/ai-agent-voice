@@ -1,22 +1,22 @@
 import { defineStore } from 'pinia'
 import { computed } from 'vue'
 
-import { adminTokenState, loginStatusState, writeAdminToken, type LoginStatus } from './admin-session'
+import { adminWebTokenState, loginStatusState, writeAdminWebToken, type LoginStatus } from './admin-session'
 
-export { readAdminToken, adminTokenState, type LoginStatus } from './admin-session'
+export { readAdminWebToken, adminWebTokenState, type LoginStatus } from './admin-session'
 
 export const useAuthStore = defineStore('auth', () => {
-  const adminToken = adminTokenState
+  const adminWebToken = adminWebTokenState
   const loginStatus = loginStatusState
   const mustChangePassword = computed(() => loginStatus.value?.mustChangePassword === true)
 
-  function setAdminToken(token: string | null) {
-    writeAdminToken(token)
+  function setAdminWebToken(token: string | null) {
+    writeAdminWebToken(token)
   }
 
   function setLoginStatus(status: LoginStatus | null) {
     loginStatus.value = status
   }
 
-  return { adminToken, loginStatus, mustChangePassword, setAdminToken, setLoginStatus }
+  return { adminWebToken, loginStatus, mustChangePassword, setAdminWebToken, setLoginStatus }
 })

@@ -8,7 +8,7 @@ import { Button } from '@/components/ui/button'
 import ThemeToggle from '@/components/ThemeToggle.vue'
 import { useI18n } from '@/composables/useI18n'
 import { navigationGroups } from '@/config/navigation'
-import { adminTokenState } from '@/stores/admin-session'
+import { adminWebTokenState } from '@/stores/admin-session'
 
 withDefaults(defineProps<{ collapsible?: boolean; collapsed?: boolean }>(), {
   collapsible: false,
@@ -72,7 +72,7 @@ const { t } = useI18n()
         <NotificationBell compact placement="sidebar" />
       </div>
       <Button
-        v-if="adminTokenState"
+        v-if="adminWebTokenState"
         variant="ghost"
         size="sm"
         class="w-full"

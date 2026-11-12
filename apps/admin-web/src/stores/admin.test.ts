@@ -167,12 +167,12 @@ describe('admin store', () => {
 
   it('clears the admin token when loadAll fails with 401 unauthorized', async () => {
     const auth = useAuthStore()
-    auth.setAdminToken('invalid-token')
+    auth.setAdminWebToken('invalid-token')
     agentsApi.list.mockRejectedValueOnce(new ApiError('API request failed: unauthorized', 401, 'unauthorized', 'req-401'))
     const store = useAdminStore()
     await store.loadAll()
 
-    expect(auth.adminToken).toBeNull()
+    expect(auth.adminWebToken).toBeNull()
     expect(store.error).toBe('Admin token không hợp lệ hoặc đã hết hạn. (request_id: req-401)')
   })
 })

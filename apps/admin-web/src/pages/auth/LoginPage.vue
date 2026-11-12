@@ -40,7 +40,7 @@ async function submit() {
     const response = await authApi.login(password.value)
     password.value = ''
     auth.setLoginStatus({ passwordLoginEnabled: true, mustChangePassword: response.must_change_password })
-    auth.setAdminToken(response.token)
+    auth.setAdminWebToken(response.token)
     await router.replace(response.must_change_password
       ? { name: 'change-password', query: { redirect: redirect.value } }
       : { path: redirect.value })

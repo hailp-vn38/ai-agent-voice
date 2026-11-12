@@ -234,7 +234,7 @@ function onVisible() {
   if (!document.hidden) reconcile()
 }
 watch(jobId, () => { activityFilter.value = { kind: 'all' }; selectedActivityId.value = null; void load(true) }, { immediate: true })
-watch(() => auth.adminToken, startStream)
+watch(() => auth.adminWebToken, startStream)
 onMounted(() => {
   mounted = true
   clockTimer = setInterval(() => { clockNow.value = Date.now() }, 30_000)

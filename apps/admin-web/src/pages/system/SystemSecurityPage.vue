@@ -79,7 +79,7 @@ async function submitChangePassword() {
     const response = await authApi.changePassword(currentPassword.value, newPassword.value)
     currentPassword.value = ''
     newPassword.value = ''
-    auth.setAdminToken(response.token)
+    auth.setAdminWebToken(response.token)
   } catch (cause) {
     changeError.value = messageFor(cause)
   } finally {
@@ -97,7 +97,7 @@ async function signOutEverywhere() {
   everywhereError.value = null
   try {
     const response = await authApi.logoutEverywhere()
-    auth.setAdminToken(response.token)
+    auth.setAdminWebToken(response.token)
   } catch (cause) {
     everywhereError.value = messageFor(cause)
   } finally {

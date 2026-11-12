@@ -90,7 +90,7 @@ function visibility() {
   // Background microphone capture is not permitted; an ongoing TTS downlink is preserved.
   if (document.hidden && assistant.micEnabled) void assistant.stopMicrophone()
 }
-watch(() => auth.adminToken, () => { assistant.disconnect(); assistant.visible = false })
+watch(() => auth.adminWebToken, () => { assistant.disconnect(); assistant.visible = false })
 watch(() => assistant.visible, async open => {
   if (open) {
     await nextTick()
@@ -117,7 +117,7 @@ onBeforeUnmount(() => {
 
 <template>
   <Teleport to="body">
-    <div v-if="auth.adminToken" class="text-foreground">
+    <div v-if="auth.adminWebToken" class="text-foreground">
       <button
         ref="launcher" type="button"
         class="assistant-launcher fixed z-30 grid size-14 place-items-center rounded-full bg-primary text-primary-foreground shadow-lg focus-visible:outline-2 focus-visible:outline-offset-4"

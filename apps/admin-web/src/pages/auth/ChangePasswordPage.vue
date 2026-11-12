@@ -45,7 +45,7 @@ async function submit() {
     currentPassword.value = ''
     newPassword.value = ''
     auth.setLoginStatus({ passwordLoginEnabled: true, mustChangePassword: false })
-    auth.setAdminToken(response.token)
+    auth.setAdminWebToken(response.token)
     await router.replace({ path: redirect.value })
   } catch (cause) {
     error.value = messageFor(cause)

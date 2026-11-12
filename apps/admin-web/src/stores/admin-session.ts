@@ -7,7 +7,7 @@ export interface LoginStatus {
   mustChangePassword: boolean
 }
 
-export function readAdminToken(): string | null {
+export function readAdminWebToken(): string | null {
   try {
     return localStorage.getItem(STORAGE_KEY) || null
   } catch {
@@ -17,12 +17,12 @@ export function readAdminToken(): string | null {
 
 // Module-level state so non-component code (HTTP client, SSE streams) can clear the session
 // without an active Pinia instance. The auth store exposes the same refs.
-export const adminTokenState = ref<string | null>(readAdminToken())
+export const adminWebTokenState = ref<string | null>(readAdminWebToken())
 export const loginStatusState = ref<LoginStatus | null>(null)
 
-export function writeAdminToken(token: string | null) {
+export function writeAdminWebToken(token: string | null) {
   const normalized = token?.trim() || null
-  adminTokenState.value = normalized
+  adminWebTokenState.value = normalized
   try {
     if (normalized) localStorage.setItem(STORAGE_KEY, normalized)
     else localStorage.removeItem(STORAGE_KEY)

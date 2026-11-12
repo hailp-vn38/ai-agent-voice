@@ -15,7 +15,7 @@ beforeEach(async () => {
   const pinia = createPinia()
   setActivePinia(pinia)
   const auth = useAuthStore()
-  auth.setAdminToken('test-token')
+  auth.setAdminWebToken('test-token')
   assistant = useAssistantStore()
   assistant.visible = true
   assistant.state = 'ready'

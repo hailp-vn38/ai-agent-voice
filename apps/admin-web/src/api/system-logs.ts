@@ -13,7 +13,7 @@ import type {
   SystemLogPage,
   SystemLogStreamCallbacks,
 } from '@/api/types/system-logs'
-import { readAdminToken } from '@/stores/auth'
+import { readAdminWebToken } from '@/stores/auth'
 import { handleSessionResponse } from './session'
 
 const LEVEL_SEVERITY: Record<LogLevel, number> = {
@@ -527,7 +527,7 @@ export async function listenSystemLogStream(
   demoSubscribers.add(demoSubscriber)
 
   try {
-    const token = readAdminToken()
+    const token = readAdminWebToken()
     const path = withQuery('/api/admin/system/logs/stream', toLogQueryRecord(filter))
 
     const response = await fetch(apiUrl(path), {

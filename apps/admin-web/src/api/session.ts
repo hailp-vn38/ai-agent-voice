@@ -1,4 +1,4 @@
-import { loginStatusState, writeAdminToken } from '@/stores/admin-session'
+import { loginStatusState, writeAdminWebToken } from '@/stores/admin-session'
 
 import { ApiError, toApiError } from './errors'
 
@@ -16,7 +16,7 @@ export function setSessionHandler(next: SessionHandler) {
 /** Applies the session rules to a failed admin request. Returns true when the request was handled. */
 export function applySessionFailure(error: ApiError): boolean {
   if (error.status === 401 || error.code === 'unauthorized') {
-    writeAdminToken(null)
+    writeAdminWebToken(null)
     handler({ kind: 'signed_out' })
     return true
   }
@@ -36,6 +36,6 @@ export async function handleSessionResponse(response: Response): Promise<boolean
 
 /** Logging out only clears this browser; the server keeps other sessions valid. */
 export function signOut() {
-  writeAdminToken(null)
+  writeAdminWebToken(null)
   handler({ kind: 'signed_out_by_user' })
 }

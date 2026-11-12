@@ -5,7 +5,7 @@ export interface PasswordLoginStatusResponse {
   must_change_password: boolean
 }
 
-export interface AdminTokenResponse {
+export interface AdminWebTokenResponse {
   token: string
   token_type: 'Bearer'
   expires_at: number
@@ -19,16 +19,16 @@ export interface PasswordLoginSetResponse {
 
 export const authApi = {
   status: () => requestJson<PasswordLoginStatusResponse>('/api/admin/auth/status', {}, { anonymous: true }),
-  login: (password: string) => requestJson<AdminTokenResponse>(
+  login: (password: string) => requestJson<AdminWebTokenResponse>(
     '/api/admin/auth/login',
     { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password }) },
     { anonymous: true },
   ),
-  changePassword: (currentPassword: string, newPassword: string) => requestJson<AdminTokenResponse>(
+  changePassword: (currentPassword: string, newPassword: string) => requestJson<AdminWebTokenResponse>(
     '/api/admin/auth/password',
     { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ current_password: currentPassword, new_password: newPassword }) },
   ),
-  logoutEverywhere: () => requestJson<AdminTokenResponse>('/api/admin/auth/logout-all', { method: 'POST' }),
+  logoutEverywhere: () => requestJson<AdminWebTokenResponse>('/api/admin/auth/logout-all', { method: 'POST' }),
   setPasswordLogin: (enabled: boolean, currentPassword: string) => requestJson<PasswordLoginSetResponse>(
     '/api/admin/auth/password-login',
     { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ enabled, current_password: currentPassword }) },

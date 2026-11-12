@@ -1,4 +1,4 @@
-import { readAdminToken } from '@/stores/auth'
+import { readAdminWebToken } from '@/stores/auth'
 
 import { toApiError } from './errors'
 import { applySessionFailure } from './session'
@@ -42,7 +42,7 @@ export function apiUrl(path: string): string {
 function requestHeaders(initHeaders: HeadersInit | undefined, optionHeaders: HeadersInit | undefined, revision: number | undefined, optionsAnonymous: boolean | undefined): Headers {
   const headers = new Headers(initHeaders)
   new Headers(optionHeaders).forEach((value, key) => headers.set(key, value))
-  const token = optionsAnonymous ? null : readAdminToken()
+  const token = optionsAnonymous ? null : readAdminWebToken()
   if (token) headers.set('Authorization', `Bearer ${token}`)
   if (revision !== undefined) headers.set('If-Match', `"${revision}"`)
   return headers

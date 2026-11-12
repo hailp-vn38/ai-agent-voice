@@ -337,7 +337,7 @@ async function currentLoginStatus(): Promise<LoginStatus> {
 
 router.beforeEach(async to => {
   const status = await currentLoginStatus()
-  return authRedirect(to, { status, token: useAuthStore().adminToken })
+  return authRedirect(to, { status, token: useAuthStore().adminWebToken })
 })
 
 setSessionHandler(event => {
