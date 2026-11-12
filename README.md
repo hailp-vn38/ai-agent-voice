@@ -268,6 +268,12 @@ Compose production mount chỉ đọc `docker/credential-keys.json` và `runtime
 
 Compose mặc định lấy data/models production tại `/mnt/storage/ai-agent-voice/docker/prod/`; có thể đổi bằng `VOICE_PROD_DATA_DIR` và `VOICE_PROD_MODELS_DIR`. [Storage checker](scripts/check-docker-storage.py) kiểm tra đường dẫn Cargo build nếu có `.cargo/config.toml` và thư mục storage tương ứng. Docker/containerd dùng storage mặc định; image, volume và cache của Docker build nằm trong storage của Docker, kể cả cache mount có đường dẫn `/mnt/storage` bên trong container. Khi dùng máy khác, chuẩn bị volume paths có quyền ghi và đặt `APP_UID`/`APP_GID` phù hợp. Backend production không publish cổng trực tiếp ra host.
 
+**Device Push Channel (broker MQTT, tuỳ chọn):** dịch vụ `mosquitto` (image `iegomez/mosquitto-go-auth`, đổi bằng `VELA_MOSQUITTO_IMAGE`) nằm trong profile `push`; không bật profile thì bộ compose giữ nguyên, không chạy broker. Broker không cho kết nối ẩn danh, không có danh sách người dùng cục bộ; mọi xác thực và quyền topic gọi về `/mqtt/auth/*` của server ([cấu hình](docker/mosquitto/)). Bật profile bằng `COMPOSE_PROFILES=push` (đặt trong `.env`) hoặc `--profile push`.
+
+- Test/dev: `docker compose -f compose.test.yaml --profile push up`; listener 1883 không TLS, chỉ trong mạng compose. Đặt `[device_push]` trong config của server với `broker_url = "mqtt://mosquitto:1883"`.
+- Production: listener TLS cổng `8883` (đổi bằng `MQTT_PORT`, `MQTT_BIND`), chứng chỉ và khoá lấy từ `MQTT_TLS_CERT` / `MQTT_TLS_KEY` trong `.env` (mặc định `docker/mosquitto/tls/fullchain.pem`, `privkey.pem`; khoá phải đọc được bởi root). Server nối broker qua listener nội bộ không TLS `mqtt://mosquitto:1883` (không publish ra host). Trong `docker/config.prod.toml` đặt `[device_push]` với `enabled = true`, `endpoint = "<host công khai>:8883"`, `broker_url = "mqtt://mosquitto:1883"`; secret đặt qua `VOICE_DEVICE_PUSH_SECRET` trong `docker/secrets.env`. Đổi secret vô hiệu mọi mật khẩu Device cũ.
+- Kiểm tra khói với broker thật (cần Docker, ngoài bộ test mặc định): `scripts/docker/mqtt-broker-smoke.sh`.
+
 ### Build image cho máy khác kiến trúc
 
 Từ máy Apple Silicon, build image `linux/amd64` cho server Linux rồi đóng gói hoặc push:

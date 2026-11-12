@@ -25,3 +25,19 @@ services:
       server:
         condition: service_healthy
 
+
+  # Device Push Channel broker (ADR 0145). Off unless the `push` profile is enabled.
+  mosquitto:
+    profiles: [push]
+    image: ${VELA_MOSQUITTO_IMAGE:-iegomez/mosquitto-go-auth:3.0.0-mosquitto_2.0.18}
+    command: [mosquitto, -c, /mosquitto/config/mosquitto.conf]
+    restart: unless-stopped
+    volumes:
+      - type: bind
+        source: ./docker/mosquitto/auth.d
+        target: /mosquitto/config/auth.d
+        read_only: true
+      - mosquitto-data:/mosquitto/data
+
+volumes:
+  mosquitto-data:

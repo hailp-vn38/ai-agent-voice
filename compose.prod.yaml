@@ -49,3 +49,26 @@ services:
     restart: unless-stopped
     ports:
       - "${WEB_BIND:-127.0.0.1}:${WEB_PORT:-8080}:8080"
+
+  # Device Push Channel broker (ADR 0145); enable with COMPOSE_PROFILES=push or --profile push.
+  # Certificate paths come from the deployment (.env); the key must be readable by root.
+  mosquitto:
+    ports:
+      - "${MQTT_BIND:-0.0.0.0}:${MQTT_PORT:-8883}:8883"
+    volumes:
+      - type: bind
+        source: ./docker/mosquitto/mosquitto.prod.conf
+        target: /mosquitto/config/mosquitto.conf
+        read_only: true
+      - type: bind
+        source: ${MQTT_TLS_CERT:-./docker/mosquitto/tls/fullchain.pem}
+        target: /mosquitto/certs/fullchain.pem
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${MQTT_TLS_KEY:-./docker/mosquitto/tls/privkey.pem}
+        target: /mosquitto/certs/privkey.pem
+        read_only: true
+        bind:
+          create_host_path: false
