@@ -4,16 +4,16 @@
 
 **Blocked by:** 01: OTA cấp thông tin Device Push Channel cho Device đã đăng ký.
 
-Status: ready-for-agent
+Status: resolved
 
 Spec: [device-push-wake](../spec.md) · [ADR 0145](../../../docs/adr/0145-device-push-channel-mqtt-wake-signal.md)
 
-- [ ] Admin API trả `wake_on_due` cho Reminder đang chờ mà lẽ ra là `pending`, khi tính năng bật.
-- [ ] `acked`, `out_of_window`, `unsupported` giữ nguyên nghĩa và độ ưu tiên; tính năng tắt thì vẫn trả `pending`.
-- [ ] Danh sách theo Device và theo Agent cho cùng kết quả.
-- [ ] Giao diện quản trị hiển thị nhãn tiếng Việt cho giá trị mới và không vỡ với giá trị lạ.
-- [ ] Cập nhật tài liệu API nếu có liệt kê các giá trị trạng thái đồng bộ.
-- [ ] Test theo mẫu test Reminder của Admin API hiện có.
+- [x] Admin API trả `wake_on_due` cho Reminder đang chờ mà lẽ ra là `pending`, khi tính năng bật.
+- [x] `acked`, `out_of_window`, `unsupported` giữ nguyên nghĩa và độ ưu tiên; tính năng tắt thì vẫn trả `pending`.
+- [x] Danh sách theo Device và theo Agent cho cùng kết quả.
+- [x] Giao diện quản trị hiển thị nhãn tiếng Việt cho giá trị mới và không vỡ với giá trị lạ.
+- [x] Cập nhật tài liệu API nếu có liệt kê các giá trị trạng thái đồng bộ.
+- [x] Test theo mẫu test Reminder của Admin API hiện có.
 
 ## Comments
 
