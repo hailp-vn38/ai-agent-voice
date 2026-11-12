@@ -156,10 +156,29 @@ pub fn router_with_state(mut state: AppState) -> Router {
         .swap(true, std::sync::atomic::Ordering::AcqRel)
         && let Some(database) = state.database.clone()
     {
-        crate::services::reminder_scheduler::start_with_hub(
+        let wake: Option<std::sync::Arc<dyn crate::services::device_push_wake::WakePublisher>> =
+            state.device_push.as_ref().and_then(|_| {
+                use crate::services::device_push_mqtt as mqtt;
+                let push = &state.config.device_push;
+                match mqtt::MqttPublisher::start(
+                    &push.broker_url,
+                    mqtt::SERVICE_USERNAME,
+                    &mqtt::service_password(push.secret.expose()),
+                    push.keepalive_seconds,
+                    state.lifecycle.stopping().clone(),
+                ) {
+                    Ok(publisher) => Some(std::sync::Arc::new(publisher) as _),
+                    Err(err) => {
+                        tracing::error!(error = %err, "device push publisher disabled");
+                        None
+                    }
+                }
+            });
+        crate::services::reminder_scheduler::start_with_wake(
             crate::database::notifications::DeviceNotifications::new((*database).clone()),
             state.active_device_sessions.clone(),
             state.notification_hub.clone(),
+            wake,
             state.lifecycle.stopping().clone(),
         );
     }

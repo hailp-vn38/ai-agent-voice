@@ -2,6 +2,7 @@
 mod aggregate;
 mod delivery;
 mod mutations;
+mod wake;
 use super::{
     Database,
     audit::{AuditOutcome, audit},
@@ -13,6 +14,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use sqlx::FromRow;
 use std::sync::Arc;
+pub use wake::WakeCandidate;
 
 pub const SNAPSHOT_LIMIT: i64 = 64;
 
