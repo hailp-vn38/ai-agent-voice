@@ -71,6 +71,7 @@ uuid.workspace = true
 unicode-normalization.workspace = true
 zeroize.workspace = true
 zip = { version = "6.0.0", default-features = false, features = ["deflate"] }
+rumqttc = { version = "0.25", default-features = false }
 
 [dev-dependencies]
 orchestrator-agent = { workspace = true, features = ["test-support"] }

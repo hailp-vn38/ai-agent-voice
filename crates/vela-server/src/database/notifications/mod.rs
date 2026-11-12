@@ -2,6 +2,7 @@
 mod aggregate;
 mod delivery;
 mod mutations;
+mod wake;
 use super::{
     Database,
     audit::{AuditOutcome, audit},
@@ -13,6 +14,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use sqlx::FromRow;
 use std::sync::Arc;
+pub use wake::WakeCandidate;
 
 pub const SNAPSHOT_LIMIT: i64 = 64;
 
@@ -276,7 +278,12 @@ impl DeviceNotifications {
             attempts_used: 0,
             created_at_ms: now,
             updated_at_ms: now,
-            sync_status: if self.wake_on_due { "wake_on_due" } else { "pending" }.into(),
+            sync_status: if self.wake_on_due {
+                "wake_on_due"
+            } else {
+                "pending"
+            }
+            .into(),
         };
         sqlx::query("INSERT INTO device_reminders(id,device_row_id,message,due_at_ms,timezone,schedule_revision,source,created_at_ms,updated_at_ms) VALUES (?,?,?,?,?,?,?,?,?)").bind(&reminder.id).bind(device_row_id).bind(&reminder.message).bind(due_at_ms).bind(&reminder.timezone).bind(revision).bind(ctx.source.as_str()).bind(now).bind(now).execute(&mut *tx).await?;
         let response = serde_json::to_string(&reminder)
