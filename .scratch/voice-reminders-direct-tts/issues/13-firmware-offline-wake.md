@@ -16,3 +16,5 @@ Status: ready-for-agent
 ## Comments
 
 2026-10-12: Người dùng chỉ đạo triển khai Web/server trước. Ticket firmware/phần cứng này được để mở cho giai đoạn sau; không dùng server harness để thay bằng chứng NVS/audio sink/RTC thật.
+
+2026-11-13: [ADR 0145](../../../docs/adr/0145-device-push-channel-mqtt-wake-signal.md) hoãn ticket này. Device đang thức được đánh thức bằng Wake Signal qua Device Push Channel ([device-push-wake](../../device-push-wake/spec.md)); ticket này chỉ còn cần cho Device Deep Sleep.

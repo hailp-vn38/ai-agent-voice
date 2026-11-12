@@ -16,3 +16,5 @@ Status: ready-for-agent
 ## Comments
 
 2026-10-12: Người dùng chỉ đạo triển khai Web/server trước. Ticket firmware/phần cứng này được để mở cho giai đoạn sau; không dùng server harness để thay bằng chứng NVS/audio sink/RTC thật.
+
+2026-11-13: [ADR 0145](../../../docs/adr/0145-device-push-channel-mqtt-wake-signal.md) hoãn phần NVS snapshot/`sync_ack` của ticket này. Phần phát online và Playback ACK được làm lại trong [device-push-wake/06](../../device-push-wake/issues/06-firmware-reminder-playback-ack.md); ticket này giữ mở cho phần cache.
