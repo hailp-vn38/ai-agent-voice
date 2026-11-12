@@ -219,7 +219,6 @@ llm = "test"
 tts = "test"
 [api]
 enabled = true
-admin_token = "wiki-conversations-test-token"
 jwt_secret = "wiki-conversations-test-jwt-signing-secret-0123456789"
 "#,
         )

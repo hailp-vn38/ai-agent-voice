@@ -11,7 +11,7 @@ token = "REPLACE_WITH_VOICE_TOKEN"
 
 [api]
 enabled = true
-admin_token = "REPLACE_WITH_ADMIN_TOKEN"
+jwt_secret = "REPLACE_WITH_RANDOM_JWT_SECRET_OF_32_CHARS_OR_MORE"
 
 [database]
 url = "sqlite://data/vela.db"

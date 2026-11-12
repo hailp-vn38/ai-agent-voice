@@ -38,11 +38,11 @@ config=docker/config.prod.toml
 if [[ -e $config ]]; then
   kept "$config"
 else
-  VOICE_TOKEN=$(random_token) ADMIN_TOKEN=$(random_token) python3 - "$config" <<'EOF'
+  VOICE_TOKEN=$(random_token) JWT_SECRET=$(random_token) python3 - "$config" <<'EOF'
 import os, sys
 text = open("docker/config.prod.example.toml").read()
 text = text.replace("REPLACE_WITH_VOICE_TOKEN", os.environ["VOICE_TOKEN"])
-text = text.replace("REPLACE_WITH_ADMIN_TOKEN", os.environ["ADMIN_TOKEN"])
+text = text.replace("REPLACE_WITH_RANDOM_JWT_SECRET_OF_32_CHARS_OR_MORE", os.environ["JWT_SECRET"])
 open(sys.argv[1], "w").write(text)
 EOF
   created "$config (edit provider keys and public_ws_url)"

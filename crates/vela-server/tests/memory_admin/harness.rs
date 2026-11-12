@@ -42,7 +42,6 @@ tts = "test"
 url = "sqlite://{db}"
 [api]
 enabled = true
-admin_token = "memory-unused-admin-token"
 jwt_secret = "memory-harness-signing-secret-0123456789"
 [orchestrator]
 store_dir = "{root}/orch-store"

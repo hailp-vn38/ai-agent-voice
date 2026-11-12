@@ -20,7 +20,6 @@ tts = "test"
 url = "sqlite://{}"
 [api]
 enabled = true
-admin_token = "background-test-token"
 jwt_secret = "background-test-jwt-signing-secret-0123456789"
 [orchestrator]
 store_dir = "{}"
@@ -338,7 +337,6 @@ tts = "test"
 url = "sqlite://{}"
 [api]
 enabled = true
-admin_token = "background-test-token"
 jwt_secret = "background-test-jwt-signing-secret-0123456789"
 [orchestrator]
 store_dir = "{}"
@@ -696,7 +694,6 @@ tts = "test"
 url = "sqlite://{}"
 [api]
 enabled = true
-admin_token = "background-test-token"
 jwt_secret = "background-test-jwt-signing-secret-0123456789"
 [orchestrator]
 store_dir = "{}"

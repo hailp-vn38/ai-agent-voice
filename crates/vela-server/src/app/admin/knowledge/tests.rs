@@ -27,7 +27,6 @@ llm = "test"
 tts = "test"
 [api]
 enabled = true
-admin_token = "knowledge-test-token"
 jwt_secret = "knowledge-test-jwt-signing-secret-0123456789"
 "#,
     )
@@ -101,7 +100,6 @@ llm = "test"
 tts = "test"
 [api]
 enabled = true
-admin_token = "knowledge-test-token"
 jwt_secret = "knowledge-test-jwt-signing-secret-0123456789"
 "#,
     )
@@ -174,7 +172,6 @@ llm = "test"
 tts = "test"
 [api]
 enabled = true
-admin_token = "knowledge-test-token"
 jwt_secret = "knowledge-test-jwt-signing-secret-0123456789"
 "#,
     )
@@ -433,7 +430,6 @@ llm = "test"
 tts = "test"
 [api]
 enabled = true
-admin_token = "knowledge-test-token"
 jwt_secret = "knowledge-test-jwt-signing-secret-0123456789"
 "#,
     )

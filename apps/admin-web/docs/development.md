@@ -59,7 +59,7 @@ location / {
 
 Đây là routing snippet, chưa cấu hình listener/TLS hay publish một Voice endpoint. Admin UI không cần mở Voice WS để render các trang quản trị. App/worklet đang dùng root-relative paths; deploy dưới subpath cần thay base/router/worklet URL trước, chưa có config sẵn cho trường hợp đó.
 
-Ưu tiên HTTPS và runtime token input. `VITE_ADMIN_TOKEN` được nhúng vào bundle; dùng nó nghĩa là người có quyền tải static bundle có bearer credential. SQLite chứa encrypted resource credentials nên server key/backup là trách nhiệm backend deployment.
+Ưu tiên HTTPS: Admin Password và Admin Web Token đi qua mạng. Bundle không chứa credential nào. SQLite chứa encrypted resource credentials nên server key/backup là trách nhiệm backend deployment.
 
 ## Kiểm tra khi sửa code
 
@@ -81,9 +81,7 @@ Kết quả review 2026-10-09: 38 test files / 126 tests pass; typecheck và pro
 
 ### Token sai hoặc 401
 
-UI giữ token trước khi API xác nhận, sau đó ẩn form Connect; Retry không đổi credential. Hiện workaround: DevTools → Application → Session Storage, xóa `voice-agent-admin-token`, reload rồi nhập đúng. Chỉ xóa token của ứng dụng này, không cần clear toàn bộ storage.
-
-Nếu dùng `VITE_ADMIN_TOKEN`, xóa session token vẫn dùng fallback; bỏ/sửa env và restart/rebuild. Không nhầm với Voice/OTA token. Flow đổi token/logout cần sửa UI, đã ghi trong review.
+Token hết hạn, bị thu hồi (đăng xuất mọi nơi, đổi mật khẩu, đổi `jwt_secret`) hoặc sai làm API trả 401 và web quay về trang đăng nhập; đăng nhập lại bằng Admin Password. Quên mật khẩu: dùng lệnh đặt lại mật khẩu của server rồi đăng nhập bằng mật khẩu mặc định. Không nhầm với Voice/OTA token.
 
 ### 404 hoặc response JSON lỗi
 

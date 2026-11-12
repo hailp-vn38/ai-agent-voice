@@ -44,7 +44,6 @@ pub const PROMPT_MARKER: &str = "SERVER-DEFAULT-PROMPT";
 pub const TEMPLATE_PROMPT_V1: &str = "TEMPLATE-PROMPT-V1";
 pub const TEMPLATE_PROMPT_V2: &str = "TEMPLATE-PROMPT-V2";
 pub const GOODBYE_ARGUMENT: &str = "SECRET-GOODBYE-FROM-A-TOOL-ARGUMENT";
-pub const ADMIN_TOKEN: &str = "transcript-admin-token";
 
 // ---------------------------------------------------------------- scripted providers
 
@@ -282,7 +281,6 @@ pub fn config(url: String, history: DatabaseHistoryConfig) -> AppConfig {
         },
         api: AdminApiConfig {
             enabled: true,
-            admin_token: ADMIN_TOKEN.to_owned(),
             jwt_secret: SecretString::new("transcript-harness-signing-secret-0123456789".to_owned()),
             ..Default::default()
         },

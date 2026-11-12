@@ -13,7 +13,8 @@ use vela_server::{
 const JWT_SECRET: &str = "admin-signing-secret-0123456789abcdef";
 const OTHER_SECRET: &str = "a-different-signing-secret-0123456789";
 const AUTH_TOKEN: &str = "voice-ota-token-not-the-same-0123456789";
-const ADMIN_TOKEN: &str = "admin-test-token";
+/// A bearer value the removed static credential used to take; it must now be refused.
+const RETIRED_STATIC_BEARER: &str = "retired-static-bearer-0123456789";
 
 fn database_url() -> String {
     format!(
@@ -42,7 +43,6 @@ url = "{database_uri}"
 token = "{AUTH_TOKEN}"
 [api]
 enabled = true
-admin_token = "{ADMIN_TOKEN}"
 jwt_secret = "{jwt_secret}"
 token_ttl_secs = {ttl_secs}
 "#
@@ -61,7 +61,7 @@ fn parse(text: &str) -> Result<AppConfig, String> {
 fn validated_prod_example(api_block: &str, voice_token: &str) -> Result<AppConfig, String> {
     let text = include_str!("../../../docker/config.prod.example.toml")
         .replace(
-            "[api]\nenabled = true\nadmin_token = \"REPLACE_WITH_ADMIN_TOKEN\"\n",
+            "[api]\nenabled = true\njwt_secret = \"REPLACE_WITH_RANDOM_JWT_SECRET_OF_32_CHARS_OR_MORE\"\n",
             api_block,
         )
         .replace(
@@ -152,9 +152,9 @@ async fn fresh_database_logs_in_with_default_password_and_token_is_accepted() {
         "a default-password token is limited to the password change until it is replaced"
     );
     assert_eq!(
-        system_status(&client, &base, ADMIN_TOKEN).await,
-        StatusCode::OK,
-        "admin_token keeps working during the expand step"
+        system_status(&client, &base, RETIRED_STATIC_BEARER).await,
+        StatusCode::UNAUTHORIZED,
+        "a static bearer is no longer a credential"
     );
 }
 
@@ -278,38 +278,14 @@ async fn restart_on_same_database_keeps_tokens_and_new_secret_invalidates_them()
 fn config_without_valid_signing_secret_fails_validation() {
     let api = |secret: &str, ttl: u64| {
         format!(
-            "[api]\nenabled = true\nadmin_token = \"{ADMIN_TOKEN}\"\njwt_secret = \"{secret}\"\ntoken_ttl_secs = {ttl}\n"
+            "[api]\nenabled = true\njwt_secret = \"{secret}\"\ntoken_ttl_secs = {ttl}\n"
         )
     };
     assert!(validated_prod_example(&api(JWT_SECRET, 3600), AUTH_TOKEN).is_ok());
-    assert!(
-        validated_prod_example("[api]\nenabled = true\nadmin_token = \"x\"\n", AUTH_TOKEN).is_ok()
-    );
+    assert!(validated_prod_example("[api]\nenabled = true\n", AUTH_TOKEN).is_err());
     assert!(validated_prod_example(&api("too-short", 3600), AUTH_TOKEN).is_err());
     assert!(validated_prod_example(&api(AUTH_TOKEN, 3600), AUTH_TOKEN).is_err());
     assert!(validated_prod_example(&api(JWT_SECRET, 0), AUTH_TOKEN).is_err());
-}
-
-#[tokio::test]
-async fn routes_are_absent_without_signing_secret() {
-    let config = parse(&config_text(&database_url(), "", 3600)).unwrap();
-    let router = bootstrap_with_providers_and_secret_resolver(
-        config,
-        Arc::new(ProviderSet::unavailable()),
-        Arc::new(EnvSecretResolver),
-    )
-    .await
-    .unwrap();
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let address = listener.local_addr().unwrap();
-    tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
-    let response = Client::new()
-        .post(format!("http://{address}/api/admin/auth/login"))
-        .json(&json!({ "password": "admin" }))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(response.status(), StatusCode::NOT_FOUND);
 }
 
 async fn change_password(
@@ -441,14 +417,29 @@ async fn password_change_rejects_wrong_current_and_weak_new_passwords() {
 }
 
 #[tokio::test]
-async fn admin_token_is_not_blocked_by_the_forced_change_flag() {
+async fn forced_change_flag_blocks_every_route_with_no_bypass() {
     let base = serve(&database_url(), JWT_SECRET, 3600).await;
     let client = Client::new();
-    let _ = login_token(&client, &base, "admin").await;
+    let token = login_token(&client, &base, "admin").await;
     assert_eq!(
-        system_status(&client, &base, ADMIN_TOKEN).await,
-        StatusCode::OK
+        system_status(&client, &base, &token).await,
+        StatusCode::FORBIDDEN
     );
+    assert_eq!(
+        system_status(&client, &base, RETIRED_STATIC_BEARER).await,
+        StatusCode::UNAUTHORIZED
+    );
+}
+
+#[test]
+fn config_with_the_removed_static_key_fails_naming_jwt_secret() {
+    let text = config_text(&database_url(), JWT_SECRET, 3600).replace(
+        "jwt_secret =",
+        "admin_token = \"old-value-that-is-not-migrated\"\njwt_secret =",
+    );
+    let error = parse(&text).unwrap_err();
+    assert!(error.contains("admin_token"), "{error}");
+    assert!(error.contains("jwt_secret"), "{error}");
 }
 
 #[tokio::test]
@@ -457,16 +448,16 @@ async fn password_change_writes_one_audit_event_without_secrets() {
     let client = Client::new();
     let token = login_token(&client, &base, "admin").await;
     let new_password = "fresh-admin-pass";
-    assert_eq!(
-        change_password(&client, &base, &token, "admin", new_password)
-            .await
-            .status(),
-        StatusCode::OK
-    );
+    let changed = change_password(&client, &base, &token, "admin", new_password).await;
+    assert_eq!(changed.status(), StatusCode::OK);
+    let rotated = changed.json::<Value>().await.unwrap()["token"]
+        .as_str()
+        .unwrap()
+        .to_owned();
 
     let page: Value = client
         .get(format!("{base}/system/audit-logs"))
-        .bearer_auth(ADMIN_TOKEN)
+        .bearer_auth(&rotated)
         .send()
         .await
         .unwrap()
@@ -711,7 +702,7 @@ async fn logout_and_toggle_each_write_one_audit_event_without_secrets() {
 
     let page: Value = client
         .get(format!("{base}/system/audit-logs"))
-        .bearer_auth(ADMIN_TOKEN)
+        .bearer_auth(&fresh)
         .send()
         .await
         .unwrap()
@@ -852,9 +843,10 @@ async fn reset_writes_one_audit_event_without_secrets() {
         .unwrap();
 
     let restarted = serve(&uri, JWT_SECRET, 3600).await;
+    let after_reset = rotated_token(&client, &restarted).await;
     let page: Value = client
         .get(format!("{restarted}/system/audit-logs"))
-        .bearer_auth(ADMIN_TOKEN)
+        .bearer_auth(&after_reset)
         .send()
         .await
         .unwrap()

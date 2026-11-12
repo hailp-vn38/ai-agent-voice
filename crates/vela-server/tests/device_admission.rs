@@ -114,7 +114,6 @@ async fn start_enrollment() -> (String, String, JoinHandle<()>) {
     };
     app_config.api = vela_server::config::AdminApiConfig {
         enabled: true,
-        admin_token: "enrollment-admin".into(),
         jwt_secret: vela_server::config::SecretString::new("enrollment-signing-secret-0123456789"),
         ..Default::default()
     };

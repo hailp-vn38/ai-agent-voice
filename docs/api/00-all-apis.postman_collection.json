@@ -2,10 +2,80 @@
   "info": {
     "_postman_id": "a8122115-1541-4b6f-a017-feb64d928bf2",
     "name": "AI Agent Voice - dev-test - All APIs",
-    "description": "Synchronized with the current Admin router. SQLite and WS Device admission are always required. Admin routes are mounted only when api.enabled=true. Removed database/admission config switches must not be sent. Admin requests require `Authorization: Bearer {{admin_token}}`. PATCH/PUT/DELETE mutations that use optimistic concurrency require `If-Match: \"<revision>\"`. This file groups logical API collections as folders so it can be imported once.",
+    "description": "Synchronized with the current Admin router. SQLite and WS Device admission are always required. Admin routes are mounted only when api.enabled=true. Removed database/admission config switches must not be sent. Admin requests require `Authorization: Bearer {{admin_web_token}}`, an Admin Web Token: run `00 - Admin login` first. A fresh database accepts the default Admin Password `admin` and then only allows `Change password` (403 password_change_required elsewhere) until it is replaced. The former static Admin bearer setting no longer exists. PATCH/PUT/DELETE mutations that use optimistic concurrency require `If-Match: \"<revision>\"`. This file groups logical API collections as folders so it can be imported once.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "item": [
+    {
+      "name": "00 - Admin login",
+      "item": [
+        {
+          "name": "Login",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const body = pm.response.json();",
+                  "if (pm.response.code === 200 && body.token) {",
+                  "  pm.collectionVariables.set('admin_web_token', body.token);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": "{{base_url}}/api/admin/auth/login",
+            "body": { "mode": "raw", "raw": "{\n  \"password\": \"{{admin_password}}\"\n}" },
+            "description": "Exchanges the Admin Password for an Admin Web Token and stores it in `admin_web_token`. 200 returns `token`, `expires_at` and `must_change_password`; a wrong password is 401 and repeated failures are 429. Requires `api.jwt_secret`."
+          },
+          "response": []
+        },
+        {
+          "name": "Change password",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const body = pm.response.json();",
+                  "if (pm.response.code === 200 && body.token) {",
+                  "  pm.collectionVariables.set('admin_web_token', body.token);",
+                  "  pm.collectionVariables.set('admin_password', pm.collectionVariables.get('new_admin_password'));",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": "{{base_url}}/api/admin/auth/password",
+            "body": { "mode": "raw", "raw": "{\n  \"current_password\": \"{{admin_password}}\",\n  \"new_password\": \"{{new_admin_password}}\"\n}" },
+            "description": "Replaces the Admin Password and returns a fresh Admin Web Token. Set `new_admin_password` first. The only Admin route open while `must_change_password` is true.",
+            "auth": {
+              "type": "bearer",
+              "bearer": [{ "key": "token", "value": "{{admin_web_token}}", "type": "string" }]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Login status",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{base_url}}/api/admin/auth/status",
+            "description": "Public. Returns `password_login_enabled` and `must_change_password` only."
+          },
+          "response": []
+        }
+      ]
+    },
     {
       "name": "01 - System & Voice",
       "item": [
@@ -41,7 +111,7 @@
               "bearer": [
                 {
                   "key": "token",
-                  "value": "{{admin_token}}",
+                  "value": "{{admin_web_token}}",
                   "type": "string"
                 }
               ]
@@ -58,7 +128,7 @@
             "description": "Current OS-visible CPU/RAM, Rust process CPU/RSS and root filesystem capacity. DTO: apps/admin-web/src/api/types/system.ts (SystemResources). 200 Cache-Control: no-store; 503 system_metrics_unavailable before first sample or after 15 seconds. First-sample CPU and unsupported fields are null. No history, paths or container quotas.",
             "auth": {
               "type": "bearer",
-              "bearer": [{ "key": "token", "value": "{{admin_token}}", "type": "string" }]
+              "bearer": [{ "key": "token", "value": "{{admin_web_token}}", "type": "string" }]
             }
           },
           "response": []
@@ -291,7 +361,7 @@
                   "bearer": [
                     {
                       "key": "token",
-                      "value": "{{admin_token}}",
+                      "value": "{{admin_web_token}}",
                       "type": "string"
                     }
                   ]
@@ -326,7 +396,7 @@
                   "bearer": [
                     {
                       "key": "token",
-                      "value": "{{admin_token}}",
+                      "value": "{{admin_web_token}}",
                       "type": "string"
                     }
                   ]
@@ -345,7 +415,7 @@
                   "bearer": [
                     {
                       "key": "token",
-                      "value": "{{admin_token}}",
+                      "value": "{{admin_web_token}}",
                       "type": "string"
                     }
                   ]
@@ -385,7 +455,7 @@
                   "bearer": [
                     {
                       "key": "token",
-                      "value": "{{admin_token}}",
+                      "value": "{{admin_web_token}}",
                       "type": "string"
                     }
                   ]
@@ -411,7 +481,7 @@
                   "bearer": [
                     {
                       "key": "token",
-                      "value": "{{admin_token}}",
+                      "value": "{{admin_web_token}}",
                       "type": "string"
                     }
                   ]
@@ -431,7 +501,7 @@
                   "bearer": [
                     {
                       "key": "token",
-                      "value": "{{admin_token}}",
+                      "value": "{{admin_web_token}}",
                       "type": "string"
                     }
                   ]
@@ -457,7 +527,7 @@
                   "bearer": [
                     {
                       "key": "token",
-                      "value": "{{admin_token}}",
+                      "value": "{{admin_web_token}}",
                       "type": "string"
                     }
                   ]
@@ -483,7 +553,7 @@
                   "bearer": [
                     {
                       "key": "token",
-                      "value": "{{admin_token}}",
+                      "value": "{{admin_web_token}}",
                       "type": "string"
                     }
                   ]
@@ -509,7 +579,7 @@
                   "bearer": [
                     {
                       "key": "token",
-                      "value": "{{admin_token}}",
+                      "value": "{{admin_web_token}}",
                       "type": "string"
                     }
                   ]
@@ -534,7 +604,7 @@
                   "bearer": [
                     {
                       "key": "token",
-                      "value": "{{admin_token}}",
+                      "value": "{{admin_web_token}}",
                       "type": "string"
                     }
                   ]
@@ -569,7 +639,7 @@
                   "bearer": [
                     {
                       "key": "token",
-                      "value": "{{admin_token}}",
+                      "value": "{{admin_web_token}}",
                       "type": "string"
                     }
                   ]
@@ -604,7 +674,7 @@
                   "bearer": [
                     {
                       "key": "token",
-                      "value": "{{admin_token}}",
+                      "value": "{{admin_web_token}}",
                       "type": "string"
                     }
                   ]
@@ -623,7 +693,7 @@
                   "bearer": [
                     {
                       "key": "token",
-                      "value": "{{admin_token}}",
+                      "value": "{{admin_web_token}}",
                       "type": "string"
                     }
                   ]
@@ -663,7 +733,7 @@
                   "bearer": [
                     {
                       "key": "token",
-                      "value": "{{admin_token}}",
+                      "value": "{{admin_web_token}}",
                       "type": "string"
                     }
                   ]
@@ -689,7 +759,7 @@
                   "bearer": [
                     {
                       "key": "token",
-                      "value": "{{admin_token}}",
+                      "value": "{{admin_web_token}}",
                       "type": "string"
                     }
                   ]
@@ -716,7 +786,7 @@
               "bearer": [
                 {
                   "key": "token",
-                  "value": "{{admin_token}}",
+                  "value": "{{admin_web_token}}",
                   "type": "string"
                 }
               ]
@@ -750,7 +820,7 @@
               "bearer": [
                 {
                   "key": "token",
-                  "value": "{{admin_token}}",
+                  "value": "{{admin_web_token}}",
                   "type": "string"
                 }
               ]
@@ -769,7 +839,7 @@
               "bearer": [
                 {
                   "key": "token",
-                  "value": "{{admin_token}}",
+                  "value": "{{admin_web_token}}",
                   "type": "string"
                 }
               ]
@@ -809,7 +879,7 @@
               "bearer": [
                 {
                   "key": "token",
-                  "value": "{{admin_token}}",
+                  "value": "{{admin_web_token}}",
                   "type": "string"
                 }
               ]
@@ -835,7 +905,7 @@
               "bearer": [
                 {
                   "key": "token",
-                  "value": "{{admin_token}}",
+                  "value": "{{admin_web_token}}",
                   "type": "string"
                 }
               ]
@@ -875,7 +945,7 @@
               "bearer": [
                 {
                   "key": "token",
-                  "value": "{{admin_token}}",
+                  "value": "{{admin_web_token}}",
                   "type": "string"
                 }
               ]
@@ -895,7 +965,7 @@
               "bearer": [
                 {
                   "key": "token",
-                  "value": "{{admin_token}}",
+                  "value": "{{admin_web_token}}",
                   "type": "string"
                 }
               ]
@@ -915,7 +985,7 @@
               "bearer": [
                 {
                   "key": "token",
-                  "value": "{{admin_token}}",
+                  "value": "{{admin_web_token}}",
                   "type": "string"
                 }
               ]
@@ -941,7 +1011,7 @@
               "bearer": [
                 {
                   "key": "token",
-                  "value": "{{admin_token}}",
+                  "value": "{{admin_web_token}}",
                   "type": "string"
                 }
               ]
@@ -967,7 +1037,7 @@
               "bearer": [
                 {
                   "key": "token",
-                  "value": "{{admin_token}}",
+                  "value": "{{admin_web_token}}",
                   "type": "string"
                 }
               ]
@@ -993,7 +1063,7 @@
               "bearer": [
                 {
                   "key": "token",
-                  "value": "{{admin_token}}",
+                  "value": "{{admin_web_token}}",
                   "type": "string"
                 }
               ]
@@ -1021,7 +1091,7 @@
                   "bearer": [
                     {
                       "key": "token",
-                      "value": "{{admin_token}}",
+                      "value": "{{admin_web_token}}",
                       "type": "string"
                     }
                   ]
@@ -1056,7 +1126,7 @@
                   "bearer": [
                     {
                       "key": "token",
-                      "value": "{{admin_token}}",
+                      "value": "{{admin_web_token}}",
                       "type": "string"
                     }
                   ]
@@ -1089,7 +1159,7 @@
                   "bearer": [
                     {
                       "key": "token",
-                      "value": "{{admin_token}}",
+                      "value": "{{admin_web_token}}",
                       "type": "string"
                     }
                   ]
@@ -1130,7 +1200,7 @@
                   "bearer": [
                     {
                       "key": "token",
-                      "value": "{{admin_token}}",
+                      "value": "{{admin_web_token}}",
                       "type": "string"
                     }
                   ]
@@ -1170,7 +1240,7 @@
                   "bearer": [
                     {
                       "key": "token",
-                      "value": "{{admin_token}}",
+                      "value": "{{admin_web_token}}",
                       "type": "string"
                     }
                   ]
@@ -1195,7 +1265,7 @@
                   "bearer": [
                     {
                       "key": "token",
-                      "value": "{{admin_token}}",
+                      "value": "{{admin_web_token}}",
                       "type": "string"
                     }
                   ]
@@ -1215,7 +1285,7 @@
                   "bearer": [
                     {
                       "key": "token",
-                      "value": "{{admin_token}}",
+                      "value": "{{admin_web_token}}",
                       "type": "string"
                     }
                   ]
@@ -1235,7 +1305,7 @@
                   "bearer": [
                     {
                       "key": "token",
-                      "value": "{{admin_token}}",
+                      "value": "{{admin_web_token}}",
                       "type": "string"
                     }
                   ]
@@ -1275,7 +1345,7 @@
                   "bearer": [
                     {
                       "key": "token",
-                      "value": "{{admin_token}}",
+                      "value": "{{admin_web_token}}",
                       "type": "string"
                     }
                   ]
@@ -1310,7 +1380,7 @@
                   "bearer": [
                     {
                       "key": "token",
-                      "value": "{{admin_token}}",
+                      "value": "{{admin_web_token}}",
                       "type": "string"
                     }
                   ]
@@ -1342,7 +1412,7 @@
                   "bearer": [
                     {
                       "key": "token",
-                      "value": "{{admin_token}}",
+                      "value": "{{admin_web_token}}",
                       "type": "string"
                     }
                   ]
@@ -1362,7 +1432,7 @@
                   "bearer": [
                     {
                       "key": "token",
-                      "value": "{{admin_token}}",
+                      "value": "{{admin_web_token}}",
                       "type": "string"
                     }
                   ]
@@ -1387,7 +1457,7 @@
                   "bearer": [
                     {
                       "key": "token",
-                      "value": "{{admin_token}}",
+                      "value": "{{admin_web_token}}",
                       "type": "string"
                     }
                   ]
@@ -1407,7 +1477,7 @@
                   "bearer": [
                     {
                       "key": "token",
-                      "value": "{{admin_token}}",
+                      "value": "{{admin_web_token}}",
                       "type": "string"
                     }
                   ]
@@ -1426,7 +1496,7 @@
                   "bearer": [
                     {
                       "key": "token",
-                      "value": "{{admin_token}}",
+                      "value": "{{admin_web_token}}",
                       "type": "string"
                     }
                   ]
@@ -1461,7 +1531,7 @@
                   "bearer": [
                     {
                       "key": "token",
-                      "value": "{{admin_token}}",
+                      "value": "{{admin_web_token}}",
                       "type": "string"
                     }
                   ]
@@ -1501,7 +1571,7 @@
                   "bearer": [
                     {
                       "key": "token",
-                      "value": "{{admin_token}}",
+                      "value": "{{admin_web_token}}",
                       "type": "string"
                     }
                   ]
@@ -1536,7 +1606,7 @@
                   "bearer": [
                     {
                       "key": "token",
-                      "value": "{{admin_token}}",
+                      "value": "{{admin_web_token}}",
                       "type": "string"
                     }
                   ]
@@ -1572,7 +1642,7 @@
                   "bearer": [
                     {
                       "key": "token",
-                      "value": "{{admin_token}}",
+                      "value": "{{admin_web_token}}",
                       "type": "string"
                     }
                   ]
@@ -1602,7 +1672,7 @@
                   "bearer": [
                     {
                       "key": "token",
-                      "value": "{{admin_token}}",
+                      "value": "{{admin_web_token}}",
                       "type": "string"
                     }
                   ]
@@ -1637,7 +1707,7 @@
                   "bearer": [
                     {
                       "key": "token",
-                      "value": "{{admin_token}}",
+                      "value": "{{admin_web_token}}",
                       "type": "string"
                     }
                   ]
@@ -1656,7 +1726,7 @@
                   "bearer": [
                     {
                       "key": "token",
-                      "value": "{{admin_token}}",
+                      "value": "{{admin_web_token}}",
                       "type": "string"
                     }
                   ]
@@ -1696,7 +1766,7 @@
                   "bearer": [
                     {
                       "key": "token",
-                      "value": "{{admin_token}}",
+                      "value": "{{admin_web_token}}",
                       "type": "string"
                     }
                   ]
@@ -1722,7 +1792,7 @@
                   "bearer": [
                     {
                       "key": "token",
-                      "value": "{{admin_token}}",
+                      "value": "{{admin_web_token}}",
                       "type": "string"
                     }
                   ]
@@ -1746,7 +1816,7 @@
                   "bearer": [
                     {
                       "key": "token",
-                      "value": "{{admin_token}}",
+                      "value": "{{admin_web_token}}",
                       "type": "string"
                     }
                   ]
@@ -1786,7 +1856,7 @@
                   "bearer": [
                     {
                       "key": "token",
-                      "value": "{{admin_token}}",
+                      "value": "{{admin_web_token}}",
                       "type": "string"
                     }
                   ]
@@ -1812,7 +1882,7 @@
                   "bearer": [
                     {
                       "key": "token",
-                      "value": "{{admin_token}}",
+                      "value": "{{admin_web_token}}",
                       "type": "string"
                     }
                   ]
@@ -1852,7 +1922,7 @@
                   "bearer": [
                     {
                       "key": "token",
-                      "value": "{{admin_token}}",
+                      "value": "{{admin_web_token}}",
                       "type": "string"
                     }
                   ]
@@ -1887,7 +1957,7 @@
                   "bearer": [
                     {
                       "key": "token",
-                      "value": "{{admin_token}}",
+                      "value": "{{admin_web_token}}",
                       "type": "string"
                     }
                   ]
@@ -1922,7 +1992,7 @@
                   "bearer": [
                     {
                       "key": "token",
-                      "value": "{{admin_token}}",
+                      "value": "{{admin_web_token}}",
                       "type": "string"
                     }
                   ]
@@ -1957,7 +2027,7 @@
                   "bearer": [
                     {
                       "key": "token",
-                      "value": "{{admin_token}}",
+                      "value": "{{admin_web_token}}",
                       "type": "string"
                     }
                   ]
@@ -1983,7 +2053,7 @@
               "bearer": [
                 {
                   "key": "token",
-                  "value": "{{admin_token}}",
+                  "value": "{{admin_web_token}}",
                   "type": "string"
                 }
               ]
@@ -2001,7 +2071,7 @@
               "bearer": [
                 {
                   "key": "token",
-                  "value": "{{admin_token}}",
+                  "value": "{{admin_web_token}}",
                   "type": "string"
                 }
               ]
@@ -2048,7 +2118,7 @@
               "bearer": [
                 {
                   "key": "token",
-                  "value": "{{admin_token}}",
+                  "value": "{{admin_web_token}}",
                   "type": "string"
                 }
               ]
@@ -2067,7 +2137,7 @@
               "bearer": [
                 {
                   "key": "token",
-                  "value": "{{admin_token}}",
+                  "value": "{{admin_web_token}}",
                   "type": "string"
                 }
               ]
@@ -2086,7 +2156,7 @@
               "bearer": [
                 {
                   "key": "token",
-                  "value": "{{admin_token}}",
+                  "value": "{{admin_web_token}}",
                   "type": "string"
                 }
               ]
@@ -2121,7 +2191,7 @@
               "bearer": [
                 {
                   "key": "token",
-                  "value": "{{admin_token}}",
+                  "value": "{{admin_web_token}}",
                   "type": "string"
                 }
               ]
@@ -2156,7 +2226,7 @@
               "bearer": [
                 {
                   "key": "token",
-                  "value": "{{admin_token}}",
+                  "value": "{{admin_web_token}}",
                   "type": "string"
                 }
               ]
@@ -2191,7 +2261,7 @@
               "bearer": [
                 {
                   "key": "token",
-                  "value": "{{admin_token}}",
+                  "value": "{{admin_web_token}}",
                   "type": "string"
                 }
               ]
@@ -2219,7 +2289,7 @@
                   "bearer": [
                     {
                       "key": "token",
-                      "value": "{{admin_token}}",
+                      "value": "{{admin_web_token}}",
                       "type": "string"
                     }
                   ]
@@ -2239,7 +2309,7 @@
                   "bearer": [
                     {
                       "key": "token",
-                      "value": "{{admin_token}}",
+                      "value": "{{admin_web_token}}",
                       "type": "string"
                     }
                   ]
@@ -2265,7 +2335,7 @@
                   "bearer": [
                     {
                       "key": "token",
-                      "value": "{{admin_token}}",
+                      "value": "{{admin_web_token}}",
                       "type": "string"
                     }
                   ]
@@ -2294,7 +2364,7 @@
                   "bearer": [
                     {
                       "key": "token",
-                      "value": "{{admin_token}}",
+                      "value": "{{admin_web_token}}",
                       "type": "string"
                     }
                   ]
@@ -2325,7 +2395,7 @@
                   "bearer": [
                     {
                       "key": "token",
-                      "value": "{{admin_token}}",
+                      "value": "{{admin_web_token}}",
                       "type": "string"
                     }
                   ]
@@ -2360,7 +2430,7 @@
                   "bearer": [
                     {
                       "key": "token",
-                      "value": "{{admin_token}}",
+                      "value": "{{admin_web_token}}",
                       "type": "string"
                     }
                   ]
@@ -2390,7 +2460,7 @@
                   "bearer": [
                     {
                       "key": "token",
-                      "value": "{{admin_token}}",
+                      "value": "{{admin_web_token}}",
                       "type": "string"
                     }
                   ]
@@ -2421,7 +2491,7 @@
                   "bearer": [
                     {
                       "key": "token",
-                      "value": "{{admin_token}}",
+                      "value": "{{admin_web_token}}",
                       "type": "string"
                     }
                   ]
@@ -2459,7 +2529,7 @@
                   "bearer": [
                     {
                       "key": "token",
-                      "value": "{{admin_token}}",
+                      "value": "{{admin_web_token}}",
                       "type": "string"
                     }
                   ]
@@ -2497,7 +2567,7 @@
                   "bearer": [
                     {
                       "key": "token",
-                      "value": "{{admin_token}}",
+                      "value": "{{admin_web_token}}",
                       "type": "string"
                     }
                   ]
@@ -2531,7 +2601,7 @@
                   "bearer": [
                     {
                       "key": "token",
-                      "value": "{{admin_token}}",
+                      "value": "{{admin_web_token}}",
                       "type": "string"
                     }
                   ]
@@ -2560,7 +2630,7 @@
                   "bearer": [
                     {
                       "key": "token",
-                      "value": "{{admin_token}}",
+                      "value": "{{admin_web_token}}",
                       "type": "string"
                     }
                   ]
@@ -2589,7 +2659,7 @@
                   "bearer": [
                     {
                       "key": "token",
-                      "value": "{{admin_token}}",
+                      "value": "{{admin_web_token}}",
                       "type": "string"
                     }
                   ]
@@ -2618,7 +2688,7 @@
                   "bearer": [
                     {
                       "key": "token",
-                      "value": "{{admin_token}}",
+                      "value": "{{admin_web_token}}",
                       "type": "string"
                     }
                   ]
@@ -2652,7 +2722,7 @@
                   "bearer": [
                     {
                       "key": "token",
-                      "value": "{{admin_token}}",
+                      "value": "{{admin_web_token}}",
                       "type": "string"
                     }
                   ]
@@ -2672,7 +2742,7 @@
                   "bearer": [
                     {
                       "key": "token",
-                      "value": "{{admin_token}}",
+                      "value": "{{admin_web_token}}",
                       "type": "string"
                     }
                   ]
@@ -2694,7 +2764,7 @@
             "header": [
               {
                 "key": "Authorization",
-                "value": "Bearer {{admin_token}}"
+                "value": "Bearer {{admin_web_token}}"
               }
             ],
             "url": "{{base_url}}/api/admin/system/assistant-device",
@@ -2709,7 +2779,7 @@
             "header": [
               {
                 "key": "Authorization",
-                "value": "Bearer {{admin_token}}"
+                "value": "Bearer {{admin_web_token}}"
               },
               {
                 "key": "Content-Type",
@@ -2737,7 +2807,7 @@
             "header": [
               {
                 "key": "Authorization",
-                "value": "Bearer {{admin_token}}"
+                "value": "Bearer {{admin_web_token}}"
               },
               {
                 "key": "Content-Type",
@@ -2769,7 +2839,7 @@
             "header": [
               {
                 "key": "Authorization",
-                "value": "Bearer {{admin_token}}"
+                "value": "Bearer {{admin_web_token}}"
               },
               {
                 "key": "Content-Type",
@@ -2809,8 +2879,18 @@
       "type": "string"
     },
     {
-      "key": "admin_token",
-      "value": "change-me",
+      "key": "admin_web_token",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "admin_password",
+      "value": "admin",
+      "type": "string"
+    },
+    {
+      "key": "new_admin_password",
+      "value": "",
       "type": "string"
     },
     {

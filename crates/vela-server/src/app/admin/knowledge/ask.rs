@@ -1580,7 +1580,6 @@ llm = "test"
 tts = "test"
 [api]
 enabled = true
-admin_token = "wiki-chat-test-token"
 jwt_secret = "wiki-chat-test-jwt-signing-secret-0123456789"
 [wiki.mcp]
 enabled = false
@@ -1678,7 +1677,6 @@ llm = "test"
 tts = "test"
 [api]
 enabled = true
-admin_token = "wiki-chat-test-token"
 jwt_secret = "wiki-chat-test-jwt-signing-secret-0123456789"
 [wiki.mcp]
 enabled = false
@@ -1760,7 +1758,6 @@ model = "fake"
             tts = "test"
             [api]
             enabled = true
-            admin_token = "wiki-chat-test-token"
             jwt_secret = "wiki-chat-test-jwt-signing-secret-0123456789"
             [providers.llm.instances.managed_chat]
             adapter = "openai"

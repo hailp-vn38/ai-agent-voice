@@ -72,7 +72,6 @@ llm = "test"
 tts = "test"
 [api]
 enabled = true
-admin_token = "{TOKEN}"
 jwt_secret = "speaker-test-signing-secret-0123456789"
 [speaker_recognition.enrollment]
 min_clip_ms = 2000

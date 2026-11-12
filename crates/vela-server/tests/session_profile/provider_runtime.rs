@@ -206,7 +206,6 @@ async fn public_api_created_provider_is_used_by_new_ws_and_patch_keeps_old_sessi
     let url = database_url();
     let mut app_config = config("127.0.0.1:0".parse().unwrap(), url);
     app_config.api.enabled = true;
-    app_config.api.admin_token = "managed-test-token".into();
     app_config.api.jwt_secret = vela_server::config::SecretString::new("managed-runtime-signing-secret-0123456789");
     let builds = Arc::new(Mutex::new(Vec::new()));
     let recorded = builds.clone();
@@ -510,7 +509,6 @@ async fn prepare_public_api_returns_accepted_then_ready_and_rejects_loader_flood
     use vela_server::services::provider_runtime::{ProviderRuntimeManager, RuntimeLimits};
     let mut cfg = config("127.0.0.1:0".parse().unwrap(), database_url());
     cfg.api.enabled = true;
-    cfg.api.admin_token = "prepare-test-token".into();
     cfg.api.jwt_secret = vela_server::config::SecretString::new("prepare-runtime-signing-secret-0123456789");
     let (entered, mut entered_rx) = tokio::sync::mpsc::unbounded_channel();
     let (release, release_rx) = std::sync::mpsc::channel();

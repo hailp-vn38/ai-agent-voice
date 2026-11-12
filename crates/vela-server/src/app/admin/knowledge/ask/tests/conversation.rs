@@ -464,10 +464,10 @@ async fn ask_rejects_browser_history_and_invalid_question_retry_combinations() {
 }
 
 #[tokio::test]
-async fn ask_requires_a_database_before_starting_a_turn() {
+async fn ask_without_a_database_rejects_every_bearer() {
     let (base, temp_root, server) = fixture_without_database().await;
-    // Without a database there is no admin_auth row, so no Admin Web Token can be issued. The
-    // middleware still checks the static token here, which is why this one request keeps it.
+    // Without a database there is no admin_auth row, so no Admin Web Token can be issued and no
+    // static credential exists to take its place: the request never reaches the ask handler.
     let response = reqwest::Client::new()
         .post(format!("{base}/knowledge/ask"))
         .bearer_auth("wiki-chat-test-token")
@@ -475,11 +475,7 @@ async fn ask_requires_a_database_before_starting_a_turn() {
         .send()
         .await
         .unwrap();
-    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
-    assert_eq!(
-        response.json::<Value>().await.unwrap()["error"]["code"],
-        "database_unavailable"
-    );
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
     server.abort();
     let _ = std::fs::remove_dir_all(temp_root);
 }

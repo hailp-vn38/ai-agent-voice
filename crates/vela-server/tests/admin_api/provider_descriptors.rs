@@ -4,6 +4,7 @@ use super::super::*;
 async fn provider_adapter_descriptors_and_bootstrap_discovery_are_public_read_only_contracts() {
     let (base, task) = server(true).await;
     let client = Client::new();
+    let web_token = admin_web_token(&client, &base).await;
     let adapters = format!("{base}/api/admin/provider-adapters");
 
     assert_eq!(
@@ -13,7 +14,7 @@ async fn provider_adapter_descriptors_and_bootstrap_discovery_are_public_read_on
 
     let listed = client
         .get(format!("{adapters}?type=tts"))
-        .bearer_auth("admin-test-token")
+        .bearer_auth(&web_token)
         .send()
         .await
         .unwrap();
@@ -66,7 +67,7 @@ async fn provider_adapter_descriptors_and_bootstrap_discovery_are_public_read_on
     );
     let bad_filter = client
         .get(format!("{adapters}?type=vision"))
-        .bearer_auth("admin-test-token")
+        .bearer_auth(&web_token)
         .send()
         .await
         .unwrap();
@@ -78,7 +79,7 @@ async fn provider_adapter_descriptors_and_bootstrap_discovery_are_public_read_on
 
     let descriptor = client
         .get(format!("{adapters}/zerotts_onnx"))
-        .bearer_auth("admin-test-token")
+        .bearer_auth(&web_token)
         .send()
         .await
         .unwrap();
@@ -112,7 +113,7 @@ async fn provider_adapter_descriptors_and_bootstrap_discovery_are_public_read_on
 
     let discovered = client
         .post(format!("{adapters}/zerotts_onnx/capabilities/discover"))
-        .bearer_auth("admin-test-token")
+        .bearer_auth(&web_token)
         .json(&serde_json::json!({"selection":{"model":"zerotts_default"}}))
         .send()
         .await
@@ -131,7 +132,7 @@ async fn provider_adapter_descriptors_and_bootstrap_discovery_are_public_read_on
 
     let invalid = client
         .post(format!("{adapters}/zerotts_onnx/capabilities/discover"))
-        .bearer_auth("admin-test-token")
+        .bearer_auth(&web_token)
         .json(&serde_json::json!({"selection":{"api_key":"not-allowed"}}))
         .send()
         .await
@@ -149,11 +150,12 @@ async fn provider_adapter_descriptors_and_bootstrap_discovery_are_public_read_on
 async fn descriptor_language_fields_match_provider_config_migration_and_validation() {
     let (base, task) = server(true).await;
     let client = Client::new();
+    let web_token = admin_web_token(&client, &base).await;
     let providers = format!("{base}/api/admin/providers");
 
     let legacy = client
         .post(&providers)
-        .bearer_auth("admin-test-token")
+        .bearer_auth(&web_token)
         .json(&serde_json::json!({
             "name": "Legacy ZeroTTS",
             "type": "tts",
@@ -181,7 +183,7 @@ async fn descriptor_language_fields_match_provider_config_migration_and_validati
 
     let incompatible = client
         .post(&providers)
-        .bearer_auth("admin-test-token")
+        .bearer_auth(&web_token)
         .json(&serde_json::json!({
             "name": "Wrong language",
             "type": "tts",
@@ -202,7 +204,7 @@ async fn descriptor_language_fields_match_provider_config_migration_and_validati
 
     let chillaudio = client
         .post(&providers)
-        .bearer_auth("admin-test-token")
+        .bearer_auth(&web_token)
         .json(&serde_json::json!({
             "name": "ChillAudio",
             "type": "tts",
@@ -218,7 +220,7 @@ async fn descriptor_language_fields_match_provider_config_migration_and_validati
 
     let edge_tts = client
         .post(&providers)
-        .bearer_auth("admin-test-token")
+        .bearer_auth(&web_token)
         .json(&serde_json::json!({
             "name": "Edge TTS International",
             "type": "tts",

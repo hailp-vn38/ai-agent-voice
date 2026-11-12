@@ -717,7 +717,6 @@ pub async fn start_controlled_switch(
             let mut state = with_template_llm(state).with_writer_outcome_probe(probe);
             let config = Arc::make_mut(&mut state.config);
             config.api.enabled = true;
-            config.api.admin_token = "direct-admin".into();
             config.api.jwt_secret = vela_server::config::SecretString::new("session-profile-signing-secret-0123456789");
             state
         },

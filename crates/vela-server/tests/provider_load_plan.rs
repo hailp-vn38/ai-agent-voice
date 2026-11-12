@@ -23,7 +23,6 @@ use vela_server::{
     providers::ProviderSet,
 };
 
-const ADMIN_TOKEN: &str = "admin-test-token";
 const VALID_LLM_CONFIG: &str = r#"{"base_url":"https://api.example.test/v1","model":"test-model"}"#;
 const INVALID_LLM_CONFIG: &str =
     r#"{"base_url":"https://api.example.test/v1","model":"m","token":"s"}"#;
@@ -80,7 +79,6 @@ fn config(url: String) -> AppConfig {
         },
         api: AdminApiConfig {
             enabled: true,
-            admin_token: ADMIN_TOKEN.into(),
             jwt_secret: vela_server::config::SecretString::new("load-plan-signing-secret-0123456789"),
             ..Default::default()
         },

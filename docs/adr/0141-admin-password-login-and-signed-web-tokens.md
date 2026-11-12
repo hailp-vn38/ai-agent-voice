@@ -1,6 +1,6 @@
 # ADR 0141 — Admin Password Login và Admin Web Token ký bằng secret trong config
 
-Status: Proposed, 2026-11-11.
+Status: Accepted, 2026-11-12.
 Supersedes (phần xác thực): [ADR 0051](0051-separate-authenticated-admin-api.md).
 Extends: [ADR 0058](0058-minimal-admin-mutation-audit.md), [ADR 0131](0131-database-backup-export-and-transactional-import.md).
 

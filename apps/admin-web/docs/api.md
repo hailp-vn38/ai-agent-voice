@@ -75,7 +75,7 @@ Các path dưới đây là path mà frontend gọi, không phải bản sao to�
 
 ## Credentials
 
-Admin token nhập lúc chạy ở sessionStorage; `VITE_ADMIN_TOKEN` là fallback build-time. Xóa session token không vô hiệu hóa fallback đã nhúng vào bundle. Hiện không có UI đổi token/logout.
+Admin đăng nhập bằng Admin Password qua `POST /api/admin/auth/login` và nhận Admin Web Token (JWT có hạn, ký bằng `api.jwt_secret`). Token nằm trong `localStorage` để dùng chung giữa tab; web không còn biến build-time nào mang credential. Đổi mật khẩu, đăng xuất mọi nơi và bật/tắt Password Login dùng các route `/api/admin/auth/*`.
 
 Provider/MCP `api_key` là write-only, tách khỏi typed `config_json`. Read chỉ trả metadata đã mask; để trống field update sẽ giữ key hiện có. MCP đổi auth thành `none` xóa stored credential theo backend contract. Credentials được backend mã hóa trong SQLite; browser không giữ chúng trong storage. Encryption key là cấu hình server, không phải `VITE_*`.
 

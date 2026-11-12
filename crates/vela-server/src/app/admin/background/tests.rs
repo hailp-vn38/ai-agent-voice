@@ -119,7 +119,6 @@ llm = "test"
 tts = "test"
 [api]
 enabled = true
-admin_token = "jobs-admin-token"
 jwt_secret = "jobs-test-jwt-signing-secret-0123456789"
 "#,
         db_path.display()
@@ -317,7 +316,7 @@ async fn recipe_admin_http_lists_validates_and_runs_playlist_recipe() {
         std::fs::set_permissions(&fake_ytdlp, std::fs::Permissions::from_mode(0o755)).unwrap();
     }
 
-    let config: AppConfig = toml::from_str(&format!("[server]\nbind='127.0.0.1:0'\npublic_ws_url='ws://127.0.0.1:0/voice/v1/'\n[database]\nurl='sqlite://{}?mode=rwc'\n[provider_defaults]\nvad='test'\nasr='test'\nllm='test'\ntts='test'\n[api]\nenabled=true\nadmin_token='recipe-admin-token'\njwt_secret='recipe-test-jwt-signing-secret-0123456789'\n", temp.join("server.db").display())).unwrap();
+    let config: AppConfig = toml::from_str(&format!("[server]\nbind='127.0.0.1:0'\npublic_ws_url='ws://127.0.0.1:0/voice/v1/'\n[database]\nurl='sqlite://{}?mode=rwc'\n[provider_defaults]\nvad='test'\nasr='test'\nllm='test'\ntts='test'\n[api]\nenabled=true\njwt_secret='recipe-test-jwt-signing-secret-0123456789'\n", temp.join("server.db").display())).unwrap();
     let engine = Arc::new(llm_wiki::WikiEngine::open(&vault).unwrap());
     let init = TaskManager::prepare(
         TaskConfig::new(temp.join("tasks"))

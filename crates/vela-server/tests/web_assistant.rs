@@ -48,7 +48,6 @@ tts="test"
 url="sqlite://{}"
 [api]
 enabled=true
-admin_token="admin-test-token"
 jwt_secret="web-assistant-test-jwt-signing-secret-0123456789"
 "#,
             database.display()

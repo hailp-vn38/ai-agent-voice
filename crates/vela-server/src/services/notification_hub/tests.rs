@@ -494,7 +494,6 @@ llm = "test"
 tts = "test"
 [api]
 enabled = true
-admin_token = "notif-admin-secret"
 jwt_secret = "notif-test-jwt-signing-secret-0123456789"
 "#,
     )

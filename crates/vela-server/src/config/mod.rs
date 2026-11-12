@@ -1107,8 +1107,6 @@ impl Default for DatabaseHistoryConfig {
 pub struct AdminApiConfig {
     #[serde(default)]
     pub enabled: bool,
-    #[serde(default)]
-    pub admin_token: String,
     /// Admin Signing Secret: HS256 key for Admin Web Tokens. Kept out of SQLite on purpose.
     #[serde(default)]
     pub jwt_secret: SecretString,
@@ -1125,7 +1123,6 @@ impl Default for AdminApiConfig {
     fn default() -> Self {
         Self {
             enabled: false,
-            admin_token: String::new(),
             jwt_secret: SecretString::default(),
             token_ttl_secs: default_admin_token_ttl_secs(),
             provider_tests: ProviderTestsConfig::default(),

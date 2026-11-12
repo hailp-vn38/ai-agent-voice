@@ -23,7 +23,6 @@ tts = "test"
 url = "sqlite::memory:"
 [api]
 enabled = true
-admin_token = "admin-test-token"
 jwt_secret = "cors-test-signing-secret-0123456789"
 "#,
     )

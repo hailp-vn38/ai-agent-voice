@@ -68,7 +68,6 @@ async fn application_shutdown_uses_its_existing_deadline_for_managed_resources()
 async fn shutdown_rejects_admin_direct_speech_on_an_existing_session() {
     let mut app_config = config(database_url());
     app_config.api.enabled = true;
-    app_config.api.admin_token = "direct-admin".into();
     app_config.api.jwt_secret = vela_server::config::SecretString::new("lifecycle-signing-secret-0123456789");
     let voice = start(app_config, Duration::from_secs(15)).await;
     seed(&voice.database().await).await;
@@ -106,7 +105,6 @@ async fn admin_sse_streams_do_not_hold_graceful_shutdown_past_controlled_close_s
 
     let mut app_config = config(database_url());
     app_config.api.enabled = true;
-    app_config.api.admin_token = "sse-shutdown-admin".into();
     app_config.api.jwt_secret = vela_server::config::SecretString::new("lifecycle-sse-signing-secret-0123456789");
     app_config.orchestrator.enabled = true;
     app_config.orchestrator.store_dir = temp_root.join("orch-store");

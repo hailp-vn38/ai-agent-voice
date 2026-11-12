@@ -65,7 +65,7 @@ Current physical **Raw/Wiki/Drafts** selection and separate `/knowledge/settings
 
 ## Add a document through the Admin API
 
-All paths below are relative to `/api/admin`; every request requires `Authorization: Bearer <admin_token>`. Knowledge storage requires a durable application SQLite path; its parent directory owns `knowledge/` and the independent Memory storage. Admin writes do not require enabling the Job Core group.
+All paths below are relative to `/api/admin`; every request requires `Authorization: Bearer <Admin Web Token>` from `POST /api/admin/auth/login`. Knowledge storage requires a durable application SQLite path; its parent directory owns `knowledge/` and the independent Memory storage. Admin writes do not require enabling the Job Core group.
 
 | Step | Method and path | Request / response |
 |---|---|---|
@@ -83,12 +83,12 @@ Git sync uses the server's `[wiki.sync]` configuration and never returns private
 
 Import accepts UTF-8 Markdown **inside JSON**, not multipart upload, a local filesystem path or a URL to fetch. `content` must be nonblank and at most 256 KiB; `name` must be nonblank, at most 255 bytes and contain no control characters; `provenance` must be nonblank and at most 1024 bytes. The Admin JSON body limit also applies. PDF/DOCX/image/audio/video extraction is not implemented. Each import creates a new Source ID at version `1`; there is no Source update endpoint or import deduplication.
 
-Example from the repository root, using this flow document as both evidence and Wiki body. Requires Bash, `curl`, `jq`, and a configured `ADMIN_TOKEN`; set `BASE_URL` to the running server origin. This creates a new Source and Wiki page each time it runs.
+Example from the repository root, using this flow document as both evidence and Wiki body. Requires Bash, `curl`, `jq`, and an Admin Web Token in `ADMIN_WEB_TOKEN`; set `BASE_URL` to the running server origin. This creates a new Source and Wiki page each time it runs.
 
 ```bash
 set -euo pipefail
 : "${BASE_URL:?Set the server origin, without /api/admin}"
-: "${ADMIN_TOKEN:?Set the Admin bearer token}"
+: "${ADMIN_WEB_TOKEN:?Set the Admin Web Token}"
 DOCUMENT=docs/flows/13-knowledge-v3.md
 
 source_json=$(jq -n --rawfile content "$DOCUMENT" \
@@ -96,7 +96,7 @@ source_json=$(jq -n --rawfile content "$DOCUMENT" \
   --arg provenance "Repository: docs/flows/13-knowledge-v3.md" \
   '{name:$name, content:$content, provenance:$provenance}' |
   curl --fail-with-body --silent --show-error \
-    -H "Authorization: Bearer $ADMIN_TOKEN" -H 'Content-Type: application/json' \
+    -H "Authorization: Bearer $ADMIN_WEB_TOKEN" -H 'Content-Type: application/json' \
     --data-binary @- "$BASE_URL/api/admin/knowledge/sources")
 source_ref=$(jq -er '.id + ":" + (.version | tostring)' <<<"$source_json")
 
@@ -104,7 +104,7 @@ draft_json=$(jq -n --rawfile body "$DOCUMENT" \
   --arg title "Knowledge + Memory V3 — data flows" --arg source_ref "$source_ref" \
   '{title:$title, body:$body, source_ref:$source_ref, expected_revision:0}' |
   curl --fail-with-body --silent --show-error \
-    -H "Authorization: Bearer $ADMIN_TOKEN" -H 'Content-Type: application/json' \
+    -H "Authorization: Bearer $ADMIN_WEB_TOKEN" -H 'Content-Type: application/json' \
     --data-binary @- "$BASE_URL/api/admin/knowledge/pages")
 page_id=$(jq -er '.id' <<<"$draft_json")
 draft_revision=$(jq -er '.revision' <<<"$draft_json")
@@ -112,14 +112,14 @@ draft_revision=$(jq -er '.revision' <<<"$draft_json")
 jq -n --argjson expected_revision "$draft_revision" --arg source_ref "$source_ref" \
   '{expected_revision:$expected_revision, source_ref:$source_ref}' |
   curl --fail-with-body --silent --show-error \
-    -H "Authorization: Bearer $ADMIN_TOKEN" -H 'Content-Type: application/json' \
+    -H "Authorization: Bearer $ADMIN_WEB_TOKEN" -H 'Content-Type: application/json' \
     --data-binary @- "$BASE_URL/api/admin/knowledge/pages/$page_id/publish"
 
 curl --fail-with-body --silent --show-error \
-  -H "Authorization: Bearer $ADMIN_TOKEN" \
+  -H "Authorization: Bearer $ADMIN_WEB_TOKEN" \
   "$BASE_URL/api/admin/knowledge/pages/$page_id"
 curl --fail-with-body --silent --show-error \
-  -H "Authorization: Bearer $ADMIN_TOKEN" "$BASE_URL/api/admin/knowledge/index"
+  -H "Authorization: Bearer $ADMIN_WEB_TOKEN" "$BASE_URL/api/admin/knowledge/index"
 ```
 
 Use the returned draft `revision` for publication rather than assuming a revision number. Initial draft `1` publishes as verified revision `2`. For Job access, Admin must additionally enable `core.knowledge` and admit a new Job with the relevant frozen Core operations; existing Jobs do not gain tools automatically. The Admin GET above confirms the editable page, not Job tool authorization.

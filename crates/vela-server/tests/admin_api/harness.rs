@@ -253,7 +253,6 @@ tts = "test"
 url = "{}"
 [api]
 enabled = {}
-admin_token = "admin-test-token"
 jwt_secret = "admin-harness-signing-secret-0123456789"
 "#,
             database_uri, api_enabled
@@ -277,9 +276,11 @@ jwt_secret = "admin-harness-signing-secret-0123456789"
 
 /// Creates a Provider through the public Admin API and returns the key the server generated.
 pub async fn create_provider(client: &Client, providers: &str, body: serde_json::Value) -> String {
+    let base = providers.split("/api/admin").next().unwrap();
+    let web_token = admin_web_token(client, base).await;
     let response = client
         .post(providers)
-        .bearer_auth("admin-test-token")
+        .bearer_auth(&web_token)
         .json(&body)
         .send()
         .await
@@ -336,7 +337,6 @@ tts = "test"
 url = "{}"
 [api]
 enabled = {}
-admin_token = "admin-test-token"
 jwt_secret = "admin-harness-signing-secret-0123456789"
 "#,
             database_url(),
@@ -408,7 +408,6 @@ tts = "test"
 url = "{}"
 [api]
 enabled = true
-admin_token = "admin-test-token"
 jwt_secret = "admin-harness-signing-secret-0123456789"
 [mcp.external.network]
 allowed_hosts = ["mcp.example.test"]
@@ -470,7 +469,6 @@ tts = "test"
 url = "{}"
 [api]
 enabled = true
-admin_token = "admin-test-token"
 jwt_secret = "admin-harness-signing-secret-0123456789"
 [mcp.external.network]
 allowed_hosts = ["mcp.example.test"]
@@ -533,7 +531,6 @@ tts = "test"
 url = "{}"
 [api]
 enabled = true
-admin_token = "admin-test-token"
 jwt_secret = "admin-harness-signing-secret-0123456789"
 [mcp.external.network]
 allowed_hosts = ["mcp.example.test"]
@@ -600,7 +597,6 @@ tts = "test"
 url = "{}"
 [api]
 enabled = true
-admin_token = "admin-test-token"
 jwt_secret = "admin-harness-signing-secret-0123456789"
 "#,
             database_uri

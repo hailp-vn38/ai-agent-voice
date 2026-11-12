@@ -110,13 +110,6 @@ pub(super) async fn authenticate(
     let password_change = super::auth::is_password_change_path(request.uri().path())
         && request.method() == http::Method::POST;
     if let Some(token) = token {
-        // The static admin_token stays usable through the expand step, but it cannot change the
-        // Admin Password, so the password route accepts only Admin Web Tokens.
-        if !password_change
-            && constant_time_eq(token.as_bytes(), state.config.api.admin_token.as_bytes())
-        {
-            return next.run(request).await;
-        }
         if state.admin_auth.accepts(token) {
             if state.admin_auth.status().must_change_password && !password_change {
                 return error(&request, StatusCode::FORBIDDEN, "password_change_required");
@@ -130,14 +123,6 @@ pub(super) async fn authenticate(
         return next.run(request).await;
     }
     error(&request, StatusCode::UNAUTHORIZED, "unauthorized")
-}
-
-fn constant_time_eq(left: &[u8], right: &[u8]) -> bool {
-    let mut diff = left.len() ^ right.len();
-    for index in 0..left.len().max(right.len()) {
-        diff |= usize::from(*left.get(index).unwrap_or(&0) ^ *right.get(index).unwrap_or(&0));
-    }
-    diff == 0
 }
 
 #[derive(Clone)]

@@ -4,7 +4,8 @@ use super::super::*;
 async fn admin_relationship_reads_and_unlinks_are_revisioned_public_contracts() {
     let (base, task) = server(true).await;
     let client = Client::new();
-    let auth = "admin-test-token";
+    let web_token = admin_web_token(&client, &base).await;
+    let auth = web_token.as_str();
     let agents = format!("{base}/api/admin/agents");
     let templates = format!("{base}/api/admin/templates");
     let providers = format!("{base}/api/admin/providers");
@@ -348,7 +349,8 @@ async fn admin_relationship_reads_and_unlinks_are_revisioned_public_contracts() 
 async fn conditional_delete_requires_a_current_revision_and_preserves_linked_templates() {
     let (base, task) = server(true).await;
     let client = Client::new();
-    let auth = "admin-test-token";
+    let web_token = admin_web_token(&client, &base).await;
+    let auth = web_token.as_str();
     let agents = format!("{base}/api/admin/agents");
     let templates = format!("{base}/api/admin/templates");
     let providers = format!("{base}/api/admin/providers");
@@ -570,10 +572,11 @@ async fn conditional_delete_requires_a_current_revision_and_preserves_linked_tem
 async fn failed_success_audit_rolls_back_each_new_desired_resource() {
     let database_uri = database_url();
     let (base, task) = server_with_database(true, &database_uri).await;
+    let client = Client::new();
+    let web_token = admin_web_token(&client, &base).await;
     let pool = sqlx::SqlitePool::connect(&database_uri).await.unwrap();
     sqlx::query("CREATE TRIGGER reject_success_audit BEFORE INSERT ON admin_audit_events WHEN NEW.outcome='success' BEGIN SELECT RAISE(ABORT,'test audit unavailable'); END")
         .execute(&pool).await.unwrap();
-    let client = Client::new();
     for (route, table, body) in [
         (
             "agents",
@@ -603,7 +606,7 @@ async fn failed_success_audit_rolls_back_each_new_desired_resource() {
     ] {
         let response = client
             .post(format!("{base}/api/admin/{route}"))
-            .bearer_auth("admin-test-token")
+            .bearer_auth(&web_token)
             .json(&body)
             .send()
             .await
@@ -629,6 +632,7 @@ async fn admin_mutations_wait_for_a_concurrent_writer() {
     let database_uri = database_url();
     let (base, task) = server_with_database(true, &database_uri).await;
     let client = Client::new();
+    let web_token = admin_web_token(&client, &base).await;
     let admin = format!("{base}/api/admin");
     let llm = create_provider(
         &client,
@@ -651,7 +655,7 @@ async fn admin_mutations_wait_for_a_concurrent_writer() {
     ] {
         client
             .post(format!("{admin}/{path}"))
-            .bearer_auth("admin-test-token")
+            .bearer_auth(&web_token)
             .json(&payload)
             .send()
             .await
@@ -662,33 +666,33 @@ async fn admin_mutations_wait_for_a_concurrent_writer() {
 
     let create_device = client
         .post(format!("{admin}/devices"))
-        .bearer_auth("admin-test-token")
+        .bearer_auth(&web_token)
         .json(&serde_json::json!({"device_id":"device-1","agent_key":"kitchen"}));
     assert_waits_for_writer(&database_uri, create_device, StatusCode::CREATED).await;
 
     let update_device = client
         .patch(format!("{admin}/devices/device-1"))
-        .bearer_auth("admin-test-token")
+        .bearer_auth(&web_token)
         .header("if-match", "\"1\"")
         .json(&serde_json::json!({"name":"Kitchen speaker"}));
     assert_waits_for_writer(&database_uri, update_device, StatusCode::OK).await;
 
     let bind_provider = client
         .put(format!("{admin}/templates/quiet/providers/llm"))
-        .bearer_auth("admin-test-token")
+        .bearer_auth(&web_token)
         .header("if-match", "\"1\"")
         .json(&serde_json::json!({"provider_key":llm}));
     assert_waits_for_writer(&database_uri, bind_provider, StatusCode::OK).await;
 
     let assign_template = client
         .put(format!("{admin}/agents/kitchen/templates/quiet"))
-        .bearer_auth("admin-test-token")
+        .bearer_auth(&web_token)
         .header("if-match", "\"1\"");
     assert_waits_for_writer(&database_uri, assign_template, StatusCode::OK).await;
 
     let delete_device = client
         .delete(format!("{admin}/devices/device-1"))
-        .bearer_auth("admin-test-token")
+        .bearer_auth(&web_token)
         .header("if-match", "\"2\"");
     assert_waits_for_writer(&database_uri, delete_device, StatusCode::NO_CONTENT).await;
     task.abort();

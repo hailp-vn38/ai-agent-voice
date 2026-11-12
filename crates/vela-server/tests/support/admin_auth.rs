@@ -24,8 +24,30 @@ pub async fn seed_default_admin_password(pool: &sqlx::SqlitePool) {
 
 /// Logs in with the default Admin Password, rotates it to `HARNESS_ADMIN_PASSWORD`, and returns a
 /// usable Admin Web Token. A database that a previous harness server already rotated accepts the
-/// rotated password directly. Tests that call protected Admin routes use this instead of `admin_token`.
+/// rotated password directly. Tests that call protected Admin routes use this instead of a static credential.
 pub async fn admin_web_token(client: &Client, base: &str) -> String {
+    // A server that already issued a token accepts it again; logging in repeatedly would
+    // trip the failed-attempt limiter on the default-password probe below.
+    let cached = TOKENS.lock().unwrap().get(base).cloned();
+    if let Some(token) = cached {
+        let probe = client
+            .get(format!("{base}/api/admin/system"))
+            .bearer_auth(&token)
+            .send()
+            .await;
+        if probe.is_ok_and(|response| response.status() == reqwest::StatusCode::OK) {
+            return token;
+        }
+    }
+    let token = fresh_admin_web_token(client, base).await;
+    TOKENS.lock().unwrap().insert(base.to_owned(), token.clone());
+    token
+}
+
+static TOKENS: std::sync::LazyLock<std::sync::Mutex<std::collections::HashMap<String, String>>> =
+    std::sync::LazyLock::new(Default::default);
+
+async fn fresh_admin_web_token(client: &Client, base: &str) -> String {
     let login = client
         .post(format!("{base}/api/admin/auth/login"))
         .json(&json!({ "password": "admin" }))

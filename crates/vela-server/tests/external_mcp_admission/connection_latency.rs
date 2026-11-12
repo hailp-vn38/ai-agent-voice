@@ -89,7 +89,6 @@ async fn gated_voice(
 ) {
     let mut app_config = config(database_url());
     app_config.api.enabled = true;
-    app_config.api.admin_token = "latency-admin-token".into();
     app_config.api.jwt_secret = vela_server::config::SecretString::new("external-mcp-latency-signing-secret-0123456789");
     app_config.database.devices.enrollment.enabled = true;
     let fixture = AppState::from_provider_set(

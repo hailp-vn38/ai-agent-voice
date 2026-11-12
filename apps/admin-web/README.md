@@ -70,10 +70,10 @@ Bổ sung vào cấu hình server hợp lệ để bật Admin API:
 ```toml
 [api]
 enabled = true
-admin_token = "replace-with-your-admin-token"
+jwt_secret = "replace-with-a-random-secret-of-at-least-32-chars"
 ```
 
-Server vẫn cần SQLite và Provider configuration phù hợp. Xem [config.example.toml](../../config.example.toml) và [README server](../../README.md); web không tự thay cấu hình server.
+Admin đăng nhập bằng Admin Password; database mới dùng mật khẩu mặc định `admin` và buộc đổi ở lần đầu. Server vẫn cần SQLite và Provider configuration phù hợp. Xem [config.example.toml](../../config.example.toml) và [README server](../../README.md); web không tự thay cấu hình server.
 
 ```text
 src/

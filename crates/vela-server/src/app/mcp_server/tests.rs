@@ -58,7 +58,6 @@ audience="https://agent.example/mcp/system"
 allowed_origins=["https://admin.example"]
 [api]
 enabled=true
-admin_token="admin-test-token"
 jwt_secret="mcp-test-jwt-signing-secret-0123456789"
 "#,
     )
@@ -87,7 +86,7 @@ fn client() -> reqwest::Client {
 async fn disabled_route_is_absent_and_invalid_enabled_auth_fails_configuration() {
     let (mut state, _, _) = fixture().await;
     assert!(auth::Verifier::from_key(&state.config, "short").is_err());
-    assert!(auth::Verifier::from_key(&state.config, &state.config.api.admin_token).is_err());
+    assert!(auth::Verifier::from_key(&state.config, state.config.api.jwt_secret.expose()).is_err());
     Arc::make_mut(&mut state.config).system_mcp.http.enabled = false;
     let (base, task) = serve(crate::app::router_with_state(state)).await;
     assert_eq!(

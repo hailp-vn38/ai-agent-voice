@@ -192,7 +192,7 @@ pub(crate) async fn reset_to_default(config: &crate::config::DatabaseConfig) -> 
 }
 
 /// Public Admin routes that carry no bearer credential. They are mounted only when the signing
-/// secret is configured; otherwise they answer 404 and only `admin_token` remains usable.
+/// secret is configured; otherwise they answer 404.
 pub(super) fn routes() -> Router<AppState> {
     Router::new()
         .route("/auth/status", get(status))

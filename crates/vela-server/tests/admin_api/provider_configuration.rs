@@ -4,7 +4,8 @@ use super::super::*;
 async fn templates_and_provider_desired_configuration_are_bounded_and_restart_honest() {
     let (base, task) = server(true).await;
     let client = Client::new();
-    let auth = "admin-test-token";
+    let web_token = admin_web_token(&client, &base).await;
+    let auth = web_token.as_str();
 
     let agent = client
         .post(format!("{base}/api/admin/agents"))
@@ -141,12 +142,13 @@ async fn kokoro_desired_configuration_accepts_catalog_selection_and_rejects_fact
  {
     let (base, task) = server(true).await;
     let client = Client::new();
+    let web_token = admin_web_token(&client, &base).await;
     for (voice, status) in [
         ("diem_trinh", StatusCode::CREATED),
         ("unknown", StatusCode::BAD_REQUEST),
     ] {
         let response = client.post(format!("{base}/api/admin/providers"))
-            .bearer_auth("admin-test-token")
+            .bearer_auth(&web_token)
             .json(&serde_json::json!({"name":"Kokoro","type":"tts","adapter":"kokoro_vi_onnx","config_json":{"voice":voice,"language":"vi-VN","speed_percent":100}}))
             .send().await.unwrap();
         assert_eq!(response.status(), status);
@@ -158,6 +160,7 @@ async fn kokoro_desired_configuration_accepts_catalog_selection_and_rejects_fact
 async fn openai_provider_mutations_accept_http_and_https_base_urls() {
     let (base, task) = server(true).await;
     let client = Client::new();
+    let web_token = admin_web_token(&client, &base).await;
     let providers = format!("{base}/api/admin/providers");
     for endpoint in [
         "http://localhost:8000/v1",
@@ -173,7 +176,7 @@ async fn openai_provider_mutations_accept_http_and_https_base_urls() {
         let accepted = endpoint.starts_with("http://") || endpoint.starts_with("https://");
         let response = client
             .post(&providers)
-            .bearer_auth("admin-test-token")
+            .bearer_auth(&web_token)
             .json(&serde_json::json!({"name":"OpenAI","type":"llm","adapter":"openai","config_json":config}))
             .send()
             .await
@@ -195,7 +198,7 @@ async fn openai_provider_mutations_accept_http_and_https_base_urls() {
         .await;
         let response = client
             .patch(format!("{providers}/{key}"))
-            .bearer_auth("admin-test-token")
+            .bearer_auth(&web_token)
             .header("if-match", "\"1\"")
             .json(&serde_json::json!({"config_json":config}))
             .send()
@@ -224,6 +227,7 @@ async fn openai_provider_mutations_accept_http_and_https_base_urls() {
 async fn provider_mutations_reject_server_owned_configuration() {
     let (base, task) = server(true).await;
     let client = Client::new();
+    let web_token = admin_web_token(&client, &base).await;
     for (kind, adapter, valid, overrides) in [
         (
             "vad",
@@ -331,7 +335,7 @@ async fn provider_mutations_reject_server_owned_configuration() {
                         .json(&serde_json::json!({"name":"Invalid","type":kind,"adapter":adapter,"config_json":invalid}))
                 };
                 let response = request
-                    .bearer_auth("admin-test-token")
+                    .bearer_auth(&web_token)
                     .send()
                     .await
                     .unwrap();
@@ -348,7 +352,7 @@ async fn provider_mutations_reject_server_owned_configuration() {
         }
         let row = client
             .get(format!("{providers}/{key}"))
-            .bearer_auth("admin-test-token")
+            .bearer_auth(&web_token)
             .send()
             .await
             .unwrap()
@@ -364,6 +368,7 @@ async fn provider_mutations_reject_server_owned_configuration() {
 async fn provider_key_is_generated_by_the_server_and_never_accepted_from_a_client() {
     let (base, task) = server(true).await;
     let client = Client::new();
+    let web_token = admin_web_token(&client, &base).await;
     let providers = format!("{base}/api/admin/providers");
     let body = serde_json::json!({"name":"OpenAI LLM","type":"llm","adapter":"openai","config_json":{"base_url":"https://example.test/v1","model":"test","max_tokens":8}});
     let key = create_provider(&client, &providers, body.clone()).await;
@@ -388,7 +393,7 @@ async fn provider_key_is_generated_by_the_server_and_never_accepted_from_a_clien
 
     let chosen = client
         .post(&providers)
-        .bearer_auth("admin-test-token")
+        .bearer_auth(&web_token)
         .json(&serde_json::json!({"key":"user_controlled_key","name":"OpenAI LLM","type":"llm","adapter":"openai","config_json":{}}))
         .send()
         .await
@@ -401,7 +406,7 @@ async fn provider_key_is_generated_by_the_server_and_never_accepted_from_a_clien
 
     let fetched = client
         .get(format!("{providers}/{key}"))
-        .bearer_auth("admin-test-token")
+        .bearer_auth(&web_token)
         .send()
         .await
         .unwrap();
@@ -413,7 +418,7 @@ async fn provider_key_is_generated_by_the_server_and_never_accepted_from_a_clien
 
     let renamed = client
         .patch(format!("{providers}/{key}"))
-        .bearer_auth("admin-test-token")
+        .bearer_auth(&web_token)
         .header("if-match", "\"1\"")
         .json(&serde_json::json!({"name":"Renamed"}))
         .send()
@@ -428,7 +433,7 @@ async fn provider_key_is_generated_by_the_server_and_never_accepted_from_a_clien
 
     let immovable = client
         .patch(format!("{providers}/{key}"))
-        .bearer_auth("admin-test-token")
+        .bearer_auth(&web_token)
         .header("if-match", "\"2\"")
         .json(&serde_json::json!({"key":"new_key"}))
         .send()
@@ -448,12 +453,13 @@ async fn a_generated_provider_key_binds_a_template_without_being_retyped() {
     let database_uri = database_url();
     let (base, task) = server_with_database(true, &database_uri).await;
     let client = Client::new();
+    let web_token = admin_web_token(&client, &base).await;
     let templates = format!("{base}/api/admin/templates");
     let providers = format!("{base}/api/admin/providers");
     assert_eq!(
         client
             .post(&templates)
-            .bearer_auth("admin-test-token")
+            .bearer_auth(&web_token)
             .json(&serde_json::json!({"key":"quiet","name":"Quiet","language":"vi-VN","prompt":"Be concise"}))
             .send()
             .await
@@ -470,7 +476,7 @@ async fn a_generated_provider_key_binds_a_template_without_being_retyped() {
     assert_eq!(
         client
             .put(format!("{templates}/quiet/providers/llm"))
-            .bearer_auth("admin-test-token")
+            .bearer_auth(&web_token)
             .header("if-match", "\"1\"")
             .json(&serde_json::json!({"provider_key":key}))
             .send()
@@ -481,7 +487,7 @@ async fn a_generated_provider_key_binds_a_template_without_being_retyped() {
     );
     let bindings: serde_json::Value = client
         .get(format!("{templates}/quiet/providers"))
-        .bearer_auth("admin-test-token")
+        .bearer_auth(&web_token)
         .send()
         .await
         .unwrap()
@@ -491,7 +497,7 @@ async fn a_generated_provider_key_binds_a_template_without_being_retyped() {
     assert_eq!(bindings["bindings"]["llm"]["provider_key"], key);
     let using: serde_json::Value = client
         .get(format!("{providers}/{key}/templates"))
-        .bearer_auth("admin-test-token")
+        .bearer_auth(&web_token)
         .send()
         .await
         .unwrap()
@@ -592,10 +598,11 @@ async fn legacy_provider_runtime_fields_are_removed_by_migration_before_admin_re
     database.pool().close().await;
     let (base, task) = server_with_database(true, &database_uri).await;
     let client = Client::new();
+    let web_token = admin_web_token(&client, &base).await;
     for (key, _, _, _, expected) in &cases {
         let response = client
             .get(format!("{base}/api/admin/providers/{key}"))
-            .bearer_auth("admin-test-token")
+            .bearer_auth(&web_token)
             .send()
             .await
             .unwrap();

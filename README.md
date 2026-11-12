@@ -66,8 +66,8 @@ Chỉnh `config.toml` trước khi chạy:
 - `[provider_defaults]` chọn instance VAD/ASR/LLM/TTS đã khai báo trong `[providers.<kind>.instances.<id>]`. Mẫu hiện chọn Silero, Gipformer, OpenAI và ChillAudio.
 - Điền LLM `api_key`, `base_url`, `model` và TTS token/endpoint phù hợp; giá trị placeholder trong mẫu chưa đủ để trò chuyện.
 - Sửa `[runtime.onnx].library` theo hệ điều hành và thư viện đã cài.
-- Đặt `[api].enabled = true` và `admin_token` riêng, không rỗng để dùng Studio hoặc provision qua Admin API.
-- `[auth].token` là bearer token cho voice, độc lập với admin token. Giá trị rỗng tắt voice bearer authentication nhưng vẫn yêu cầu Device admission.
+- Đặt `[api].enabled = true` và `[api].jwt_secret` ngẫu nhiên, tối thiểu 32 ký tự (khác `[auth].token` và khoá JWT của System MCP; ghi đè bằng `VOICE_ADMIN_JWT_SECRET`) để dùng Studio hoặc Admin API. `scripts/prod-init.sh` tự sinh giá trị này. Database mới có Admin Password mặc định `admin`; Studio buộc đổi ngay lần đăng nhập đầu. Nâng cấp từ bản cũ: xem [ghi chú nâng cấp đăng nhập Admin](docs/admin-password-login-upgrade.md).
+- `[auth].token` là bearer token cho voice, độc lập với Admin Web Token và `jwt_secret`. Giá trị rỗng tắt voice bearer authentication nhưng vẫn yêu cầu Device admission.
 - Mẫu bật `[orchestrator].enabled = true`: cấu hình `endpoint`, `api_key`, `model` cho tác vụ nền. Cấu hình LLM này độc lập với provider voice mặc định. Đặt `enabled = false` nếu chỉ chạy voice.
 - `[wiki]`, `[wiki.mcp]`, `[memory]` và `[system_mcp]` là các phần bật riêng; không bật tất cả chỉ để khởi động voice.
 
@@ -111,7 +111,7 @@ npm ci
 npm run dev
 ```
 
-Mở `http://127.0.0.1:5173` và nhập admin bearer token vào form kết nối. Vite proxy tới `http://127.0.0.1:8000`; đổi `VITE_DEV_PROXY_TARGET` trong `.env` nếu backend ở địa chỉ khác. Nhập token qua form; `VITE_ADMIN_TOKEN`, nếu cấu hình, sẽ được đưa vào browser bundle.
+Mở `http://127.0.0.1:5173` và đăng nhập bằng Admin Password (mặc định `admin`, bắt buộc đổi ở lần đầu). Vite proxy tới `http://127.0.0.1:8000`; đổi `VITE_DEV_PROXY_TARGET` trong `.env` nếu backend ở địa chỉ khác.
 
 Trong Studio, tạo Agent rồi thêm Device với Device ID đúng như client gửi. Có thể liên kết Template và cấu hình provider bindings; slot chưa được bind dùng server defaults. Agent và Device phải enabled. Database trống không tự tạo Agent/Device; khi enrollment tắt, Device chưa đăng ký bị từ chối OTA/WS với HTTP 403.
 

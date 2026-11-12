@@ -32,7 +32,6 @@ tts = "test"
 url = "sqlite://{}"
 [api]
 enabled = true
-admin_token = "draft-test-token"
 jwt_secret = "draft-test-signing-secret-0123456789"
 "#,
             path.with_extension("db").display()

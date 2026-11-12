@@ -143,7 +143,6 @@ llm="primary"
 tts="primary"
 [api]
 enabled=true
-admin_token="admin-test-token"
 jwt_secret="bindings-test-signing-secret-0123456789"
 [providers.vad.instances.vad]
 adapter="silero_onnx"

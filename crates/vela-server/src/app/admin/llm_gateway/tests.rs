@@ -38,7 +38,6 @@ llm = "test"
 tts = "test"
 [api]
 enabled = true
-admin_token = "gateway-admin-token"
 jwt_secret = "llm-gateway-test-jwt-signing-secret-0123456789"
 "#,
         db_path.display()
