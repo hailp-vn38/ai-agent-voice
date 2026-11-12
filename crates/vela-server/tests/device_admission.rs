@@ -81,6 +81,7 @@ fn config(address: std::net::SocketAddr, database_url: String) -> AppConfig {
         shutdown: vela_server::config::ShutdownConfig::default(),
         agent: None,
         effective_agent: vela_server::config::EffectiveAgentConfig::default(),
+        device_push: Default::default(),
     }
 }
 

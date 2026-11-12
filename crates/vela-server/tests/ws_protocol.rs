@@ -105,6 +105,7 @@ async fn start_with_state(
         shutdown: vela_server::config::ShutdownConfig::default(),
         agent: None,
         effective_agent: vela_server::config::EffectiveAgentConfig::default(),
+        device_push: Default::default(),
     };
     let config = configure(config);
     let (config, database) = support::provision(config).await;

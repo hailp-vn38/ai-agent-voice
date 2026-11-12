@@ -43,7 +43,9 @@ pub(crate) async fn handler(State(state): State<AppState>, request: Request) -> 
     };
     let now = unix_seconds();
     match database.device_registration(&identity.device_id).await {
-        Ok(DeviceRegistration::Registered) => ota_response(&state, &headers, None, true),
+        Ok(DeviceRegistration::Registered) => {
+            ota_response(&state, &headers, None, true, Some(&identity.device_id))
+        }
         Ok(DeviceRegistration::Blocked) => ota_error(StatusCode::FORBIDDEN, "device_not_admitted"),
         Ok(DeviceRegistration::Unknown) => {
             if !state.config.database.devices.enrollment.enabled {
@@ -53,7 +55,7 @@ pub(crate) async fn handler(State(state): State<AppState>, request: Request) -> 
                 return ota_error(StatusCode::SERVICE_UNAVAILABLE, "server_shutting_down");
             }
             let request = EnrollmentRequest {
-                device_id: identity.device_id,
+                device_id: identity.device_id.clone(),
                 client_id: identity.client_id,
                 metadata_json,
                 now,
@@ -71,7 +73,7 @@ pub(crate) async fn handler(State(state): State<AppState>, request: Request) -> 
                     if state.config.database.devices.enrollment.transport
                         == crate::config::EnrollmentTransport::Websocket
                     {
-                        return ota_response(&state, &headers, None, true);
+                        return ota_response(&state, &headers, None, true, None);
                     }
                     let remaining = pending.expires_at.saturating_sub(now).max(0) as u64;
                     ota_response(
@@ -84,9 +86,12 @@ pub(crate) async fn handler(State(state): State<AppState>, request: Request) -> 
                             timeout_ms: remaining.saturating_mul(1_000),
                         }),
                         false,
+                        None,
                     )
                 }
-                Ok(EnrollmentClaim::Registered) => ota_response(&state, &headers, None, true),
+                Ok(EnrollmentClaim::Registered) => {
+                    ota_response(&state, &headers, None, true, Some(&identity.device_id))
+                }
                 Ok(EnrollmentClaim::Blocked) => {
                     ota_error(StatusCode::FORBIDDEN, "device_not_admitted")
                 }
@@ -166,6 +171,7 @@ fn ota_response(
     request_headers: &HeaderMap,
     activation: Option<OtaActivation>,
     registered: bool,
+    push_device_id: Option<&str>,
 ) -> Response {
     let mut response = axum::Json(OtaResponse {
         server_time: ServerTime {
@@ -181,6 +187,9 @@ fn ota_response(
             token: state.config.auth.token.clone(),
         }),
         activation,
+        push: push_device_id
+            .zip(state.device_push.as_ref())
+            .map(|(device_id, push)| push.credentials(device_id)),
     })
     .into_response();
     response

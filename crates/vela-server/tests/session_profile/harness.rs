@@ -285,6 +285,7 @@ pub fn config(address: std::net::SocketAddr, url: String) -> AppConfig {
         shutdown: Default::default(),
         agent: None,
         effective_agent: Default::default(),
+        device_push: Default::default(),
     }
 }
 

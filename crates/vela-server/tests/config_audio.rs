@@ -102,6 +102,7 @@ fn valid_config() -> AppConfig {
         shutdown: vela_server::config::ShutdownConfig::default(),
         agent: None,
         effective_agent: EffectiveAgentConfig::default(),
+        device_push: Default::default(),
     }
 }
 

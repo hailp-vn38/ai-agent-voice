@@ -41,6 +41,9 @@ pub struct OtaResponse {
     pub websocket: Option<OtaWebsocket>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub activation: Option<OtaActivation>,
+    /// Device Push Channel credentials; never named `mqtt`, which firmware reads as a voice transport.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub push: Option<crate::services::device_push::PushCredentials>,
 }
 
 #[derive(Debug, Serialize)]

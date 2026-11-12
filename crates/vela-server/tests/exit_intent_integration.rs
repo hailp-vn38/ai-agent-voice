@@ -242,6 +242,7 @@ async fn start(tool_was_advertised: Arc<AtomicBool>) -> (String, JoinHandle<()>)
         shutdown: vela_server::config::ShutdownConfig::default(),
         agent: None,
         effective_agent: vela_server::config::EffectiveAgentConfig::default(),
+        device_push: Default::default(),
     };
     let providers = Arc::new(ProviderSet::with_all(
         Arc::new(FakeVad),

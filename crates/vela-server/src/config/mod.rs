@@ -66,6 +66,8 @@ pub struct AppConfig {
     #[serde(default)]
     pub shutdown: ShutdownConfig,
     #[serde(default)]
+    pub device_push: DevicePushConfig,
+    #[serde(default)]
     pub agent: Option<AgentConfig>,
     #[serde(skip)]
     pub effective_agent: EffectiveAgentConfig,
@@ -1102,6 +1104,41 @@ impl Default for DatabaseHistoryConfig {
 }
 
 /// Optional, separately authenticated administrative control plane.
+/// Device Push Channel: MQTT broker details used to wake registered Devices. Off by default.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DevicePushConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    /// Public `host:port` handed to Devices in the OTA `push` block.
+    #[serde(default)]
+    pub endpoint: String,
+    /// Broker address the server itself connects to (internal network).
+    #[serde(default)]
+    pub broker_url: String,
+    /// Derives every Device password; override with VOICE_DEVICE_PUSH_SECRET.
+    #[serde(default)]
+    pub secret: SecretString,
+    #[serde(default = "default_device_push_keepalive_seconds")]
+    pub keepalive_seconds: u32,
+}
+
+fn default_device_push_keepalive_seconds() -> u32 {
+    60
+}
+
+impl Default for DevicePushConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            endpoint: String::new(),
+            broker_url: String::new(),
+            secret: SecretString::default(),
+            keepalive_seconds: default_device_push_keepalive_seconds(),
+        }
+    }
+}
+
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AdminApiConfig {

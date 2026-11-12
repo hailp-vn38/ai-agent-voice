@@ -175,6 +175,7 @@ async fn start(llm: Arc<dyn LlmProvider>, tts: Arc<dyn TtsProvider>) -> (String,
         shutdown: vela_server::config::ShutdownConfig::default(),
         agent: None,
         effective_agent: vela_server::config::EffectiveAgentConfig::default(),
+        device_push: Default::default(),
     };
     let providers = Arc::new(ProviderSet::with_all(
         Arc::new(ManualOnlyVad),
