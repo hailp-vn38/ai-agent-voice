@@ -40,6 +40,7 @@ pub(crate) mod admin;
 mod assistant;
 mod enrollment;
 mod knowledge_write_gate;
+mod mqtt_auth;
 pub(crate) mod mcp_server;
 mod state;
 mod transport;
@@ -251,6 +252,17 @@ pub fn router_with_state(mut state: AppState) -> Router {
                     .options(enrollment::ota::options)
                     .layer(middleware::from_fn(enrollment::ota::cors_response)),
             )
+    } else {
+        router
+    };
+    let router = if state.device_push.is_some() {
+        router
+            .route("/mqtt/auth/user", axum::routing::post(mqtt_auth::user))
+            .route(
+                "/mqtt/auth/superuser",
+                axum::routing::post(mqtt_auth::superuser),
+            )
+            .route("/mqtt/auth/acl", axum::routing::post(mqtt_auth::acl))
     } else {
         router
     };

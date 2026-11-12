@@ -30,6 +30,23 @@ services:
       server:
         condition: service_healthy
 
+  mosquitto:
+    profiles: [push]
+    image: ${VELA_MOSQUITTO_IMAGE:-iegomez/mosquitto-go-auth:3.0.0-mosquitto_2.0.18}
+    command: [mosquitto, -c, /mosquitto/config/mosquitto.conf]
+    volumes:
+      - type: bind
+        source: ./docker/mosquitto/mosquitto.test.conf
+        target: /mosquitto/config/mosquitto.conf
+        read_only: true
+      - type: bind
+        source: ./docker/mosquitto/auth.d
+        target: /mosquitto/config/auth.d
+        read_only: true
+    depends_on:
+      server:
+        condition: service_healthy
+
   server-check:
     profiles: [checks]
     build:

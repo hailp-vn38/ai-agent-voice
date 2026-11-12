@@ -6,6 +6,7 @@ import { formatApiError } from '@/api/errors'
 import DeviceReminders from '@/components/devices/DeviceReminders.vue'
 import { Button } from '@/components/ui/button'
 import { useI18n } from '@/composables/useI18n'
+import { syncLabelKey } from '@/components/devices/syncStatus'
 
 const props = defineProps<{ agentId: string }>()
 const { t, formatDateTime } = useI18n()
@@ -145,7 +146,7 @@ onBeforeUnmount(() => active?.abort())
             <time>{{ formatDateTime(new Date(item.due_at_ms)) }}</time>
             <span class="reminder-state" :data-state="item.status">{{ t(`reminders.${item.status}` as Parameters<typeof t>[0]) }}</span>
           </div>
-          <p class="body-caption mt-2">{{ t('reminders.syncPending') }}</p>
+          <p class="body-caption mt-2">{{ t(syncLabelKey(item.sync_status)) }}</p>
         </div>
         <Button data-manage size="sm" variant="outline" @click="manage(item.device_id)">{{ t('reminders.manage') }}</Button>
       </li>

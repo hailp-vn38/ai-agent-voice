@@ -38,6 +38,11 @@ impl ReminderCoordinator {
         Self::new(DeviceNotifications::new(database), sessions)
     }
 
+    pub fn with_wake_on_due(mut self, enabled: bool) -> Self {
+        self.repo = self.repo.with_wake_on_due(enabled);
+        self
+    }
+
     pub fn scoped_to_agent(mut self, key: &str) -> Self {
         self.repo = self.repo.scoped_to_agent(key);
         self
