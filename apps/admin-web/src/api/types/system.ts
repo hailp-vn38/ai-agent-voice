@@ -42,6 +42,16 @@ export interface SystemResources {
   }
 }
 
+export interface SystemLiveSnapshot {
+  v: 1
+  resources: SystemResources | null
+  status: {
+    checked_at: string | null
+    refresh_interval_ms: number
+    summary: SystemStatus | null
+  }
+}
+
 export type BackupFormat = 'json' | 'sqlite'
 export type BackupScope = 'full' | 'config_only'
 export type ImportMode = 'merge' | 'replace'
