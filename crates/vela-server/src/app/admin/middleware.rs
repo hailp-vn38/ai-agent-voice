@@ -5,12 +5,17 @@ use super::{
     MAX_SPEAKER_SAMPLE_BODY, error,
 };
 use axum::{
+    body::Body,
     extract::{Request, State},
     http::{HeaderValue, StatusCode, header},
     middleware::Next,
     response::Response,
 };
+use futures_util::StreamExt;
+use std::time::{Duration, SystemTime};
 use uuid::Uuid;
+
+const ADMIN_STREAM_AUTH_CHECK_INTERVAL: Duration = Duration::from_secs(5);
 
 pub(super) async fn transport(request: Request, next: Next) -> Response {
     if request
@@ -123,6 +128,79 @@ pub(super) async fn authenticate(
         return next.run(request).await;
     }
     error(&request, StatusCode::UNAUTHORIZED, "unauthorized")
+}
+
+/// Wraps an Admin SSE body so revoking the request's authorization also ends its open response.
+pub(super) async fn guard_admin_sse(
+    State(state): State<AppState>,
+    request: Request,
+    next: Next,
+) -> Response {
+    let bearer = request
+        .headers()
+        .get(header::AUTHORIZATION)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.strip_prefix("Bearer "))
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned);
+    let expires_at = bearer
+        .as_deref()
+        .and_then(|value| state.admin_auth.token_expiry(value))
+        .and_then(|expires_at| {
+            expires_at
+                .duration_since(SystemTime::now())
+                .ok()
+                .map(|remaining| tokio::time::Instant::now() + remaining)
+        });
+
+    let response = next.run(request).await;
+    let is_sse = response
+        .headers()
+        .get(header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(|value| value.starts_with("text/event-stream"));
+    if !is_sse {
+        return response;
+    }
+
+    let (parts, body) = response.into_parts();
+    // One revocation watcher per response: its 5 second cadence does not restart on each chunk.
+    let revoked = Box::pin(wait_for_admin_stream_revocation(
+        state,
+        bearer,
+        expires_at,
+        ADMIN_STREAM_AUTH_CHECK_INTERVAL,
+    ));
+    let guarded = body.into_data_stream().take_until(revoked);
+    Response::from_parts(parts, Body::from_stream(guarded))
+}
+
+/// Resolves once the request's authorization would no longer pass `authenticate`: on the periodic
+/// in-memory check, or at the token's `exp` when that check then fails.
+pub(super) async fn wait_for_admin_stream_revocation(
+    state: AppState,
+    bearer: Option<String>,
+    mut expires_at: Option<tokio::time::Instant>,
+    check_interval: Duration,
+) {
+    loop {
+        if !state.admin_auth.stream_access_allowed(bearer.as_deref()) {
+            return;
+        }
+        match expires_at {
+            Some(deadline) => {
+                tokio::select! {
+                    biased;
+                    _ = tokio::time::sleep_until(deadline) => {
+                        // Re-checked at the top: with Password Login off the stream stays open.
+                        expires_at = None;
+                    }
+                    _ = tokio::time::sleep(check_interval) => {}
+                }
+            }
+            None => tokio::time::sleep(check_interval).await,
+        }
+    }
 }
 
 #[derive(Clone)]

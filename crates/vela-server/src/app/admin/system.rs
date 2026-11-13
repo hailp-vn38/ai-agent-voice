@@ -44,6 +44,72 @@ pub(super) async fn get_resources(State(state): State<AppState>, request: Reques
     response
 }
 
+/// How long the first event waits for the status summary a new subscriber triggers.
+const SYSTEM_LIVE_FIRST_STATUS_WAIT: Duration = Duration::from_secs(1);
+
+pub(super) async fn stream_live(State(state): State<AppState>) -> Response {
+    let system_live = state.system_live();
+    let mut snapshot = system_live.subscribe();
+    // Subscribing starts a summary when none is current; a short wait lets the first event carry
+    // it instead of `summary: null`. Past the wait the current value is sent as is.
+    if snapshot.borrow().status.checked_at.is_none() {
+        let deadline = tokio::time::Instant::now() + SYSTEM_LIVE_FIRST_STATUS_WAIT;
+        while snapshot.borrow().status.checked_at.is_none() {
+            match tokio::time::timeout_at(deadline, snapshot.changed()).await {
+                Ok(Ok(())) => {}
+                Ok(Err(_)) | Err(_) => break,
+            }
+        }
+    }
+    let stopping = state.lifecycle.stopping().clone();
+    let messages = futures_util::stream::unfold(
+        (snapshot, stopping, true, None::<String>),
+        |(mut snapshot, stopping, first, previous)| async move {
+            if first {
+                let data = serde_json::to_string(snapshot.borrow_and_update().as_ref())
+                    .unwrap_or_else(|_| "{}".into());
+                return Some((
+                    Ok::<Event, Infallible>(Event::default().event("snapshot").data(data.clone())),
+                    (snapshot, stopping, false, Some(data)),
+                ));
+            }
+            loop {
+                tokio::select! {
+                    biased;
+                    _ = stopping.cancelled() => return None,
+                    changed = snapshot.changed() => {
+                        if changed.is_err() {
+                            return None;
+                        }
+                        let data = serde_json::to_string(snapshot.borrow_and_update().as_ref())
+                            .unwrap_or_else(|_| "{}".into());
+                        if previous.as_deref() == Some(data.as_str()) {
+                            continue;
+                        }
+                        return Some((
+                            Ok(Event::default().event("snapshot").data(data.clone())),
+                            (snapshot, stopping, false, Some(data)),
+                        ));
+                    }
+                }
+            }
+        },
+    );
+
+    let mut response = Sse::new(messages)
+        .keep_alive(
+            KeepAlive::new()
+                .interval(Duration::from_secs(15))
+                .text("keepalive"),
+        )
+        .into_response();
+    response.headers_mut().insert(
+        axum::http::header::CACHE_CONTROL,
+        axum::http::HeaderValue::from_static("no-store"),
+    );
+    response
+}
+
 pub(super) async fn get_logs(State(state): State<AppState>, request: Request) -> Response {
     let Query(filter) = match Query::<LogFilter>::try_from_uri(request.uri()) {
         Ok(q) => q,

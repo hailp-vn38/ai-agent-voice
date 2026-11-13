@@ -32,6 +32,7 @@ fn missing_os_data_remains_nullable_and_never_exposes_paths() {
 #[tokio::test]
 async fn sampler_publishes_and_stops_on_listening_cancellation() {
     let metrics = Arc::new(SystemMetrics::new());
+    let mut samples = metrics.subscribe();
     let stop = CancellationToken::new();
     let task = metrics.clone().start(stop.clone());
     tokio::time::timeout(Duration::from_secs(3), async {
@@ -41,6 +42,14 @@ async fn sampler_publishes_and_stops_on_listening_cancellation() {
     })
     .await
     .unwrap();
+    tokio::time::timeout(Duration::from_secs(1), samples.changed())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        samples.borrow().as_ref().unwrap().sampled_at,
+        metrics.latest().unwrap().sampled_at
+    );
     stop.cancel();
     tokio::time::timeout(Duration::from_secs(1), task)
         .await

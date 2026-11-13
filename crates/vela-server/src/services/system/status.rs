@@ -22,6 +22,13 @@ pub(crate) struct SystemStatus {
 
 impl SystemStatus {
     pub async fn readiness(&self) -> Readiness {
+        self.readiness_with_database_reachability(None).await
+    }
+
+    async fn readiness_with_database_reachability(
+        &self,
+        database_reachable: Option<bool>,
+    ) -> Readiness {
         if !self.lifecycle.gate().is_open() {
             return Readiness::ShuttingDown;
         }
@@ -37,10 +44,16 @@ impl SystemStatus {
         if self.required_runtime_missing() {
             return Readiness::RequiredRuntimeUnavailable;
         }
-        if let Some(database) = &self.database
-            && database.is_reachable().await.is_err()
-        {
-            return Readiness::DatabaseUnreachable;
+        match database_reachable {
+            Some(false) => return Readiness::DatabaseUnreachable,
+            Some(true) => {}
+            None => {
+                if let Some(database) = &self.database
+                    && database.is_reachable().await.is_err()
+                {
+                    return Readiness::DatabaseUnreachable;
+                }
+            }
         }
         Readiness::Ready
     }
@@ -70,14 +83,15 @@ impl SystemStatus {
 
     pub async fn summary(&self) -> Result<serde_json::Value, sqlx::Error> {
         let database = self.database.as_ref().ok_or(sqlx::Error::PoolClosed)?;
-        let database_status = if database.is_reachable().await.is_ok() {
+        let database_reachable = database.is_reachable().await.is_ok();
+        let database_status = if database_reachable {
             "ready"
         } else {
             "unavailable"
         };
         if database_status == "unavailable" {
             return Ok(
-                serde_json::json!({"status":self.readiness().await.as_str(),"version":env!("CARGO_PKG_VERSION"),"uptime_seconds":self.started_at.elapsed().as_secs(),"database":{"enabled":true,"status":"unavailable"},"providers":{"configured":null,"loaded":null,"stale":null,"failed":null},"sessions":{"active":self.lifecycle.drain().active()},"provider_runtime":self.provider_runtime_manager.as_ref().map(|manager|serde_json::json!({"accounting":manager.accounting(),"metrics":manager.metrics().snapshot()}))}),
+                serde_json::json!({"status":self.readiness_with_database_reachability(Some(false)).await.as_str(),"version":env!("CARGO_PKG_VERSION"),"uptime_seconds":self.started_at.elapsed().as_secs(),"database":{"enabled":true,"status":"unavailable"},"providers":{"configured":null,"loaded":null,"stale":null,"failed":null},"sessions":{"active":self.lifecycle.drain().active()},"provider_runtime":self.provider_runtime_manager.as_ref().map(|manager|serde_json::json!({"accounting":manager.accounting(),"metrics":manager.metrics().snapshot()}))}),
             );
         }
         let tracked = self
@@ -113,7 +127,7 @@ impl SystemStatus {
             stale = (configured as u64).saturating_sub(loaded + failed);
         }
         Ok(
-            serde_json::json!({"status":self.readiness().await.as_str(),"version":env!("CARGO_PKG_VERSION"),"uptime_seconds":self.started_at.elapsed().as_secs(),"database":{"enabled":true,"status":database_status},"providers":{"configured":configured,"loaded":loaded,"stale":stale,"failed":failed},"sessions":{"active":self.lifecycle.drain().active()},"provider_runtime":self.provider_runtime_manager.as_ref().map(|manager|serde_json::json!({"accounting":manager.accounting(),"metrics":manager.metrics().snapshot()}))}),
+            serde_json::json!({"status":self.readiness_with_database_reachability(Some(true)).await.as_str(),"version":env!("CARGO_PKG_VERSION"),"uptime_seconds":self.started_at.elapsed().as_secs(),"database":{"enabled":true,"status":database_status},"providers":{"configured":configured,"loaded":loaded,"stale":stale,"failed":failed},"sessions":{"active":self.lifecycle.drain().active()},"provider_runtime":self.provider_runtime_manager.as_ref().map(|manager|serde_json::json!({"accounting":manager.accounting(),"metrics":manager.metrics().snapshot()}))}),
         )
     }
 }

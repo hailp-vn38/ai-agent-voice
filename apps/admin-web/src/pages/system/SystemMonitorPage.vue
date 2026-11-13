@@ -1,50 +1,26 @@
 <script setup lang="ts">
 import { Activity, RefreshCcw } from '@lucide/vue'
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, ref } from 'vue'
 import { useRouter } from 'vue-router'
 
-import { isApiError } from '@/api/errors'
-import { systemApi } from '@/api/system'
-import type { SystemResources } from '@/api/types/system'
 import DetailHeader from '@/components/admin/DetailHeader.vue'
 import ResourceStatCard from '@/components/system/ResourceStatCard.vue'
+import SystemFreshnessNotice from '@/components/system/SystemFreshnessNotice.vue'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { reconnectSystemLive, useSystemLive } from '@/composables/useSystemLive'
 import { useI18n } from '@/composables/useI18n'
-import { useServerStore } from '@/stores/server'
 
 const router = useRouter()
-const server = useServerStore()
 const { t, formatDateTime } = useI18n()
-
-const resources = ref<SystemResources | null>(null)
-const loading = ref(true)
-const error = ref('')
-const now = ref(Date.now())
+const { snapshot: liveSnapshot, cpuHistory, connection, freshness } = useSystemLive()
+const resources = computed(() => liveSnapshot.value?.resources ?? null)
+const visibleCpuSamples = computed(() => cpuHistory.value.slice(-14))
+const current = resources
 const period = ref<'15m' | '1h' | '6h'>('15m')
-const cpuSamples = ref<number[]>([26, 32, 22, 38, 30, 42, 34, 48, 36, 44, 29, 39, 31, 35])
-
-const controller = new AbortController()
-let inFlight = false
-let resourcesTimer: number | undefined
-
-const stale = computed(() => {
-  if (!resources.value) return false
-  const sampled = Date.parse(resources.value.sampled_at)
-  return !Number.isFinite(sampled) || now.value - sampled > 15_000
-})
-
-const current = computed(() => (!error.value && !stale.value ? resources.value : null))
-
-const resourceState = computed(
-  () =>
-    error.value ||
-    (stale.value
-      ? t('system.stale')
-      : loading.value && !resources.value
-        ? t('common.loading')
-        : ''),
-)
+const resourceState = computed(() => freshness.value.resources === 'stale'
+  ? t('system.stale')
+  : freshness.value.resources === 'unavailable' ? t('system.unavailable') : '')
 
 const sampledAtLabel = computed(() => {
   const sampled = resources.value && Date.parse(resources.value.sampled_at)
@@ -92,7 +68,7 @@ const diskUsed = computed(() => {
 const diskPercentage = computed(() => percentage(diskUsed.value, current.value?.storage.total_bytes))
 
 const sparkPoints = computed(() => {
-  const raw = cpuSamples.value.length >= 2 ? cpuSamples.value : [25, 35]
+  const raw = visibleCpuSamples.value.length >= 2 ? visibleCpuSamples.value : [25, 35]
   const stepX = 400 / (raw.length - 1)
   return raw.map((val, idx) => {
     const clamped = Math.min(100, Math.max(0, val))
@@ -112,57 +88,6 @@ const sparkAreaPath = computed(() => {
   return `M0 55L${pts.map(pt => `${pt.x} ${pt.y}`).join('L')}L400 55Z`
 })
 
-async function refreshResources() {
-  if (inFlight || controller.signal.aborted || document.hidden) return
-  inFlight = true
-  loading.value = true
-  try {
-    const snapshot = await systemApi.resources(controller.signal)
-    if (controller.signal.aborted) return
-    resources.value = snapshot
-    error.value = ''
-    if (snapshot.system.cpu_percent != null && Number.isFinite(snapshot.system.cpu_percent)) {
-      cpuSamples.value = [...cpuSamples.value.slice(-13), snapshot.system.cpu_percent]
-    }
-  } catch (cause) {
-    if (controller.signal.aborted) return
-    error.value =
-      isApiError(cause) && cause.status === 401
-        ? t('system.metricsUnauthorized')
-        : t('system.unavailable')
-  } finally {
-    now.value = Date.now()
-    inFlight = false
-    loading.value = false
-  }
-}
-
-function refresh() {
-  void server.refresh(controller.signal)
-  void refreshResources()
-}
-
-function visible() {
-  if (!document.hidden) {
-    now.value = Date.now()
-    void refreshResources()
-  }
-}
-
-onMounted(() => {
-  refresh()
-  resourcesTimer = window.setInterval(() => {
-    now.value = Date.now()
-    void refreshResources()
-  }, 5_000)
-  document.addEventListener('visibilitychange', visible)
-})
-
-onBeforeUnmount(() => {
-  controller.abort()
-  window.clearInterval(resourcesTimer)
-  document.removeEventListener('visibilitychange', visible)
-})
 </script>
 
 <template>
@@ -190,17 +115,19 @@ onBeforeUnmount(() => {
       </template>
       <template #actions>
         <Button
+          v-if="connection === 'reconnecting'"
           variant="outline"
           size="sm"
-          :disabled="loading"
           data-testid="monitor-refresh-btn"
-          @click="refresh"
+          @click="reconnectSystemLive"
         >
-          <RefreshCcw :class="['size-4', loading && 'animate-spin']" aria-hidden="true" />
+          <RefreshCcw class="size-4 animate-spin" aria-hidden="true" />
           {{ t('system.refresh') }}
         </Button>
       </template>
     </DetailHeader>
+
+    <SystemFreshnessNotice :freshness="freshness.resources" />
 
     <!-- 4 Resource KPI Cards -->
     <div class="grid grid-cols-1 gap-3.5 sm:grid-cols-2 xl:grid-cols-4">

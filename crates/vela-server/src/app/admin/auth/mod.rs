@@ -44,6 +44,10 @@ pub(crate) struct AdminAuthState {
     credential_failures: FailureLimiter,
 }
 
+#[cfg(test)]
+#[path = "tests.rs"]
+mod tests;
+
 /// A sliding-window failure budget: `FAILURE_LIMIT` failures per `FAILURE_WINDOW`.
 struct FailureLimiter(Mutex<VecDeque<Instant>>);
 
@@ -112,6 +116,24 @@ impl AdminAuthState {
         };
         token::verify(key, bearer, unix_now())
             .is_some_and(|claims| claims.rev == self.status().revision)
+    }
+
+    /// Whether a long-lived Admin SSE request would still pass the authenticate middleware.
+    pub(super) fn stream_access_allowed(&self, bearer: Option<&str>) -> bool {
+        // Mirrors `middleware::authenticate`: an accepted token is checked for the forced password
+        // change first; otherwise only Password Login being off admits the request.
+        let status = self.status();
+        if bearer.is_some_and(|value| self.accepts(value)) {
+            return !status.must_change_password;
+        }
+        !status.password_login_enabled
+    }
+
+    /// The signed token's expiry, used to stop an SSE response at its deadline.
+    pub(super) fn token_expiry(&self, bearer: &str) -> Option<SystemTime> {
+        let key = self.key.as_ref()?;
+        let claims = token::verify(key, bearer, unix_now())?;
+        Some(SystemTime::UNIX_EPOCH + Duration::from_secs(u64::try_from(claims.exp).ok()?))
     }
 }
 

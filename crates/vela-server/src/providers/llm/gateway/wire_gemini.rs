@@ -586,6 +586,7 @@ pub(crate) async fn open_sse_stream(
     Ok(Box::pin(poll_fn(move |cx| rx.poll_recv(cx))))
 }
 
+#[allow(clippy::too_many_arguments)] // Mirrors the other wire adapters' execute_vision signature.
 pub(crate) async fn execute_vision(
     http: &reqwest::Client,
     endpoint_base: &str,

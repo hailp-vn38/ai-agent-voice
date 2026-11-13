@@ -26,6 +26,7 @@ pub(in crate::app) fn router(state: AppState) -> Router<AppState> {
     };
     Router::new()
         .merge(password_change)
+        .merge(admin_stream_routes(state.clone()))
         .merge(knowledge_routes(Arc::clone(&state.knowledge_write_gate)))
         .merge(wiki_sync_routes())
         .merge(background_routes())
@@ -147,7 +148,6 @@ fn knowledge_routes(gate: Arc<super::super::KnowledgeWriteGate>) -> Router<AppSt
             get(knowledge::knowledge_read_source),
         )
         .route("/knowledge/index", get(knowledge::knowledge_health))
-        .route("/knowledge/events", get(knowledge::knowledge_events))
         .route(
             "/knowledge/index/rebuild",
             axum::routing::post(knowledge::knowledge_rebuild),
@@ -224,7 +224,6 @@ fn background_routes() -> Router<AppState> {
             "/jobs/batch-delete",
             axum::routing::post(background::batch_delete),
         )
-        .route("/jobs/stream", get(background::stream))
         .route(
             "/jobs/{id}",
             get(background::get).delete(background::delete),
@@ -259,7 +258,6 @@ fn notification_routes() -> Router<AppState> {
             "/notifications/purge",
             axum::routing::post(notifications::hub::purge_inbox),
         )
-        .route("/notifications/stream", get(notifications::hub::stream))
         .route(
             "/notifications/settings",
             get(notifications::hub::settings).put(notifications::hub::save_settings),
@@ -383,7 +381,6 @@ fn system_routes() -> Router<AppState> {
         .route("/system", get(system::get_system))
         .route("/system/resources", get(system::get_resources))
         .route("/system/logs", get(system::get_logs))
-        .route("/system/logs/stream", get(system::stream_logs))
         .route("/system/audit-logs", get(system::get_audit_logs))
         .route("/system/backup/export", get(system::export_backup))
         .route(
@@ -412,6 +409,19 @@ fn system_routes() -> Router<AppState> {
             "/assistant/ws-ticket",
             axum::routing::post(devices::assistant::ticket),
         )
+}
+
+fn admin_stream_routes(state: AppState) -> Router<AppState> {
+    Router::new()
+        .route("/jobs/stream", get(background::stream))
+        .route("/notifications/stream", get(notifications::hub::stream))
+        .route("/system/logs/stream", get(system::stream_logs))
+        .route("/system/live", get(system::stream_live))
+        .route("/knowledge/events", get(knowledge::knowledge_events))
+        .route_layer(axum::middleware::from_fn_with_state(
+            state,
+            super::middleware::guard_admin_sse,
+        ))
 }
 
 fn agent_and_template_routes() -> Router<AppState> {

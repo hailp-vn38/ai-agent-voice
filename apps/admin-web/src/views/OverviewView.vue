@@ -25,86 +25,56 @@ import {
   Workflow,
   XCircle,
 } from '@lucide/vue'
-import { computed, onBeforeUnmount, onMounted, ref, watch, type Component } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, type Component } from 'vue'
 import { RouterLink } from 'vue-router'
 
 import RadialGauge from '@/components/overview/RadialGauge.vue'
 import Sparkline from '@/components/overview/Sparkline.vue'
-import { systemApi } from '@/api/system'
-import type { SystemResources } from '@/api/types/system'
+import SystemFreshnessNotice from '@/components/system/SystemFreshnessNotice.vue'
+import { reconnectSystemLive, useSystemLive } from '@/composables/useSystemLive'
 import { useI18n } from '@/composables/useI18n'
 import type { MessageKey } from '@/i18n/messages'
 import type { ProviderType } from '@/domain/admin'
 import { useAdminStore } from '@/stores/admin'
 import { useAuthStore } from '@/stores/auth'
-import { useServerStore } from '@/stores/server'
 
-const STATUS_INTERVAL_MS = 15_000
-const RESOURCES_INTERVAL_MS = 5_000
 const CPU_HISTORY = 36
 
 const { t, locale, providerTypeLabel } = useI18n()
 const admin = useAdminStore()
 const auth = useAuthStore()
-const server = useServerStore()
+const { snapshot: liveSnapshot, cpuHistory, connection, freshness } = useSystemLive()
+const resources = computed(() => liveSnapshot.value?.resources ?? null)
+const status = computed(() => liveSnapshot.value?.status.summary ?? null)
+const visibleCpuHistory = computed(() => cpuHistory.value.slice(-CPU_HISTORY))
 
 const countsVisible = computed(() => auth.hasAdminAccess && !admin.loading && !admin.error)
 const dash = '—'
 
-/* ---------- Live polling ---------- */
+/* ---------- Live snapshot ---------- */
 
-const aborter = new AbortController()
-const resources = ref<SystemResources | null>(null)
-const resourcesFailed = ref(false)
-const cpuHistory = ref<number[]>([])
-const refreshing = ref(false)
 const now = ref(new Date())
-let statusTimer: number | undefined
-let resourcesTimer: number | undefined
 let clockTimer: number | undefined
 
-async function loadResources() {
-  if (!auth.hasAdminAccess || aborter.signal.aborted) return
-  try {
-    const snapshot = await systemApi.resources(aborter.signal)
-    resources.value = snapshot
-    resourcesFailed.value = false
-    const cpu = snapshot.system.cpu_percent
-    if (cpu != null && Number.isFinite(cpu)) {
-      cpuHistory.value = [...cpuHistory.value, cpu].slice(-CPU_HISTORY)
-    }
-  } catch {
-    if (aborter.signal.aborted) return
-    resources.value = null
-    resourcesFailed.value = true
-  }
-}
-
+/* The live snapshot needs no REST refresh; the button reloads the Admin counts and, only while the
+   stream is recovering, forces an immediate reconnect. */
+const refreshingCounts = ref(false)
 async function refresh() {
-  refreshing.value = true
+  reconnectSystemLive()
+  if (!auth.hasAdminAccess || refreshingCounts.value) return
+  refreshingCounts.value = true
   try {
-    await Promise.all([
-      auth.hasAdminAccess ? admin.refreshAll() : Promise.resolve(),
-      server.refresh(aborter.signal),
-      loadResources(),
-    ])
+    await admin.refreshAll()
   } finally {
-    refreshing.value = false
+    refreshingCounts.value = false
   }
 }
 
 onMounted(() => {
-  void server.refresh(aborter.signal)
-  void loadResources()
-  statusTimer = window.setInterval(() => void server.refresh(aborter.signal), STATUS_INTERVAL_MS)
-  resourcesTimer = window.setInterval(() => void loadResources(), RESOURCES_INTERVAL_MS)
   clockTimer = window.setInterval(() => (now.value = new Date()), 60_000)
 })
 
 onBeforeUnmount(() => {
-  aborter.abort()
-  window.clearInterval(statusTimer)
-  window.clearInterval(resourcesTimer)
   window.clearInterval(clockTimer)
 })
 
@@ -117,30 +87,31 @@ const greeting = computed(() => {
   return t('overview.greeting.evening')
 })
 
-type SystemState = 'checking' | 'operational' | 'degraded' | 'offline'
+type SystemState = 'checking' | 'operational' | 'degraded'
 
-// Polls flip readiness to `checking`; keep showing the last verdict meanwhile.
-const systemState = ref<SystemState>('checking')
 const providerErrors = computed(() => admin.providers.filter((provider) => provider.status === 'error'))
-watch(
-  () => [server.readiness, server.health, server.status, providerErrors.value.length] as const,
-  ([readiness, health, status, errors]) => {
-    if (readiness === 'checking' || readiness === 'idle') return
-    if (readiness === 'offline' || health === 'offline') systemState.value = 'offline'
-    else if ((status?.providers.failed ?? 0) > 0 || errors > 0) systemState.value = 'degraded'
-    else systemState.value = 'operational'
-  },
-  { immediate: true },
-)
+const systemState = computed<SystemState>(() => {
+  const current = status.value
+  if (!current) return connection.value === 'live' ? 'degraded' : 'checking'
+  if (freshness.value.status !== 'fresh') return 'degraded'
+  if (current.status !== 'ready' || (current.providers.failed ?? 0) > 0 || providerErrors.value.length > 0) return 'degraded'
+  return 'operational'
+})
 
 const stateStyle = computed(() => ({
   checking: { dot: 'bg-white/70', key: 'overview.state.checking' },
   operational: { dot: 'bg-emerald-300', key: 'overview.state.operational' },
   degraded: { dot: 'bg-amber-300', key: 'overview.state.degraded' },
-  offline: { dot: 'bg-rose-300', key: 'overview.state.offline' },
 }[systemState.value] as { dot: string; key: MessageKey }))
 
-const activeSessions = computed(() => server.status?.sessions.active ?? null)
+const connectionLabel = computed(() => ({
+  live: t('system.deck.live'),
+  connecting: t('system.deck.connecting'),
+  reconnecting: t('system.deck.reconnecting'),
+  paused: t('system.deck.paused'),
+}[connection.value]))
+
+const activeSessions = computed(() => status.value?.sessions.active ?? null)
 
 function formatUptime(seconds: number) {
   const days = Math.floor(seconds / 86_400)
@@ -152,8 +123,8 @@ function formatUptime(seconds: number) {
 }
 
 const lastChecked = computed(() =>
-  server.checkedAt
-    ? server.checkedAt.toLocaleTimeString(locale.value === 'vi' ? 'vi-VN' : 'en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+  liveSnapshot.value?.status.checked_at
+    ? new Date(liveSnapshot.value.status.checked_at).toLocaleTimeString(locale.value === 'vi' ? 'vi-VN' : 'en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
     : dash,
 )
 
@@ -257,23 +228,22 @@ const processLine = computed(() => {
 type Tone = 'ok' | 'warn' | 'bad' | 'muted'
 
 const healthRows = computed(() => {
-  const status = server.status
-  const probe = (state: string): Tone => (state === 'online' ? 'ok' : state === 'offline' ? 'bad' : 'muted')
+  const currentStatus = status.value
   const count = (value: number | null | undefined, badWhenPositive: boolean): Tone =>
     value == null ? 'muted' : badWhenPositive && value > 0 ? 'bad' : 'ok'
-  const db = status?.database
+  const db = currentStatus?.database
   const rows: { icon: Component; label: MessageKey; value: string; tone: Tone }[] = [
     {
       icon: Server,
-      label: 'overview.health.api',
-      value: server.health === 'online' ? t('overview.online') : server.health === 'offline' ? t('overview.offline') : dash,
-      tone: probe(server.health),
+      label: 'overview.health.stream',
+      value: connectionLabel.value,
+      tone: connection.value === 'live' ? 'ok' : 'muted',
     },
     {
       icon: Activity,
       label: 'overview.health.readiness',
-      value: server.readiness === 'online' ? t('overview.ready') : server.readiness === 'offline' ? t('overview.notReady') : dash,
-      tone: probe(server.readiness),
+      value: currentStatus ? (currentStatus.status === 'ready' ? t('overview.ready') : t('overview.notReady')) : dash,
+      tone: !currentStatus ? 'muted' : currentStatus.status === 'ready' ? 'ok' : 'warn',
     },
     {
       icon: Database,
@@ -284,25 +254,25 @@ const healthRows = computed(() => {
     {
       icon: Boxes,
       label: 'overview.health.providers',
-      value: status?.providers.loaded != null
-        ? `${status.providers.loaded}${status.providers.configured != null ? ` / ${status.providers.configured}` : ''}`
+      value: currentStatus?.providers.loaded != null
+        ? `${currentStatus.providers.loaded}${currentStatus.providers.configured != null ? ` / ${currentStatus.providers.configured}` : ''}`
         : dash,
-      tone: count(status?.providers.loaded, false),
+      tone: count(currentStatus?.providers.loaded, false),
     },
     {
       icon: Clock,
       label: 'overview.health.stale',
-      value: status?.providers.stale != null ? String(status.providers.stale) : dash,
-      tone: status?.providers.stale ? 'warn' : count(status?.providers.stale, false),
+      value: currentStatus?.providers.stale != null ? String(currentStatus.providers.stale) : dash,
+      tone: currentStatus?.providers.stale ? 'warn' : count(currentStatus?.providers.stale, false),
     },
     {
       icon: XCircle,
       label: 'overview.health.failed',
-      value: status?.providers.failed != null ? String(status.providers.failed) : dash,
-      tone: count(status?.providers.failed, true),
+      value: currentStatus?.providers.failed != null ? String(currentStatus.providers.failed) : dash,
+      tone: count(currentStatus?.providers.failed, true),
     },
   ]
-  const accounting = status?.provider_runtime?.accounting
+  const accounting = currentStatus?.provider_runtime?.accounting
   if (accounting) {
     rows.push({
       icon: Cpu,
@@ -332,15 +302,15 @@ interface AttentionItem {
 
 const attention = computed<AttentionItem[]>(() => {
   const items: AttentionItem[] = []
-  if (server.readiness === 'offline') {
+  if (status.value && status.value.status !== 'ready') {
     items.push({ id: 'readiness', tone: 'bad', text: t('overview.attention.readiness'), to: '/system' })
   }
-  const failed = server.status?.providers.failed ?? 0
+  const failed = status.value?.providers.failed ?? 0
   if (failed > 0) items.push({ id: 'failed', tone: 'bad', text: t('overview.attention.providersFailed', { count: failed }), to: '/providers' })
   for (const provider of providerErrors.value) {
     items.push({ id: `provider-${provider.id}`, tone: 'bad', text: t('overview.attention.providerError', { name: provider.name }), to: `/providers/${encodeURIComponent(provider.id)}` })
   }
-  const stale = server.status?.providers.stale ?? 0
+  const stale = status.value?.providers.stale ?? 0
   if (stale > 0) items.push({ id: 'stale', tone: 'warn', text: t('overview.attention.providersStale', { count: stale }), to: '/providers' })
   if (countsVisible.value) {
     for (const stage of pipeline.value) {
@@ -437,14 +407,19 @@ const quickActions: { to: string; label: MessageKey; hint: MessageKey; icon: Com
           <button
             type="button"
             class="inline-flex h-9 items-center gap-2 rounded-full border border-white/30 bg-white/10 px-3.5 text-sm font-medium backdrop-blur transition hover:bg-white/20 disabled:opacity-60"
-            :disabled="refreshing || !auth.hasAdminAccess"
+            data-testid="overview-refresh"
+            :disabled="refreshingCounts || (!auth.hasAdminAccess && connection !== 'reconnecting')"
             @click="refresh()"
           >
-            <RefreshCw class="size-4" :class="refreshing ? 'animate-spin' : ''" aria-hidden="true" />
+            <RefreshCw
+              class="size-4"
+              :class="refreshingCounts || connection === 'reconnecting' ? 'animate-spin motion-reduce:animate-none' : ''"
+              aria-hidden="true"
+            />
             {{ t('common.refresh') }}
           </button>
           <p class="overview-last-checked">
-            {{ t('overview.lastChecked', { time: lastChecked }) }} · {{ t('overview.autoRefresh', { seconds: STATUS_INTERVAL_MS / 1000 }) }}
+            {{ t('overview.lastChecked', { time: lastChecked }) }} · {{ t('system.deck.stream') }}
           </p>
         </div>
       </div>
@@ -455,11 +430,11 @@ const quickActions: { to: string; label: MessageKey; hint: MessageKey; icon: Com
         </div>
         <div>
           <dt>{{ t('overview.uptime') }}</dt>
-          <dd>{{ server.status ? formatUptime(server.status.uptime_seconds) : dash }}</dd>
+          <dd>{{ status ? formatUptime(status.uptime_seconds) : dash }}</dd>
         </div>
         <div>
           <dt>{{ t('overview.version') }}</dt>
-          <dd>{{ server.status?.version ?? dash }}</dd>
+          <dd>{{ status?.version ?? dash }}</dd>
         </div>
       </dl>
     </header>
@@ -633,22 +608,22 @@ const quickActions: { to: string; label: MessageKey; hint: MessageKey; icon: Com
             <h2 id="overview-resources-title" class="text-lg font-semibold">{{ t('overview.resources.title') }}</h2>
             <p class="mt-1 text-sm text-muted-foreground">{{ t('overview.resources.hint') }}</p>
           </div>
-          <span v-if="resources" class="inline-flex items-center gap-1.5 rounded-full border border-success/40 px-2.5 py-1 text-xs text-success">
-            <span class="size-1.5 animate-pulse rounded-full bg-success" aria-hidden="true" /> Live
+          <span v-if="freshness.resources === 'fresh'" class="inline-flex items-center gap-1.5 rounded-full border border-success/40 px-2.5 py-1 text-xs text-success">
+            <span class="size-1.5 animate-pulse rounded-full bg-success" aria-hidden="true" /> {{ t('system.deck.live') }}
           </span>
         </div>
+        <SystemFreshnessNotice :freshness="freshness.resources" />
 
-        <p v-if="resourcesFailed" class="rounded-xl bg-surface p-4 text-sm text-muted-foreground">{{ t('overview.resources.unavailable') }}</p>
-        <template v-else>
+        <template>
           <div class="grid grid-cols-3 gap-2">
             <RadialGauge v-for="gauge in gauges" :key="gauge.key" :label="gauge.label" :percentage="gauge.value" :detail="gauge.detail" />
           </div>
           <div class="mt-5 rounded-2xl bg-surface p-4">
             <div class="mb-2 flex items-center justify-between text-xs text-muted-foreground">
               <span class="font-medium">{{ t('overview.resources.trend') }}</span>
-              <span class="tabular-nums">{{ cpuHistory.length ? `${cpuHistory.at(-1)!.toFixed(1)}%` : dash }}</span>
+              <span class="tabular-nums">{{ visibleCpuHistory.length ? `${visibleCpuHistory.at(-1)!.toFixed(1)}%` : dash }}</span>
             </div>
-            <Sparkline :values="cpuHistory" :label="t('overview.resources.trend')" />
+            <Sparkline :values="visibleCpuHistory" :label="t('overview.resources.trend')" />
             <p v-if="processLine" class="mt-2 text-xs text-muted-foreground">{{ processLine }}</p>
           </div>
         </template>
@@ -657,6 +632,7 @@ const quickActions: { to: string; label: MessageKey; hint: MessageKey; icon: Com
       <section class="studio-panel p-5 sm:p-6" aria-labelledby="overview-health-title">
         <h2 id="overview-health-title" class="text-lg font-semibold">{{ t('overview.health.title') }}</h2>
         <p class="mt-1 mb-4 text-sm text-muted-foreground">{{ t('overview.health.hint') }}</p>
+        <SystemFreshnessNotice :freshness="freshness.status" />
         <dl class="divide-y divide-border/70">
           <div v-for="row in healthRows" :key="row.label" class="flex items-center gap-3 py-2.5">
             <component :is="row.icon" class="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />

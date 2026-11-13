@@ -1,11 +1,11 @@
 import { createPinia, setActivePinia } from 'pinia'
 import { enableAutoUnmount, flushPromises, mount } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { ref } from 'vue'
 import { systemApi } from '@/api/system'
 import { assistantApi } from '@/api/assistant'
-import { ApiError } from '@/api/errors'
 import type { SystemResources } from '@/api/types/system'
-import { useServerStore } from '@/stores/server'
+import type { SystemLiveSnapshot } from '@/api/types/system'
 import ResourceStatCard from '@/components/system/ResourceStatCard.vue'
 import AssistantDeviceSettings from '@/components/system/AssistantDeviceSettings.vue'
 import DatabaseBackupCard from '@/components/system/DatabaseBackupCard.vue'
@@ -15,11 +15,16 @@ import SystemMonitorPage from '@/pages/system/SystemMonitorPage.vue'
 import SystemRuntimePage from '@/pages/system/SystemRuntimePage.vue'
 import SystemTransportPage from '@/pages/system/SystemTransportPage.vue'
 import SystemView from './SystemView.vue'
+import { loginStatusState } from '@/stores/admin-session'
+
+import OverviewView from './OverviewView.vue'
 
 const { navigateMock, mockLoadAll } = vi.hoisted(() => ({
   navigateMock: vi.fn(),
   mockLoadAll: vi.fn(),
 }))
+
+const liveMocks = vi.hoisted(() => ({ useSystemLive: vi.fn(), reconnectSystemLive: vi.fn() }))
 
 vi.mock('vue-router', () => ({
   useRouter: () => ({ push: navigateMock }),
@@ -40,14 +45,22 @@ vi.mock('@/api/system', () => ({
     importBackup: vi.fn(),
   },
 }))
+vi.mock('@/composables/useSystemLive', () => liveMocks)
 vi.mock('@/api/assistant', () => ({ assistantApi: { settings: vi.fn(), save: vi.fn(), ticket: vi.fn() } }))
 vi.mock('@/stores/assistant', () => ({ useAssistantStore: () => ({ open: vi.fn() }) }))
 vi.mock('@/stores/admin', () => ({
   useAdminStore: () => ({
     agents: [{ id: 'agent-one', name: 'One' }, { id: 'agent-two', name: 'Two' }],
+    providers: [{ id: 'provider-one', name: 'Provider One', type: 'llm', status: 'ready' }],
+    devices: [],
+    templates: [],
+    loading: false,
+    error: null,
+    devicesForAgent: () => [],
     getTemplatesForAgent: () => [],
     getDefaultTemplate: () => undefined,
     loadAll: mockLoadAll,
+    refreshAll: mockLoadAll,
   }),
 }))
 
@@ -66,10 +79,40 @@ function snapshot(): SystemResources {
   }
 }
 
+function liveValue(
+  status: SystemLiveSnapshot['status']['summary'] = {
+  status: 'ready', version: '0.1.0', uptime_seconds: 20,
+  database: { enabled: true, status: 'ready' },
+  providers: { configured: 3, loaded: 2, failed: 1, stale: 0 },
+  sessions: { active: 4 },
+  provider_runtime: { accounting: { reserved_bytes: 1024 ** 3, active_leases: 2 } },
+  },
+  resources: SystemResources | null = snapshot(),
+  resourceFreshness: 'fresh' | 'stale' | 'unavailable' = 'fresh',
+  statusFreshness: 'fresh' | 'stale' | 'unavailable' = 'fresh',
+  connection: 'connecting' | 'live' | 'reconnecting' | 'paused' = 'live',
+) {
+  const value: SystemLiveSnapshot = {
+    v: 1,
+    resources,
+    status: { checked_at: new Date().toISOString(), refresh_interval_ms: 15_000, summary: status },
+  }
+  return {
+    snapshot: ref(value),
+    cpuHistory: ref([24, 34.5, 43]),
+    connection: ref(connection),
+    freshness: ref({ resources: resourceFreshness, status: statusFreshness }),
+  }
+}
+
 enableAutoUnmount(afterEach)
 
 function page() {
   return mount(SystemView, { global: { plugins: [createPinia()], stubs: { RouterLink: true } } })
+}
+
+function overview() {
+  return mount(OverviewView, { global: { plugins: [createPinia()], stubs: { RouterLink: true } } })
 }
 
 beforeEach(() => {
@@ -89,6 +132,7 @@ beforeEach(() => {
     provider_runtime: { accounting: { reserved_bytes: 1024 ** 3, active_leases: 2 } },
   })
   vi.mocked(systemApi.resources).mockImplementation(async () => snapshot())
+  liveMocks.useSystemLive.mockReturnValue(liveValue())
   vi.mocked(assistantApi.settings).mockResolvedValue({
     configured: true,
     enabled: true,
@@ -107,6 +151,90 @@ afterEach(() => {
 })
 
 describe('System control room & sub-pages', () => {
+  it('Overview reads the shared snapshot and CPU history without REST polling', async () => {
+    liveMocks.useSystemLive.mockReturnValue(liveValue())
+    const wrapper = overview()
+    await flushPromises()
+    expect(liveMocks.useSystemLive).toHaveBeenCalled()
+    expect(wrapper.text()).toContain('35%')
+    expect(wrapper.text()).toContain('0m 20s')
+    expect(systemApi.resources).not.toHaveBeenCalled()
+    expect(systemApi.status).not.toHaveBeenCalled()
+    expect(systemApi.health).not.toHaveBeenCalled()
+    expect(systemApi.ready).not.toHaveBeenCalled()
+    // Without Admin access there is nothing to reload while the stream is live.
+    expect(wrapper.get('[data-testid="overview-refresh"]').attributes('disabled')).toBeDefined()
+    wrapper.unmount()
+
+    loginStatusState.value = { passwordLoginEnabled: false, mustChangePassword: false }
+    try {
+      const adminWrapper = overview()
+      await flushPromises()
+      mockLoadAll.mockClear()
+      await adminWrapper.get('[data-testid="overview-refresh"]').trigger('click')
+      await flushPromises()
+      expect(mockLoadAll).toHaveBeenCalledTimes(1)
+      expect(systemApi.resources).not.toHaveBeenCalled()
+      expect(systemApi.status).not.toHaveBeenCalled()
+      adminWrapper.unmount()
+    } finally {
+      loginStatusState.value = null
+    }
+
+    const reconnecting = liveValue()
+    reconnecting.connection.value = 'reconnecting'
+    liveMocks.useSystemLive.mockReturnValue(reconnecting)
+    const reconnectingWrapper = overview()
+    await flushPromises()
+    const button = reconnectingWrapper.get('.overview-hero-actions button')
+    liveMocks.reconnectSystemLive.mockClear()
+    await button.trigger('click')
+    expect(liveMocks.reconnectSystemLive).toHaveBeenCalledTimes(1)
+    reconnecting.connection.value = 'live'
+    await flushPromises()
+    expect(reconnectingWrapper.get('[data-testid="overview-refresh"]').attributes('disabled')).toBeDefined()
+    reconnectingWrapper.unmount()
+  })
+
+  it('keeps last System Live values visible and marks each page section stale', async () => {
+    liveMocks.useSystemLive.mockReturnValue(liveValue(undefined, snapshot(), 'stale', 'stale'))
+
+    const overviewWrapper = overview()
+    await flushPromises()
+    expect(overviewWrapper.text()).toContain('Stale')
+    expect(overviewWrapper.text()).toContain('35%')
+    overviewWrapper.unmount()
+
+    const systemWrapper = page()
+    await flushPromises()
+    expect(systemWrapper.text()).toContain('Stale')
+    expect(systemWrapper.text()).toContain('34.5%')
+    systemWrapper.unmount()
+
+    const monitorWrapper = mount(SystemMonitorPage, { global: { plugins: [createPinia()] } })
+    await flushPromises()
+    expect(monitorWrapper.text()).toContain('Stale')
+    expect(monitorWrapper.text()).toContain('34.5%')
+    monitorWrapper.unmount()
+
+    const runtimeWrapper = mount(SystemRuntimePage, { global: { plugins: [createPinia()] } })
+    await flushPromises()
+    expect(runtimeWrapper.text()).toContain('Stale')
+    expect(runtimeWrapper.text()).toContain('2 / 3')
+    runtimeWrapper.unmount()
+  })
+
+  it('reads System Resources and System Status from the shared live snapshot', async () => {
+    const wrapper = page()
+    await flushPromises()
+    expect(liveMocks.useSystemLive).toHaveBeenCalledTimes(1)
+    expect(wrapper.text()).toContain('34.5%')
+    expect(wrapper.text()).toContain('2 / 3')
+    expect(systemApi.resources).not.toHaveBeenCalled()
+    expect(systemApi.status).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
+
   it('renders four resource cards, status strip, and feature module links on SystemView', async () => {
     const wrapper = page()
     await flushPromises()
@@ -147,60 +275,43 @@ describe('System control room & sub-pages', () => {
         providers: { configured: 3, loaded: 3, failed: 0, stale: 0 },
         sessions: { active: 0 },
       }
-      if (scenario === 'readiness') vi.mocked(systemApi.ready).mockResolvedValue('not ready')
+      if (scenario === 'readiness') healthy.status = 'not_ready'
       if (scenario === 'database') healthy.database.status = 'unavailable'
       if (scenario === 'stale') healthy.providers.stale = 1
       if (scenario === 'partial') healthy.providers.loaded = 2
-      if (scenario === 'offline') vi.mocked(systemApi.health).mockRejectedValue(new Error('offline'))
-      if (scenario === 'missing') vi.mocked(systemApi.status).mockRejectedValue(new Error('unavailable'))
-      else vi.mocked(systemApi.status).mockResolvedValue(healthy)
+      if (scenario === 'offline') healthy.status = 'unavailable'
+      liveMocks.useSystemLive.mockReturnValue(liveValue(scenario === 'missing' ? null : healthy))
       const wrapper = page()
       await flushPromises()
       expect(wrapper.get('[data-testid="system-status-strip"]').attributes('data-state')).toBe(
-        scenario === 'ready' ? 'ready' : scenario === 'offline' ? 'offline' : 'attention',
+        scenario === 'ready' ? 'ready' : 'attention',
       )
       expect(wrapper.get('[data-testid="system-uptime"]').text()).toBe(scenario === 'missing' ? '—' : '1d 1h')
       wrapper.unmount()
     },
   )
 
-  it('pauses hidden polling, resumes immediately, refreshes status every 30 seconds and aborts on unmount', async () => {
+  it('uses the shared snapshot and exposes immediate reconnect only while reconnecting', async () => {
+    const live = liveValue()
+    live.connection.value = 'reconnecting'
+    liveMocks.useSystemLive.mockReturnValue(live)
     const wrapper = page()
     await flushPromises()
-    await vi.advanceTimersByTimeAsync(5000)
-    expect(systemApi.resources).toHaveBeenCalledTimes(2)
-    expect(systemApi.status).toHaveBeenCalledTimes(1)
-    vi.spyOn(document, 'hidden', 'get').mockReturnValue(true)
-    await vi.advanceTimersByTimeAsync(20_000)
-    expect(systemApi.resources).toHaveBeenCalledTimes(2)
-    vi.spyOn(document, 'hidden', 'get').mockReturnValue(false)
-    document.dispatchEvent(new Event('visibilitychange'))
+    await wrapper.get('[data-testid="system-refresh"]').trigger('click')
+    expect(liveMocks.reconnectSystemLive).toHaveBeenCalledTimes(1)
+    expect(systemApi.resources).not.toHaveBeenCalled()
+    expect(systemApi.status).not.toHaveBeenCalled()
+    live.connection.value = 'live'
     await flushPromises()
-    expect(systemApi.resources).toHaveBeenCalledTimes(3)
-    await vi.advanceTimersByTimeAsync(5000)
-    expect(systemApi.status).toHaveBeenCalledTimes(2)
-    const signal = vi.mocked(systemApi.resources).mock.calls[0]![0]!
+    expect(wrapper.find('[data-testid="system-refresh"]').exists()).toBe(false)
     wrapper.unmount()
-    expect(signal.aborted).toBe(true)
-    const count = vi.mocked(systemApi.resources).mock.calls.length
-    document.dispatchEvent(new Event('visibilitychange'))
-    await vi.advanceTimersByTimeAsync(30_000)
-    expect(systemApi.resources).toHaveBeenCalledTimes(count)
   })
 
   it('skips overlapping requests on SystemView and renders dedicated SystemAssistantPage with Managed Device inspector', async () => {
-    let resolve!: (value: SystemResources) => void
-    vi.mocked(systemApi.resources).mockReturnValueOnce(
-      new Promise(done => {
-        resolve = done
-      }),
-    )
     const wrapper = page()
     await flushPromises()
-    await vi.advanceTimersByTimeAsync(10_000)
-    expect(systemApi.resources).toHaveBeenCalledTimes(1)
-    resolve(snapshot())
-    await flushPromises()
+    expect(systemApi.resources).not.toHaveBeenCalled()
+    expect(systemApi.status).not.toHaveBeenCalled()
     wrapper.unmount()
 
     const assistantPage = mount(SystemAssistantPage, {
@@ -222,11 +333,15 @@ describe('System control room & sub-pages', () => {
   })
 
   it('renders dedicated SystemMonitorPage, SystemRuntimePage, SystemBackupPage, and SystemTransportPage', async () => {
+    const callsBefore = liveMocks.useSystemLive.mock.calls.length
     const monitorWrapper = mount(SystemMonitorPage, { global: { plugins: [createPinia()] } })
     await flushPromises()
     expect(monitorWrapper.find('[data-testid="system-monitor-page"]').exists()).toBe(true)
     expect(monitorWrapper.text()).toContain('Host details')
     expect(monitorWrapper.text()).toContain('123')
+    expect(liveMocks.useSystemLive).toHaveBeenCalledTimes(callsBefore + 1)
+    expect(systemApi.resources).not.toHaveBeenCalled()
+    expect(systemApi.status).not.toHaveBeenCalled()
     await monitorWrapper.get('button[data-period="1h"]').trigger('click')
     expect(monitorWrapper.text()).toContain('1h')
     await monitorWrapper.get('[data-detail-back]').trigger('click')
@@ -238,6 +353,9 @@ describe('System control room & sub-pages', () => {
     expect(runtimeWrapper.find('[data-testid="system-runtime-page"]').exists()).toBe(true)
     expect(runtimeWrapper.text()).toContain('2 / 3')
     expect(runtimeWrapper.text()).toContain('1.0 GiB')
+    expect(liveMocks.useSystemLive).toHaveBeenCalledTimes(callsBefore + 2)
+    expect(systemApi.resources).not.toHaveBeenCalled()
+    expect(systemApi.status).not.toHaveBeenCalled()
     runtimeWrapper.unmount()
 
     const backupWrapper = mount(SystemBackupPage, { global: { plugins: [createPinia()] } })
@@ -255,37 +373,61 @@ describe('System control room & sub-pages', () => {
     transportWrapper.unmount()
   })
 
+  it('only shows reconnect buttons for Monitor and Runtime while the stream is reconnecting', async () => {
+    const live = liveValue()
+    live.connection.value = 'reconnecting'
+    liveMocks.useSystemLive.mockReturnValue(live)
+
+    const monitorWrapper = mount(SystemMonitorPage, { global: { plugins: [createPinia()] } })
+    const monitorButton = monitorWrapper.get('[data-testid="monitor-refresh-btn"]')
+    await monitorButton.trigger('click')
+    expect(liveMocks.reconnectSystemLive).toHaveBeenCalledTimes(1)
+    live.connection.value = 'live'
+    await flushPromises()
+    expect(monitorWrapper.find('[data-testid="monitor-refresh-btn"]').exists()).toBe(false)
+    monitorWrapper.unmount()
+
+    live.connection.value = 'reconnecting'
+    const runtimeWrapper = mount(SystemRuntimePage, { global: { plugins: [createPinia()] } })
+    await runtimeWrapper.get('[data-testid="runtime-refresh-btn"]').trigger('click')
+    expect(liveMocks.reconnectSystemLive).toHaveBeenCalledTimes(2)
+    live.connection.value = 'live'
+    await flushPromises()
+    expect(runtimeWrapper.find('[data-testid="runtime-refresh-btn"]').exists()).toBe(false)
+    runtimeWrapper.unmount()
+  })
+
   it('shows nullable and stale readings without inventing zero values', async () => {
     const data = snapshot()
     data.system.cpu_percent = null
     data.system.memory_total_bytes = 0
     data.system.memory_used_bytes = null
     data.storage.available_bytes = null
-    vi.mocked(systemApi.resources).mockResolvedValue(data)
+    liveMocks.useSystemLive.mockReturnValue(liveValue(undefined, data))
     const wrapper = page()
     await flushPromises()
     const cards = wrapper.findAllComponents(ResourceStatCard)
     expect(cards[0]!.text()).toContain('—')
     expect(cards[1]!.find('[role="progressbar"]').exists()).toBe(false)
     expect(cards[3]!.text()).toContain('Unavailable')
-    await vi.advanceTimersByTimeAsync(20_000)
-    expect(cards[2]!.text()).toContain('Stale')
-    expect(cards[2]!.text()).not.toContain('242.8%')
-    expect(wrapper.get('.telemetry-footer').attributes('data-live')).toBe('false')
     wrapper.unmount()
+
+    liveMocks.useSystemLive.mockReturnValue(liveValue(undefined, data, 'stale'))
+    const staleWrapper = page()
+    await flushPromises()
+    expect(staleWrapper.text()).toContain('Stale')
+    expect(staleWrapper.text()).toContain('242.8%')
+    expect(staleWrapper.get('.telemetry-footer').attributes('data-live')).toBe('false')
+    staleWrapper.unmount()
   })
 
-  it.each([401, 503])('keeps health and runtime status when resources returns %s', async status => {
-    vi.mocked(systemApi.resources).mockRejectedValue(
-      new ApiError('failed', status, 'system_metrics_unavailable'),
-    )
+  it('keeps the final resource values visible and marks them stale after reconnect loss', async () => {
+    liveMocks.useSystemLive.mockReturnValue(liveValue(undefined, snapshot(), 'stale', 'unavailable'))
     const wrapper = page()
     await flushPromises()
-    expect(useServerStore().health).toBe('online')
-    expect(useServerStore().status?.sessions.active).toBe(4)
-    expect(wrapper.text()).toContain(
-      status === 401 ? 'Admin authentication required' : 'Unavailable',
-    )
+    expect(wrapper.text()).toContain('Stale')
+    expect(wrapper.text()).toContain('34.5%')
+    expect(wrapper.text()).toContain('Unavailable')
     wrapper.unmount()
   })
 

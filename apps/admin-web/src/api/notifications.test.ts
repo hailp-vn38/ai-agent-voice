@@ -1,4 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { handleSessionResponse } from './session'
+
+vi.mock('./session', async importOriginal => {
+  const actual = await importOriginal<typeof import('./session')>()
+  return { ...actual, handleSessionResponse: vi.fn(actual.handleSessionResponse) }
+})
 
 import {
   isNotificationsDemoMode,
@@ -360,5 +366,17 @@ describe('notificationsApi & stateful demo store fallback', () => {
 
     expect(createdIds).toEqual(['sse-1'])
     expect(changedCount).toBeGreaterThanOrEqual(2)
+  })
+
+  it('forwards a rejected stream response to the session handler', async () => {
+    const abort = new AbortController()
+    const onCreated = vi.fn()
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('', { status: 401 })))
+
+    await listenNotificationStream({ onCreated, onChanged: vi.fn() }, abort.signal)
+
+    expect(handleSessionResponse).toHaveBeenCalledOnce()
+    expect(handleSessionResponse).toHaveBeenCalledWith(expect.objectContaining({ status: 401 }))
+    expect(onCreated).not.toHaveBeenCalled()
   })
 })
