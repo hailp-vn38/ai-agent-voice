@@ -370,6 +370,7 @@ pub async fn start_router_with_limits(
         shutdown: vela_server::config::ShutdownConfig::default(),
         agent: None,
         effective_agent: vela_server::config::EffectiveAgentConfig::default(),
+        device_push: Default::default(),
     };
     let app: Router = crate::support::router(config, providers).await;
     let task = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });

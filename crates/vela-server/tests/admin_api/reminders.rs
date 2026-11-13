@@ -1141,3 +1141,68 @@ async fn agent_reminders_join_current_assignment_and_scope_mutations() {
     );
     task.abort();
 }
+
+#[tokio::test]
+async fn wake_on_due_replaces_pending_sync_status_when_device_push_enabled() {
+    let (base, task) = server_with_device_push().await;
+    let client = Client::new();
+    let web_token = admin_web_token(&client, &base).await;
+    client
+        .post(format!("{base}/api/admin/agents"))
+        .bearer_auth(&web_token)
+        .json(&serde_json::json!({"key":"wake_agent","name":"Wake"}))
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap();
+    client
+        .post(format!("{base}/api/admin/devices"))
+        .bearer_auth(&web_token)
+        .json(&serde_json::json!({"device_id":"wake-device","agent_key":"wake_agent"}))
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap();
+    let url = format!("{base}/api/admin/devices/wake-device/reminders");
+    let created: serde_json::Value = client
+        .post(&url)
+        .bearer_auth(&web_token)
+        .header("Idempotency-Key", "wake-one")
+        .json(&serde_json::json!({"message":"Gọi dậy","delay_seconds":600}))
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(created["sync_status"], "wake_on_due");
+    let listed: serde_json::Value = client
+        .get(&url)
+        .bearer_auth(&web_token)
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(listed["items"][0]["sync_status"], "wake_on_due");
+    let by_agent: serde_json::Value = client
+        .get(format!("{base}/api/admin/agents/wake_agent/reminders"))
+        .bearer_auth(&web_token)
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(by_agent["items"][0]["sync_status"], "wake_on_due");
+    task.abort();
+}

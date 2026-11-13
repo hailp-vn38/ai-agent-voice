@@ -68,6 +68,18 @@ _Avoid_: end of network stream, WebSocket delivery, Device Cache ACK
 Lần phát nội dung đã có bằng giọng tổng hợp, không nhận dạng lời nói hoặc sinh nội dung bằng mô hình ngôn ngữ.
 _Avoid_: generated assistant response, Reminder (khi nói về khả năng phát dùng chung)
 
+**Device Push Channel**:
+Kết nối MQTT thường trực từ Device tới broker của deployment, chỉ dùng để server gửi Wake Signal khi Device không có Voice Session.
+_Avoid_: Notification Channel, notification WS, giao thức thoại MQTT+UDP
+
+**Wake Signal**:
+Tín hiệu không mang nội dung, gửi qua Device Push Channel để yêu cầu Device mở Voice Session vì có Reminder đến hạn. Một Wake Signal được nhận diện bằng Reminder và mốc đến hạn hoặc thử lại mà nó đại diện.
+_Avoid_: Notification, Reminder, `sync_required`, push notification
+
+**Device Key**:
+Định danh dẫn xuất từ Device ID, an toàn để đặt trong tên topic và client ID của Device Push Channel.
+_Avoid_: Device ID, Client ID, serial number
+
 ## Background Tasks, Reminders, and Wiki Auto-Flow
 
 **Background Task**:

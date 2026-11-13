@@ -124,6 +124,7 @@ async fn start() -> Server {
         shutdown: Default::default(),
         agent: None,
         effective_agent: Default::default(),
+        device_push: Default::default(),
     };
     let database = Database::connect(&config.database).await.unwrap();
     crate::admin_auth::seed_default_admin_password(database.pool()).await;

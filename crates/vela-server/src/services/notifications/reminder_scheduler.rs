@@ -2,12 +2,17 @@ use crate::{
     database::notifications::DeviceNotifications,
     services::{
         device::active_sessions::ActiveDeviceSessions,
+        device_push::{DevicePush, WakeRequest},
         notification_hub::{NotificationHub, bridge},
         notifications::ReminderCoordinator,
     },
     session::{DirectSpeechRequest, SpeechOrigin},
 };
-use std::{collections::HashSet, sync::Arc, time::Duration};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::Arc,
+    time::Duration,
+};
 use tokio_util::sync::CancellationToken;
 
 const IDLE_SWEEP_INTERVAL: Duration = Duration::from_secs(60);
@@ -22,19 +27,24 @@ pub fn start(
     sessions: Arc<ActiveDeviceSessions>,
     stopping: CancellationToken,
 ) {
-    start_with_hub(notifications, sessions, None, stopping);
+    start_with_wake(notifications, sessions, None, None, stopping);
 }
 
-pub fn start_with_hub(
+/// Like [`start`], plus the Notification Hub bridge and, when the Device Push Channel is
+/// enabled, a Wake Signal for due Reminders of Devices without a session. `None` for both
+/// keeps behaviour identical to [`start`].
+pub fn start_with_wake(
     notifications: DeviceNotifications,
     sessions: Arc<ActiveDeviceSessions>,
     notification_hub: Option<Arc<NotificationHub>>,
+    device_push: Option<Arc<DevicePush>>,
     stopping: CancellationToken,
 ) {
     let coordinator = ReminderCoordinator::new(notifications, Arc::clone(&sessions));
     let wakeup = Arc::clone(coordinator.scheduler_wakeup());
     tokio::spawn(async move {
         let mut notified_reminder_ids = HashSet::<String>::new();
+        let mut signalled = HashMap::<String, SentWakeSignal>::new();
         loop {
             if stopping.is_cancelled() {
                 return;
@@ -156,6 +166,12 @@ pub fn start_with_hub(
                 }
             }
 
+            let mut wake_wait: Option<Duration> = None;
+            if let Some(ref push) = device_push {
+                wake_wait =
+                    signal_unconnected_devices(&coordinator, &sessions, push, &mut signalled).await;
+            }
+
             let sleep_duration = if any_transient_rejection {
                 BUSY_RETRY_INTERVAL
             } else {
@@ -174,6 +190,11 @@ pub fn start_with_hub(
                 }
             };
 
+            let sleep_duration = match wake_wait {
+                Some(wait) => sleep_duration.min(wait.max(MIN_ZERO_DEADLINE_BACKOFF)),
+                None => sleep_duration,
+            };
+
             tokio::select! {
                 _ = stopping.cancelled() => return,
                 _ = &mut notified => {}
@@ -181,4 +202,115 @@ pub fn start_with_hub(
             }
         }
     });
+}
+
+const PUBLISH_RETRY_INTERVAL: Duration = Duration::from_secs(5);
+/// How long a signalled Device gets to open a session before the miss is logged.
+const WAKE_CONNECT_GRACE_MS: i64 = 30_000;
+
+/// The Wake Signal last sent for a Reminder: one per due moment or retry checkpoint.
+struct SentWakeSignal {
+    trigger_at_ms: i64,
+    sent_at_ms: i64,
+    miss_logged: bool,
+}
+
+/// Sends one Wake Signal per due moment (or retry checkpoint) for Devices without a session
+/// able to take the Reminder. Returns how long the scheduler may sleep before the next
+/// signal-relevant moment (a future trigger, a retry after a failed publish, or the end of a
+/// signalled Device's connect grace).
+async fn signal_unconnected_devices(
+    coordinator: &ReminderCoordinator,
+    sessions: &ActiveDeviceSessions,
+    device_push: &DevicePush,
+    signalled: &mut HashMap<String, SentWakeSignal>,
+) -> Option<Duration> {
+    let candidates = match coordinator.repo().wake_candidates().await {
+        Ok(candidates) => candidates,
+        Err(err) => {
+            tracing::warn!(error = ?err, "wake signal candidate query failed");
+            return Some(PUBLISH_RETRY_INTERVAL);
+        }
+    };
+    let now_ms = coordinator.repo().clock_now();
+    let connected: HashSet<i64> = sessions.active_reminder_device_ids().into_iter().collect();
+    signalled.retain(|id, _| candidates.iter().any(|c| &c.reminder_id == id));
+
+    let mut wait: Option<Duration> = None;
+    let mut shorten = |candidate: Duration| {
+        wait = Some(wait.map_or(candidate, |current| current.min(candidate)));
+    };
+    for candidate in candidates {
+        if connected.contains(&candidate.device_row_id) {
+            continue;
+        }
+        if candidate.trigger_at_ms > now_ms {
+            shorten(Duration::from_millis(
+                (candidate.trigger_at_ms - now_ms) as u64,
+            ));
+            continue;
+        }
+        let previous = signalled.get_mut(&candidate.reminder_id);
+        if let Some(sent) = previous
+            && sent.trigger_at_ms == candidate.trigger_at_ms
+        {
+            // Already signalled for this moment: never re-publish, only report a Device that
+            // stays away so the log tells a broker problem from a Device problem.
+            let grace_left_ms = sent.sent_at_ms + WAKE_CONNECT_GRACE_MS - now_ms;
+            if grace_left_ms > 0 {
+                shorten(Duration::from_millis(grace_left_ms as u64));
+            } else if !sent.miss_logged {
+                sent.miss_logged = true;
+                tracing::warn!(
+                    reminder_id = %candidate.reminder_id,
+                    device_id = %candidate.device_id,
+                    waited_ms = now_ms - sent.sent_at_ms,
+                    "wake signal sent but device did not connect"
+                );
+            }
+            continue;
+        }
+        let retry = signalled.contains_key(&candidate.reminder_id);
+        match device_push
+            .send_wake_signal(
+                &candidate.device_id,
+                WakeRequest {
+                    reminder_id: &candidate.reminder_id,
+                    trigger_at_ms: candidate.trigger_at_ms,
+                    expires_at_ms: candidate.expires_at_ms,
+                },
+            )
+            .await
+        {
+            Ok(()) => {
+                signalled.insert(
+                    candidate.reminder_id.clone(),
+                    SentWakeSignal {
+                        trigger_at_ms: candidate.trigger_at_ms,
+                        sent_at_ms: now_ms,
+                        miss_logged: false,
+                    },
+                );
+                shorten(Duration::from_millis(WAKE_CONNECT_GRACE_MS as u64));
+                tracing::info!(
+                    reminder_id = %candidate.reminder_id,
+                    device_id = %candidate.device_id,
+                    retry,
+                    "wake signal sent; waiting for device to connect"
+                );
+            }
+            Err(err) => {
+                tracing::warn!(
+                    reminder_id = %candidate.reminder_id,
+                    device_id = %candidate.device_id,
+                    error = %err,
+                    "wake signal could not be sent; will retry"
+                );
+                shorten(PUBLISH_RETRY_INTERVAL);
+                // The broker is the likely cause: do not make every other Device wait for it.
+                break;
+            }
+        }
+    }
+    wait
 }

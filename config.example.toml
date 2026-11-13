@@ -70,6 +70,16 @@ max_output_tokens = 16000
 request_timeout_ms = 120000
 max_concurrent_root_runs = 4
 
+# Device Push Channel (ADR 0145): registered Devices receive MQTT broker credentials in the OTA
+# `push` block. Off by default. Enabling requires endpoint, broker_url and secret.
+# Override the secret with VOICE_DEVICE_PUSH_SECRET; changing it invalidates every Device password.
+[device_push]
+enabled = false
+# endpoint = "push.example.com:8883"    # public host:port handed to Devices
+# broker_url = "mqtt://mosquitto:1883"  # broker address as seen by the server
+# secret = ""
+keepalive_seconds = 60
+
 [shutdown]
 grace_ms = 15000
 

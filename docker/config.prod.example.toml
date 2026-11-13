@@ -33,6 +33,14 @@ interval_min = 5
 debounce_sec = 30
 max_file_mb = 50
 
+# Device Push Channel: enable together with the compose `push` profile (see README).
+# The server reaches the broker over the compose network; Devices use the public TLS endpoint.
+# Set the secret via VOICE_DEVICE_PUSH_SECRET in docker/secrets.env.
+[device_push]
+enabled = false
+# endpoint = "push.example.com:8883"
+# broker_url = "mqtt://mosquitto:1883"
+
 [shutdown]
 grace_ms = 15000
 

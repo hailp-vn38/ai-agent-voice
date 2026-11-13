@@ -88,7 +88,7 @@ impl DeviceNotifications {
                 device_rows.insert(item.device_id.clone(), id);
                 id
             };
-            item.sync_status = sync_status(&mut tx, row_id, item).await?;
+            item.sync_status = sync_status(&mut tx, row_id, item, self.wake_on_due).await?;
         }
         let mut count = QueryBuilder::<Sqlite>::new("SELECT count(*)");
         filter(&mut count, key, input, true);

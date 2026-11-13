@@ -66,6 +66,9 @@ public:
     virtual void SendStopListening();
     virtual void SendAbortSpeaking(AbortReason reason);
     virtual void SendMcpMessage(const std::string& message);
+    // Playback ACK for a Reminder: event is "played" or "failed" (reason only for failed).
+    void SendReminderEvent(const std::string& event, const std::string& reminder_id,
+                           const std::string& attempt_id, const std::string& reason = "");
 
 protected:
     std::function<void(const cJSON* root)> on_incoming_json_;

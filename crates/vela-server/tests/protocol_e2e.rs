@@ -228,6 +228,7 @@ async fn start_pilot(outcome: AsrOutcome, pilot: bool) -> (String, JoinHandle<()
         shutdown: vela_server::config::ShutdownConfig::default(),
         agent: None,
         effective_agent: vela_server::config::EffectiveAgentConfig::default(),
+        device_push: Default::default(),
     };
     let providers = Arc::new(ProviderSet::with_vad(
         Arc::new(SpeechThenSilenceVad),
@@ -295,6 +296,7 @@ async fn start_barge_in() -> (String, JoinHandle<()>) {
         shutdown: vela_server::config::ShutdownConfig::default(),
         agent: None,
         effective_agent: vela_server::config::EffectiveAgentConfig::default(),
+        device_push: Default::default(),
     };
     let providers = Arc::new(ProviderSet::with_all(
         Arc::new(SpeechThenSilenceVad),

@@ -107,6 +107,11 @@ impl AppConfig {
         {
             self.api.jwt_secret = crate::config::SecretString::new(secret);
         }
+        if let Ok(secret) = std::env::var("VOICE_DEVICE_PUSH_SECRET")
+            && !secret.is_empty()
+        {
+            self.device_push.secret = crate::config::SecretString::new(secret);
+        }
         if let Ok(db_url) = std::env::var("VOICE_DATABASE_URL")
             && !db_url.trim().is_empty()
         {
@@ -197,6 +202,7 @@ impl AppConfig {
         validate_deployment(self)?;
         validate_database(self)?;
         validate_admin_api(self)?;
+        validate_device_push(self)?;
         validate_speaker_recognition(self)?;
         validate_shutdown(self)?;
         crate::app::mcp_server::validate(self)?;
@@ -337,6 +343,27 @@ fn validate_speaker_recognition(config: &AppConfig) -> Result<(), ConfigError> {
     {
         return Err(ConfigError::Validation(
             "speaker_recognition.observe bounds are invalid".into(),
+        ));
+    }
+    Ok(())
+}
+
+fn validate_device_push(config: &AppConfig) -> Result<(), ConfigError> {
+    let push = &config.device_push;
+    if !push.enabled {
+        return Ok(());
+    }
+    if push.endpoint.trim().is_empty()
+        || push.broker_url.trim().is_empty()
+        || push.secret.expose().is_empty()
+    {
+        return Err(ConfigError::Validation(
+            "device_push.enabled requires endpoint, broker_url and secret".into(),
+        ));
+    }
+    if !(10..=3_600).contains(&push.keepalive_seconds) {
+        return Err(ConfigError::Validation(
+            "device_push.keepalive_seconds must be within 10..=3600".into(),
         ));
     }
     Ok(())
@@ -1006,6 +1033,22 @@ url = "sqlite://data/vela.db"
 "#
         ))
         .expect("the minimal configuration parses")
+    }
+
+    #[test]
+    fn device_push_is_off_by_default_and_rejects_enabling_without_required_fields() {
+        assert!(validate_device_push(&config("")).is_ok());
+        let missing = |fields: &str| {
+            validate_device_push(&config(&format!("[device_push]\nenabled = true\n{fields}")))
+        };
+        assert!(missing("").is_err());
+        assert!(missing("endpoint = \"h:8883\"\nbroker_url = \"mqtt://b:1883\"").is_err());
+        assert!(missing("endpoint = \"h:8883\"\nsecret = \"s\"").is_err());
+        assert!(missing("broker_url = \"mqtt://b:1883\"\nsecret = \"s\"").is_err());
+        assert!(
+            missing("endpoint = \"h:8883\"\nbroker_url = \"mqtt://b:1883\"\nsecret = \"s\"")
+                .is_ok()
+        );
     }
 
     #[test]

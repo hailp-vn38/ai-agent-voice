@@ -244,7 +244,8 @@ fn coordinator(
     let service = ReminderCoordinator::from_database(
         database.clone(),
         std::sync::Arc::clone(&state.active_device_sessions),
-    );
+    )
+    .with_wake_on_due(state.device_push.is_some());
     match agent_scope(request) {
         Some(scope) => service.scoped_to_agent(scope),
         None => service,
@@ -265,6 +266,7 @@ pub(in crate::app::admin) async fn agent_list(
         db.clone(),
         std::sync::Arc::clone(&state.active_device_sessions),
     )
+    .with_wake_on_due(state.device_push.is_some())
     .list_agent(&key, &query)
     .await
     {

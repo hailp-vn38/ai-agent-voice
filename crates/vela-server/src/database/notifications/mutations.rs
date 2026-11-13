@@ -71,7 +71,7 @@ impl DeviceNotifications {
             }
             let mut reminder: Reminder = serde_json::from_str(&response)
                 .map_err(|_| NotificationError::Invalid("stored_response_invalid"))?;
-            reminder.sync_status = sync_status(&mut tx, owner, &reminder).await?;
+            reminder.sync_status = sync_status(&mut tx, owner, &reminder, self.wake_on_due).await?;
             tx.commit().await?;
             return Ok((reminder, owner));
         }

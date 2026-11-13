@@ -105,6 +105,25 @@ void Protocol::SendMcpMessage(const std::string& payload) {
     SendText(message);
 }
 
+void Protocol::SendReminderEvent(const std::string& event, const std::string& reminder_id,
+                                 const std::string& attempt_id, const std::string& reason) {
+    cJSON* msg = cJSON_CreateObject();
+    cJSON_AddStringToObject(msg, "session_id", session_id_.c_str());
+    cJSON_AddStringToObject(msg, "type", "reminder");
+    cJSON_AddStringToObject(msg, "event", event.c_str());
+    cJSON_AddStringToObject(msg, "reminder_id", reminder_id.c_str());
+    cJSON_AddStringToObject(msg, "attempt_id", attempt_id.c_str());
+    if (!reason.empty()) {
+        cJSON_AddStringToObject(msg, "reason", reason.c_str());
+    }
+    char* json = cJSON_PrintUnformatted(msg);
+    if (json) {
+        SendText(json);
+        cJSON_free(json);
+    }
+    cJSON_Delete(msg);
+}
+
 bool Protocol::IsTimeout() const {
     const int kTimeoutSeconds = 120;
     auto now = std::chrono::steady_clock::now();

@@ -4,6 +4,8 @@
 
 Accepted, 2026-10-26 — `server-ready, firmware-unverified` (Proposed, 2026-10-12; offline RTC wake cần nghiệm thu trên phần cứng thật).
 
+Amended by [ADR 0145](0145-device-push-channel-mqtt-wake-signal.md), 2026-11-13: phần firmware cache lịch và wake timer được hoãn. Device đang thức nhận Wake Signal qua Device Push Channel rồi mở Voice Session; cache lịch chỉ còn cần cho Device Deep Sleep. Giao thức sync phía server giữ nguyên.
+
 Server giữ lịch authoritative; firmware chỉ cache kế hoạch wake đã xác nhận, không giữ quyền phát. Chọn snapshot có revision và một logical wake timer thay vì timer theo từng Reminder hay giả định server có thể đánh thức Device đang Deep Sleep.
 
 - Sau mọi commit thay đổi pending, kể cả completed/expired, gửi `reminder.sync_required` tới current opted-in session; hint coalesce giữ revision cao nhất. Reconnect luôn `sync_request`, không phụ thuộc hint tới được.

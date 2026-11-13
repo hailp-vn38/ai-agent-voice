@@ -198,6 +198,31 @@ NetworkResult<> Ota::CheckVersion() {
         ESP_LOGI(TAG, "No websocket section found!");
     }
 
+    // Device Push Channel grant. Kept in its own "push" namespace, never mixed with the
+    // voice-protocol "mqtt"/"websocket" keys. Absent block => feature off, stale grant erased.
+    has_push_config_ = false;
+    cJSON *push = cJSON_GetObjectItem(root, "push");
+    if (cJSON_IsObject(push)) {
+        Settings settings("push", true);
+        cJSON *item = NULL;
+        cJSON_ArrayForEach(item, push) {
+            if (cJSON_IsString(item)) {
+                if (settings.GetString(item->string) != item->valuestring) {
+                    settings.SetString(item->string, item->valuestring);
+                }
+            } else if (cJSON_IsNumber(item)) {
+                if (settings.GetInt(item->string) != item->valueint) {
+                    settings.SetInt(item->string, item->valueint);
+                }
+            }
+        }
+        has_push_config_ = true;
+    } else {
+        Settings settings("push", true);
+        settings.EraseAll();
+        ESP_LOGI(TAG, "No push section found");
+    }
+
     has_server_time_ = false;
     cJSON *server_time = cJSON_GetObjectItem(root, "server_time");
     if (cJSON_IsObject(server_time)) {
@@ -210,9 +235,12 @@ NetworkResult<> Ota::CheckVersion() {
             double ts = timestamp->valuedouble;
             
             // 如果有时区偏移，计算本地时间
+            int64_t utc_offset_ms = 0;
             if (cJSON_IsNumber(timezone_offset)) {
-                ts += (timezone_offset->valueint * 60 * 1000); // 转换分钟为毫秒
+                utc_offset_ms = static_cast<int64_t>(timezone_offset->valueint) * 60 * 1000;
+                ts += utc_offset_ms; // 转换分钟为毫秒
             }
+            clock_utc_offset_ms_ = utc_offset_ms;
             
             tv.tv_sec = (time_t)(ts / 1000);  // 转换毫秒为秒
             tv.tv_usec = (suseconds_t)((long long)ts % 1000) * 1000;  // 剩余的毫秒转换为微秒

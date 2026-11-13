@@ -285,6 +285,7 @@ pub fn config(url: String, history: DatabaseHistoryConfig) -> AppConfig {
         shutdown: Default::default(),
         agent: None,
         effective_agent: Default::default(),
+        device_push: Default::default(),
     };
     // A marker the archive must never contain: the deployed prompt, not the answer.
     config.effective_agent.prompt_template = format!("{{{{persona}}}} {PROMPT_MARKER}");

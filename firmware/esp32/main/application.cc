@@ -17,6 +17,7 @@
 #include <arpa/inet.h>
 #include <cJSON.h>
 #include <cstring>
+#include <sys/time.h>
 #include <limits>
 
 #define TAG "Application"
@@ -87,6 +88,9 @@ void Application::Initialize() {
     };
     callbacks.on_playback_drained = [this]() {
         xEventGroupSetBits(event_group_, MAIN_EVENT_PLAYBACK_DRAINED);
+    };
+    callbacks.on_decode_error = [this]() {
+        Schedule([this]() { FailReminderPlayback("decode_failed"); });
     };
     callbacks.on_playback_progress = [this](uint32_t playback_id, uint32_t media_position_ms) {
         notify_player_.OnPlaybackProgress(playback_id, media_position_ms);
@@ -188,6 +192,7 @@ void Application::Run() {
         auto bits = xEventGroupWaitBits(event_group_, ALL_EVENTS, pdTRUE, pdFALSE, portMAX_DELAY);
 
         if (bits & MAIN_EVENT_ERROR) {
+            FailReminderPlayback("output_unavailable");
             if (GetDeviceState() == kDeviceStateNotifying) {
                 StopNotification();
             }
@@ -216,6 +221,7 @@ void Application::Run() {
             if (audio_service_.IsPlaybackIdle()) {
                 notify_player_.OnPlaybackDrained();
             }
+            CheckReminderDrained();
             // Deferred listening start (auto mode): the playback queue has
             // drained, so it is now safe to enable voice processing.
             if (pending_listening_start_ && GetDeviceState() == kDeviceStateListening &&
@@ -273,6 +279,16 @@ void Application::Run() {
 
         if (bits & MAIN_EVENT_CLOCK_TICK) {
             clock_ticks_++;
+            if (reminder_tracker_.Tick(NowMs()) == reminder_playback::Action::kCloseSession &&
+                protocol_ && protocol_->IsAudioChannelOpened()) {
+                ESP_LOGI(TAG, "Wake session finished, closing");
+                // The server had the whole session to play what was due: this signal is done.
+                // A Reminder that failed gets a new signal at the server's retry checkpoint.
+                SettlePendingWake();
+                reminder_tracker_.Reset();
+                protocol_->CloseAudioChannel();
+            }
+            TryOpenWakeSession();
             auto display = Board::GetInstance().GetDisplay();
             display->UpdateStatusBar();
 
@@ -570,9 +586,15 @@ void Application::InitializeProtocol() {
     protocol_->OnAudioChannelClosed([this, &board]() {
         board.SetPowerSaveLevel(PowerSaveLevel::LOW_POWER);
         Schedule([this]() {
+            if (reminder_tracker_.wake_session()) {
+                // Dropped before the wake session ran its course: open another one later.
+                pending_wake_.OnSessionFailed(NowMs());
+            }
+            reminder_tracker_.Reset();
             auto display = Board::GetInstance().GetDisplay();
             display->SetChatMessage("system", "");
             SetDeviceState(kDeviceStateIdle);
+            UpdatePushChannel();
         });
     });
 
@@ -621,13 +643,40 @@ void Application::InitializeProtocol() {
             if (!cJSON_IsString(state)) {
                 return;
             }
+            auto source = cJSON_GetObjectItem(root, "source");
+            bool from_reminder = cJSON_IsString(source) && strcmp(source->valuestring, "reminder") == 0;
+            std::string reminder_id, attempt_id;
+            if (from_reminder) {
+                auto rid = cJSON_GetObjectItem(root, "reminder_id");
+                auto aid = cJSON_GetObjectItem(root, "attempt_id");
+                if (!cJSON_IsString(rid) || !cJSON_IsString(aid)) {
+                    ESP_LOGW(TAG, "Reminder tts without reminder_id/attempt_id");
+                    return;
+                }
+                reminder_id = rid->valuestring;
+                attempt_id = aid->valuestring;
+            }
             if (strcmp(state->valuestring, "start") == 0) {
-                Schedule([this]() {
+                Schedule([this, from_reminder, reminder_id, attempt_id]() {
+                    if (from_reminder &&
+                        !reminder_tracker_.OnTtsStart(reminder_id, attempt_id, NowMs())) {
+                        ESP_LOGW(TAG, "Reminder tts start ignored (duplicate or busy)");
+                        return;
+                    }
                     aborted_ = false;
                     SetDeviceState(kDeviceStateSpeaking);
                 });
             } else if (strcmp(state->valuestring, "stop") == 0) {
-                Schedule([this]() {
+                Schedule([this, from_reminder, reminder_id, attempt_id]() {
+                    if (from_reminder) {
+                        // Stream end is not "played": wait for the audio sink to drain.
+                        reminder_tracker_.OnTtsStop(reminder_id, attempt_id);
+                        if (GetDeviceState() == kDeviceStateSpeaking) {
+                            SetDeviceState(kDeviceStateIdle);
+                        }
+                        CheckReminderDrained();
+                        return;
+                    }
                     if (GetDeviceState() == kDeviceStateSpeaking) {
                         if (listening_mode_ == kListeningModeManualStop) {
                             SetDeviceState(kDeviceStateIdle);
@@ -651,6 +700,23 @@ void Application::InitializeProtocol() {
                         display->SetChatMessage("assistant", message.c_str());
                     });
                 }
+            }
+        } else if (strcmp(type->valuestring, "reminder") == 0) {
+            auto event = cJSON_GetObjectItem(root, "event");
+            auto rid = cJSON_GetObjectItem(root, "reminder_id");
+            auto aid = cJSON_GetObjectItem(root, "attempt_id");
+            if (cJSON_IsString(event) && strcmp(event->valuestring, "delivery_result") == 0 &&
+                cJSON_IsString(rid) && cJSON_IsString(aid)) {
+                Schedule([this, reminder_id = std::string(rid->valuestring),
+                          attempt_id = std::string(aid->valuestring)]() {
+                    if (reminder_tracker_.OnDeliveryResult(reminder_id, attempt_id, NowMs())) {
+                        ESP_LOGI(TAG, "Reminder delivery result received");
+                        if (pending_wake_.pending() &&
+                            pending_wake_.identity().id == reminder_id) {
+                            SettlePendingWake();
+                        }
+                    }
+                });
             }
         } else if (strcmp(type->valuestring, "stt") == 0) {
             auto text = cJSON_GetObjectItem(root, "text");
@@ -723,6 +789,113 @@ void Application::InitializeProtocol() {
     });
 
     protocol_->Start();
+    InitializePushChannel();
+}
+
+void Application::InitializePushChannel() {
+    // Optional feature: absent OTA `push` block (or an unreachable broker) leaves the Device
+    // exactly as before. The channel lives in its own task and never blocks voice paths.
+    if (!ota_ || !ota_->HasPushConfig() || !DevicePushChannel::HasConfig()) {
+        push_channel_.reset();
+        return;
+    }
+    if (push_channel_ == nullptr) {
+        push_channel_ = std::make_unique<DevicePushChannel>(
+            [this](const wake_signal::Accepted& signal) {
+                // Runs on the push task: only hand off to the main task.
+                Schedule([this, signal]() {
+                    pending_wake_.Accept(signal, NowMs());
+                    TryOpenWakeSession();
+                });
+            },
+            [this]() { return GetDeviceState() != kDeviceStateIdle; },
+            [this]() {
+                struct timeval tv;
+                gettimeofday(&tv, nullptr);
+                int64_t local_ms = static_cast<int64_t>(tv.tv_sec) * 1000 + tv.tv_usec / 1000;
+                return local_ms - ota_->ClockUtcOffsetMs();
+            });
+    }
+    Schedule([this]() { UpdatePushChannel(); });
+}
+
+void Application::UpdatePushChannel() {
+    if (!push_channel_) {
+        return;
+    }
+    // Hold the push connection only while no voice session exists, so a Device with little
+    // RAM never keeps two TLS sessions.
+    bool session = protocol_ && protocol_->IsAudioChannelOpened();
+    if (GetDeviceState() == kDeviceStateIdle && !session) {
+        push_channel_->Start();
+    } else {
+        push_channel_->Stop();
+    }
+}
+
+int64_t Application::NowMs() {
+    return esp_timer_get_time() / 1000;
+}
+
+void Application::CheckReminderDrained() {
+    if (!reminder_tracker_.active() || !protocol_) {
+        return;
+    }
+    auto decision = reminder_tracker_.OnPlaybackDrained(audio_service_.IsPlaybackIdle(), NowMs());
+    SendReminderDecision(decision);
+}
+
+void Application::FailReminderPlayback(const char* reason) {
+    SendReminderDecision(reminder_tracker_.OnFailure(reason, NowMs()));
+}
+
+void Application::SendReminderDecision(const reminder_playback::Decision& d) {
+    if (d.kind == reminder_playback::Action::kNone || !protocol_) {
+        return;
+    }
+    bool played = d.kind == reminder_playback::Action::kSendPlayed;
+    protocol_->SendReminderEvent(played ? "played" : "failed", d.reminder_id, d.attempt_id,
+                                 d.reason);
+    ESP_LOGI(TAG, "Reminder %s sent", played ? "played" : "failed");
+}
+
+void Application::SettlePendingWake() {
+    if (!pending_wake_.pending()) {
+        return;
+    }
+    if (push_channel_) {
+        push_channel_->MarkHandled(pending_wake_.identity());
+    }
+    pending_wake_.Settle();
+}
+
+void Application::TryOpenWakeSession() {
+    // While the user holds a session the signal just waits: the server plays the Reminder
+    // there if it can, and otherwise a wake session is opened once the Device is idle again.
+    if (GetDeviceState() != kDeviceStateIdle || !protocol_ || protocol_->IsAudioChannelOpened() ||
+        !pending_wake_.ShouldOpen(NowMs())) {
+        return;
+    }
+    ESP_LOGI(TAG, "Opening reminder session on wake signal");
+    SetDeviceState(kDeviceStateConnecting);
+    Schedule([this]() {
+        if (GetDeviceState() != kDeviceStateConnecting) {
+            return;
+        }
+        Board::GetInstance().SetPowerSaveLevel(PowerSaveLevel::PERFORMANCE);
+        bool opened = protocol_->OpenAudioChannel();
+        // Open the channel only: no mic, no listening state. Reminder audio is played by the
+        // tts/reminder handlers; the tracker closes the session when nothing (more) is played.
+        SetDeviceState(kDeviceStateIdle);
+        if (opened) {
+            reminder_tracker_.BeginWakeSession(NowMs());
+        } else {
+            ESP_LOGW(TAG, "Wake session could not be opened; will retry");
+            pending_wake_.OnSessionFailed(NowMs());
+            Board::GetInstance().SetPowerSaveLevel(PowerSaveLevel::LOW_POWER);
+        }
+        UpdatePushChannel();
+    });
 }
 
 void Application::ShowActivationCode(const std::string& code, const std::string& message) {
@@ -1025,6 +1198,9 @@ void Application::HandleStateChangedEvent() {
             display->SetChatMessage("system", "");
             break;
         case kDeviceStateListening:
+            // The user started a conversation; a session opened by a Wake Signal is theirs
+            // now and must not close itself under them.
+            reminder_tracker_.ReleaseToUser();
             display->SetStatus(Lang::Strings::LISTENING);
             display->SetEmotion("neutral");
 
@@ -1066,6 +1242,7 @@ void Application::HandleStateChangedEvent() {
             // Do nothing
             break;
     }
+    UpdatePushChannel();
 }
 
 void Application::StartListeningAudio() {
@@ -1175,6 +1352,7 @@ void Application::Schedule(std::function<void()>&& callback) {
 void Application::AbortSpeaking(AbortReason reason) {
     ESP_LOGI(TAG, "Abort speaking");
     aborted_ = true;
+    FailReminderPlayback("playback_aborted");
     if (protocol_) {
         protocol_->SendAbortSpeaking(reason);
     }
@@ -1193,6 +1371,9 @@ void Application::Reboot() {
     ESP_LOGI(TAG, "Rebooting...");
     if (GetDeviceState() == kDeviceStateNotifying) {
         StopNotification();
+    }
+    if (push_channel_) {
+        push_channel_->Stop();
     }
     // Disconnect the audio channel
     if (protocol_ && protocol_->IsAudioChannelOpened()) {

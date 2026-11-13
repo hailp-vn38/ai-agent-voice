@@ -41,6 +41,7 @@ mod assistant;
 mod enrollment;
 mod knowledge_write_gate;
 pub(crate) mod mcp_server;
+mod mqtt_auth;
 mod state;
 mod transport;
 mod wiki_sync;
@@ -106,6 +107,7 @@ pub async fn bootstrap_with_providers_and_secret_resolver(
     prepare_memory(&mut state);
     prepare_background(&mut state).await?;
     prepare_enrollment(&mut state).await?;
+    prepare_device_push(&state)?;
     admin::auth::prepare(&state)
         .await
         .map_err(|_| DatabaseError::Unavailable)?;
@@ -156,10 +158,11 @@ pub fn router_with_state(mut state: AppState) -> Router {
         .swap(true, std::sync::atomic::Ordering::AcqRel)
         && let Some(database) = state.database.clone()
     {
-        crate::services::reminder_scheduler::start_with_hub(
+        crate::services::reminder_scheduler::start_with_wake(
             crate::database::notifications::DeviceNotifications::new((*database).clone()),
             state.active_device_sessions.clone(),
             state.notification_hub.clone(),
+            state.device_push.clone(),
             state.lifecycle.stopping().clone(),
         );
     }
@@ -232,6 +235,17 @@ pub fn router_with_state(mut state: AppState) -> Router {
                     .options(enrollment::ota::options)
                     .layer(middleware::from_fn(enrollment::ota::cors_response)),
             )
+    } else {
+        router
+    };
+    let router = if state.device_push.is_some() {
+        router
+            .route("/mqtt/auth/user", axum::routing::post(mqtt_auth::user))
+            .route(
+                "/mqtt/auth/superuser",
+                axum::routing::post(mqtt_auth::superuser),
+            )
+            .route("/mqtt/auth/acl", axum::routing::post(mqtt_auth::acl))
     } else {
         router
     };
@@ -356,6 +370,7 @@ pub async fn startup_with_lifecycle_and_secret_resolver(
     prepare_memory(&mut state);
     prepare_background(&mut state).await?;
     prepare_enrollment(&mut state).await?;
+    prepare_device_push(&state)?;
     admin::auth::prepare(&state)
         .await
         .map_err(|_| DatabaseError::Unavailable)?;
@@ -536,6 +551,7 @@ async fn managed_startup(
     prepare_memory(&mut state);
     prepare_background(&mut state).await?;
     prepare_enrollment(&mut state).await?;
+    prepare_device_push(&state)?;
     admin::auth::prepare(&state)
         .await
         .map_err(|_| DatabaseError::Unavailable)?;
@@ -671,6 +687,16 @@ async fn prepare_enrollment(state: &mut AppState) -> Result<(), BootstrapError> 
     .await
     .map_err(|_| BootstrapError::Enrollment)?;
     Ok(())
+}
+
+/// With `[device_push]` enabled the broker client is mandatory: refuse to start rather than
+/// run with the channel silently off.
+fn prepare_device_push(state: &AppState) -> Result<(), BootstrapError> {
+    let Some(push) = state.device_push.as_ref() else {
+        return Ok(());
+    };
+    push.connect_broker(state.lifecycle.stopping().clone())
+        .map_err(|err| BootstrapError::DevicePush(err.to_string()))
 }
 
 /// Load one CAM++ extractor outside the Tokio reactor. Speaker identification is optional:
@@ -813,4 +839,6 @@ pub enum BootstrapError {
     Provider,
     #[error("enrollment_prompt_startup_failed: prepare 24kHz mono PCM16 WAV assets")]
     Enrollment,
+    #[error("device_push_startup_failed: {0}")]
+    DevicePush(String),
 }

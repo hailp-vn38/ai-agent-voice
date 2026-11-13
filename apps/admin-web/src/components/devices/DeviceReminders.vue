@@ -5,6 +5,7 @@ import ConfirmDialog from '@/components/admin/ConfirmDialog.vue'
 import { formatApiError, isApiError } from '@/api/errors'
 import { Button } from '@/components/ui/button'
 import { useI18n } from '@/composables/useI18n'
+import { syncLabelKey } from './syncStatus'
 
 const props = defineProps<{ deviceId: string; agentId?: string }>()
 const emit = defineEmits<{ changed: [] }>()
@@ -164,7 +165,7 @@ onBeforeUnmount(() => active?.abort())
   <label>{{t('reminders.filter')}}<select v-model="status" class="rounded border py-1.5 pl-2.5 pr-9" @change="page=1"><option value="">{{t('reminders.all')}}</option><option v-for="state in ['pending','completed','cancelled','expired']" :key="state" :value="state">{{t(`reminders.${state}` as Parameters<typeof t>[0])}}</option></select></label>
   <p v-if="loading" role="status">{{t('common.loading')}}</p>
   <p v-if="!loading && result?.items.length===0">{{t('reminders.empty')}}</p>
-  <ul v-if="!loading" class="space-y-3"><li v-for="item in result?.items" :key="item.id" class="rounded border p-3"><p>{{item.message}}</p><time>{{formatDateTime(new Date(item.due_at_ms))}}</time><p>{{t(`reminders.${item.status}` as Parameters<typeof t>[0])}} · {{t('reminders.syncPending')}}</p><div v-if="item.status==='pending'" class="flex gap-2"><Button data-action="edit" :disabled="saving" @click="edit(item)">{{t('reminders.edit')}}</Button><Button data-action="cancel-reminder" :disabled="saving" @click="confirmCancel(item)">{{t('reminders.cancel')}}</Button></div></li></ul>
+  <ul v-if="!loading" class="space-y-3"><li v-for="item in result?.items" :key="item.id" class="rounded border p-3"><p>{{item.message}}</p><time>{{formatDateTime(new Date(item.due_at_ms))}}</time><p>{{t(`reminders.${item.status}` as Parameters<typeof t>[0])}} · {{t(syncLabelKey(item.sync_status))}}</p><div v-if="item.status==='pending'" class="flex gap-2"><Button data-action="edit" :disabled="saving" @click="edit(item)">{{t('reminders.edit')}}</Button><Button data-action="cancel-reminder" :disabled="saving" @click="confirmCancel(item)">{{t('reminders.cancel')}}</Button></div></li></ul>
   <div class="flex gap-2"><Button :disabled="page===1 || loading" @click="page--">{{t('reminders.previous')}}</Button><span>{{page}}</span><Button :disabled="!result || !result.has_more || loading" @click="page++">{{t('reminders.next')}}</Button><Button :disabled="loading" @click="load">{{t('common.refresh')}}</Button></div>
  <ConfirmDialog v-model="cancelOpen" :title="t('reminders.cancelTitle')" :description="t('reminders.cancelHelp')" :confirm-label="t('reminders.cancel')" @confirm="cancelReminder" />
  </section>

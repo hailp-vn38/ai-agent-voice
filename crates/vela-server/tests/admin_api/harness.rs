@@ -235,6 +235,25 @@ pub async fn server_with_resolver(
     database_uri: &str,
     resolver: Arc<dyn vela_server::database::secrets::SecretResolver>,
 ) -> (String, tokio::task::JoinHandle<()>) {
+    server_with_extra_config(api_enabled, database_uri, resolver, "").await
+}
+
+pub async fn server_with_device_push() -> (String, tokio::task::JoinHandle<()>) {
+    server_with_extra_config(
+        true,
+        &database_url(),
+        Arc::new(vela_server::database::secrets::EnvSecretResolver),
+        "[device_push]\nenabled = true\nendpoint = \"mqtt.example.test:1883\"\nbroker_url = \"mqtt://127.0.0.1:1883\"\nsecret = \"push-secret-0123456789\"\n",
+    )
+    .await
+}
+
+async fn server_with_extra_config(
+    api_enabled: bool,
+    database_uri: &str,
+    resolver: Arc<dyn vela_server::database::secrets::SecretResolver>,
+    extra_toml: &str,
+) -> (String, tokio::task::JoinHandle<()>) {
     let config_path =
         std::env::temp_dir().join(format!("vela-admin-{}.toml", uuid::Uuid::new_v4()));
     fs::write(
@@ -254,8 +273,9 @@ url = "{}"
 [api]
 enabled = {}
 jwt_secret = "admin-harness-signing-secret-0123456789"
+{}
 "#,
-            database_uri, api_enabled
+            database_uri, api_enabled, extra_toml
         ),
     )
     .unwrap();

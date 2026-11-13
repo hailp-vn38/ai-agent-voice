@@ -555,6 +555,7 @@ pub fn config_with_external(
         shutdown: Default::default(),
         agent: None,
         effective_agent: Default::default(),
+        device_push: Default::default(),
     }
 }
 
