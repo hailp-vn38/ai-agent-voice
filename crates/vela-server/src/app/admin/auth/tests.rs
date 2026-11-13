@@ -395,8 +395,7 @@ async fn other_admin_sse_routes_end_when_the_token_revision_changes() {
         "/api/admin/system/logs/stream",
         "/api/admin/knowledge/events",
     ];
-    let mut revision = 1;
-    for path in paths {
+    for (revision, path) in (1..).zip(paths) {
         let token = test_token(&config, revision, unix_now() + 600);
         let response = open_admin_sse(&base, path, &token).await;
         assert_eq!(response.status(), reqwest::StatusCode::OK, "{path}");
@@ -410,11 +409,11 @@ async fn other_admin_sse_routes_end_when_the_token_revision_changes() {
 
         let next_chunk = tokio::spawn(async move { chunks.next().await });
         tokio::task::yield_now().await;
-        revision += 1;
+        let next_revision = revision + 1;
         state.admin_auth.publish(PasswordLoginStatus {
             password_login_enabled: true,
             must_change_password: false,
-            revision,
+            revision: next_revision,
         });
         let end = tokio::time::timeout(Duration::from_secs(6), next_chunk)
             .await

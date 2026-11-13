@@ -51,6 +51,12 @@ pub struct SystemMetrics {
     samples: watch::Sender<Option<ResourceSnapshot>>,
 }
 
+impl Default for SystemMetrics {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl SystemMetrics {
     pub fn new() -> Self {
         let (samples, _) = watch::channel(None);

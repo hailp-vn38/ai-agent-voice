@@ -1,6 +1,6 @@
 # System Live Snapshot: đẩy System Resources và System Status qua SSE
 
-Status: ready-for-agent
+Status: ready-for-human
 
 Quyết định kiến trúc: [ADR 0146](../../docs/adr/0146-system-live-snapshot-stream.md). Từ vựng: [GLOSSARY](../../GLOSSARY.md#system-observability--structured-logs).
 
