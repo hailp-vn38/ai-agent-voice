@@ -56,6 +56,20 @@ const dash = '—'
 const now = ref(new Date())
 let clockTimer: number | undefined
 
+/* The live snapshot needs no REST refresh; the button reloads the Admin counts and, only while the
+   stream is recovering, forces an immediate reconnect. */
+const refreshingCounts = ref(false)
+async function refresh() {
+  reconnectSystemLive()
+  if (!auth.hasAdminAccess || refreshingCounts.value) return
+  refreshingCounts.value = true
+  try {
+    await admin.refreshAll()
+  } finally {
+    refreshingCounts.value = false
+  }
+}
+
 onMounted(() => {
   clockTimer = window.setInterval(() => (now.value = new Date()), 60_000)
 })
@@ -391,12 +405,17 @@ const quickActions: { to: string; label: MessageKey; hint: MessageKey; icon: Com
 
         <div class="overview-hero-actions">
           <button
-            v-if="connection === 'reconnecting'"
             type="button"
             class="inline-flex h-9 items-center gap-2 rounded-full border border-white/30 bg-white/10 px-3.5 text-sm font-medium backdrop-blur transition hover:bg-white/20 disabled:opacity-60"
-            @click="reconnectSystemLive"
+            data-testid="overview-refresh"
+            :disabled="refreshingCounts || (!auth.hasAdminAccess && connection !== 'reconnecting')"
+            @click="refresh()"
           >
-            <RefreshCw class="size-4 animate-spin" aria-hidden="true" />
+            <RefreshCw
+              class="size-4"
+              :class="refreshingCounts || connection === 'reconnecting' ? 'animate-spin motion-reduce:animate-none' : ''"
+              aria-hidden="true"
+            />
             {{ t('common.refresh') }}
           </button>
           <p class="overview-last-checked">

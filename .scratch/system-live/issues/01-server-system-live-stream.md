@@ -24,3 +24,10 @@ Spec: [system-live](../spec.md) · [ADR 0146](../../../docs/adr/0146-system-live
 ## Comments
 
 - 2026-11-13: Implemented System Live Snapshot and SSE route. Targeted `scripts/agent-test.sh` gates passed: `check vela-server`, `sampler_publishes_and_stops_on_listening_cancellation`, `status_is_only_summarized_while_observed_and_is_shared_by_subscribers`, `failed_status_has_checked_at_but_no_summary_and_stop_ends_task`, `resource_samples_replace_the_snapshot_and_none_clears_resources`, and `system_live_requires_admin_auth_and_emits_initial_snapshot`.
+
+### 2026-11-13 (review)
+
+- Task `SystemLive` dừng theo `lifecycle.stopping()` thay vì `listening()`. Stream sống tới `stopping`, nên trong lúc drain snapshot vẫn phát readiness `shutting_down` và số session đang drain thay vì đứng yên ở `ready`.
+- Tổng hợp System Status có hẹn giờ riêng đúng 15 giây khi có người xem, không còn phụ thuộc nhịp 5 giây của mẫu resources (trước đây thực tế là 15–20 giây).
+- Khi không ai xem quá một chu kỳ, status cũ bị xoá (`checked_at`/`summary` về `null`) để người xem kế tiếp không nhận summary cũ như mới. Event đầu tiên của route chờ tối đa 1 giây cho lần tổng hợp mà subscriber mới kích hoạt.
+- Test mới: `unobserved_status_is_forgotten_so_the_next_observer_never_sees_it_as_current`.

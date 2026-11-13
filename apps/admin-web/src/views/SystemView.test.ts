@@ -15,6 +15,8 @@ import SystemMonitorPage from '@/pages/system/SystemMonitorPage.vue'
 import SystemRuntimePage from '@/pages/system/SystemRuntimePage.vue'
 import SystemTransportPage from '@/pages/system/SystemTransportPage.vue'
 import SystemView from './SystemView.vue'
+import { loginStatusState } from '@/stores/admin-session'
+
 import OverviewView from './OverviewView.vue'
 
 const { navigateMock, mockLoadAll } = vi.hoisted(() => ({
@@ -58,6 +60,7 @@ vi.mock('@/stores/admin', () => ({
     getTemplatesForAgent: () => [],
     getDefaultTemplate: () => undefined,
     loadAll: mockLoadAll,
+    refreshAll: mockLoadAll,
   }),
 }))
 
@@ -159,8 +162,24 @@ describe('System control room & sub-pages', () => {
     expect(systemApi.status).not.toHaveBeenCalled()
     expect(systemApi.health).not.toHaveBeenCalled()
     expect(systemApi.ready).not.toHaveBeenCalled()
-    expect(wrapper.find('.overview-hero-actions button').exists()).toBe(false)
+    // Without Admin access there is nothing to reload while the stream is live.
+    expect(wrapper.get('[data-testid="overview-refresh"]').attributes('disabled')).toBeDefined()
     wrapper.unmount()
+
+    loginStatusState.value = { passwordLoginEnabled: false, mustChangePassword: false }
+    try {
+      const adminWrapper = overview()
+      await flushPromises()
+      mockLoadAll.mockClear()
+      await adminWrapper.get('[data-testid="overview-refresh"]').trigger('click')
+      await flushPromises()
+      expect(mockLoadAll).toHaveBeenCalledTimes(1)
+      expect(systemApi.resources).not.toHaveBeenCalled()
+      expect(systemApi.status).not.toHaveBeenCalled()
+      adminWrapper.unmount()
+    } finally {
+      loginStatusState.value = null
+    }
 
     const reconnecting = liveValue()
     reconnecting.connection.value = 'reconnecting'
@@ -168,11 +187,12 @@ describe('System control room & sub-pages', () => {
     const reconnectingWrapper = overview()
     await flushPromises()
     const button = reconnectingWrapper.get('.overview-hero-actions button')
+    liveMocks.reconnectSystemLive.mockClear()
     await button.trigger('click')
     expect(liveMocks.reconnectSystemLive).toHaveBeenCalledTimes(1)
     reconnecting.connection.value = 'live'
     await flushPromises()
-    expect(reconnectingWrapper.find('.overview-hero-actions button').exists()).toBe(false)
+    expect(reconnectingWrapper.get('[data-testid="overview-refresh"]').attributes('disabled')).toBeDefined()
     reconnectingWrapper.unmount()
   })
 

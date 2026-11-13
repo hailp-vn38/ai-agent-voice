@@ -163,6 +163,16 @@ fn stream_access_tracks_the_same_password_login_and_token_rules_as_admin_request
         revision: 1,
     });
     assert!(!auth.stream_access_allowed(Some(&token)));
+
+    // `authenticate` answers 403 to an accepted token that must change its password, even with
+    // Password Login off; the stream rule matches it.
+    auth.publish(PasswordLoginStatus {
+        password_login_enabled: false,
+        must_change_password: true,
+        revision: 1,
+    });
+    assert!(!auth.stream_access_allowed(Some(&token)));
+    assert!(auth.stream_access_allowed(None));
 }
 
 #[tokio::test]
@@ -435,6 +445,36 @@ async fn other_admin_sse_routes_end_when_the_token_revision_changes() {
 
 #[tokio::test(start_paused = true)]
 async fn admin_stream_guard_ends_at_the_token_expiry_deadline() {
+    let config = test_config();
+    let state = crate::app::AppState::new(config.clone(), LoadedProviders::default());
+    // Signed token verification reads the wall clock, which paused tokio time does not move, so
+    // revoking at the deadline stands in for the token turning invalid exactly at `exp`.
+    let token = test_token(&config, 1, unix_now() + 600);
+    let expires_at = tokio::time::Instant::now() + Duration::from_secs(2);
+    let guard = tokio::spawn(
+        crate::app::admin::middleware::wait_for_admin_stream_revocation(
+            state.clone(),
+            Some(token),
+            Some(expires_at),
+            Duration::from_secs(5),
+        ),
+    );
+    tokio::time::advance(Duration::from_secs(1)).await;
+    assert!(!guard.is_finished());
+    state.admin_auth.publish(PasswordLoginStatus {
+        password_login_enabled: true,
+        must_change_password: false,
+        revision: 2,
+    });
+    tokio::time::advance(Duration::from_secs(1)).await;
+    tokio::time::timeout(Duration::from_millis(1), guard)
+        .await
+        .expect("guard must re-check at exp instead of waiting for the next 5 second poll")
+        .unwrap();
+}
+
+#[tokio::test(start_paused = true)]
+async fn admin_stream_guard_keeps_an_open_stream_past_exp_while_password_login_is_off() {
     let state = crate::app::AppState::new(test_config(), LoadedProviders::default());
     state.admin_auth.publish(PasswordLoginStatus {
         password_login_enabled: false,
@@ -445,13 +485,12 @@ async fn admin_stream_guard_ends_at_the_token_expiry_deadline() {
     let guard = tokio::spawn(
         crate::app::admin::middleware::wait_for_admin_stream_revocation(
             state,
-            None,
+            Some("expired-or-invalid".into()),
             Some(expires_at),
             Duration::from_secs(5),
         ),
     );
-    tokio::time::advance(Duration::from_secs(1)).await;
+    tokio::time::advance(Duration::from_secs(12)).await;
     assert!(!guard.is_finished());
-    tokio::time::advance(Duration::from_secs(1)).await;
-    guard.await.unwrap();
+    guard.abort();
 }

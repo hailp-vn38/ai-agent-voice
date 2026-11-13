@@ -12,6 +12,11 @@ jwt_secret = "docker-test-jwt-signing-secret-0123456789"
 [database]
 url = "sqlite://data/vela.db"
 
+# The test server runs with a read-only root; built-in job skills are installed at startup, so the
+# skills directory must live under the mounted data/ volume like every other orchestrator path.
+[orchestrator]
+skills_dir = "data/skills"
+
 [provider_defaults]
 vad = "test_vad"
 asr = "test_asr"

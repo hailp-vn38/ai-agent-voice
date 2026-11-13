@@ -108,10 +108,15 @@ impl SystemLive {
         let mut resources = self.metrics.latest();
 
         loop {
+            // Wake exactly when the status is due while observed, not on the next 5 second tick.
+            let observed = self.snapshot.receiver_count() > 0 && last_status_refresh.is_some();
+            let status_due =
+                last_status_refresh.unwrap_or_else(tokio::time::Instant::now) + STATUS_INTERVAL;
             tokio::select! {
                 biased;
                 _ = stop.cancelled() => break,
                 _ = self.subscriber_changed.notified() => {},
+                _ = tokio::time::sleep_until(status_due), if observed => {},
                 changed = resource_samples.changed() => {
                     if changed.is_err() {
                         break;
@@ -129,6 +134,16 @@ impl SystemLive {
             }
 
             if self.snapshot.receiver_count() == 0 {
+                // Unobserved status is not current. Forget it once it is due so the next observer's
+                // first event never presents an old summary as if it were just checked.
+                let expired = last_status_refresh
+                    .is_some_and(|last: tokio::time::Instant| last.elapsed() >= STATUS_INTERVAL);
+                if expired {
+                    last_status_refresh = None;
+                    status.checked_at = None;
+                    status.summary = None;
+                    self.publish(resources.clone(), status.clone());
+                }
                 continue;
             }
             let should_refresh = last_status_refresh

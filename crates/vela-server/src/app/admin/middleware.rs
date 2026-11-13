@@ -164,45 +164,41 @@ pub(super) async fn guard_admin_sse(
     }
 
     let (parts, body) = response.into_parts();
-    let chunks = body.into_data_stream();
-    let guarded = futures_util::stream::unfold(
-        (chunks, state, bearer, expires_at),
-        |(mut chunks, state, bearer, expires_at)| async move {
-            tokio::select! {
-                biased;
-                _ = wait_for_admin_stream_revocation(
-                    state.clone(),
-                    bearer.clone(),
-                    expires_at,
-                    ADMIN_STREAM_AUTH_CHECK_INTERVAL,
-                ) => None,
-                chunk = chunks.next() => chunk.map(|chunk| {
-                    (chunk, (chunks, state, bearer, expires_at))
-                }),
-            }
-        },
-    );
+    // One revocation watcher per response: its 5 second cadence does not restart on each chunk.
+    let revoked = Box::pin(wait_for_admin_stream_revocation(
+        state,
+        bearer,
+        expires_at,
+        ADMIN_STREAM_AUTH_CHECK_INTERVAL,
+    ));
+    let guarded = body.into_data_stream().take_until(revoked);
     Response::from_parts(parts, Body::from_stream(guarded))
 }
 
+/// Resolves once the request's authorization would no longer pass `authenticate`: on the periodic
+/// in-memory check, or at the token's `exp` when that check then fails.
 pub(super) async fn wait_for_admin_stream_revocation(
     state: AppState,
     bearer: Option<String>,
-    expires_at: Option<tokio::time::Instant>,
+    mut expires_at: Option<tokio::time::Instant>,
     check_interval: Duration,
 ) {
     loop {
         if !state.admin_auth.stream_access_allowed(bearer.as_deref()) {
             return;
         }
-        if let Some(expires_at) = expires_at {
-            tokio::select! {
-                biased;
-                _ = tokio::time::sleep_until(expires_at) => return,
-                _ = tokio::time::sleep(check_interval) => {}
+        match expires_at {
+            Some(deadline) => {
+                tokio::select! {
+                    biased;
+                    _ = tokio::time::sleep_until(deadline) => {
+                        // Re-checked at the top: with Password Login off the stream stays open.
+                        expires_at = None;
+                    }
+                    _ = tokio::time::sleep(check_interval) => {}
+                }
             }
-        } else {
-            tokio::time::sleep(check_interval).await;
+            None => tokio::time::sleep(check_interval).await,
         }
     }
 }

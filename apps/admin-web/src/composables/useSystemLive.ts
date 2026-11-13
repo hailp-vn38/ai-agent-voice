@@ -149,7 +149,9 @@ function openConnection() {
         haltedForUnauthorized = true
         stopFreshnessClock()
         clearLiveData()
-        sharedConnection.value = 'reconnecting'
+        // Not 'reconnecting': nothing reconnects until a new caller after sign-in, so pages must
+        // not offer a reconnect button that would do nothing.
+        sharedConnection.value = 'paused'
         return
       }
       scheduleReconnect(currentGeneration)

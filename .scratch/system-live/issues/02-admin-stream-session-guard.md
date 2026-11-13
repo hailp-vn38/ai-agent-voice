@@ -28,3 +28,10 @@ Spec: [system-live](../spec.md) · [ADR 0146](../../../docs/adr/0146-system-live
 - Thêm test client notifications xác nhận HTTP 401 được chuyển tới `handleSessionResponse`.
 - Khi thêm test route, phát hiện lần đọc `watch` đầu có thể lặp lại snapshot chưa đổi; đánh dấu receiver đã đọc và bỏ giá trị trùng.
 - Gates: `scripts/agent-test.sh check vela-server` PASS; targeted server tests PASS (System Live 4 tests; route matrix 1 test); targeted notifications web test PASS (7 tests); `cargo fmt --all -- --check` PASS.
+
+### 2026-11-13 (review)
+
+- Guard dùng một future thu hồi cho mỗi response (`take_until`); trước đây hẹn giờ 5 giây bị tạo lại sau mỗi chunk.
+- Tới `exp`, guard kiểm tra lại điều kiện thay vì luôn đóng, nên stream có token vẫn chạy khi Password Login tắt (đúng spec).
+- `stream_access_allowed` viết lại theo đúng thứ tự của `authenticate`: token hợp lệ nhưng phải đổi mật khẩu luôn bị chặn, kể cả khi Password Login tắt.
+- Test: `admin_stream_guard_ends_at_the_token_expiry_deadline` (thu hồi được phát hiện đúng tại `exp`), `admin_stream_guard_keeps_an_open_stream_past_exp_while_password_login_is_off`, thêm trường hợp must-change-password khi Password Login tắt.

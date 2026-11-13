@@ -183,7 +183,9 @@ async fn system_live_requires_admin_auth_and_emits_initial_snapshot() {
     let first = String::from_utf8_lossy(&first);
     assert!(first.contains("event: snapshot"));
     assert!(first.contains("\"v\":1"));
-    assert!(first.contains("\"checked_at\":null"));
+    // No database: the summary a new subscriber triggers fails, so the first event already
+    // carries the attempt time with a null summary instead of an unchecked status.
+    assert!(!first.contains("\"checked_at\":null"));
     assert!(first.contains("\"summary\":null"));
 
     state.lifecycle.stopping().cancel();

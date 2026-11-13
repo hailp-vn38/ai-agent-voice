@@ -44,9 +44,23 @@ pub(super) async fn get_resources(State(state): State<AppState>, request: Reques
     response
 }
 
+/// How long the first event waits for the status summary a new subscriber triggers.
+const SYSTEM_LIVE_FIRST_STATUS_WAIT: Duration = Duration::from_secs(1);
+
 pub(super) async fn stream_live(State(state): State<AppState>) -> Response {
     let system_live = state.system_live();
-    let snapshot = system_live.subscribe();
+    let mut snapshot = system_live.subscribe();
+    // Subscribing starts a summary when none is current; a short wait lets the first event carry
+    // it instead of `summary: null`. Past the wait the current value is sent as is.
+    if snapshot.borrow().status.checked_at.is_none() {
+        let deadline = tokio::time::Instant::now() + SYSTEM_LIVE_FIRST_STATUS_WAIT;
+        while snapshot.borrow().status.checked_at.is_none() {
+            match tokio::time::timeout_at(deadline, snapshot.changed()).await {
+                Ok(Ok(())) => {}
+                Ok(Err(_)) | Err(_) => break,
+            }
+        }
+    }
     let stopping = state.lifecycle.stopping().clone();
     let messages = futures_util::stream::unfold(
         (snapshot, stopping, true, None::<String>),

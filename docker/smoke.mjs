@@ -9,6 +9,38 @@ async function get(path, token) {
   })
 }
 
+// The Admin API has no static token: sign in with the seeded default Password, replace it on the
+// first run (the forced change), and reuse the test Password after a restart.
+const DEFAULT_ADMIN_PASSWORD = 'admin'
+const TEST_ADMIN_PASSWORD = 'docker-test-admin-password'
+
+async function postJson(path, body, token) {
+  return fetch(`${base}${path}`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify(body),
+    signal: AbortSignal.timeout(10_000),
+  })
+}
+
+async function signInAdmin() {
+  const login = await postJson('/api/admin/auth/login', { password: TEST_ADMIN_PASSWORD })
+  if (login.ok) return (await login.json()).token
+  assert.equal(login.status, 401, 'Admin login with the test Password')
+  const first = await postJson('/api/admin/auth/login', { password: DEFAULT_ADMIN_PASSWORD })
+  assert.equal(first.status, 200, 'Admin login with the seeded default Password')
+  const changed = await postJson(
+    '/api/admin/auth/password',
+    { current_password: DEFAULT_ADMIN_PASSWORD, new_password: TEST_ADMIN_PASSWORD },
+    (await first.json()).token,
+  )
+  assert.equal(changed.status, 200, 'Admin forced Password change')
+  return (await changed.json()).token
+}
+
 function sseReader(body) {
   const reader = body.getReader()
   const decoder = new TextDecoder()
@@ -68,7 +100,7 @@ async function openSystemLive() {
     response = await fetch(`${base}/api/admin/system/live`, {
       headers: {
         Accept: 'text/event-stream',
-        Authorization: 'Bearer docker-test-admin',
+        Authorization: `Bearer ${adminToken}`,
       },
       cache: 'no-store',
       signal: controller.signal,
@@ -145,9 +177,10 @@ assert.ok(html.includes('<div id="app">'))
 const route = await get('/agents/docker-smoke')
 assert.equal(route.status, 200)
 assert.equal(await route.text(), html, 'SPA history fallback')
+const adminToken = await signInAdmin()
 assert.equal((await get('/api/admin/system')).status, 401)
 assert.equal((await get('/api/admin/system', 'incorrect')).status, 401)
-assert.equal((await get('/api/admin/system', 'docker-test-admin')).status, 200)
+assert.equal((await get('/api/admin/system', adminToken)).status, 200)
 if (!['after-restart', 'system-live-shutdown'].includes(process.argv[2])) {
   await checkSystemLiveProxy()
 }
@@ -180,13 +213,13 @@ const speakerPath = '/api/admin/speakers/docker_smoke'
 if (process.argv[2] === 'system-live-shutdown') {
   await waitForSystemLiveShutdown()
 } else if (process.argv[2] === 'after-restart') {
-  const response = await get(speakerPath, 'docker-test-admin')
+  const response = await get(speakerPath, adminToken)
   assert.equal(response.status, 200, 'SQLite data survives restart')
   assert.equal((await response.json()).name, 'Docker smoke')
 } else {
   const response = await fetch(`${base}/api/admin/speakers`, {
     method: 'POST',
-    headers: { Authorization: 'Bearer docker-test-admin', 'Content-Type': 'application/json' },
+    headers: { Authorization: `Bearer ${adminToken}`, 'Content-Type': 'application/json' },
     body: JSON.stringify({ key: 'docker_smoke', name: 'Docker smoke' }),
     signal: AbortSignal.timeout(10_000),
   })

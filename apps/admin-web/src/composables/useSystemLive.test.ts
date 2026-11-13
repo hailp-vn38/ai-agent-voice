@@ -184,6 +184,7 @@ describe('useSystemLive', () => {
     await settle()
     expect(mounted.value.snapshot.value).toBeNull()
     expect(mounted.value.cpuHistory.value).toEqual([])
+    expect(mounted.value.connection.value).toBe('paused')
     await vi.advanceTimersByTimeAsync(60_000)
     expect(transport).toHaveBeenCalledTimes(1)
     mounted.scope.stop()

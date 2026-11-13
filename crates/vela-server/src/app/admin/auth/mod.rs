@@ -120,11 +120,13 @@ impl AdminAuthState {
 
     /// Whether a long-lived Admin SSE request would still pass the authenticate middleware.
     pub(super) fn stream_access_allowed(&self, bearer: Option<&str>) -> bool {
+        // Mirrors `middleware::authenticate`: an accepted token is checked for the forced password
+        // change first; otherwise only Password Login being off admits the request.
         let status = self.status();
-        if !status.password_login_enabled {
-            return true;
+        if bearer.is_some_and(|value| self.accepts(value)) {
+            return !status.must_change_password;
         }
-        bearer.is_some_and(|value| self.accepts(value)) && !status.must_change_password
+        !status.password_login_enabled
     }
 
     /// The signed token's expiry, used to stop an SSE response at its deadline.

@@ -113,3 +113,30 @@ async fn failed_status_has_checked_at_but_no_summary_and_stop_ends_task() {
     stop.cancel();
     task.await.unwrap();
 }
+
+#[tokio::test(start_paused = true)]
+async fn unobserved_status_is_forgotten_so_the_next_observer_never_sees_it_as_current() {
+    let (live, source) = live(false);
+    let stop = CancellationToken::new();
+    let task = live.clone().start(stop.clone());
+    tokio::task::yield_now().await;
+
+    let first = live.subscribe();
+    tokio::task::yield_now().await;
+    assert!(first.borrow().status.checked_at.is_some());
+    drop(first);
+
+    for _ in 0..4 {
+        tokio::time::advance(Duration::from_secs(5)).await;
+        tokio::task::yield_now().await;
+    }
+    let idle = live.subscribe();
+    assert!(idle.borrow().status.checked_at.is_none());
+    assert!(idle.borrow().status.summary.is_none());
+    tokio::task::yield_now().await;
+    assert_eq!(source.calls.load(Ordering::SeqCst), 2);
+    assert!(idle.borrow().status.summary.is_some());
+
+    stop.cancel();
+    task.await.unwrap();
+}

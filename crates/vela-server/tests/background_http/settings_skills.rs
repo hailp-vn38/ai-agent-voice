@@ -46,7 +46,7 @@ tts = "test"
 url = "sqlite://{}"
 [api]
 enabled = true
-admin_token = "background-test-token"
+jwt_secret = "background-test-jwt-signing-secret-0123456789"
 [orchestrator]
 enabled = true
 store_dir = "{}"
@@ -513,7 +513,7 @@ tts = "test"
 url = "sqlite://{}"
 [api]
 enabled = true
-admin_token = "background-test-token"
+jwt_secret = "background-test-jwt-signing-secret-0123456789"
 [orchestrator]
 store_dir = "{}"
 prompts_dir = "{}"
@@ -532,9 +532,10 @@ prompts_dir = "{}"
     let base = format!("http://{}/api/admin", listener.local_addr().unwrap());
     let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
     let client = Client::new();
+    let web_token = admin_web_token(&client, base.trim_end_matches("/api/admin")).await;
     let initial_resp = client
         .get(format!("{base}/background/settings"))
-        .bearer_auth("background-test-token")
+        .bearer_auth(&web_token)
         .send()
         .await
         .unwrap();
@@ -579,7 +580,7 @@ prompts_dir = "{}"
 
     let custom = client
         .put(format!("{base}/background/settings"))
-        .bearer_auth("background-test-token")
+        .bearer_auth(&web_token)
         .header(
             "If-Match",
             format!("\"{}\"", initial["revision"].as_i64().unwrap()),
@@ -794,7 +795,7 @@ skills_dir = "{}"
     );
     let filing_delete = client
         .delete(format!("{base}/background/skills/wiki-synthesis-filing"))
-        .bearer_auth("background-test-token")
+        .bearer_auth(&web_token)
         .header(
             "If-Match",
             format!("\"{}\"", filing["etag"].as_str().unwrap()),
@@ -809,7 +810,7 @@ skills_dir = "{}"
     );
     let filing_detail: Value = client
         .get(format!("{base}/background/skills/wiki-synthesis-filing"))
-        .bearer_auth("background-test-token")
+        .bearer_auth(&web_token)
         .send()
         .await
         .unwrap()
@@ -818,7 +819,7 @@ skills_dir = "{}"
         .unwrap();
     let filing_update = client
         .put(format!("{base}/background/skills/wiki-synthesis-filing"))
-        .bearer_auth("background-test-token")
+        .bearer_auth(&web_token)
         .header(
             "If-Match",
             format!("\"{}\"", filing["etag"].as_str().unwrap()),
@@ -1082,7 +1083,7 @@ skills_dir = "{}"
     .unwrap();
     let fallback_sync = client
         .put(format!("{base}/background/settings"))
-        .bearer_auth("background-test-token")
+        .bearer_auth(&web_token)
         .header("If-Match", "\"2\"")
         .json(&json!({
             "enabled": true,
@@ -1210,7 +1211,7 @@ tts = "test"
 url = "sqlite://{}"
 [api]
 enabled = true
-admin_token = "background-test-token"
+jwt_secret = "background-test-jwt-signing-secret-0123456789"
 [wiki]
 vault_dir = "{}"
 [orchestrator]
@@ -1258,10 +1259,11 @@ skills_dir = "{}"
     let base = format!("http://{}/api/admin", listener.local_addr().unwrap());
     let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
     let client = Client::new();
+    let web_token = admin_web_token(&client, base.trim_end_matches("/api/admin")).await;
 
     let settings: Value = client
         .get(format!("{base}/background/settings"))
-        .bearer_auth("background-test-token")
+        .bearer_auth(&web_token)
         .send()
         .await
         .unwrap()
@@ -1295,7 +1297,7 @@ skills_dir = "{}"
     let invalid_name = skills.iter().find(|skill| skill["id"] == "Bad ID").unwrap();
     let delete_invalid_name = client
         .delete(format!("{base}/background/skills/Bad%20ID"))
-        .bearer_auth("background-test-token")
+        .bearer_auth(&web_token)
         .header(
             "If-Match",
             format!("\"{}\"", invalid_name["etag"].as_str().unwrap()),
@@ -1320,7 +1322,7 @@ skills_dir = "{}"
 
     let broken_detail_response = client
         .get(format!("{base}/background/skills/custom-broken"))
-        .bearer_auth("background-test-token")
+        .bearer_auth(&web_token)
         .send()
         .await
         .unwrap();
@@ -1339,7 +1341,7 @@ skills_dir = "{}"
 
     let create_over_broken = client
         .put(format!("{base}/background/skills/custom-broken"))
-        .bearer_auth("background-test-token")
+        .bearer_auth(&web_token)
         .header("If-None-Match", "*")
         .json(&json!({"name":"Repaired", "description":"Valid", "body":"Valid body"}))
         .send()
@@ -1353,7 +1355,7 @@ skills_dir = "{}"
 
     let stale_repair = client
         .put(format!("{base}/background/skills/custom-broken"))
-        .bearer_auth("background-test-token")
+        .bearer_auth(&web_token)
         .header("If-Match", "\"stale\"")
         .json(&json!({"name":"Repaired", "description":"Valid", "body":"Valid body"}))
         .send()
@@ -1367,7 +1369,7 @@ skills_dir = "{}"
 
     let invalid_assignment = client
         .put(format!("{base}/background/settings"))
-        .bearer_auth("background-test-token")
+        .bearer_auth(&web_token)
         .header("If-Match", "\"1\"")
         .json(&json!({"enabled": true, "agents": {"wiki_researcher": {"enabled": true, "allowed_skills": ["custom-broken"]}}}))
         .send().await.unwrap();
@@ -1379,7 +1381,7 @@ skills_dir = "{}"
 
     let repair = client
         .put(format!("{base}/background/skills/custom-broken"))
-        .bearer_auth("background-test-token")
+        .bearer_auth(&web_token)
         .header("If-Match", format!("\"{broken_etag}\""))
         .json(&json!({"name":"Repaired", "description":"Valid", "body":"Valid body"}))
         .send()
@@ -1390,7 +1392,7 @@ skills_dir = "{}"
 
     let after_repair_settings: Value = client
         .get(format!("{base}/background/settings"))
-        .bearer_auth("background-test-token")
+        .bearer_auth(&web_token)
         .send()
         .await
         .unwrap()
@@ -1418,7 +1420,7 @@ skills_dir = "{}"
     let empty_etag = empty["etag"].as_str().unwrap();
     let stale_empty_delete = client
         .delete(format!("{base}/background/skills/empty-skill-dir"))
-        .bearer_auth("background-test-token")
+        .bearer_auth(&web_token)
         .header("If-Match", "\"stale\"")
         .send()
         .await
@@ -1430,7 +1432,7 @@ skills_dir = "{}"
     );
     let delete_empty = client
         .delete(format!("{base}/background/skills/empty-skill-dir"))
-        .bearer_auth("background-test-token")
+        .bearer_auth(&web_token)
         .header("If-Match", format!("\"{empty_etag}\""))
         .send()
         .await
@@ -1438,7 +1440,7 @@ skills_dir = "{}"
     assert_eq!(delete_empty.status(), StatusCode::NO_CONTENT);
     let builtin_detail: Value = client
         .get(format!("{base}/background/skills/wiki-chat"))
-        .bearer_auth("background-test-token")
+        .bearer_auth(&web_token)
         .send()
         .await
         .unwrap()
@@ -1455,7 +1457,7 @@ skills_dir = "{}"
 
     let settings_save = client
         .put(format!("{base}/background/settings"))
-        .bearer_auth("background-test-token")
+        .bearer_auth(&web_token)
         .header("If-Match", "\"1\"")
         .json(&json!({
             "enabled": true,
@@ -1477,7 +1479,7 @@ skills_dir = "{}"
 
     let provider_save = client
         .post(format!("{base}/providers"))
-        .bearer_auth("background-test-token")
+        .bearer_auth(&web_token)
         .json(&json!({
             "name": "Malformed Skill Resilience Provider",
             "type": "llm",
@@ -1518,7 +1520,7 @@ tts = "test"
 url = "sqlite://{}"
 [api]
 enabled = true
-admin_token = "background-test-token"
+jwt_secret = "background-test-jwt-signing-secret-0123456789"
 [orchestrator]
 store_dir = "{}"
 prompts_dir = "{}"
@@ -1537,10 +1539,11 @@ prompts_dir = "{}"
     let base = format!("http://{}/api/admin", listener.local_addr().unwrap());
     let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
     let client = Client::new();
+    let web_token = admin_web_token(&client, base.trim_end_matches("/api/admin")).await;
 
     let settings: Value = client
         .get(format!("{base}/background/settings"))
-        .bearer_auth("background-test-token")
+        .bearer_auth(&web_token)
         .send()
         .await
         .unwrap()
@@ -1550,7 +1553,7 @@ prompts_dir = "{}"
     assert_eq!(settings["skills"], json!([]));
     let detail = client
         .get(format!("{base}/background/skills/wiki-chat"))
-        .bearer_auth("background-test-token")
+        .bearer_auth(&web_token)
         .send()
         .await
         .unwrap();
@@ -1579,7 +1582,7 @@ tts = "test"
 url = "sqlite://{}"
 [api]
 enabled = true
-admin_token = "background-test-token"
+jwt_secret = "background-test-jwt-signing-secret-0123456789"
 [orchestrator]
 store_dir = "{}"
 prompts_dir = "{}"
@@ -1600,10 +1603,11 @@ skills_dir = "{}"
     let base = format!("http://{}/api/admin", listener.local_addr().unwrap());
     let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
     let client = Client::new();
+    let web_token = admin_web_token(&client, base.trim_end_matches("/api/admin")).await;
 
     let created = client
         .put(format!("{base}/background/skills/custom-tool-aware"))
-        .bearer_auth("background-test-token")
+        .bearer_auth(&web_token)
         .header("If-None-Match", "*")
         .json(&json!({
             "name": "custom-tool-aware",
@@ -1621,7 +1625,7 @@ skills_dir = "{}"
 
     let listed: Value = client
         .get(format!("{base}/background/settings"))
-        .bearer_auth("background-test-token")
+        .bearer_auth(&web_token)
         .send()
         .await
         .unwrap()
@@ -1638,7 +1642,7 @@ skills_dir = "{}"
 
     let invalid = client
         .put(format!("{base}/background/skills/invalid-tool-requirement"))
-        .bearer_auth("background-test-token")
+        .bearer_auth(&web_token)
         .header("If-None-Match", "*")
         .json(&json!({
             "name": "invalid-tool-requirement",
@@ -1657,7 +1661,7 @@ skills_dir = "{}"
 
     let updated = client
         .put(format!("{base}/background/skills/custom-tool-aware"))
-        .bearer_auth("background-test-token")
+        .bearer_auth(&web_token)
         .header("If-Match", format!("\"{first_etag}\""))
         .json(&json!({
             "name": "custom-tool-aware",
@@ -1675,7 +1679,7 @@ skills_dir = "{}"
 
     let custom_agent = client
         .post(format!("{base}/background/agents"))
-        .bearer_auth("background-test-token")
+        .bearer_auth(&web_token)
         .header("If-Match", "\"1\"")
         .json(&json!({
             "id": "custom_skill_tool_agent",
@@ -1713,7 +1717,7 @@ skills_dir = "{}"
     // after the missing tool is explicitly added to its effective grants.
     let incomplete = client
         .put(format!("{base}/background/settings"))
-        .bearer_auth("background-test-token")
+        .bearer_auth(&web_token)
         .header("If-Match", "\"2\"")
         .json(&json!({
             "enabled": true,
@@ -1749,7 +1753,7 @@ skills_dir = "{}"
 
     let complete = client
         .put(format!("{base}/background/settings"))
-        .bearer_auth("background-test-token")
+        .bearer_auth(&web_token)
         .header("If-Match", "\"3\"")
         .json(&json!({
             "enabled": true,
@@ -1776,7 +1780,7 @@ skills_dir = "{}"
 
     let no_requirements = client
         .put(format!("{base}/background/skills/custom-no-tools"))
-        .bearer_auth("background-test-token")
+        .bearer_auth(&web_token)
         .header("If-None-Match", "*")
         .json(&json!({
             "name": "custom-no-tools",
@@ -1792,7 +1796,7 @@ skills_dir = "{}"
 
     let no_requirements_assigned = client
         .put(format!("{base}/background/settings"))
-        .bearer_auth("background-test-token")
+        .bearer_auth(&web_token)
         .header("If-Match", "\"4\"")
         .json(&json!({
             "enabled": true,
@@ -1989,7 +1993,7 @@ tts = "test"
 url = "sqlite://{}"
 [api]
 enabled = true
-admin_token = "background-test-token"
+jwt_secret = "background-test-jwt-signing-secret-0123456789"
 [orchestrator]
 store_dir = "{}"
 prompts_dir = "{}"
@@ -2010,10 +2014,11 @@ skills_dir = "{}"
     let base = format!("http://{}/api/admin", listener.local_addr().unwrap());
     let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
     let client = Client::new();
+    let web_token = admin_web_token(&client, base.trim_end_matches("/api/admin")).await;
 
     let list: Value = client
         .get(format!("{base}/background/settings"))
-        .bearer_auth("background-test-token")
+        .bearer_auth(&web_token)
         .send()
         .await
         .unwrap()
@@ -2031,7 +2036,7 @@ skills_dir = "{}"
 
     let wiki_query_detail: Value = client
         .get(format!("{base}/background/skills/wiki-query"))
-        .bearer_auth("background-test-token")
+        .bearer_auth(&web_token)
         .send()
         .await
         .unwrap()
@@ -2041,7 +2046,7 @@ skills_dir = "{}"
     let original_etag = wiki_query_detail["etag"].as_str().unwrap().to_owned();
     let edit: Value = client
         .put(format!("{base}/background/skills/wiki-query"))
-        .bearer_auth("background-test-token")
+        .bearer_auth(&web_token)
         .header("If-Match", format!("\"{original_etag}\""))
         .json(&json!({
             "name": "wiki-query",
@@ -2066,7 +2071,7 @@ skills_dir = "{}"
 
     let updated_edit: Value = client
         .get(format!("{base}/background/skills/wiki-query"))
-        .bearer_auth("background-test-token")
+        .bearer_auth(&web_token)
         .send()
         .await
         .unwrap()
@@ -2078,7 +2083,7 @@ skills_dir = "{}"
 
     let unchanged_default: Value = client
         .get(format!("{base}/background/skills/wiki-ingest"))
-        .bearer_auth("background-test-token")
+        .bearer_auth(&web_token)
         .send()
         .await
         .unwrap()
@@ -2092,7 +2097,7 @@ skills_dir = "{}"
     let defaults = &updated_edit["default"];
     let restored: Value = client
         .put(format!("{base}/background/skills/wiki-query"))
-        .bearer_auth("background-test-token")
+        .bearer_auth(&web_token)
         .header("If-Match", format!("\"{latest_etag}\""))
         .json(&json!({
             "name": defaults["name"],
@@ -2111,7 +2116,7 @@ skills_dir = "{}"
 
     let custom: Value = client
         .put(format!("{base}/background/skills/custom-update-check"))
-        .bearer_auth("background-test-token")
+        .bearer_auth(&web_token)
         .header("If-None-Match", "*")
         .json(&json!({
             "name": "Custom update check",
