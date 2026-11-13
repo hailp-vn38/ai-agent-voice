@@ -376,6 +376,18 @@ _Avoid_: History Archive, Notification Inbox, SQLite log table
 Luồng đẩy thời gian thực một chiều từ server tới trình duyệt của Admin đã xác thực, áp dụng bộ lọc ngay tại server trước khi phát từng Structured Log Entry.
 _Avoid_: Job Change Signal, Voice Session WebSocket, unauthenticated tail
 
+**System Status**:
+Bản tóm tắt an toàn về tình trạng tiến trình server do `GET /api/admin/system` trả: Readiness, phiên bản, uptime, database, số provider đã cấu hình/đã nạp/lỗi, số Voice Session đang hoạt động và accounting của provider runtime. Không chứa đường dẫn, cấu hình, secret hay chi tiết lỗi.
+_Avoid_: Runtime Status (trạng thái của một Loaded Runtime), health check, readiness probe
+
+**System Live Snapshot**:
+Giá trị duy nhất trong bộ nhớ của server, ghép mẫu System Resources mới nhất với System Status gần nhất. Mỗi phần mang thời điểm lấy mẫu hoặc kiểm tra của nó và có thể vắng mặt. Giá trị mới thay hoàn toàn giá trị cũ; không có lịch sử. Xem [ADR 0146](docs/adr/0146-system-live-snapshot-stream.md).
+_Avoid_: metrics history, Structured Log Entry, health check
+
+**System Live Stream**:
+Luồng SSE một chiều tới Admin đã xác thực, gửi System Live Snapshot hiện tại ngay khi mở rồi gửi lại toàn bộ snapshot mỗi khi nó đổi. Kết nối còn mở không có nghĩa là server Ready.
+_Avoid_: Job Change Signal, Live Log Stream, readiness probe
+
 ## Internal LLM Gateway & OAuth Accounts
 
 **Gateway Account**:

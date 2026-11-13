@@ -775,7 +775,7 @@ For Device Push Channel, Wake Signal, and Device Key, use the definitions in [GL
 
 ## System Observability & Structured Logs
 
-For Structured Log Entry, Correlation Context, Log Ring Buffer, and Live Log Stream, use the definitions in [GLOSSARY.md](GLOSSARY.md#system-observability--structured-logs).
+For Structured Log Entry, Correlation Context, Log Ring Buffer, Live Log Stream, System Status, System Live Snapshot, and System Live Stream, use the definitions in [GLOSSARY.md](GLOSSARY.md#system-observability--structured-logs). See [ADR 0146](docs/adr/0146-system-live-snapshot-stream.md); spec: `.scratch/system-live/`.
 
 ## Internal LLM Gateway & OAuth Accounts
 

@@ -3,6 +3,7 @@
 Status: Accepted, 2026-11-12.
 Supersedes (phần xác thực): [ADR 0051](0051-separate-authenticated-admin-api.md).
 Extends: [ADR 0058](0058-minimal-admin-mutation-audit.md), [ADR 0131](0131-database-backup-export-and-transactional-import.md).
+Extended by: [ADR 0146](0146-system-live-snapshot-stream.md): stream SSE của Admin đang mở cũng kết thúc khi token hết hạn hoặc revision đổi.
 
 Admin API hiện chỉ nhận một `admin_token` tĩnh trong config. Admin Web bắt Admin dán token đó vào trang; token không có hạn, không đổi được từ giao diện và có thể bị nhúng vào bundle. Spec: [admin-web-password-login](../../.scratch/admin-web-password-login/spec.md).
 
