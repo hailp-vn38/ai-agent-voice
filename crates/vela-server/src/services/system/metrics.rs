@@ -10,6 +10,7 @@ use serde::Serialize;
 use sysinfo::{
     DiskRefreshKind, Disks, MemoryRefreshKind, Pid, ProcessRefreshKind, ProcessesToUpdate, System,
 };
+use tokio::sync::watch;
 use tokio_util::sync::CancellationToken;
 
 const SAMPLE_INTERVAL: Duration = Duration::from_secs(5);
@@ -45,14 +46,40 @@ struct StorageResources {
     available_bytes: Option<u64>,
 }
 
-#[derive(Default)]
 pub struct SystemMetrics {
     snapshot: RwLock<Option<(Instant, ResourceSnapshot)>>,
+    samples: watch::Sender<Option<ResourceSnapshot>>,
 }
 
 impl SystemMetrics {
     pub fn new() -> Self {
-        Self::default()
+        let (samples, _) = watch::channel(None);
+        Self {
+            snapshot: RwLock::new(None),
+            samples,
+        }
+    }
+
+    /// Receives each collected sample, retaining only the newest value.
+    pub fn subscribe(&self) -> watch::Receiver<Option<ResourceSnapshot>> {
+        self.samples.subscribe()
+    }
+
+    #[cfg(test)]
+    pub(super) fn publish_sample_for_test(&self) {
+        let snapshot = Collector::new().sample();
+        if let Ok(mut guard) = self.snapshot.write() {
+            *guard = Some((Instant::now(), snapshot.clone()));
+            self.samples.send_replace(Some(snapshot));
+        }
+    }
+
+    #[cfg(test)]
+    pub(super) fn clear_for_test(&self) {
+        if let Ok(mut guard) = self.snapshot.write() {
+            *guard = None;
+            self.samples.send_replace(None);
+        }
     }
 
     pub fn latest(&self) -> Option<ResourceSnapshot> {
@@ -87,7 +114,8 @@ impl SystemMetrics {
                     Ok((next, snapshot)) => {
                         collector = Some(next);
                         if let Ok(mut guard) = self.snapshot.write() {
-                            *guard = Some((Instant::now(), snapshot));
+                            *guard = Some((Instant::now(), snapshot.clone()));
+                            self.samples.send_replace(Some(snapshot));
                         }
                     }
                     Err(_) => {

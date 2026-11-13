@@ -381,6 +381,7 @@ fn mcp_routes() -> Router<AppState> {
 fn system_routes() -> Router<AppState> {
     Router::new()
         .route("/system", get(system::get_system))
+        .route("/system/live", get(system::stream_live))
         .route("/system/resources", get(system::get_resources))
         .route("/system/logs", get(system::get_logs))
         .route("/system/logs/stream", get(system::stream_logs))

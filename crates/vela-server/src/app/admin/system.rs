@@ -44,6 +44,53 @@ pub(super) async fn get_resources(State(state): State<AppState>, request: Reques
     response
 }
 
+pub(super) async fn stream_live(State(state): State<AppState>) -> Response {
+    let system_live = state.system_live();
+    let snapshot = system_live.subscribe();
+    let stopping = state.lifecycle.stopping().clone();
+    let messages = futures_util::stream::unfold(
+        (snapshot, stopping, true),
+        |(mut snapshot, stopping, first)| async move {
+            if first {
+                let data = serde_json::to_string(snapshot.borrow().as_ref())
+                    .unwrap_or_else(|_| "{}".into());
+                return Some((
+                    Ok::<Event, Infallible>(Event::default().event("snapshot").data(data)),
+                    (snapshot, stopping, false),
+                ));
+            }
+            tokio::select! {
+                biased;
+                _ = stopping.cancelled() => None,
+                changed = snapshot.changed() => {
+                    if changed.is_err() {
+                        return None;
+                    }
+                    let data = serde_json::to_string(snapshot.borrow().as_ref())
+                        .unwrap_or_else(|_| "{}".into());
+                    Some((
+                        Ok(Event::default().event("snapshot").data(data)),
+                        (snapshot, stopping, false),
+                    ))
+                }
+            }
+        },
+    );
+
+    let mut response = Sse::new(messages)
+        .keep_alive(
+            KeepAlive::new()
+                .interval(Duration::from_secs(15))
+                .text("keepalive"),
+        )
+        .into_response();
+    response.headers_mut().insert(
+        axum::http::header::CACHE_CONTROL,
+        axum::http::HeaderValue::from_static("no-store"),
+    );
+    response
+}
+
 pub(super) async fn get_logs(State(state): State<AppState>, request: Request) -> Response {
     let Query(filter) = match Query::<LogFilter>::try_from_uri(request.uri()) {
         Ok(q) => q,

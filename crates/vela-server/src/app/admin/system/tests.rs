@@ -1,9 +1,11 @@
 use super::*;
 use crate::{
+    app::router_with_state,
     config::{AppConfig, DatabaseConfig},
     database::{Database, backup::MAX_BACKUP_BODY_BYTES},
     providers::LoadedProviders,
 };
+use futures_util::StreamExt;
 
 #[tokio::test]
 async fn admin_http_backup_export_inspect_and_import_roundtrip_companion_settings() {
@@ -123,4 +125,72 @@ async fn admin_http_backup_export_inspect_and_import_roundtrip_companion_setting
     assert!(prompts_dir.is_dir());
 
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[tokio::test]
+async fn system_live_requires_admin_auth_and_emits_initial_snapshot() {
+    let config: AppConfig = toml::from_str(
+        r#"
+        [server]
+        bind = "127.0.0.1:0"
+        public_ws_url = "ws://127.0.0.1:0/ws"
+        [provider_defaults]
+        vad = "test"
+        asr = "test"
+        llm = "test"
+        tts = "test"
+        [api]
+        enabled = true
+        jwt_secret = "system-live-test-jwt-signing-secret-0123456789"
+        "#,
+    )
+    .unwrap();
+    let state = AppState::new(config, LoadedProviders::default());
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base = format!("http://{}", listener.local_addr().unwrap());
+    let app = router_with_state(state.clone());
+    let server = tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+    let unauthorized = reqwest::get(format!("{base}/api/admin/system/live"))
+        .await
+        .unwrap();
+    assert_eq!(unauthorized.status().as_u16(), 401);
+    server.abort();
+
+    let response = stream_live(State(state.clone())).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        response
+            .headers()
+            .get(header::CACHE_CONTROL)
+            .and_then(|value| value.to_str().ok()),
+        Some("no-store")
+    );
+    assert!(
+        response
+            .headers()
+            .get(header::CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok())
+            .is_some_and(|value| value.starts_with("text/event-stream"))
+    );
+    let mut stream = response.into_body().into_data_stream();
+    let first = tokio::time::timeout(Duration::from_secs(1), stream.next())
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    let first = String::from_utf8_lossy(&first);
+    assert!(first.contains("event: snapshot"));
+    assert!(first.contains("\"v\":1"));
+    assert!(first.contains("\"checked_at\":null"));
+    assert!(first.contains("\"summary\":null"));
+
+    state.lifecycle.stopping().cancel();
+    assert!(
+        tokio::time::timeout(Duration::from_secs(1), stream.next())
+            .await
+            .unwrap()
+            .is_none()
+    );
 }

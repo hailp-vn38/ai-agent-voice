@@ -139,6 +139,9 @@ async fn recover_wiki_conversations(database: &Database) -> Result<(), Bootstrap
 }
 
 pub fn router_with_state(mut state: AppState) -> Router {
+    state
+        .system_live()
+        .start(state.lifecycle.listening().clone());
     if let Some(ref hub) = state.notification_hub {
         hub.start_workers(state.lifecycle.stopping().clone());
     }

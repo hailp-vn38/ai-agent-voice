@@ -104,6 +104,8 @@ pub struct AppState {
     pub(crate) knowledge_mcp:
         Arc<std::sync::OnceLock<Arc<crate::tools::knowledge_mcp::KnowledgeMcp>>>,
     pub system_metrics: Arc<crate::services::system_metrics::SystemMetrics>,
+    pub(crate) system_live:
+        Arc<std::sync::OnceLock<Arc<crate::services::system::live::SystemLive>>>,
     pub system_logs: Arc<crate::services::system_logs::SystemLogHub>,
     pub(crate) web_assistant: Arc<super::assistant::WebAssistantAuth>,
     /// Admin Password login status mirrored in memory for the Admin token check.
@@ -311,6 +313,17 @@ impl AppState {
                 && self.enrollment_runtime.is_none()),
             managed_deployment: !self.deployment_snapshots.is_empty(),
         }
+    }
+
+    pub(crate) fn system_live(&self) -> Arc<crate::services::system::live::SystemLive> {
+        Arc::clone(self.system_live.get_or_init(|| {
+            Arc::new(crate::services::system::live::SystemLive::new(
+                self.system_metrics.clone(),
+                Arc::new(crate::services::system::live::SystemStatusAdapter(
+                    self.system_status(),
+                )),
+            ))
+        }))
     }
 
     pub fn bound_vision_runtime(&self) -> Option<Arc<LlmRuntime>> {
@@ -904,6 +917,7 @@ impl AppState {
             system_mcp: None,
             knowledge_mcp: Arc::new(std::sync::OnceLock::new()),
             system_metrics: Arc::new(crate::services::system_metrics::SystemMetrics::new()),
+            system_live: Arc::new(std::sync::OnceLock::new()),
             system_logs: crate::services::system_logs::SystemLogHub::global(),
             web_assistant: Arc::new(Default::default()),
             admin_auth,
