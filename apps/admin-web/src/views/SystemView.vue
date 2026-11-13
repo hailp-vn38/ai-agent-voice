@@ -18,50 +18,29 @@ import {
   Terminal,
   Workflow,
 } from '@lucide/vue'
-import { storeToRefs } from 'pinia'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import { RouterLink } from 'vue-router'
 
 import { assistantApi, type AssistantSettings } from '@/api/assistant'
-import { isApiError } from '@/api/errors'
-import { systemApi } from '@/api/system'
-import type { SystemResources } from '@/api/types/system'
 import ResourceStatCard from '@/components/system/ResourceStatCard.vue'
+import SystemFreshnessNotice from '@/components/system/SystemFreshnessNotice.vue'
+import { reconnectSystemLive, useSystemLive } from '@/composables/useSystemLive'
 import { useI18n } from '@/composables/useI18n'
 import type { MessageKey } from '@/i18n/messages'
-import { useServerStore } from '@/stores/server'
 import { beginSystemLayout } from '@/router/system-scroll'
 
-const server = useServerStore()
-const { health, readiness, status, lastError } = storeToRefs(server)
 const { t, formatDateTime } = useI18n()
-
-const resources = ref<SystemResources | null>(null)
+const { snapshot: liveSnapshot, connection, freshness } = useSystemLive()
+const resources = computed(() => liveSnapshot.value?.resources ?? null)
+const status = computed(() => liveSnapshot.value?.status.summary ?? null)
 const assistantSummary = ref<AssistantSettings | null>(null)
-const loading = ref(true)
-const error = ref('')
-const now = ref(Date.now())
 const controller = new AbortController()
 const finishInitialLayout = beginSystemLayout()
-let inFlight = false
-let resourcesTimer: number | undefined
-let statusTimer: number | undefined
 
-const stale = computed(() => {
-  if (!resources.value) return false
-  const sampled = Date.parse(resources.value.sampled_at)
-  return !Number.isFinite(sampled) || now.value - sampled > 15_000
-})
-const current = computed(() => (!error.value && !stale.value ? resources.value : null))
-const resourceState = computed(
-  () =>
-    error.value ||
-    (stale.value
-      ? t('system.stale')
-      : loading.value && !resources.value
-        ? t('common.loading')
-        : ''),
-)
+const current = resources
+const resourceState = computed(() => freshness.value.resources === 'stale'
+  ? t('system.stale')
+  : freshness.value.resources === 'unavailable' ? t('system.unavailable') : '')
 const sampledAtLabel = computed(() => {
   const sampled = resources.value && Date.parse(resources.value.sampled_at)
   return sampled && Number.isFinite(sampled) ? formatDateTime(new Date(sampled)) : '—'
@@ -69,10 +48,10 @@ const sampledAtLabel = computed(() => {
 
 type SystemState = 'ready' | 'attention' | 'offline' | 'checking'
 const systemState = computed<SystemState>(() => {
-  if (health.value === 'offline') return 'offline'
-  if (health.value !== 'online' || readiness.value === 'checking') return 'checking'
   const snapshot = status.value
-  if (readiness.value !== 'online' || !snapshot || lastError.value) return 'attention'
+  if (!snapshot && connection.value === 'connecting') return 'checking'
+  if (!snapshot) return 'attention'
+  if (freshness.value.status !== 'fresh') return 'attention'
   const { providers, database } = snapshot
   if (snapshot.status !== 'ready' || (providers.failed ?? 0) > 0 || (providers.stale ?? 0) > 0)
     return 'attention'
@@ -88,10 +67,13 @@ const stateCopy: Record<SystemState, { title: MessageKey; description: MessageKe
   offline: { title: 'system.deck.offline', description: 'system.deck.offlineDesc' },
   checking: { title: 'system.deck.checking', description: 'system.deck.checkingDesc' },
 }
-function probeLabel(probe: string) {
-  return probe === 'online' ? t('status.device.online')
-    : probe === 'offline' ? t('status.device.offline') : t('system.checking')
-}
+const connectionLabel = computed(() => connection.value === 'live'
+  ? t('system.deck.live')
+  : connection.value === 'reconnecting' ? t('system.deck.reconnecting')
+    : connection.value === 'paused' ? t('system.deck.paused') : t('system.deck.connecting'))
+const readinessState = computed(() => !status.value ? 'idle' : status.value.status === 'ready' ? 'online' : 'offline')
+const readinessLabel = computed(() => !status.value ? t('system.checking')
+  : status.value.status === 'ready' ? t('system.deck.dbReady') : t('system.deck.attention'))
 const uptime = computed(() => {
   const seconds = status.value?.uptime_seconds
   if (seconds == null || !Number.isFinite(seconds) || seconds < 0) return '—'
@@ -183,28 +165,6 @@ const diskUsed = computed(() => {
 })
 const diskPercentage = computed(() => percentage(diskUsed.value, current.value?.storage.total_bytes))
 
-async function refreshResources() {
-  if (inFlight || controller.signal.aborted || document.hidden) return
-  inFlight = true
-  loading.value = true
-  try {
-    const snapshot = await systemApi.resources(controller.signal)
-    if (controller.signal.aborted) return
-    resources.value = snapshot
-    error.value = ''
-  } catch (cause) {
-    if (controller.signal.aborted) return
-    error.value =
-      isApiError(cause) && cause.status === 401
-        ? t('system.metricsUnauthorized')
-        : t('system.unavailable')
-  } finally {
-    now.value = Date.now()
-    inFlight = false
-    loading.value = false
-  }
-}
-
 async function loadAssistantSummary() {
   try {
     if (!assistantApi.settings) return
@@ -215,35 +175,15 @@ async function loadAssistantSummary() {
   }
 }
 
-function refresh() {
-  return Promise.all([server.refresh(controller.signal), refreshResources()])
-}
-function visible() {
-  if (!document.hidden) {
-    now.value = Date.now()
-    void refreshResources()
-  }
-}
 onMounted(() => {
-  void Promise.allSettled([refresh(), loadAssistantSummary()]).then(async () => {
+  void Promise.allSettled([loadAssistantSummary()]).then(async () => {
     await nextTick()
     finishInitialLayout()
   })
-  resourcesTimer = window.setInterval(() => {
-    now.value = Date.now()
-    void refreshResources()
-  }, 5_000)
-  statusTimer = window.setInterval(() => {
-    if (!document.hidden) void server.refresh(controller.signal)
-  }, 30_000)
-  document.addEventListener('visibilitychange', visible)
 })
 onBeforeUnmount(() => {
   finishInitialLayout()
   controller.abort()
-  window.clearInterval(resourcesTimer)
-  window.clearInterval(statusTimer)
-  document.removeEventListener('visibilitychange', visible)
 })
 </script>
 
@@ -256,13 +196,13 @@ onBeforeUnmount(() => {
         <p class="deck-subtitle">{{ t('system.deck.subtitle') }}</p>
       </div>
       <button
+        v-if="connection === 'reconnecting'"
         type="button"
         class="deck-refresh"
-        :disabled="loading || health === 'checking' || readiness === 'checking'"
+        @click="reconnectSystemLive"
         data-testid="system-refresh"
-        @click="refresh"
       >
-        <RefreshCcw :class="['size-3.5', loading && 'animate-spin motion-reduce:animate-none']" aria-hidden="true" />
+        <RefreshCcw class="size-3.5 animate-spin motion-reduce:animate-none" aria-hidden="true" />
         {{ t('system.refresh') }}
       </button>
       <HeroScene theme="system" surface />
@@ -279,13 +219,13 @@ onBeforeUnmount(() => {
           <h2>{{ t(stateCopy[systemState].title) }}</h2>
           <p>{{ t(stateCopy[systemState].description) }}</p>
           <div class="probe-list">
-            <div :data-probe="health">
-              <Activity aria-hidden="true" /><span>{{ t('system.deck.health') }}</span>
-              <strong>{{ probeLabel(health) }}</strong>
+            <div :data-probe="connection">
+              <Activity aria-hidden="true" /><span>{{ t('system.deck.stream') }}</span>
+              <strong>{{ connectionLabel }}</strong>
             </div>
-            <div :data-probe="readiness">
+            <div :data-probe="readinessState">
               <CircleDot aria-hidden="true" /><span>{{ t('system.deck.readiness') }}</span>
-              <strong>{{ probeLabel(readiness) }}</strong>
+              <strong>{{ readinessLabel }}</strong>
             </div>
             <div :data-probe="!status ? 'idle' : databaseReady ? 'online' : status.database.enabled ? 'offline' : 'idle'">
               <Database aria-hidden="true" /><span>{{ t('system.database') }}</span>
@@ -310,7 +250,7 @@ onBeforeUnmount(() => {
           <div class="core-center">
             <Server class="size-7" />
             <strong>{{ t('system.deck.core') }}</strong>
-            <span>{{ probeLabel(health) }}</span>
+            <span>{{ connectionLabel }}</span>
           </div>
         </div>
       </div>
@@ -330,7 +270,7 @@ onBeforeUnmount(() => {
         <div><span>{{ t('system.deck.sessions') }}</span><strong>{{ status?.sessions.active ?? '—' }}<Radio class="session-radio" aria-hidden="true" /></strong></div>
       </div>
     </section>
-    <p v-if="lastError" role="status" class="deck-error">{{ t('system.statusUnavailable') }}</p>
+    <SystemFreshnessNotice :freshness="freshness.status" />
 
     <section class="resource-section" aria-labelledby="resource-heading">
       <header class="section-heading">
@@ -342,6 +282,7 @@ onBeforeUnmount(() => {
           {{ t('system.hub.openDetail') }}<ArrowUpRight class="size-4" aria-hidden="true" />
         </RouterLink>
       </header>
+      <SystemFreshnessNotice :freshness="freshness.resources" />
       <div class="resource-grid">
         <RouterLink to="/system/monitor" class="resource-link">
           <ResourceStatCard
@@ -379,8 +320,8 @@ onBeforeUnmount(() => {
           />
         </RouterLink>
       </div>
-      <div class="telemetry-footer" :data-live="!!current">
-        <span><span class="telemetry-dot" aria-hidden="true" />{{ t(current ? 'system.deck.live' : 'system.deck.waiting') }}</span>
+      <div class="telemetry-footer" :data-live="freshness.resources === 'fresh'">
+        <span><span class="telemetry-dot" aria-hidden="true" />{{ t(freshness.resources === 'fresh' ? 'system.deck.live' : 'system.deck.waiting') }}</span>
         <span>{{ t('system.deck.interval') }}<span class="footer-separator" aria-hidden="true">/</span>{{ t('system.deck.sampled', { time: sampledAtLabel }) }}</span>
       </div>
     </section>

@@ -1,22 +1,19 @@
 <script setup lang="ts">
 import { Activity, Cpu, ExternalLink, HardDrive, Layers, RefreshCcw } from '@lucide/vue'
-import { storeToRefs } from 'pinia'
-import { computed, onBeforeUnmount, onMounted } from 'vue'
+import { computed } from 'vue'
 import { useRouter } from 'vue-router'
 
 import DetailHeader from '@/components/admin/DetailHeader.vue'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import SystemFreshnessNotice from '@/components/system/SystemFreshnessNotice.vue'
+import { reconnectSystemLive, useSystemLive } from '@/composables/useSystemLive'
 import { useI18n } from '@/composables/useI18n'
-import { useServerStore } from '@/stores/server'
 
 const router = useRouter()
-const server = useServerStore()
-const { status, health } = storeToRefs(server)
 const { t } = useI18n()
-
-const controller = new AbortController()
-let statusTimer: number | undefined
+const { snapshot: liveSnapshot, connection, freshness } = useSystemLive()
+const status = computed(() => liveSnapshot.value?.status.summary ?? null)
 
 function bytes(value: number | null | undefined) {
   if (value == null || !Number.isFinite(value) || value < 0) return '—'
@@ -42,21 +39,6 @@ const leasePercent = computed(() => {
   return Math.min(100, Math.max(0, leases * 20))
 })
 
-function refresh() {
-  void server.refresh(controller.signal)
-}
-
-onMounted(() => {
-  refresh()
-  statusTimer = window.setInterval(() => {
-    if (!document.hidden) void server.refresh(controller.signal)
-  }, 15_000)
-})
-
-onBeforeUnmount(() => {
-  controller.abort()
-  window.clearInterval(statusTimer)
-})
 </script>
 
 <template>
@@ -92,17 +74,19 @@ onBeforeUnmount(() => {
           {{ t('system.providers') }}
         </Button>
         <Button
+          v-if="connection === 'reconnecting'"
           variant="outline"
           size="sm"
-          :disabled="health === 'checking'"
           data-testid="runtime-refresh-btn"
-          @click="refresh"
+          @click="reconnectSystemLive"
         >
-          <RefreshCcw :class="['size-4', health === 'checking' && 'animate-spin']" aria-hidden="true" />
+          <RefreshCcw class="size-4 animate-spin" aria-hidden="true" />
           {{ t('system.refresh') }}
         </Button>
       </template>
     </DetailHeader>
+
+    <SystemFreshnessNotice :freshness="freshness.status" />
 
     <!-- 3 KPI Cards -->
     <div class="grid gap-3.5 md:grid-cols-3">
