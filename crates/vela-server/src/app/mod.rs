@@ -107,7 +107,7 @@ pub async fn bootstrap_with_providers_and_secret_resolver(
     prepare_memory(&mut state);
     prepare_background(&mut state).await?;
     prepare_enrollment(&mut state).await?;
-    prepare_device_push(&mut state)?;
+    prepare_device_push(&state)?;
     admin::auth::prepare(&state)
         .await
         .map_err(|_| DatabaseError::Unavailable)?;
@@ -158,12 +158,11 @@ pub fn router_with_state(mut state: AppState) -> Router {
         .swap(true, std::sync::atomic::Ordering::AcqRel)
         && let Some(database) = state.database.clone()
     {
-        let wake = state.wake_publisher.clone();
         crate::services::reminder_scheduler::start_with_wake(
             crate::database::notifications::DeviceNotifications::new((*database).clone()),
             state.active_device_sessions.clone(),
             state.notification_hub.clone(),
-            wake,
+            state.device_push.clone(),
             state.lifecycle.stopping().clone(),
         );
     }
@@ -371,7 +370,7 @@ pub async fn startup_with_lifecycle_and_secret_resolver(
     prepare_memory(&mut state);
     prepare_background(&mut state).await?;
     prepare_enrollment(&mut state).await?;
-    prepare_device_push(&mut state)?;
+    prepare_device_push(&state)?;
     admin::auth::prepare(&state)
         .await
         .map_err(|_| DatabaseError::Unavailable)?;
@@ -552,7 +551,7 @@ async fn managed_startup(
     prepare_memory(&mut state);
     prepare_background(&mut state).await?;
     prepare_enrollment(&mut state).await?;
-    prepare_device_push(&mut state)?;
+    prepare_device_push(&state)?;
     admin::auth::prepare(&state)
         .await
         .map_err(|_| DatabaseError::Unavailable)?;
@@ -690,22 +689,14 @@ async fn prepare_enrollment(state: &mut AppState) -> Result<(), BootstrapError> 
     Ok(())
 }
 
-/// With `[device_push]` enabled the Wake Signal publisher is mandatory: refuse to start rather
-/// than run with the channel silently off.
-fn prepare_device_push(state: &mut AppState) -> Result<(), BootstrapError> {
+/// With `[device_push]` enabled the broker client is mandatory: refuse to start rather than
+/// run with the channel silently off.
+fn prepare_device_push(state: &AppState) -> Result<(), BootstrapError> {
     let Some(push) = state.device_push.as_ref() else {
         return Ok(());
     };
-    let config = &state.config.device_push;
-    let publisher = push
-        .start_wake_publisher(
-            &config.broker_url,
-            config.keepalive_seconds,
-            state.lifecycle.stopping().clone(),
-        )
-        .map_err(|err| BootstrapError::DevicePush(err.to_string()))?;
-    state.wake_publisher = Some(Arc::new(publisher));
-    Ok(())
+    push.connect_broker(state.lifecycle.stopping().clone())
+        .map_err(|err| BootstrapError::DevicePush(err.to_string()))
 }
 
 /// Load one CAM++ extractor outside the Tokio reactor. Speaker identification is optional:

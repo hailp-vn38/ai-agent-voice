@@ -33,6 +33,12 @@ services:
     command: [mosquitto, -c, /mosquitto/config/mosquitto.conf]
     restart: unless-stopped
     volumes:
+      # Plain listener on the compose network only; compose.prod.yaml replaces this file
+      # with the TLS configuration (same target).
+      - type: bind
+        source: ./docker/mosquitto/mosquitto.test.conf
+        target: /mosquitto/config/mosquitto.conf
+        read_only: true
       - type: bind
         source: ./docker/mosquitto/auth.d
         target: /mosquitto/config/auth.d

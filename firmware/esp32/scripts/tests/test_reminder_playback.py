@@ -5,7 +5,7 @@ import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-PUSH = ROOT / "main" / "push"
+REMINDER = ROOT / "main" / "reminder"
 
 
 class ReminderPlaybackTest(unittest.TestCase):
@@ -21,7 +21,7 @@ class ReminderPlaybackTest(unittest.TestCase):
             exe = Path(tmp) / "t"
             src.write_text(source)
             subprocess.run(
-                ["c++", "-std=c++20", "-I", str(PUSH), str(src), "-o", str(exe)],
+                ["c++", "-std=c++20", "-I", str(REMINDER), str(src), "-o", str(exe)],
                 check=True,
             )
             subprocess.run([str(exe)], check=True)
@@ -98,6 +98,17 @@ class ReminderPlaybackTest(unittest.TestCase):
 
             Tracker normal;  // a normal session never self-closes
             assert(normal.Tick(1000000) == Action::kNone);
+            """
+        )
+
+    def test_user_conversation_takes_over_a_wake_session(self):
+        self.run_driver(
+            """
+            Tracker t;
+            t.BeginWakeSession(0);
+            t.ReleaseToUser();
+            assert(!t.wake_session());
+            assert(t.Tick(kEmptySessionTimeoutMs * 10) == Action::kNone);
             """
         )
 

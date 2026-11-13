@@ -278,12 +278,7 @@ impl DeviceNotifications {
             attempts_used: 0,
             created_at_ms: now,
             updated_at_ms: now,
-            sync_status: if self.wake_on_due {
-                "wake_on_due"
-            } else {
-                "pending"
-            }
-            .into(),
+            sync_status: waiting_sync_status(self.wake_on_due).into(),
         };
         sqlx::query("INSERT INTO device_reminders(id,device_row_id,message,due_at_ms,timezone,schedule_revision,source,created_at_ms,updated_at_ms) VALUES (?,?,?,?,?,?,?,?,?)").bind(&reminder.id).bind(device_row_id).bind(&reminder.message).bind(due_at_ms).bind(&reminder.timezone).bind(revision).bind(ctx.source.as_str()).bind(now).bind(now).execute(&mut *tx).await?;
         let response = serde_json::to_string(&reminder)
@@ -408,6 +403,16 @@ impl DeviceNotifications {
     }
 }
 
+/// Sync status of a Reminder the Device has not cached: with the Device Push Channel the
+/// server wakes the Device when it is due, otherwise it waits for a session.
+fn waiting_sync_status(wake_on_due: bool) -> &'static str {
+    if wake_on_due {
+        "wake_on_due"
+    } else {
+        "pending"
+    }
+}
+
 pub(super) async fn sync_status(
     tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
     device: i64,
@@ -423,10 +428,8 @@ pub(super) async fn sync_status(
                 .bind(device).bind(item.due_at_ms).bind(item.due_at_ms).bind(&item.id).fetch_one(&mut **tx).await?;
             if position >= SNAPSHOT_LIMIT {
                 "out_of_window".into()
-            } else if wake_on_due {
-                "wake_on_due".into()
             } else {
-                "pending".into()
+                waiting_sync_status(wake_on_due).into()
             }
         }
     })

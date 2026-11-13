@@ -12,6 +12,7 @@ MOSQUITTO = ROOT / "docker" / "mosquitto"
 COMPOSE_SETS = {
     "prod": ["-f", "compose.yaml", "-f", "compose.prod.yaml"],
     "test": ["-f", "compose.test.yaml"],
+    "base": ["-f", "compose.yaml"],
 }
 
 
@@ -53,6 +54,21 @@ class MosquittoProfileTests(unittest.TestCase):
         for environment in COMPOSE_SETS:
             with self.subTest(environment=environment):
                 self.assertIn("mosquitto", self.model(environment, "push")["services"])
+
+    def broker_config_source(self, environment):
+        volumes = self.model(environment, "push")["services"]["mosquitto"]["volumes"]
+        sources = [v["source"] for v in volumes if v["target"] == "/mosquitto/config/mosquitto.conf"]
+        self.assertEqual(len(sources), 1, "exactly one broker config is mounted")
+        return Path(sources[0]).name
+
+    def test_every_compose_set_mounts_a_broker_config(self):
+        # Without a mounted file the image's own default configuration would run.
+        self.assertEqual(self.broker_config_source("base"), "mosquitto.test.conf")
+        self.assertEqual(self.broker_config_source("test"), "mosquitto.test.conf")
+        self.assertEqual(self.broker_config_source("prod"), "mosquitto.prod.conf")
+
+    def test_base_broker_publishes_no_port(self):
+        self.assertFalse(self.model("base", "push")["services"]["mosquitto"].get("ports"))
 
     def test_test_broker_publishes_no_port(self):
         broker = self.model("test", "push")["services"]["mosquitto"]

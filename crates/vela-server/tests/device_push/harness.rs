@@ -1,7 +1,9 @@
+//! Shared server fixture for the Device Push Channel tests.
+#![allow(dead_code)]
+
 use std::sync::Arc;
 
 use axum::Router;
-use sha2::Digest;
 use sqlx::SqlitePool;
 use tokio::{net::TcpListener, task::JoinHandle};
 use url::Url;
@@ -15,7 +17,7 @@ use vela_server::{
     providers::ProviderSet,
 };
 
-fn database_url() -> String {
+pub fn database_url() -> String {
     format!(
         "sqlite://{}",
         std::env::temp_dir()
@@ -25,7 +27,7 @@ fn database_url() -> String {
     )
 }
 
-fn config(address: std::net::SocketAddr, database_url: String) -> AppConfig {
+pub fn config(address: std::net::SocketAddr, database_url: String) -> AppConfig {
     AppConfig {
         orchestrator: Default::default(),
         wiki: Default::default(),
@@ -73,7 +75,7 @@ fn config(address: std::net::SocketAddr, database_url: String) -> AppConfig {
     }
 }
 
-fn push_config() -> vela_server::config::DevicePushConfig {
+pub fn push_config() -> vela_server::config::DevicePushConfig {
     vela_server::config::DevicePushConfig {
         enabled: true,
         endpoint: "push.example.test:8883".into(),
@@ -83,7 +85,7 @@ fn push_config() -> vela_server::config::DevicePushConfig {
     }
 }
 
-async fn start(
+pub async fn start(
     push: vela_server::config::DevicePushConfig,
     enrollment: bool,
 ) -> (String, String, JoinHandle<()>) {
@@ -113,7 +115,7 @@ async fn start(
     (format!("http://{address}"), database_url, task)
 }
 
-async fn insert_device(database_url: &str, device_id: &str, enabled: bool) {
+pub async fn insert_device(database_url: &str, device_id: &str, enabled: bool) {
     let pool = SqlitePool::connect(database_url).await.unwrap();
     sqlx::query("INSERT OR IGNORE INTO agents (key,name,enabled,created_at,updated_at) VALUES ('agent', 'Agent', 1, 1, 1)")
         .execute(&pool)
@@ -127,7 +129,7 @@ async fn insert_device(database_url: &str, device_id: &str, enabled: bool) {
         .unwrap();
 }
 
-async fn ota(base: &str, device_id: &str) -> (u16, serde_json::Value) {
+pub async fn ota(base: &str, device_id: &str) -> (u16, serde_json::Value) {
     let response = reqwest::Client::new()
         .post(format!("{base}/voice/ota/"))
         .header("Device-Id", device_id)
@@ -140,94 +142,6 @@ async fn ota(base: &str, device_id: &str) -> (u16, serde_json::Value) {
     (status, response.json().await.unwrap())
 }
 
-fn hex(bytes: &[u8]) -> String {
+pub fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
-}
-
-#[tokio::test]
-async fn registered_device_receives_push_block_when_enabled() {
-    let (base, db, task) = start(push_config(), false).await;
-    insert_device(&db, "device-1", true).await;
-    let (status, body) = ota(&base, "device-1").await;
-    assert_eq!(status, 200);
-    let push = &body["push"];
-    let key = hex(&sha2::Sha256::digest(b"device-1"))[..32].to_owned();
-    assert_eq!(push["endpoint"], "push.example.test:8883");
-    assert_eq!(push["username"], "device-1");
-    assert_eq!(push["client_id"], format!("vela-{key}"));
-    assert_eq!(push["topic"], format!("vela/v1/devices/{key}/signal"));
-    assert_eq!(push["keepalive"], 45);
-    let expected = ring::hmac::sign(
-        &ring::hmac::Key::new(ring::hmac::HMAC_SHA256, b"push-secret-0123456789"),
-        b"v1:device-1",
-    );
-    assert_eq!(push["password"], hex(expected.as_ref()));
-    assert!(body.get("mqtt").is_none());
-    task.abort();
-}
-
-#[tokio::test]
-async fn device_named_like_the_service_account_gets_no_push_block() {
-    let (base, db, task) = start(push_config(), false).await;
-    insert_device(&db, "vela-server", true).await;
-    let (status, body) = ota(&base, "vela-server").await;
-    assert_eq!(status, 200);
-    assert!(body.get("push").is_none());
-    task.abort();
-}
-
-#[tokio::test]
-async fn no_push_block_when_feature_disabled() {
-    let (base, db, task) = start(Default::default(), false).await;
-    insert_device(&db, "device-1", true).await;
-    let (status, body) = ota(&base, "device-1").await;
-    assert_eq!(status, 200);
-    assert!(body.get("push").is_none());
-    assert!(body.get("mqtt").is_none());
-    assert!(body.get("websocket").is_some());
-    task.abort();
-}
-
-#[tokio::test]
-async fn no_push_block_for_pending_or_blocked_devices() {
-    let (base, db, task) = start(push_config(), true).await;
-    let (status, pending) = ota(&base, "new-device").await;
-    assert_eq!(status, 200);
-    assert!(pending.get("activation").is_some());
-    assert!(pending.get("push").is_none());
-    assert!(pending.get("mqtt").is_none());
-    insert_device(&db, "blocked-device", false).await;
-    let (status, blocked) = ota(&base, "blocked-device").await;
-    assert_eq!(status, 403);
-    assert!(blocked.get("push").is_none());
-    task.abort();
-}
-
-#[tokio::test]
-async fn awkward_device_ids_still_yield_valid_topic_and_client_id() {
-    let (base, db, task) = start(push_config(), false).await;
-    insert_device(&db, "a/b+c#d", true).await;
-    let (_, body) = ota(&base, "a/b+c#d").await;
-    let push = &body["push"];
-    assert_eq!(push["username"], "a/b+c#d");
-    let topic = push["topic"].as_str().unwrap();
-    let client_id = push["client_id"].as_str().unwrap();
-    assert!(!topic.contains(['+', '#']));
-    assert_eq!(topic.matches('/').count(), 4);
-    assert!(
-        client_id
-            .bytes()
-            .all(|b| b.is_ascii_alphanumeric() || b == b'-')
-    );
-    task.abort();
-}
-
-#[tokio::test]
-async fn startup_fails_when_push_enabled_but_broker_url_is_unusable() {
-    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let mut app_config = config(listener.local_addr().unwrap(), database_url());
-    app_config.device_push = push_config();
-    app_config.device_push.broker_url = "not-a-broker-url".into();
-    let result = bootstrap_with_providers(app_config, Arc::new(ProviderSet::unavailable())).await;
-    assert!(result.is_err());
 }

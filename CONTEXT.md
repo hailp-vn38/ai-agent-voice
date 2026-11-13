@@ -771,7 +771,7 @@ For Wiki Page, Source, Knowledge Revision, Memory Fact, Memory Summary, Memory V
 
 For Notification, Notification Inbox, Notification Channel, Notification Channel Policy, and Channel Delivery Attempt, use the definitions in [GLOSSARY.md](GLOSSARY.md#multi-channel-notifications).
 
-For Device Push Channel, Wake Signal, and Device Key, use the definitions in [GLOSSARY.md](GLOSSARY.md#reminders-and-direct-speech). See [ADR 0145](docs/adr/0145-device-push-channel-mqtt-wake-signal.md); the design is proposed and not yet implemented.
+For Device Push Channel, Wake Signal, and Device Key, use the definitions in [GLOSSARY.md](GLOSSARY.md#reminders-and-direct-speech). See [ADR 0145](docs/adr/0145-device-push-channel-mqtt-wake-signal.md); server, infrastructure and firmware are implemented, hardware acceptance is pending.
 
 ## System Observability & Structured Logs
 

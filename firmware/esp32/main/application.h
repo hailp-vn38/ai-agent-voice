@@ -21,7 +21,8 @@
 #include "device_state_machine.h"
 #include "notify/notify_player.h"
 #include "push/device_push_channel.h"
-#include "push/reminder_playback.h"
+#include "push/wake_signal.h"
+#include "reminder/reminder_playback.h"
 
 // Main event bits
 #define MAIN_EVENT_SCHEDULE             (1 << 0)
@@ -147,6 +148,8 @@ private:
     std::unique_ptr<Ota> ota_;
     std::unique_ptr<DevicePushChannel> push_channel_;
     reminder_playback::Tracker reminder_tracker_;
+    // Wake Signal still owed a session; retried from the clock tick until settled or expired.
+    wake_signal::PendingWake pending_wake_;
 
     std::function<void(const std::string&)> mcp_broadcast_callback_;
 
@@ -190,7 +193,8 @@ private:
     void CheckReminderDrained();
     void FailReminderPlayback(const char* reason);
     void SendReminderDecision(const reminder_playback::Decision& decision);
-    void HandleWakeSignal();
+    void TryOpenWakeSession();
+    void SettlePendingWake();
     void ShowActivationCode(const std::string& code, const std::string& message);
     void SetListeningMode(ListeningMode mode);
     ListeningMode GetDefaultListeningMode() const;

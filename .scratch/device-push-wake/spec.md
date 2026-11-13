@@ -51,6 +51,7 @@ Device lấy thông tin kết nối Device Push Channel trong phản hồi OTA l
 31. As a nhà phát triển firmware, I want thông tin Device Push Channel nằm trong một khối riêng của phản hồi OTA, so that nó không lẫn với cấu hình giao thức thoại.
 32. As a nhà phát triển firmware, I want firmware cũ bỏ qua khối mới mà vẫn chạy, so that tôi nâng cấp server trước firmware.
 33. As a nhà phát triển firmware, I want Wake Signal có mốc hết hiệu lực, so that Device bỏ qua tín hiệu retained đã cũ sau khi khởi động lại.
+    - Mở rộng: Wake Signal mang mốc `at`, để Device phân biệt tín hiệu thử lại (cùng Reminder, `at` mới) với bản retained của tín hiệu nó đã xử lý (cùng `id` và `at`), kể cả khi Device vừa nối lại broker.
 34. As a nhà phát triển firmware, I want Wake Signal có trường phiên bản, so that payload thay đổi sau này không làm hỏng firmware đang chạy.
 35. As a nhà phát triển firmware, I want Device ngắt Device Push Channel trong lúc có Voice Session, so that Device ít RAM không phải giữ hai phiên TLS.
 36. As a nhà phát triển firmware, I want một tín hiệu thừa chỉ dẫn tới một phiên rỗng tự đóng, so that tôi không phải xử lý trạng thái đặc biệt.
@@ -76,7 +77,7 @@ Device lấy thông tin kết nối Device Push Channel trong phản hồi OTA l
 
 - Device Key: 32 ký tự hex đầu của SHA-256 trên Device ID.
 - Topic server→Device: `vela/v1/devices/{device_key}/signal`, QoS 1, retained.
-- Payload Wake Signal: JSON gồm `v` (số nguyên, hiện là 1), `type` (`"wake"`), `id` (định danh Reminder), `expires_at` (Unix milli giây; bằng hạn chót phát của Reminder theo cửa sổ trễ 24h).
+- Payload Wake Signal: JSON gồm `v` (số nguyên, hiện là 1), `type` (`"wake"`), `id` (định danh Reminder), `at` (Unix milli giây; mốc đến hạn hoặc mốc thử lại mà tín hiệu này đại diện), `expires_at` (Unix milli giây; bằng hạn chót phát của Reminder theo cửa sổ trễ 24h).
 - Thông tin đăng nhập Device: username là Device ID nguyên bản; client ID là `vela-` cộng Device Key; mật khẩu là HMAC-SHA256 của secret trên chuỗi có tiền tố phiên bản và Device ID, mã hoá hex. Không có bảng, cột hay migration mới.
 - Tài khoản dịch vụ của server: username cố định, mật khẩu dẫn xuất từ cùng secret với tiền tố khác; là chủ thể duy nhất được publish lên các topic `signal`.
 

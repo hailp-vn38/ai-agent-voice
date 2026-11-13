@@ -16,8 +16,7 @@ use vela_server::{
     protocol::ClientFeatures,
     services::{
         active_device_sessions::ActiveDeviceSessions,
-        device_push::DevicePush,
-        device_push_wake::RecordingPublisher,
+        device_push::{DevicePush, RecordingPublisher},
         notifications::{ReminderCoordinator, reminder_scheduler},
     },
     session::{SessionEvent, SpeechOrigin},
@@ -65,11 +64,17 @@ async fn fixture(wake_enabled: bool) -> Fixture {
     let coordinator = ReminderCoordinator::new(repo.clone(), Arc::clone(&sessions));
     let recorder = Arc::new(RecordingPublisher::default());
     let stopping = CancellationToken::new();
+    let device_push = wake_enabled.then(|| {
+        Arc::new(
+            DevicePush::with_publisher(&crate::harness::push_config(), recorder.clone())
+                .expect("push enabled"),
+        )
+    });
     reminder_scheduler::start_with_wake(
         repo.clone(),
         Arc::clone(&sessions),
         None,
-        wake_enabled.then(|| recorder.clone() as _),
+        device_push,
         stopping.clone(),
     );
     Fixture {
@@ -107,8 +112,28 @@ async fn create(f: &Fixture, req: &str, delay: i64) -> String {
         .id
 }
 
+/// Lets the scheduler finish a sweep. Only for asserting that something did *not* happen;
+/// expected effects are awaited with [`published`] or [`eventually`].
 async fn settle() {
     tokio::time::sleep(Duration::from_millis(120)).await;
+}
+
+async fn eventually(what: &str, condition: impl Fn() -> bool) {
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    while !condition() {
+        assert!(tokio::time::Instant::now() < deadline, "timed out: {what}");
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+}
+
+/// Wakes the scheduler and waits until `count` Wake Signals were published.
+async fn published(f: &Fixture, count: usize) -> Vec<(String, Vec<u8>)> {
+    f.sessions.scheduler_wakeup().notify_one();
+    eventually("wake signal published", || {
+        f.recorder.published().len() >= count
+    })
+    .await;
+    f.recorder.published()
 }
 
 fn reminder_features() -> ClientFeatures {
@@ -124,8 +149,7 @@ async fn due_reminder_without_session_emits_exactly_one_wake_signal() {
     let f = fixture(true).await;
     let id = create(&f, "r1", 1).await;
     f.clock.store(T0 + 2_000, Ordering::SeqCst);
-    f.sessions.scheduler_wakeup().notify_one();
-    settle().await;
+    published(&f, 1).await;
     f.sessions.scheduler_wakeup().notify_one();
     settle().await;
 
@@ -136,7 +160,13 @@ async fn due_reminder_without_session_emits_exactly_one_wake_signal() {
     assert_eq!(payload["v"], 1);
     assert_eq!(payload["type"], "wake");
     assert_eq!(payload["id"], id);
+    assert_eq!(payload["at"], T0 + 1_000);
     assert_eq!(payload["expires_at"], T0 + 1_000 + 86_400_000);
+    assert_eq!(
+        payload.as_object().unwrap().len(),
+        5,
+        "no Reminder content in the signal"
+    );
     f.stopping.cancel();
 }
 
@@ -176,9 +206,7 @@ async fn scheduler_sleeps_until_future_reminder_then_signals() {
     settle().await;
     assert!(f.recorder.published().is_empty());
     f.clock.store(T0 + 1_500, Ordering::SeqCst);
-    f.sessions.scheduler_wakeup().notify_one();
-    settle().await;
-    assert_eq!(f.recorder.published().len(), 1);
+    assert_eq!(published(&f, 1).await.len(), 1);
     f.stopping.cancel();
 }
 
@@ -194,9 +222,7 @@ async fn retry_checkpoint_signals_again_and_publish_failure_does_not_stop_schedu
 
     // Failed publish is retried on the next sweep (the Device was never told).
     f.recorder.set_failing(false);
-    f.sessions.scheduler_wakeup().notify_one();
-    settle().await;
-    assert_eq!(f.recorder.published().len(), 1);
+    assert_eq!(published(&f, 1).await.len(), 1);
 
     // A failed delivery attempt schedules a retry checkpoint: a new signal at that time.
     sqlx::query("UPDATE device_reminders SET next_attempt_at_ms = ? WHERE id = ?")
@@ -209,9 +235,15 @@ async fn retry_checkpoint_signals_again_and_publish_failure_does_not_stop_schedu
     settle().await;
     assert_eq!(f.recorder.published().len(), 1, "retry not yet due");
     f.clock.store(T0 + 61_000, Ordering::SeqCst);
-    f.sessions.scheduler_wakeup().notify_one();
-    settle().await;
-    assert_eq!(f.recorder.published().len(), 2);
+    let signals: Vec<serde_json::Value> = published(&f, 2)
+        .await
+        .iter()
+        .map(|(_, payload)| serde_json::from_slice(payload).unwrap())
+        .collect();
+    // Same Reminder, different trigger moment: the Device can tell the retry from a replay.
+    assert_eq!(signals[0]["id"], signals[1]["id"]);
+    assert_eq!(signals[0]["at"], T0 + 1_000);
+    assert_eq!(signals[1]["at"], T0 + 60_000);
     f.stopping.cancel();
 }
 
@@ -235,35 +267,60 @@ impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for LogCapture {
     }
 }
 
-#[tokio::test]
-async fn retry_mark_after_successful_signal_logs_device_did_not_connect() {
+fn capture_logs() -> (LogCapture, tracing::subscriber::DefaultGuard) {
     let capture = LogCapture::default();
-    let _guard = tracing::subscriber::set_default(
+    let guard = tracing::subscriber::set_default(
         tracing_subscriber::fmt()
             .with_writer(capture.clone())
             .with_ansi(false)
             .finish(),
     );
-    let f = fixture(true).await;
-    let id = create(&f, "r1", 1).await;
-    f.clock.store(T0 + 2_000, Ordering::SeqCst);
-    f.sessions.scheduler_wakeup().notify_one();
-    settle().await;
-    assert_eq!(f.recorder.published().len(), 1);
-    let logs = |c: &LogCapture| String::from_utf8_lossy(&c.0.lock().unwrap()).into_owned();
-    assert!(!logs(&capture).contains("device did not connect"));
+    (capture, guard)
+}
 
-    sqlx::query("UPDATE device_reminders SET next_attempt_at_ms = ? WHERE id = ?")
-        .bind(T0 + 60_000)
-        .bind(&id)
-        .execute(f.repo.database().pool())
-        .await
-        .unwrap();
-    f.clock.store(T0 + 61_000, Ordering::SeqCst);
+impl LogCapture {
+    fn count(&self, needle: &str) -> usize {
+        String::from_utf8_lossy(&self.0.lock().unwrap())
+            .matches(needle)
+            .count()
+    }
+}
+
+const DID_NOT_CONNECT: &str = "wake signal sent but device did not connect";
+const COULD_NOT_SEND: &str = "wake signal could not be sent";
+
+#[tokio::test]
+async fn signalled_device_that_stays_away_is_logged_once_without_another_signal() {
+    let (logs, _guard) = capture_logs();
+    let f = fixture(true).await;
+    create(&f, "r1", 1).await;
+    f.clock.store(T0 + 2_000, Ordering::SeqCst);
+    published(&f, 1).await;
+    settle().await;
+    assert_eq!(logs.count(DID_NOT_CONNECT), 0, "still within the grace");
+
+    // The Device never opens a session: reported once the grace is over, and only once.
+    f.clock.store(T0 + 2_000 + 31_000, Ordering::SeqCst);
+    f.sessions.scheduler_wakeup().notify_one();
+    eventually("miss logged", || logs.count(DID_NOT_CONNECT) == 1).await;
     f.sessions.scheduler_wakeup().notify_one();
     settle().await;
-    assert_eq!(f.recorder.published().len(), 2);
-    assert!(logs(&capture).contains("wake signal sent but device did not connect"));
+    assert_eq!(logs.count(DID_NOT_CONNECT), 1);
+    assert_eq!(logs.count(COULD_NOT_SEND), 0);
+    assert_eq!(f.recorder.published().len(), 1, "a miss never re-publishes");
+    f.stopping.cancel();
+}
+
+#[tokio::test]
+async fn failed_publish_is_logged_as_a_send_failure_not_as_a_device_miss() {
+    let (logs, _guard) = capture_logs();
+    let f = fixture(true).await;
+    f.recorder.set_failing(true);
+    create(&f, "r1", 1).await;
+    f.clock.store(T0 + 2_000 + 31_000, Ordering::SeqCst);
+    f.sessions.scheduler_wakeup().notify_one();
+    eventually("send failure logged", || logs.count(COULD_NOT_SEND) >= 1).await;
+    assert_eq!(logs.count(DID_NOT_CONNECT), 0);
     f.stopping.cancel();
 }
 
@@ -272,9 +329,7 @@ async fn device_connecting_after_wake_signal_completes_the_reminder() {
     let f = fixture(true).await;
     let id = create(&f, "r1", 1).await;
     f.clock.store(T0 + 2_000, Ordering::SeqCst);
-    f.sessions.scheduler_wakeup().notify_one();
-    settle().await;
-    assert_eq!(f.recorder.published().len(), 1);
+    assert_eq!(published(&f, 1).await.len(), 1);
 
     // Simulated Device opens a session announcing reminders.
     let (tx, mut rx) = mpsc::channel(8);

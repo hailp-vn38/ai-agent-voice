@@ -26,3 +26,9 @@ Branch work (firmware/esp32): `main/push/reminder_playback.h` (pure attempt trac
 Verified: host tests (`python3 -m unittest scripts.tests.test_push_wake_signal scripts.tests.test_reminder_playback`, 7 OK); real build `python3 scripts/build.py bread-compact-wifi --name bread-compact-wifi` with ESP-IDF v6.1-rc1 succeeded (36% app free). Boxes ticked cover logic and code paths only, not behavior on a Device.
 
 Not verified / hardware-only: the last box (real Device end to end). All firmware behavior is unexercised on hardware, including that `IsPlaybackIdle()` really means the DAC/DMA output drained. Known gaps: `decode_failed` and `output_unavailable` are not raised from the audio service (it exposes no error callback); only `playback_aborted` (AbortSpeaking) and `output_unavailable` (network/main error event) are sent. A channel that closes mid-playback cannot send `failed` (the server must treat it as uncertain). Timeouts (empty wake session 10 s, delivery_result 8 s, 3 s grace between Reminders) are untuned constants. Status stays ready-for-agent because of the hardware box.
+
+Review follow-up (2026-11-13), host tests and real build only, nothing run on hardware:
+
+- `decode_failed` is now sent: `AudioServiceCallbacks::on_decode_error` fires when a received packet cannot be decoded.
+- A wake session the user starts talking in becomes theirs (`Tracker::ReleaseToUser` on entering listening) and no longer closes itself.
+- After a failed playback the server's retry checkpoint produces a new Wake Signal (new `at`), which the Device now accepts even though it handled the earlier one.

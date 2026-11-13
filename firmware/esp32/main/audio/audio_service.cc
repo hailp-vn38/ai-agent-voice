@@ -448,6 +448,10 @@ void AudioService::OpusCodecTask() {
                 ESP_LOGE(TAG, "Audio decoder is not configured");
             }
 
+            if (!decoded && callbacks_.on_decode_error) {
+                callbacks_.on_decode_error();
+            }
+
             lock.lock();
             if (decoded && generation == playback_generation_ && !service_stopped_.load()) {
                 audio_playback_queue_.push_back(std::move(task));

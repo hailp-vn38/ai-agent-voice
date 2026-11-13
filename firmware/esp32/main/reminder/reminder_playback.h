@@ -1,5 +1,5 @@
-#ifndef PUSH_REMINDER_PLAYBACK_H
-#define PUSH_REMINDER_PLAYBACK_H
+#ifndef REMINDER_PLAYBACK_H
+#define REMINDER_PLAYBACK_H
 
 #include <cstdint>
 #include <string>
@@ -39,6 +39,9 @@ public:
         attempt_id_.clear();
         deadline_ms_ = 0;
     }
+
+    // The user started talking inside a wake session: it is theirs now and never self-closes.
+    void ReleaseToUser() { wake_session_ = false; }
 
     bool active() const { return phase_ == Phase::kPlaying || phase_ == Phase::kDraining; }
     bool wake_session() const { return wake_session_; }
@@ -109,4 +112,4 @@ private:
 
 }  // namespace reminder_playback
 
-#endif  // PUSH_REMINDER_PLAYBACK_H
+#endif  // REMINDER_PLAYBACK_H

@@ -15,7 +15,7 @@ use serde::Deserialize;
 use crate::{
     app::state::AppState,
     database::DeviceRegistration,
-    services::device_push::{DevicePush, TopicAccess},
+    services::device_push::{BrokerClient, DevicePush},
 };
 
 #[derive(Deserialize)]
@@ -41,14 +41,22 @@ fn verdict(allowed: bool) -> Response {
     .into_response()
 }
 
-async fn device_registered(state: &AppState, device_id: &str) -> bool {
-    let Some(database) = state.database.as_ref() else {
-        return false;
-    };
-    matches!(
-        database.device_registration(device_id).await,
-        Ok(DeviceRegistration::Registered)
-    )
+/// The module decides what each account may do; a Device additionally has to be registered
+/// right now, so blocking it takes effect on its next broker question.
+async fn allowed(state: &AppState, client: Option<BrokerClient<'_>>) -> bool {
+    match client {
+        None => false,
+        Some(BrokerClient::Service) => true,
+        Some(BrokerClient::Device(device_id)) => {
+            let Some(database) = state.database.as_ref() else {
+                return false;
+            };
+            matches!(
+                database.device_registration(device_id).await,
+                Ok(DeviceRegistration::Registered)
+            )
+        }
+    }
 }
 
 pub(crate) async fn user(
@@ -58,13 +66,7 @@ pub(crate) async fn user(
     let (Some(push), Ok(Json(check))) = (state.device_push.as_ref(), body) else {
         return verdict(false);
     };
-    if DevicePush::is_service_username(&check.username) {
-        return verdict(push.verify_service_password(&check.password));
-    }
-    verdict(
-        push.verify_device_password(&check.username, &check.password)
-            && device_registered(&state, &check.username).await,
-    )
+    verdict(allowed(&state, push.authenticate(&check.username, &check.password)).await)
 }
 
 /// Superuser bypasses ACLs, so nobody is ever one.
@@ -79,14 +81,6 @@ pub(crate) async fn acl(
     let (Some(_), Ok(Json(check))) = (state.device_push.as_ref(), body) else {
         return verdict(false);
     };
-    let Some(access) = TopicAccess::from_code(check.acc) else {
-        return verdict(false);
-    };
-    if DevicePush::is_service_username(&check.username) {
-        return verdict(DevicePush::service_topic_allowed(&check.topic, access));
-    }
-    verdict(
-        DevicePush::device_topic_allowed(&check.username, &check.topic, access)
-            && device_registered(&state, &check.username).await,
-    )
+    let client = DevicePush::authorize_topic(&check.username, &check.topic, check.acc);
+    verdict(allowed(&state, client).await)
 }

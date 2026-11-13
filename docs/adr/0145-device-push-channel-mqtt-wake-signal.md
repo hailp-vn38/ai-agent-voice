@@ -10,8 +10,9 @@ Quyết định: thêm **Device Push Channel**, một kết nối MQTT thường
 
 ## Decisions
 
-- **Wake Signal không mang nội dung.** Payload chỉ có phiên bản, loại `wake`, định danh Reminder và mốc hết hiệu lực. Nội dung Reminder chỉ đi qua Voice Session đã admit, đúng nguyên tắc "firmware không tự phát nội dung cache" của ADR 0089.
+- **Wake Signal không mang nội dung.** Payload chỉ có phiên bản, loại `wake`, định danh Reminder, mốc kích hoạt `at` và mốc hết hiệu lực. Nội dung Reminder chỉ đi qua Voice Session đã admit, đúng nguyên tắc "firmware không tự phát nội dung cache" của ADR 0089.
 - **Phát Wake Signal lúc đến hạn, không phải lúc lịch thay đổi.** `reminder_scheduler` phát khi một Device có Reminder đến hạn (hoặc đến mốc thử lại) mà không có phiên sẵn sàng. Mỗi Reminder phát một lần cho mỗi lần đến hạn/thử lại.
+- **Danh tính của một Wake Signal là cặp (`id`, `at`).** `at` là mốc đến hạn hoặc mốc thử lại mà tín hiệu đại diện. Broker giao lại bản retained ở mỗi lần subscribe; Device ghi nhớ cặp đã xử lý và bỏ qua bản giao lại cùng cặp, còn tín hiệu thử lại của cùng Reminder mang `at` mới nên luôn được xét. Cách này thay cho cửa sổ thời gian sau subscribe, vốn không phân biệt được hai trường hợp khi Device vắng mặt lúc tín hiệu thử lại được publish. Device coi tín hiệu thiếu `id` hoặc `at` là không hợp lệ.
 - **Một topic server→Device cho mỗi Device, QoS 1, retained.** Device kết nối lại sau mất mạng vẫn nhận tín hiệu cuối. Mốc hết hiệu lực nằm trong payload nên không cần xoá retained; tín hiệu thừa chỉ gây một lần mở phiên rỗng.
 - **Topic dùng Device Key**, dạng băm hex của Device ID, vì Device ID hợp lệ hiện có thể chứa `/`, `+`, `#`.
 - **Phản hồi OTA mang khối `push`, không dùng khoá `mqtt`.** Firmware coi `mqtt` là cấu hình giao thức thoại MQTT+UDP và sẽ bỏ WebSocket nếu thấy khoá đó. Khối `push` chỉ trả cho Device đã đăng ký và khi tính năng bật; firmware cũ bỏ qua khoá lạ.

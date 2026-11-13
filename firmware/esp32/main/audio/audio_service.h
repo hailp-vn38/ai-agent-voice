@@ -86,6 +86,8 @@ struct AudioServiceCallbacks {
     std::function<void(void)> on_audio_testing_queue_full;
     // Fired when the decode/playback queues and their in-flight work are drained.
     std::function<void(void)> on_playback_drained;
+    // Fired when a received audio packet could not be decoded (it is dropped).
+    std::function<void(void)> on_decode_error;
     std::function<void(uint32_t playback_id, uint32_t media_position_ms)> on_playback_progress;
 };
 

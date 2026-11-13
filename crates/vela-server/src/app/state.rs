@@ -100,8 +100,6 @@ pub struct AppState {
     pub notification_hub: Option<Arc<crate::services::notification_hub::NotificationHub>>,
     /// Present only when `[device_push]` is enabled.
     pub device_push: Option<Arc<crate::services::device_push::DevicePush>>,
-    /// Set at bootstrap when the Device Push Channel is enabled.
-    pub wake_publisher: Option<Arc<dyn crate::services::device_push_wake::WakePublisher>>,
     pub(crate) system_mcp: Option<Arc<crate::tools::system_mcp::SystemMcp>>,
     pub(crate) knowledge_mcp:
         Arc<std::sync::OnceLock<Arc<crate::tools::knowledge_mcp::KnowledgeMcp>>>,
@@ -901,7 +899,6 @@ impl AppState {
             llm_gateway_hub,
             llm_gateway_refresh_started: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             notification_hub,
-            wake_publisher: None,
             device_push: crate::services::device_push::DevicePush::from_config(&config.device_push)
                 .map(Arc::new),
             system_mcp: None,

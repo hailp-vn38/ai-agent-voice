@@ -1,6 +1,6 @@
 """Stand-in for the Vela server's /mqtt/auth/* endpoints, used only by mqtt-broker-smoke.sh.
 
-Mirrors the rules in crates/vela-server/src/services/device_push.rs (passwords, topics, ACLs) so
+Mirrors the rules in crates/vela-server/src/services/device_push/mod.rs (passwords, topics, ACLs) so
 the smoke test exercises the broker configuration without building the whole server. Every Device
 is treated as registered. Status-only answers: 200 allows, 403 denies.
 """
@@ -8,10 +8,12 @@ import hashlib
 import hmac
 import json
 import os
+import re
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 SECRET = os.environ["SMOKE_SECRET"].encode()
 SERVICE = "vela-server"
+SIGNAL_TOPIC = re.compile(r"vela/v1/devices/[0-9a-fA-F]{32}/signal")
 
 
 def mac(message):
@@ -38,7 +40,7 @@ def allowed(path, body):
     if path == "/mqtt/auth/acl":
         topic, acc = body.get("topic", ""), body.get("acc")
         if username == SERVICE:
-            return acc == 2 and topic.startswith("vela/v1/devices/") and topic.endswith("/signal")
+            return acc == 2 and SIGNAL_TOPIC.fullmatch(topic) is not None
         return acc in (1, 4) and topic == topic_for(username)
     return False  # superuser and anything else
 

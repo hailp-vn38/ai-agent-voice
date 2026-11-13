@@ -34,7 +34,7 @@ service_password=$(python3 -c 'import hashlib,hmac,sys; k=hmac.new(sys.argv[1].e
 password_a=$(mac v1:device-a)
 topic_a=$(topic device-a)
 topic_b=$(topic device-b)
-payload='{"v":1,"type":"wake","id":"smoke","expires_at":4102444800000}'
+payload='{"v":1,"type":"wake","id":"smoke","at":4102358400000,"expires_at":4102444800000}'
 
 docker network create "$network" >/dev/null
 docker run -d --name "$stub" --network "$network" --network-alias server -e SMOKE_SECRET="$secret" \

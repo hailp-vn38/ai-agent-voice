@@ -17,6 +17,7 @@
 #include <arpa/inet.h>
 #include <cJSON.h>
 #include <cstring>
+#include <sys/time.h>
 #include <limits>
 
 #define TAG "Application"
@@ -87,6 +88,9 @@ void Application::Initialize() {
     };
     callbacks.on_playback_drained = [this]() {
         xEventGroupSetBits(event_group_, MAIN_EVENT_PLAYBACK_DRAINED);
+    };
+    callbacks.on_decode_error = [this]() {
+        Schedule([this]() { FailReminderPlayback("decode_failed"); });
     };
     callbacks.on_playback_progress = [this](uint32_t playback_id, uint32_t media_position_ms) {
         notify_player_.OnPlaybackProgress(playback_id, media_position_ms);
@@ -278,9 +282,13 @@ void Application::Run() {
             if (reminder_tracker_.Tick(NowMs()) == reminder_playback::Action::kCloseSession &&
                 protocol_ && protocol_->IsAudioChannelOpened()) {
                 ESP_LOGI(TAG, "Wake session finished, closing");
+                // The server had the whole session to play what was due: this signal is done.
+                // A Reminder that failed gets a new signal at the server's retry checkpoint.
+                SettlePendingWake();
                 reminder_tracker_.Reset();
                 protocol_->CloseAudioChannel();
             }
+            TryOpenWakeSession();
             auto display = Board::GetInstance().GetDisplay();
             display->UpdateStatusBar();
 
@@ -578,6 +586,10 @@ void Application::InitializeProtocol() {
     protocol_->OnAudioChannelClosed([this, &board]() {
         board.SetPowerSaveLevel(PowerSaveLevel::LOW_POWER);
         Schedule([this]() {
+            if (reminder_tracker_.wake_session()) {
+                // Dropped before the wake session ran its course: open another one later.
+                pending_wake_.OnSessionFailed(NowMs());
+            }
             reminder_tracker_.Reset();
             auto display = Board::GetInstance().GetDisplay();
             display->SetChatMessage("system", "");
@@ -699,6 +711,10 @@ void Application::InitializeProtocol() {
                           attempt_id = std::string(aid->valuestring)]() {
                     if (reminder_tracker_.OnDeliveryResult(reminder_id, attempt_id, NowMs())) {
                         ESP_LOGI(TAG, "Reminder delivery result received");
+                        if (pending_wake_.pending() &&
+                            pending_wake_.identity().id == reminder_id) {
+                            SettlePendingWake();
+                        }
                     }
                 });
             }
@@ -785,12 +801,20 @@ void Application::InitializePushChannel() {
     }
     if (push_channel_ == nullptr) {
         push_channel_ = std::make_unique<DevicePushChannel>(
-            [this]() {
+            [this](const wake_signal::Accepted& signal) {
                 // Runs on the push task: only hand off to the main task.
-                Schedule([this]() { HandleWakeSignal(); });
-                return true;
+                Schedule([this, signal]() {
+                    pending_wake_.Accept(signal, NowMs());
+                    TryOpenWakeSession();
+                });
             },
-            [this]() { return GetDeviceState() != kDeviceStateIdle; });
+            [this]() { return GetDeviceState() != kDeviceStateIdle; },
+            [this]() {
+                struct timeval tv;
+                gettimeofday(&tv, nullptr);
+                int64_t local_ms = static_cast<int64_t>(tv.tv_sec) * 1000 + tv.tv_usec / 1000;
+                return local_ms - ota_->ClockUtcOffsetMs();
+            });
     }
     Schedule([this]() { UpdatePushChannel(); });
 }
@@ -835,9 +859,21 @@ void Application::SendReminderDecision(const reminder_playback::Decision& d) {
     ESP_LOGI(TAG, "Reminder %s sent", played ? "played" : "failed");
 }
 
-void Application::HandleWakeSignal() {
-    if (GetDeviceState() != kDeviceStateIdle || !protocol_ || protocol_->IsAudioChannelOpened()) {
-        ESP_LOGI(TAG, "Wake signal ignored: session already active");
+void Application::SettlePendingWake() {
+    if (!pending_wake_.pending()) {
+        return;
+    }
+    if (push_channel_) {
+        push_channel_->MarkHandled(pending_wake_.identity());
+    }
+    pending_wake_.Settle();
+}
+
+void Application::TryOpenWakeSession() {
+    // While the user holds a session the signal just waits: the server plays the Reminder
+    // there if it can, and otherwise a wake session is opened once the Device is idle again.
+    if (GetDeviceState() != kDeviceStateIdle || !protocol_ || protocol_->IsAudioChannelOpened() ||
+        !pending_wake_.ShouldOpen(NowMs())) {
         return;
     }
     ESP_LOGI(TAG, "Opening reminder session on wake signal");
@@ -854,6 +890,8 @@ void Application::HandleWakeSignal() {
         if (opened) {
             reminder_tracker_.BeginWakeSession(NowMs());
         } else {
+            ESP_LOGW(TAG, "Wake session could not be opened; will retry");
+            pending_wake_.OnSessionFailed(NowMs());
             Board::GetInstance().SetPowerSaveLevel(PowerSaveLevel::LOW_POWER);
         }
         UpdatePushChannel();
@@ -1160,6 +1198,9 @@ void Application::HandleStateChangedEvent() {
             display->SetChatMessage("system", "");
             break;
         case kDeviceStateListening:
+            // The user started a conversation; a session opened by a Wake Signal is theirs
+            // now and must not close itself under them.
+            reminder_tracker_.ReleaseToUser();
             display->SetStatus(Lang::Strings::LISTENING);
             display->SetEmotion("neutral");
 

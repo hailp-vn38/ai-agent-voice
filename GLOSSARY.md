@@ -73,7 +73,7 @@ Kết nối MQTT thường trực từ Device tới broker của deployment, ch�
 _Avoid_: Notification Channel, notification WS, giao thức thoại MQTT+UDP
 
 **Wake Signal**:
-Tín hiệu không mang nội dung, gửi qua Device Push Channel để yêu cầu Device mở Voice Session vì có Reminder đến hạn.
+Tín hiệu không mang nội dung, gửi qua Device Push Channel để yêu cầu Device mở Voice Session vì có Reminder đến hạn. Một Wake Signal được nhận diện bằng Reminder và mốc đến hạn hoặc thử lại mà nó đại diện.
 _Avoid_: Notification, Reminder, `sync_required`, push notification
 
 **Device Key**:

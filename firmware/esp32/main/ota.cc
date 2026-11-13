@@ -235,9 +235,12 @@ NetworkResult<> Ota::CheckVersion() {
             double ts = timestamp->valuedouble;
             
             // 如果有时区偏移，计算本地时间
+            int64_t utc_offset_ms = 0;
             if (cJSON_IsNumber(timezone_offset)) {
-                ts += (timezone_offset->valueint * 60 * 1000); // 转换分钟为毫秒
+                utc_offset_ms = static_cast<int64_t>(timezone_offset->valueint) * 60 * 1000;
+                ts += utc_offset_ms; // 转换分钟为毫秒
             }
+            clock_utc_offset_ms_ = utc_offset_ms;
             
             tv.tv_sec = (time_t)(ts / 1000);  // 转换毫秒为秒
             tv.tv_usec = (suseconds_t)((long long)ts % 1000) * 1000;  // 剩余的毫秒转换为微秒
