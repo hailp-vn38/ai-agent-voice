@@ -49,29 +49,34 @@ pub(super) async fn stream_live(State(state): State<AppState>) -> Response {
     let snapshot = system_live.subscribe();
     let stopping = state.lifecycle.stopping().clone();
     let messages = futures_util::stream::unfold(
-        (snapshot, stopping, true),
-        |(mut snapshot, stopping, first)| async move {
+        (snapshot, stopping, true, None::<String>),
+        |(mut snapshot, stopping, first, previous)| async move {
             if first {
-                let data = serde_json::to_string(snapshot.borrow().as_ref())
+                let data = serde_json::to_string(snapshot.borrow_and_update().as_ref())
                     .unwrap_or_else(|_| "{}".into());
                 return Some((
-                    Ok::<Event, Infallible>(Event::default().event("snapshot").data(data)),
-                    (snapshot, stopping, false),
+                    Ok::<Event, Infallible>(Event::default().event("snapshot").data(data.clone())),
+                    (snapshot, stopping, false, Some(data)),
                 ));
             }
-            tokio::select! {
-                biased;
-                _ = stopping.cancelled() => None,
-                changed = snapshot.changed() => {
-                    if changed.is_err() {
-                        return None;
+            loop {
+                tokio::select! {
+                    biased;
+                    _ = stopping.cancelled() => return None,
+                    changed = snapshot.changed() => {
+                        if changed.is_err() {
+                            return None;
+                        }
+                        let data = serde_json::to_string(snapshot.borrow_and_update().as_ref())
+                            .unwrap_or_else(|_| "{}".into());
+                        if previous.as_deref() == Some(data.as_str()) {
+                            continue;
+                        }
+                        return Some((
+                            Ok(Event::default().event("snapshot").data(data.clone())),
+                            (snapshot, stopping, false, Some(data)),
+                        ));
                     }
-                    let data = serde_json::to_string(snapshot.borrow().as_ref())
-                        .unwrap_or_else(|_| "{}".into());
-                    Some((
-                        Ok(Event::default().event("snapshot").data(data)),
-                        (snapshot, stopping, false),
-                    ))
                 }
             }
         },
